@@ -15,7 +15,7 @@ jobs:
   sdk:
     name: SDK ${{ matrix.flavor }} — ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -28,6 +28,10 @@ jobs:
             platform: linux
             preset: player-release
             flavor: player
+          - os: ubuntu-latest
+            platform: linux
+            preset: ship-release
+            flavor: ship
           - os: windows-latest
             platform: windows
             preset: editor-release
@@ -36,6 +40,10 @@ jobs:
             platform: windows
             preset: player-release
             flavor: player
+          - os: windows-latest
+            platform: windows
+            preset: ship-release
+            flavor: ship
           - os: macos-latest
             platform: macos
             preset: editor-release
@@ -44,6 +52,10 @@ jobs:
             platform: macos
             preset: player-release
             flavor: player
+          - os: macos-latest
+            platform: macos
+            preset: ship-release
+            flavor: ship
 
     steps:
       - name: Checkout engine
@@ -121,7 +133,7 @@ jobs:
   publish:
     name: Publish GitHub Release
     needs: [sdk]
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: write
