@@ -1,0 +1,592 @@
+# OctarinePackage.cmake — desktop packaging (Android packages via Gradle; iOS parked on defer/ios).
+#
+# Produces a self-contained, double-clickable artifact per OS that launches with NO `-p` argument:
+# the engine binary sits beside a baked game project (assets + lua + config + asset_manifest.lua),
+# and `SDL_GetBasePath()` resolves the project dir at the exe/bundle location. The baked manifest
+# is what removes the runtime filesystem scan, so the same code works inside a read-only bundle.
+#
+# Usage (from the top-level CMakeLists, behind an opt-in):
+#   include(cmake/OctarinePackage.cmake)
+#   octarine_package(OctarineEngine PROJECT <game-project-dir> [NAME <pkg-name>])
+#
+# The engine resolves all of fonts/images/sounds/scripts/etc. by recursively scanning a single base
+# dir, so we stage the whole PROJECT directory rather than separate assets/ + lua/ trees. PROJECT
+# must contain the project's `config` and startup script; the bake step writes asset_manifest.lua
+# into the staged copy.
+#
+# Layout:
+#   octarine_package                  — public entrypoint, orchestrates the steps below
+#   octarine_read_project_ini         — flat key=value INI -> ${PREFIX}_<key> vars (public; gradle mirrors)
+#   _octarine_resolve_identity        — CLI cache > project.ini > default precedence per identity key
+#   _octarine_validate_identity       — shipping-build identity gate (FATAL on bad/missing required keys)
+#   _octarine_generate_desktop_icons  — runs scripts/octarine-icons.cmake for the host OS
+#   _octarine_setup_desktop_install   — install(TARGETS) + bake CODE step + project DIRECTORY copy
+#   _octarine_bundle_runtime_libs     — vcpkg dylibs/sos/DLLs + MSVC CRT redist beside the binary
+#   _octarine_setup_cpack             — CPACK_* vars + generator pick + include(CPack)
+
+# Guard against double-include.
+if (DEFINED _OCTARINE_PACKAGE_INCLUDED)
+    return()
+endif ()
+set(_OCTARINE_PACKAGE_INCLUDED ON)
+
+# Capture this file's directory at include time so functions can resolve sibling paths reliably.
+# CMAKE_CURRENT_LIST_DIR inside a function reflects the caller's listfile, not the definition site.
+set(_OCTARINE_PACKAGE_DIR "${CMAKE_CURRENT_LIST_DIR}")
+
+# Path to the shared icon/splash generator. Same script Gradle runs on Android — single source of
+# truth for sizes/manifests so desktop/Android can't drift. CMAKE_CURRENT_LIST_DIR resolves to
+# the directory of THIS file (cmake/) regardless of which CMakeLists.txt includes it.
+set(_OCTARINE_ICON_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/../scripts/octarine-icons.cmake")
+
+# Third-party license aggregator. Same file lives at cmake/octarine-licenses.cmake; including it
+# here keeps the public octarine_collect_licenses() symbol available to the desktop branch of
+# octarine_package.
+include("${CMAKE_CURRENT_LIST_DIR}/octarine-licenses.cmake")
+
+# NSIS is opt-in, not auto-detected: a stray/non-functional makensis on PATH (e.g. a Chocolatey
+# shim) would otherwise make plain `cpack` fail before producing the reliable ZIP. Turn this ON only
+# on a machine with a working NSIS install.
+option(OCTARINE_PACKAGE_NSIS "Also emit an NSIS installer on Windows (requires a working makensis)" OFF)
+
+# Script protection: compile all .lua files in the installed package to stripped bytecode so that
+# plaintext source is not shipped. luac -s strips debug info, which specifically breaks unluac (the
+# most capable Lua decompiler). Source files in PROJECT_DIR are never modified — only the installed
+# copy is touched. Defaults ON for shipped builds. Set OFF to ship plain source.
+option(OCTARINE_PROTECT_SCRIPTS "Compile Lua scripts to stripped bytecode in packaged builds" ${OCTARINE_SHIPPED})
+
+# XOR key for encrypting compiled Lua bytecode at package time and decrypting at runtime.
+# Set to any non-empty uint8 value (decimal or 0x-prefixed hex, e.g. "90" or "0x5A").
+# Leave empty (the default) to skip encryption — bytecode compilation still runs if
+# OCTARINE_PROTECT_SCRIPTS is ON, but the result is unencrypted. Change this value per project/build
+# so that the same decryption key is not shared across all Octarine games.
+set(OCTARINE_LUA_XOR_KEY "" CACHE STRING "XOR key (uint8) for Lua bytecode encryption; empty = no encryption")
+
+if (OCTARINE_PROTECT_SCRIPTS)
+    find_program(LUAC_EXECUTABLE
+        NAMES luac luac5.4
+        HINTS
+            "${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/tools/lua"
+            "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/lua"
+        REQUIRED
+    )
+    message(STATUS "Octarine: script protection enabled (luac=${LUAC_EXECUTABLE})")
+endif ()
+
+if (OCTARINE_PROTECT_SCRIPTS AND OCTARINE_LUA_XOR_KEY)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+endif ()
+
+# CLI overrides for project identity (precedence: CLI cache var > project.ini > built-in default).
+# Empty default = "not set on the CLI"; the helper falls through to the file or default.
+set(OCTARINE_PACKAGE_NAME         "" CACHE STRING "Override project.ini: name")
+set(OCTARINE_PACKAGE_VERSION_NAME "" CACHE STRING "Override project.ini: version_name")
+set(OCTARINE_PACKAGE_VERSION_CODE "" CACHE STRING "Override project.ini: version_code")
+set(OCTARINE_PACKAGE_VENDOR       "" CACHE STRING "Override project.ini: vendor")
+set(OCTARINE_PACKAGE_DESCRIPTION  "" CACHE STRING "Override project.ini: description")
+set(OCTARINE_PACKAGE_ID           "" CACHE STRING "Override project.ini: package_id (Android bundle id)")
+set(OCTARINE_PACKAGE_ORIENTATION  "" CACHE STRING "Override project.ini: orientation (portrait|landscape|all)")
+set(OCTARINE_PACKAGE_FULLSCREEN   "" CACHE STRING "Override project.ini: fullscreen (true|false)")
+set(OCTARINE_PACKAGE_PERMISSIONS  "" CACHE STRING "Override project.ini: permissions (comma list: internet,recording,camera,location,photos)")
+set(OCTARINE_PACKAGE_CATEGORY     "" CACHE STRING "Override project.ini: category (reserved for Android category surfaces; currently informational)")
+set(OCTARINE_PACKAGE_EXCLUDE      "" CACHE STRING "Override project.ini: package_exclude (comma list of file/dir patterns to exclude)")
+set(OCTARINE_PACKAGE_INCLUDE      "" CACHE STRING "Override project.ini: package_include (comma list of file/dir patterns to include)")
+
+# Parse a flat key=value INI (no sections; Java Properties compatible) into ${PREFIX}_<key> vars in
+# the caller's scope. Skips blank lines and `#`-prefixed comments. Unknown keys are still set —
+# callers consume only the keys they recognize.
+function(octarine_read_project_ini PROJECT_DIR PREFIX)
+    set(_ini "${PROJECT_DIR}/project.ini")
+    if (NOT EXISTS "${_ini}")
+        return()
+    endif ()
+    file(STRINGS "${_ini}" _lines)
+    foreach (_line IN LISTS _lines)
+        # Strip surrounding whitespace by matching against a tolerant regex.
+        if (_line MATCHES "^[ \t]*#")
+            continue()
+        endif ()
+        if (_line MATCHES "^[ \t]*$")
+            continue()
+        endif ()
+        if (_line MATCHES "^[ \t]*([A-Za-z0-9_]+)[ \t]*=[ \t]*(.*)$")
+            set(_key "${CMAKE_MATCH_1}")
+            set(_val "${CMAKE_MATCH_2}")
+            # Trim trailing whitespace from the value.
+            string(REGEX REPLACE "[ \t]+$" "" _val "${_val}")
+            set("${PREFIX}_${_key}" "${_val}" PARENT_SCOPE)
+        else ()
+            message(WARNING "octarine_read_project_ini: ignoring malformed line in ${_ini}: ${_line}")
+        endif ()
+    endforeach ()
+endfunction()
+
+# Resolve a single identity key: CLI cache override > project.ini value > built-in default.
+# Sets ${OUT_VAR} in the caller's scope.
+function(_octarine_resolve_identity OUT_VAR CLI_VAL INI_VAL DEFAULT_VAL)
+    if (NOT "${CLI_VAL}" STREQUAL "")
+        set(${OUT_VAR} "${CLI_VAL}" PARENT_SCOPE)
+    elseif (NOT "${INI_VAL}" STREQUAL "")
+        set(${OUT_VAR} "${INI_VAL}" PARENT_SCOPE)
+    else ()
+        set(${OUT_VAR} "${DEFAULT_VAL}" PARENT_SCOPE)
+    endif ()
+endfunction()
+
+# Validate project identity for a shipping build. Policy:
+#  - File absent + SHIPPED → warn (the project hasn't supplied an identity; we'll use defaults).
+#  - File present + SHIPPED → required keys must be non-empty; package_id must be reverse-DNS.
+#  - SHIPPED off → no-op (dev builds don't gate on identity).
+# Fail-fast at configure time so the build doesn't burn cycles producing a misnamed package.
+function(_octarine_validate_identity PROJECT_DIR PKG_NAME PKG_ID PKG_VER SHIPPED)
+    set(_ini "${PROJECT_DIR}/project.ini")
+    if (NOT SHIPPED)
+        return()
+    endif ()
+    if (NOT EXISTS "${_ini}")
+        message(WARNING "Octarine: shipping build with no ${_ini} — using fallback identity ('${PKG_NAME}' ${PKG_VER}). Add a project.ini for a proper package identity.")
+        return()
+    endif ()
+    set(_errors "")
+    if ("${PKG_NAME}" STREQUAL "")
+        list(APPEND _errors "missing required key: name")
+    endif ()
+    if ("${PKG_VER}" STREQUAL "")
+        list(APPEND _errors "missing required key: version_name")
+    endif ()
+    if ("${PKG_ID}" STREQUAL "")
+        list(APPEND _errors "missing required key: package_id (Android bundle id)")
+    elseif (NOT "${PKG_ID}" MATCHES "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$")
+        list(APPEND _errors "package_id '${PKG_ID}' must be reverse-DNS (e.g. com.studio.mygame)")
+    endif ()
+    if (_errors)
+        string(REPLACE ";" "\n  - " _err_lines "${_errors}")
+        message(FATAL_ERROR "Octarine: project.ini validation failed (${_ini}):\n  - ${_err_lines}")
+    endif ()
+endfunction()
+
+# iOS bundle helper, orientation/permission Info.plist mappers, and Settings.bundle wiring are
+# parked on the defer/ios branch pending an Apple Developer account.
+
+# Generate per-OS icon files (.ico/.icns/.png) under ${OUT_DIR}/desktop. Sets ${ICO_VAR},
+# ${ICNS_VAR}, ${PNG_VAR} in the caller's scope to the conventional output paths (callers test
+# EXISTS before consuming, since the script skip-warns when project.ini has no `icon=`).
+function(_octarine_generate_desktop_icons PROJECT_DIR OUT_DIR OS_NAME ICO_VAR ICNS_VAR PNG_VAR)
+    execute_process(
+            COMMAND "${CMAKE_COMMAND}"
+                    "-DOCTARINE_ICON_PROJECT=${PROJECT_DIR}"
+                    "-DOCTARINE_ICON_PLATFORM=desktop"
+                    "-DOCTARINE_ICON_DESKTOP_OS=${OS_NAME}"
+                    "-DOCTARINE_ICON_OUT_DIR=${OUT_DIR}"
+                    -P "${_OCTARINE_ICON_SCRIPT}"
+            RESULT_VARIABLE _icon_rc)
+    if (NOT _icon_rc EQUAL 0)
+        message(FATAL_ERROR "octarine_package: desktop icon generation failed (rc=${_icon_rc})")
+    endif ()
+    set(${ICO_VAR}  "${OUT_DIR}/desktop/octarine_icon.ico"  PARENT_SCOPE)
+    set(${ICNS_VAR} "${OUT_DIR}/desktop/octarine_icon.icns" PARENT_SCOPE)
+    set(${PNG_VAR}  "${OUT_DIR}/desktop/octarine_icon.png"  PARENT_SCOPE)
+endfunction()
+
+# Desktop deliverable layout + install rules:
+#   - install(TARGETS) puts the binary at the package root (or .app/Contents/MacOS for macOS).
+#   - install(CODE ...) runs the just-built binary in bake mode to produce asset_manifest.lua — the
+#     CI gate: a broken asset reference exits nonzero and aborts the install.
+#   - install(DIRECTORY) stages the project (now including the baked manifest) next to the binary.
+function(_octarine_setup_desktop_install TARGET PROJECT_DIR RUNTIME_DEST DATA_DEST)
+    set(oneValueArgs "")
+    set(multiValueArgs EXTRA_EXCLUDES EXTRA_INCLUDES)
+    cmake_parse_arguments(_INST "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+    install(TARGETS ${TARGET}
+            RUNTIME DESTINATION "${RUNTIME_DEST}"
+            BUNDLE DESTINATION "${RUNTIME_DEST}"
+    )
+
+    # Aggregate third-party license text at configure time. Desktop convention:
+    #   - macOS .app: file lands in Contents/Resources/ (DATA_DEST) so SDL_GetBasePath() can find
+    #     it from the running binary if a future about-screen surfaces it.
+    #   - Windows/Linux: file lands at the package root beside the binary (DATA_DEST == ".").
+    # Repo-root LICENSE is also installed at the package root as a stand-alone file — redundant
+    # with the aggregated copy but expected by users / store reviewers.
+    set(_licenses_out "${CMAKE_BINARY_DIR}/THIRD_PARTY_LICENSES.txt")
+    set(_project_license_drops "${PROJECT_DIR}/THIRD_PARTY_LICENSES.d")
+    set(_extra_dirs "")
+    if (IS_DIRECTORY "${_project_license_drops}")
+        list(APPEND _extra_dirs "${_project_license_drops}")
+    endif ()
+    # Roboto-Medium.ttf (Apache-2.0) is embedded into every binary — editor UI font plus the renderer
+    # performance overlay — so octarine_collect_licenses always emits its attribution; no per-build gate.
+    octarine_collect_licenses("${_licenses_out}" EXTRA_DIRS ${_extra_dirs})
+    install(FILES "${_licenses_out}" DESTINATION "${DATA_DEST}")
+    set(_engine_license "${_OCTARINE_PACKAGE_DIR}/../LICENSE")
+    if (EXISTS "${_engine_license}")
+        install(FILES "${_engine_license}" DESTINATION "${RUNTIME_DEST}")
+    endif ()
+
+    set(_staged_scripts_dir "${CMAKE_BINARY_DIR}/_octarine_staged_scripts")
+    if (OCTARINE_PROTECT_SCRIPTS)
+        set(_bake_args_str "\"--scripts-dir\" \"${_staged_scripts_dir}\"")
+        set(_script_prep_code "
+        message(STATUS \"Octarine: staging and compiling Lua scripts for asset bake...\")
+        file(REMOVE_RECURSE \"${_staged_scripts_dir}\")
+        file(MAKE_DIRECTORY \"${_staged_scripts_dir}\")
+
+        # Copy root Lua scripts
+        file(GLOB _root_lua LIST_DIRECTORIES false \"${PROJECT_DIR}/*.lua\")
+        if (_root_lua)
+            list(FILTER _root_lua EXCLUDE REGEX \"asset_manifest\\\\.lua$\")
+            if (_root_lua)
+                file(COPY \${_root_lua} DESTINATION \"${_staged_scripts_dir}\")
+            endif ()
+        endif ()
+
+        # Copy scripts/ directory if present
+        if (IS_DIRECTORY \"${PROJECT_DIR}/scripts\")
+            file(COPY \"${PROJECT_DIR}/scripts/\" DESTINATION \"${_staged_scripts_dir}/scripts\")
+        endif ()
+
+        file(GLOB_RECURSE _lua_sources LIST_DIRECTORIES false \"${_staged_scripts_dir}/*.lua\")
+        foreach (_src IN LISTS _lua_sources)
+            execute_process(
+                COMMAND \"${LUAC_EXECUTABLE}\" -s -o \"\${_src}.tmp\" \"\${_src}\"
+                RESULT_VARIABLE _rc)
+            if (NOT _rc EQUAL 0)
+                file(REMOVE \"\${_src}.tmp\")
+                message(FATAL_ERROR \"Octarine: luac failed on \${_src} (rc=\${_rc})\")
+            endif ()
+            file(RENAME \"\${_src}.tmp\" \"\${_src}\")
+        endforeach ()
+        message(STATUS \"Octarine: Lua bytecode compilation done.\")
+        ")
+
+        if (OCTARINE_LUA_XOR_KEY)
+            string(APPEND _script_prep_code "
+        message(STATUS \"Octarine: XOR-encrypting staged Lua bytecode...\")
+        file(GLOB_RECURSE _lua_enc_sources LIST_DIRECTORIES false \"${_staged_scripts_dir}/*.lua\")
+        set(_enc_py \"${CMAKE_BINARY_DIR}/_octarine_enc.py\")
+        file(WRITE \"\${_enc_py}\"
+            \"import sys, os\\n\"
+            \"k = ${OCTARINE_LUA_XOR_KEY}\\n\"
+            \"magic = bytes([27]) + b'OCT'\\n\"
+            \"for f in sys.argv[1:]:\\n\"
+            \"    d = open(f, 'rb').read()\\n\"
+            \"    enc = bytes((b ^ ((k + i) & 0xFF)) for i, b in enumerate(d))\\n\"
+            \"    tmp = f + '.tmp'\\n\"
+            \"    open(tmp, 'wb').write(magic + enc)\\n\"
+            \"    os.replace(tmp, f)\\n\"
+        )
+        execute_process(
+            COMMAND \"${Python3_EXECUTABLE}\" \"\${_enc_py}\" \${_lua_enc_sources}
+            RESULT_VARIABLE _rc)
+        file(REMOVE \"\${_enc_py}\")
+        if (NOT _rc EQUAL 0)
+            message(FATAL_ERROR \"Octarine: Lua XOR encryption failed (rc=\${_rc})\")
+        endif ()
+        message(STATUS \"Octarine: Staged Lua encryption done.\")
+            ")
+        endif ()
+    else ()
+        set(_bake_args_str "")
+        set(_script_prep_code "")
+    endif ()
+
+    # install() steps run in order, so the bake CODE precedes file staging below.
+    install(CODE "
+        ${_script_prep_code}
+        message(STATUS \"Octarine: baking asset manifest and asset_bundle.pak for package...\")
+        execute_process(
+            COMMAND \"$<TARGET_FILE:${TARGET}>\" \"${PROJECT_DIR}\" -m bake ${_bake_args_str}
+            RESULT_VARIABLE _bake_rc)
+        if (NOT _bake_rc EQUAL 0)
+            message(FATAL_ERROR \"Octarine: asset bake failed (rc=\${_bake_rc}); aborting package\")
+        endif ()
+    ")
+
+    # Stage expected runtime game files and data (allowlist model).
+    # All game assets and Lua scripts are bundled into asset_bundle.pak; only runtime metadata,
+    # licenses, the baked manifest, and explicit custom includes are staged loose.
+    # 1. Configuration & Project metadata
+    if (EXISTS "${PROJECT_DIR}/config.ini")
+        install(FILES "${PROJECT_DIR}/config.ini" DESTINATION "${DATA_DEST}")
+    endif ()
+    if (EXISTS "${PROJECT_DIR}/project.ini")
+        install(FILES "${PROJECT_DIR}/project.ini" DESTINATION "${DATA_DEST}")
+    endif ()
+
+    # 2. Project licenses
+    file(GLOB _project_licenses
+         LIST_DIRECTORIES false
+         "${PROJECT_DIR}/LICENSE*"
+    )
+    if (_project_licenses)
+        install(FILES ${_project_licenses} DESTINATION "${DATA_DEST}")
+    endif ()
+
+    # 3. Baked manifest & asset pak (emitted by bake step into PROJECT_DIR)
+    install(FILES "${PROJECT_DIR}/asset_manifest.lua"
+            DESTINATION "${DATA_DEST}"
+            OPTIONAL)
+    install(FILES "${PROJECT_DIR}/asset_bundle.pak"
+            DESTINATION "${DATA_DEST}"
+            OPTIONAL)
+
+    # 4. Custom extra project includes (package_include in project.ini)
+    foreach (_inc IN LISTS _INST_EXTRA_INCLUDES)
+        string(STRIP "${_inc}" _inc_clean)
+        if (_inc_clean AND EXISTS "${PROJECT_DIR}/${_inc_clean}")
+            if (IS_DIRECTORY "${PROJECT_DIR}/${_inc_clean}")
+                install(DIRECTORY "${PROJECT_DIR}/${_inc_clean}/"
+                        DESTINATION "${DATA_DEST}/${_inc_clean}"
+                )
+            else ()
+                install(FILES "${PROJECT_DIR}/${_inc_clean}"
+                        DESTINATION "${DATA_DEST}"
+                )
+            endif ()
+        endif ()
+    endforeach ()
+endfunction()
+
+# Bundle vcpkg runtime libs + C/C++ runtime beside the binary.
+#
+# vcpkg runtime libs: default vcpkg triplets on Linux/macOS (x64-linux, *-osx) are static, so the
+# glob hits nothing and the step is a no-op. A dynamic triplet or SHARED build of SDL3 drops
+# .so/.dylib/.dll alongside the build-tree binary; those need to ship with the package. We glob
+# TARGET_FILE_DIR rather than $<TARGET_RUNTIME_DLLS> because vcpkg's app-local copy includes the
+# FULL transitive set (freetype, libpng, jpeg, zlib, ...) and the genex only lists direct imports
+# — missing a transitive dep yields a load-time failure (0xC0000135 on Windows; ENOENT/dyld at
+# launch on Linux/macOS). FOLLOW_SYMLINK_CHAIN copies the libfoo.so → libfoo.so.1 → libfoo.so.1.2.3
+# versioned chain whole rather than dropping a dangling symlink.
+#
+# C/C++ runtime: MSVC ships from the COMPILER'S OWN redist folder, not InstallRequiredSystemLibraries
+# (whose redist finder can latch onto a different VS install — e.g. a leftover VS2019 — bundling
+# an older MSVCP140.dll that access-violates against a binary built by a newer toolset; the app-dir
+# DLL shadows the matching System32 one at launch and the exe dies before its first log line).
+# Layout: <VC>/Tools/MSVC/<ver>/bin/Host<a>/<a>/cl.exe -> <VC>/Redist/MSVC/<rver>/<arch>/Microsoft.VC<toolset>.CRT/*.dll
+# (7 levels up from cl.exe reaches the VC dir: x64/Host<a>/bin/<ver>/MSVC/Tools/VC).
+function(_octarine_bundle_runtime_libs TARGET RUNTIME_DEST FRAMEWORK_DEST)
+    if (WIN32)
+        install(CODE "
+            file(GLOB _octarine_runtime_dlls \"$<TARGET_FILE_DIR:${TARGET}>/*.dll\")
+            if (_octarine_runtime_dlls)
+                file(INSTALL \${_octarine_runtime_dlls} DESTINATION \"\${CMAKE_INSTALL_PREFIX}/${RUNTIME_DEST}\")
+            endif ()
+        ")
+    elseif (APPLE)
+        # INSTALL_RPATH on the binary points the loader at Frameworks/. vcpkg dylibs use
+        # @rpath/... install_names, so the rpath rewrite alone is enough — no install_name_tool
+        # dance needed unless a future dep ships with an absolute install_name (at which point
+        # swap this for BundleUtilities::fixup_bundle).
+        set_target_properties(${TARGET} PROPERTIES INSTALL_RPATH "@executable_path/../Frameworks")
+        install(CODE "
+            file(GLOB _octarine_runtime_libs \"$<TARGET_FILE_DIR:${TARGET}>/*.dylib\")
+            if (_octarine_runtime_libs)
+                file(INSTALL \${_octarine_runtime_libs}
+                     DESTINATION \"\${CMAKE_INSTALL_PREFIX}/${FRAMEWORK_DEST}\"
+                     FOLLOW_SYMLINK_CHAIN)
+            endif ()
+        ")
+    else ()
+        # Linux: libs go beside the binary; $ORIGIN tells the dynamic linker to look there.
+        set_target_properties(${TARGET} PROPERTIES INSTALL_RPATH "$ORIGIN")
+        install(CODE "
+            file(GLOB _octarine_runtime_libs
+                 \"$<TARGET_FILE_DIR:${TARGET}>/*.so\"
+                 \"$<TARGET_FILE_DIR:${TARGET}>/*.so.*\")
+            if (_octarine_runtime_libs)
+                file(INSTALL \${_octarine_runtime_libs}
+                     DESTINATION \"\${CMAKE_INSTALL_PREFIX}/${RUNTIME_DEST}\"
+                     FOLLOW_SYMLINK_CHAIN)
+            endif ()
+        ")
+    endif ()
+
+    if (MSVC)
+        get_filename_component(_vc_root "${CMAKE_CXX_COMPILER}/../../../../../../.." ABSOLUTE)
+        file(GLOB _crt_dirs "${_vc_root}/Redist/MSVC/*/x64/Microsoft.VC${MSVC_TOOLSET_VERSION}.CRT")
+        list(SORT _crt_dirs)
+        list(REVERSE _crt_dirs)   # newest redist version first
+        set(_crt_found OFF)
+        foreach (_crt IN LISTS _crt_dirs)
+            file(GLOB _crt_dlls "${_crt}/*.dll")
+            if (_crt_dlls)
+                message(STATUS "Octarine: bundling MSVC CRT from ${_crt}")
+                install(PROGRAMS ${_crt_dlls} DESTINATION "${RUNTIME_DEST}")
+                set(_crt_found ON)
+                break()
+            endif ()
+        endforeach ()
+        if (NOT _crt_found)
+            message(WARNING "Octarine: no MSVC CRT redist found under ${_vc_root}/Redist/MSVC — "
+                            "the package will depend on the VC++ Redistributable being installed.")
+        endif ()
+    else ()
+        # Non-MSVC (Linux libgcc/libstdc++ when present). SKIP suppresses the module's own bin/ rule
+        # so we place the libs at the deliverable root.
+        set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP ON)
+        include(InstallRequiredSystemLibraries)
+        if (CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS)
+            install(PROGRAMS ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS} DESTINATION "${RUNTIME_DEST}")
+        endif ()
+    endif ()
+endfunction()
+
+# CPack identity + generator pick + include. CPACK_* are plain (non-cache) vars consumed by the
+# CPack module at include time; setting them here in the helper's scope works because include()
+# evaluates in the calling scope. NSIS installer/uninstaller icons land here too (the .ico path
+# must use forward slashes — NSIS barfs on backslashes inside CPACK_NSIS_*).
+function(_octarine_setup_cpack PKG_NAME PKG_VERSION PKG_DESCRIPTION PKG_VENDOR DESKTOP_ICO)
+    set(CPACK_PACKAGE_NAME "${PKG_NAME}")
+    set(CPACK_PACKAGE_VERSION "${PKG_VERSION}")
+    set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "${PKG_DESCRIPTION}")
+    set(CPACK_PACKAGE_VENDOR "${PKG_VENDOR}")
+    message(STATUS "Octarine: package identity '${PKG_NAME}' ${PKG_VERSION} (vendor: ${PKG_VENDOR})")
+    # Keep the default single top-level <name>-<version>/ folder: unzip yields one self-contained dir.
+
+    if (WIN32)
+        # ZIP is the portable single-folder drop; NSIS installer is opt-in (see option above).
+        set(CPACK_GENERATOR "ZIP")
+        if (OCTARINE_PACKAGE_NSIS)
+            list(APPEND CPACK_GENERATOR "NSIS")
+            if (EXISTS "${DESKTOP_ICO}")
+                file(TO_CMAKE_PATH "${DESKTOP_ICO}" _ico_fwd)
+                set(CPACK_NSIS_MUI_ICON "${_ico_fwd}")
+                set(CPACK_NSIS_MUI_UNIICON "${_ico_fwd}")
+                set(CPACK_PACKAGE_ICON "${_ico_fwd}")
+            endif ()
+        endif ()
+    elseif (APPLE)
+        # .app drag-installer.
+        set(CPACK_GENERATOR "DragNDrop")
+    else ()
+        # Portable tarball; AppImage is a later opt-in.
+        set(CPACK_GENERATOR "TGZ")
+    endif ()
+
+    include(CPack)
+endfunction()
+
+function(octarine_package TARGET)
+    set(options "")
+    set(oneValueArgs PROJECT NAME)
+    set(multiValueArgs "")
+    cmake_parse_arguments(OP "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+    if (NOT OP_PROJECT)
+        message(FATAL_ERROR "octarine_package: PROJECT <game-project-dir> is required")
+    endif ()
+    if (NOT IS_DIRECTORY "${OP_PROJECT}")
+        message(FATAL_ERROR "octarine_package: PROJECT dir does not exist: ${OP_PROJECT}")
+    endif ()
+    if (NOT OP_NAME)
+        set(OP_NAME "${TARGET}")
+    endif ()
+
+    # A packaged binary MUST load the baked manifest — it has no real FS to scan inside a bundle.
+    # The canonical entry is the `ship-release` CMake preset (carries OCTARINE_SHIPPED=ON); this
+    # force is the guardrail so a package configured from a non-ship preset still can't silently
+    # ship a binary that scans and dies at launch. Belt-and-suspenders with the preset.
+    target_compile_definitions(${TARGET} PRIVATE OCTARINE_SHIPPED)
+    message(STATUS "Octarine: packaging '${OP_NAME}' from project '${OP_PROJECT}' (OCTARINE_SHIPPED forced ON)")
+
+    # ---- Project identity ---------------------------------------------------------------------
+    # Precedence: CLI cache override > project.ini > default.
+    octarine_read_project_ini("${OP_PROJECT}" _pi)
+    _octarine_resolve_identity(_pkg_name        "${OCTARINE_PACKAGE_NAME}"         "${_pi_name}"         "${OP_NAME}")
+    _octarine_resolve_identity(_pkg_version     "${OCTARINE_PACKAGE_VERSION_NAME}" "${_pi_version_name}" "${PROJECT_VERSION}")
+    _octarine_resolve_identity(_pkg_version_code "${OCTARINE_PACKAGE_VERSION_CODE}" "${_pi_version_code}" "1")
+    _octarine_resolve_identity(_pkg_vendor      "${OCTARINE_PACKAGE_VENDOR}"       "${_pi_vendor}"       "Octarine")
+    _octarine_resolve_identity(_pkg_description "${OCTARINE_PACKAGE_DESCRIPTION}"  "${_pi_description}"  "${PROJECT_DESCRIPTION}")
+    _octarine_resolve_identity(_pkg_id          "${OCTARINE_PACKAGE_ID}"           "${_pi_package_id}"   "")
+    _octarine_validate_identity("${OP_PROJECT}" "${_pkg_name}" "${_pkg_id}" "${_pkg_version}" ON)
+
+    # Set binary and bundle output name to the resolved package identity
+    set_target_properties(${TARGET} PROPERTIES OUTPUT_NAME "${_pkg_name}")
+
+    # Soft engine version check: warn when project.ini declares an engine_version that doesn't
+    # match the engine being built against. Not fatal — the developer may be intentionally
+    # testing a newer engine — but surfacing the mismatch at configure time avoids surprises.
+    if (DEFINED _pi_engine_version AND NOT "${_pi_engine_version}" STREQUAL "")
+        if (NOT "${_pi_engine_version}" VERSION_EQUAL "${PROJECT_VERSION}")
+            message(WARNING
+                "Octarine: project.ini engine_version=${_pi_engine_version} does not match "
+                "building engine ${PROJECT_VERSION}. Update engine_version in project.ini "
+                "once you have validated the game against this engine build.")
+        endif ()
+    endif ()
+
+    # ---- Per-project platform knobs ------------------------------------------------------------
+    # Same CLI > project.ini > default precedence as identity. Resolved here so the desktop branch
+    # (orientation/fullscreen reserved for downstream consumers) and the Android Gradle host
+    # (which reads project.ini directly via identityProp) stay in sync on key names. The iOS
+    # bundle helper that consumed min_ios/permissions/category is parked on defer/ios.
+    _octarine_resolve_identity(_pkg_orientation "${OCTARINE_PACKAGE_ORIENTATION}"  "${_pi_orientation}"  "")
+    _octarine_resolve_identity(_pkg_fullscreen  "${OCTARINE_PACKAGE_FULLSCREEN}"   "${_pi_fullscreen}"   "")
+    _octarine_resolve_identity(_pkg_permissions "${OCTARINE_PACKAGE_PERMISSIONS}"  "${_pi_permissions}"  "")
+    _octarine_resolve_identity(_pkg_category    "${OCTARINE_PACKAGE_CATEGORY}"     "${_pi_category}"     "")
+    _octarine_resolve_identity(_pkg_exclude     "${OCTARINE_PACKAGE_EXCLUDE}"      "${_pi_package_exclude}" "")
+    set(_extra_excludes "")
+    if (_pkg_exclude)
+        string(REPLACE "," ";" _extra_excludes "${_pkg_exclude}")
+    endif ()
+    _octarine_resolve_identity(_pkg_include     "${OCTARINE_PACKAGE_INCLUDE}"      "${_pi_package_include}" "")
+    set(_extra_includes "")
+    if (_pkg_include)
+        string(REPLACE "," ";" _extra_includes "${_pkg_include}")
+    endif ()
+
+    # ---- Desktop ------------------------------------------------------------------------------
+    # macOS: a .app bundle; binary in Contents/MacOS, project files in Contents/Resources.
+    # Windows/Linux: flat — binary + project files share the package root so base_path_ finds them.
+    if (WIN32)
+        set(_octarine_desktop_os "windows")
+    elseif (APPLE)
+        set(_octarine_desktop_os "macos")
+    else ()
+        set(_octarine_desktop_os "linux")
+    endif ()
+    _octarine_generate_desktop_icons("${OP_PROJECT}"
+            "${CMAKE_BINARY_DIR}/_octarine_desktop_icons"
+            "${_octarine_desktop_os}"
+            _desktop_ico _desktop_icns _desktop_png)
+
+    if (APPLE)
+        set_target_properties(${TARGET} PROPERTIES
+                MACOSX_BUNDLE ON
+                MACOSX_BUNDLE_GUI_IDENTIFIER "${_pkg_id}"
+                MACOSX_BUNDLE_BUNDLE_NAME "${_pkg_name}"
+                MACOSX_BUNDLE_SHORT_VERSION_STRING "${_pkg_version}"
+                MACOSX_BUNDLE_BUNDLE_VERSION "${_pkg_version_code}"
+                MACOSX_BUNDLE_COPYRIGHT "${_pkg_vendor}"
+                MACOSX_BUNDLE_INFO_STRING "${_pkg_description}"
+        )
+        set(_runtime_dest ".")
+        set(_data_dest "${_pkg_name}.app/Contents/Resources")
+        set(_framework_dest "${_pkg_name}.app/Contents/Frameworks")
+        # MACOSX_BUNDLE_ICON_FILE writes CFBundleIconFile into Info.plist; the .icns must land in
+        # Contents/Resources/ with the matching name. Both pieces only kick in when the generator
+        # produced an .icns (project supplied an icon).
+        if (EXISTS "${_desktop_icns}")
+            get_filename_component(_icns_name "${_desktop_icns}" NAME)
+            set_target_properties(${TARGET} PROPERTIES MACOSX_BUNDLE_ICON_FILE "${_icns_name}")
+            install(FILES "${_desktop_icns}" DESTINATION "${_data_dest}")
+        endif ()
+    else ()
+        set(_runtime_dest ".")
+        set(_data_dest ".")
+        set(_framework_dest ".")   # unused on non-APPLE; bundle helper branches on platform
+        # Linux: ship the PNG beside the binary so a future .desktop file (or AppImage) can
+        # reference it via Icon=octarine_icon. Windows: nothing here; CPack NSIS picks the .ico
+        # through CPACK_NSIS_MUI_ICON below.
+        if (NOT WIN32 AND EXISTS "${_desktop_png}")
+            install(FILES "${_desktop_png}" DESTINATION "${_runtime_dest}")
+        endif ()
+    endif ()
+
+    _octarine_setup_desktop_install(${TARGET} "${OP_PROJECT}" "${_runtime_dest}" "${_data_dest}"
+            EXTRA_EXCLUDES ${_extra_excludes}
+            EXTRA_INCLUDES ${_extra_includes})
+    _octarine_bundle_runtime_libs(${TARGET} "${_runtime_dest}" "${_framework_dest}")
+    _octarine_setup_cpack("${_pkg_name}" "${_pkg_version}" "${_pkg_description}" "${_pkg_vendor}" "${_desktop_ico}")
+endfunction()

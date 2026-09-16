@@ -1,0 +1,600 @@
+#include "Registry.h"
+
+#include <algorithm>
+#include <set>
+#include <stdexcept>
+
+#include "CommandBuffer.h"
+#include "General/Logger.h"
+#include "General/PerfUtils.h"
+#include "Query.h"
+#include "Systems/EntityPoolSystem.h"
+
+namespace {
+// Names of the systems still blocked (indegree > 0) when Kahn's algorithm stalls — i.e. the
+// members of the constraint cycle, for the error message.
+std::string CollectBlockedSystemNames(const std::vector<std::unique_ptr<ISystem>>& systems,
+                                      const std::vector<size_t>& indegree) {
+  std::string names;
+  for (size_t i = 0; i < systems.size(); ++i) {
+    if (indegree[i] > 0) {
+      if (!names.empty()) names += ", ";
+      names += systems[i]->GetName();
+    }
+  }
+  return names;
+}
+}  // namespace
+
+void Registry::AddOrderEdge(const SystemId before, const SystemId after) {
+  if (before >= systems_.size() || after >= systems_.size() || before == after) {
+    Logger::Error("Registry::Order: invalid system ordering edge (" + std::to_string(before) + " -> " +
+                  std::to_string(after) + ")");
+    return;
+  }
+  system_order_edges_.emplace_back(before, after);
+  system_order_dirty_ = true;
+}
+
+void Registry::RebuildExecutionOrder() {
+  const size_t count = systems_.size();
+  std::vector<std::vector<SystemId>> adjacency(count);
+  std::vector<size_t> indegree(count, 0);
+  for (const auto& [before, after] : system_order_edges_) {
+    adjacency[before].push_back(after);
+    ++indegree[after];
+  }
+
+  // Kahn's algorithm. The ready set is ordered ascending by SystemId, so the lowest-registered
+  // ready system always runs next — unconstrained systems keep exact registration order.
+  std::set<SystemId> ready;
+  for (SystemId i = 0; i < count; ++i) {
+    if (indegree[i] == 0) ready.insert(i);
+  }
+
+  system_execution_order_.clear();
+  system_execution_order_.reserve(count);
+  while (!ready.empty()) {
+    const SystemId id = *ready.begin();
+    ready.erase(ready.begin());
+    system_execution_order_.push_back(id);
+    for (const SystemId next : adjacency[id]) {
+      if (--indegree[next] == 0) ready.insert(next);
+    }
+  }
+
+  if (system_execution_order_.size() != count) {
+    const std::string names = CollectBlockedSystemNames(systems_, indegree);
+    Logger::Error("Registry: system ordering constraints form a cycle between: " + names);
+    throw std::runtime_error("Registry: system ordering cycle between: " + names);
+  }
+  system_order_dirty_ = false;
+}
+
+void Registry::Update(const float deltaTime) {
+  PROFILE_NAMED_SCOPE("Registry::Update (total)");
+  delta_time_ = deltaTime;
+  if (system_order_dirty_ || system_execution_order_.size() != systems_.size()) {
+    RebuildExecutionOrder();
+  }
+  for (const SystemId id : system_execution_order_) {
+#ifdef OCTARINE_PROFILING
+    ACCUMULATE_PROFILE_SCOPE(systems_[id]->GetName());
+    PROFILE_NAMED_SCOPE(systems_[id]->GetName());
+#endif
+    systems_[id]->Update(*this);
+  }
+  FlushPendingDestruction();
+}
+
+void Registry::FlushPendingDestruction() {
+  if (pending_blams_.empty() && pending_despawns_.empty()) {
+    return;
+  }
+  PROFILE_NAMED_SCOPE("Registry::Update (pending blam/despawn)");
+  auto pending = std::move(pending_blams_);
+  auto despawns = std::move(pending_despawns_);
+  pending_blams_.clear();
+  pending_blam_ids_.clear();
+  pending_despawns_.clear();
+  pending_despawn_ids_.clear();
+
+  for (const Entity entity : pending) {
+    if (!IsAlive(entity)) continue;
+    BlamEntity(entity);
+  }
+
+  // Route pooled entities into free list; blam non-pooled entities.
+  if (!despawns.empty()) {
+    FlushDespawns(despawns);
+  }
+}
+
+void Registry::FlushDespawns(const std::vector<Entity>& despawns) {
+  auto* pool = TryGet<EntityPoolManager>();
+  for (const Entity entity : despawns) {
+    if (!IsAlive(entity)) continue;
+    if (pool && HasTag<PoolableTag>(entity)) {
+      pool->Park(*this, entity);
+    } else {
+      BlamEntity(entity);
+    }
+  }
+}
+
+Entity Registry::CreateEntity() {
+  const Entity entity = entity_manager_->CreateEntity();
+  const auto entityLocation = root_archetype_->AddEntity(entity);
+  const std::uint32_t id = entity.GetId();
+  if (id >= entity_locations_.size()) {
+    entity_locations_.resize(id + 1, EntityLocation{nullptr, 0, 0});
+  }
+  entity_locations_[id] = entityLocation;
+  ++user_entity_count_;
+  PromoteToActive(entity_locations_[id]);
+  return entity;
+}
+
+Entity Registry::CreateInternalEntity() {
+  const Entity entity = entity_manager_->CreateEntity();
+  const auto entityLocation = root_archetype_->AddEntity(entity);
+  const std::uint32_t id = entity.GetId();
+  if (id >= entity_locations_.size()) {
+    entity_locations_.resize(id + 1, EntityLocation{nullptr, 0, 0});
+  }
+  entity_locations_[id] = entityLocation;
+  internal_entity_ids_.insert(entity.id);
+  PromoteToActive(entity_locations_[id]);
+  return entity;
+}
+
+void Registry::BlamEntity(const Entity entity) {
+  const std::uint32_t id = entity.GetId();
+  if (id >= entity_locations_.size() || !entity_locations_[id].archetype || !entity_manager_->IsValid(entity)) {
+    Logger::Warn("Could not find entity with ID: " + std::to_string(entity.id) + " to blam");
+    return;
+  }
+
+  bool hierarchyMutated = false;
+
+  // Cascade-destroy children first.
+  if (const auto childIt = parent_to_children_.find(entity.id); childIt != parent_to_children_.end()) {
+    const auto childIds = childIt->second;
+    parent_to_children_.erase(childIt);
+    for (const EntityID childId : childIds) {
+      child_to_parent_.erase(childId);
+      BlamEntity(Entity(childId));
+    }
+    hierarchyMutated = true;
+  }
+
+  // Detach from own parent.
+  if (const auto parentIt = child_to_parent_.find(entity.id); parentIt != child_to_parent_.end()) {
+    if (const auto p = parent_to_children_.find(parentIt->second.id); p != parent_to_children_.end()) {
+      p->second.erase(entity.id);
+      if (p->second.empty()) parent_to_children_.erase(p);
+    }
+    child_to_parent_.erase(parentIt);
+    hierarchyMutated = true;
+  }
+
+  if (hierarchyMutated) ++hierarchy_generation_;
+
+  const EntityLocation removedLocation = entity_locations_[id];
+  const auto swaps = removedLocation.archetype->RemoveEntity(removedLocation);
+  entity_manager_->BlamEntity(entity);
+  entity_locations_[id] = EntityLocation{nullptr, 0, 0};
+  for (const auto& swap : swaps) {
+    entity_locations_[swap.entity.GetId()] =
+        EntityLocation{removedLocation.archetype, removedLocation.chunkIndex, swap.indexInChunk};
+  }
+  if (internal_entity_ids_.erase(entity.id) == 0 && user_entity_count_ > 0) {
+    --user_entity_count_;
+  }
+
+  // Drop relationship entries authored by this entity, and any pair targeting it.
+  if (const auto it = pairs_.find(entity.id); it != pairs_.end()) {
+    for (const EcsId pairId : it->second) {
+      const std::uint32_t tid = Pair(pairId).GetTarget();
+      if (const auto revIt = target_to_pair_authors_.find(tid); revIt != target_to_pair_authors_.end()) {
+        revIt->second.erase(entity.id);
+        if (revIt->second.empty()) target_to_pair_authors_.erase(revIt);
+      }
+    }
+    pairs_.erase(it);
+  }
+
+  const auto targetId = entity.GetId();
+  if (const auto revIt = target_to_pair_authors_.find(targetId); revIt != target_to_pair_authors_.end()) {
+    const auto authors = revIt->second;
+    for (const EntityID authorId : authors) {
+      if (const auto pIt = pairs_.find(authorId); pIt != pairs_.end()) {
+        auto& pairSet = pIt->second;
+        for (auto setIt = pairSet.begin(); setIt != pairSet.end();) {
+          if (Pair(*setIt).GetTarget() == targetId) {
+            setIt = pairSet.erase(setIt);
+          } else {
+            ++setIt;
+          }
+        }
+        if (pairSet.empty()) pairs_.erase(pIt);
+      }
+    }
+    target_to_pair_authors_.erase(revIt);
+  }
+}
+
+void Registry::ClearUserEntities() {
+  const auto entities = GetUserEntities();
+  for (const auto entity : entities) {
+    BlamEntity(entity);
+  }
+}
+
+std::vector<Entity> Registry::GetUserEntities() const {
+  std::vector<Entity> entities;
+  entities.reserve(user_entity_count_);
+  for (std::uint32_t id = 0; id < entity_locations_.size(); ++id) {
+    if (entity_locations_[id].archetype != nullptr && !internal_entity_ids_.contains(id)) {
+      // Retrieve full entity with generation from archetype.
+      const auto location = entity_locations_[id];
+      const Entity entity = location.archetype->GetEntity(location.chunkIndex, location.indexInChunk);
+      entities.push_back(entity);
+    }
+  }
+  return entities;
+}
+
+std::vector<Archetype*> Registry::GetMatchingArchetypes(const ArchetypeType& type) const {
+  ACCUMULATE_PROFILE_SCOPE("Registry::GetMatchingArchetypes");
+  if (type.empty()) {
+    return {};
+  }
+
+  const ArchetypeList* smallest = nullptr;
+  for (const ComponentID id : type) {
+    const auto it = component_index_.find(id);
+    if (it == component_index_.end()) {
+      return {};
+    }
+    if (smallest == nullptr || it->second.size() < smallest->size()) {
+      smallest = &it->second;
+    }
+  }
+
+  std::vector<Archetype*> matching_archetypes;
+  matching_archetypes.reserve(smallest->size());
+
+  for (const ArchetypeID aid : *smallest) {
+    const auto archIt = archetypes_.find(aid);
+    if (archIt == archetypes_.end()) {
+      continue;
+    }
+    if (MatchesType(*archIt->second, type)) {
+      matching_archetypes.push_back(archIt->second.get());
+    }
+  }
+
+  return matching_archetypes;
+}
+
+bool Registry::MatchesType(const Archetype& archetype, const ArchetypeType& type) {
+  const auto& archetypeType = archetype.type();
+
+  // Both `type` and `archetypeType` are sorted ascending; two-pointer superset check.
+  size_t i = 0;
+  size_t j = 0;
+  while (i < type.size() && j < archetypeType.size()) {
+    if (type[i] == archetypeType[j]) {
+      ++i;
+      ++j;
+    } else if (archetypeType[j] < type[i]) {
+      ++j;
+    } else {
+      break;
+    }
+  }
+  return i == type.size();
+}
+
+EntityLocation Registry::TransitionAddComponent(const Entity entity, const ComponentID componentId) {
+  const std::uint32_t id = entity.GetId();
+  if (id >= entity_locations_.size() || !entity_locations_[id].archetype || !entity_manager_->IsValid(entity)) {
+    Logger::Warn("TransitionAddComponent called on missing entity " + std::to_string(entity.id));
+    return {nullptr, 0, 0};
+  }
+  const EntityLocation oldLocation = entity_locations_[id];
+  if (oldLocation.archetype->HasComponent(componentId)) {
+    return oldLocation;
+  }
+
+  PROFILE_COUNTER_ADD("Archetype: Transition Add", 1);
+  Archetype* newArchetype = nullptr;
+  auto it = oldLocation.archetype->edges.find(componentId);
+  if (it != oldLocation.archetype->edges.end() && it->second.add != nullptr) {
+    newArchetype = it->second.add;
+  } else {
+    newArchetype = GetOrCreateArchetype(oldLocation.archetype->type(), componentId);
+
+    newArchetype->edges.insert(std::make_pair(componentId, ArchetypeEdge{nullptr, oldLocation.archetype}));
+    if (it != oldLocation.archetype->edges.end()) {
+      it->second.add = newArchetype;
+    } else {
+      oldLocation.archetype->edges.insert(std::make_pair(componentId, ArchetypeEdge{newArchetype, nullptr}));
+    }
+  }
+
+  const EntityLocation newLocation = newArchetype->AddEntity(entity);
+  newArchetype->CopyComponents(oldLocation, newLocation);
+
+  const auto swaps = oldLocation.archetype->RemoveEntity(oldLocation);
+  entity_locations_[id] = newLocation;
+  for (const auto& swap : swaps) {
+    entity_locations_[swap.entity.GetId()] =
+        EntityLocation{oldLocation.archetype, oldLocation.chunkIndex, swap.indexInChunk};
+  }
+  PromoteToActive(entity_locations_[id]);
+  return entity_locations_[id];
+}
+
+EntityLocation Registry::TransitionRemoveComponent(const Entity entity, const ComponentID componentId) {
+  const std::uint32_t id = entity.GetId();
+  if (id >= entity_locations_.size() || !entity_locations_[id].archetype || !entity_manager_->IsValid(entity)) {
+    Logger::Warn("TransitionRemoveComponent called on missing entity " + std::to_string(entity.id));
+    return {nullptr, 0, 0};
+  }
+  const EntityLocation oldLocation = entity_locations_[id];
+  if (!oldLocation.archetype->HasComponent(componentId)) {
+    return oldLocation;
+  }
+
+  PROFILE_COUNTER_ADD("Archetype: Transition Remove", 1);
+  Archetype* newArchetype = nullptr;
+  auto it = oldLocation.archetype->edges.find(componentId);
+  if (it != oldLocation.archetype->edges.end() && it->second.remove != nullptr) {
+    newArchetype = it->second.remove;
+  } else {
+    newArchetype = GetOrCreateArchetypeRemove(oldLocation.archetype->type(), componentId);
+
+    newArchetype->edges.insert(std::make_pair(componentId, ArchetypeEdge{oldLocation.archetype, nullptr}));
+    if (it != oldLocation.archetype->edges.end()) {
+      it->second.remove = newArchetype;
+    } else {
+      oldLocation.archetype->edges.insert(std::make_pair(componentId, ArchetypeEdge{nullptr, newArchetype}));
+    }
+  }
+
+  const EntityLocation newLocation = newArchetype->AddEntity(entity);
+  newArchetype->CopyComponents(oldLocation, newLocation);
+
+  const auto swaps = oldLocation.archetype->RemoveEntity(oldLocation);
+  entity_locations_[id] = newLocation;
+  for (const auto& swap : swaps) {
+    entity_locations_[swap.entity.GetId()] =
+        EntityLocation{oldLocation.archetype, oldLocation.chunkIndex, swap.indexInChunk};
+  }
+  PromoteToActive(entity_locations_[id]);
+  return entity_locations_[id];
+}
+
+void Registry::PromoteToActive(const EntityLocation& location) {
+  if (!location.archetype) return;
+  // Activate is no-op-equivalent when the slot is already at the active boundary (no swap, just
+  // ++active_count). When the chunk has an inactive tail, this swaps the new entity past it.
+  const auto result = location.archetype->Activate(location);
+  // Patch entity_locations_ for both the entity that just became active and (if the boundary
+  // was occupied by an inactive entity) the displaced inactive entity now sitting at `location`.
+  const Entity activated = location.archetype->GetEntity(location.chunkIndex, result.newSlot);
+  entity_locations_[activated.GetId()] = EntityLocation{location.archetype, location.chunkIndex, result.newSlot};
+  if (result.displaced) {
+    entity_locations_[result.displaced->GetId()] = location;
+  }
+}
+
+void Registry::Activate(const Entity entity) {
+  const std::uint32_t id = entity.GetId();
+  if (id >= entity_locations_.size() || !entity_locations_[id].archetype || !entity_manager_->IsValid(entity)) {
+    return;
+  }
+  const EntityLocation oldLocation = entity_locations_[id];
+  // Already in the active prefix? Nothing to do.
+  if (oldLocation.indexInChunk < oldLocation.archetype->GetActiveCountInChunk(oldLocation.chunkIndex)) {
+    return;
+  }
+  const auto result = oldLocation.archetype->Activate(oldLocation);
+  entity_locations_[id] = EntityLocation{oldLocation.archetype, oldLocation.chunkIndex, result.newSlot};
+  if (result.displaced) {
+    entity_locations_[result.displaced->GetId()] = oldLocation;
+  }
+}
+
+void Registry::Deactivate(const Entity entity) {
+  const std::uint32_t id = entity.GetId();
+  if (id >= entity_locations_.size() || !entity_locations_[id].archetype || !entity_manager_->IsValid(entity)) {
+    return;
+  }
+  const EntityLocation oldLocation = entity_locations_[id];
+  // Already in the inactive tail? Nothing to do.
+  if (oldLocation.indexInChunk >= oldLocation.archetype->GetActiveCountInChunk(oldLocation.chunkIndex)) {
+    return;
+  }
+  const auto result = oldLocation.archetype->Deactivate(oldLocation);
+  entity_locations_[id] = EntityLocation{oldLocation.archetype, oldLocation.chunkIndex, result.newSlot};
+  if (result.displaced) {
+    entity_locations_[result.displaced->GetId()] = oldLocation;
+  }
+}
+
+bool Registry::IsActive(const Entity entity) const {
+  const std::uint32_t id = entity.GetId();
+  if (id >= entity_locations_.size() || !entity_manager_->IsValid(entity) || !entity_locations_[id].archetype) {
+    return false;
+  }
+  const auto& loc = entity_locations_[id];
+  return loc.indexInChunk < loc.archetype->GetActiveCountInChunk(loc.chunkIndex);
+}
+
+Archetype* Registry::FindExactArchetype(const std::vector<ComponentID>& componentIDs) const {
+  // Narrow search using the least frequent component in the set.
+  const ArchetypeList* smallest = nullptr;
+  for (const ComponentID id : componentIDs) {
+    const auto it = component_index_.find(id);
+    if (it == component_index_.end()) {
+      return nullptr;
+    }
+    if (smallest == nullptr || it->second.size() < smallest->size()) {
+      smallest = &it->second;
+    }
+  }
+
+  for (const auto archetypeId : *smallest) {
+    const auto archetype = archetypes_.find(archetypeId);
+    if (archetype->second->type() == componentIDs) {
+      return archetype->second.get();
+    }
+  }
+  return nullptr;
+}
+
+Archetype* Registry::RegisterNewArchetype(const std::vector<ComponentID>& componentIDs) {
+  std::vector<ComponentInfo> componentInfos;
+  componentInfos.reserve(componentIDs.size());
+  for (const auto& id : componentIDs) {
+    componentInfos.push_back(component_registry_->GetInfo(id));
+  }
+
+  auto newArchetype = std::make_unique<Archetype>(std::move(componentInfos));
+  Archetype* newArchetypePtr = newArchetype.get();
+  const auto newArchetypeId = newArchetype->GetID();
+  archetypes_.emplace(newArchetypeId, std::move(newArchetype));
+  // Keep generation and log in lockstep for incremental query matching.
+  ++archetype_generation_;
+  archetype_log_.push_back(newArchetypePtr);
+
+  for (const ComponentID id : newArchetypePtr->type()) {
+    auto& list = component_index_[id];
+    if (std::ranges::find(list, newArchetypeId) == list.end()) {
+      list.push_back(newArchetypeId);
+    }
+  }
+
+  return newArchetypePtr;
+}
+
+Archetype* Registry::GetOrCreateArchetype(std::vector<ComponentID> componentIDs, const ComponentID newComponentId) {
+  componentIDs.push_back(newComponentId);
+  std::ranges::sort(componentIDs);
+
+  if (Archetype* existing = FindExactArchetype(componentIDs)) {
+    return existing;
+  }
+  return RegisterNewArchetype(componentIDs);
+}
+
+Archetype* Registry::GetOrCreateArchetypeRemove(std::vector<ComponentID> componentIDs,
+                                                const ComponentID removeComponentId) {
+  std::erase(componentIDs, removeComponentId);
+  std::ranges::sort(componentIDs);
+
+  if (componentIDs.empty()) {
+    return root_archetype_.get();
+  }
+  if (Archetype* existing = FindExactArchetype(componentIDs)) {
+    return existing;
+  }
+  return RegisterNewArchetype(componentIDs);
+}
+
+Archetype* Registry::GetOrCreateArchetypeFromSet(std::vector<ComponentID> componentIDs) {
+  std::ranges::sort(componentIDs);
+  componentIDs.erase(std::ranges::unique(componentIDs).begin(), componentIDs.end());
+
+  if (componentIDs.empty()) {
+    return root_archetype_.get();
+  }
+  if (Archetype* existing = FindExactArchetype(componentIDs)) {
+    return existing;
+  }
+  return RegisterNewArchetype(componentIDs);
+}
+
+void Registry::AddPair(const Entity entity, const Entity relationship, const Entity target) {
+  const std::uint32_t targetId = target.GetId();
+  const EcsId pairId =
+      (static_cast<EcsId>(relationship.GetId()) << kPairRelationshipOffset) | static_cast<EcsId>(targetId);
+  if (pairs_[entity.id].insert(pairId).second) {
+    target_to_pair_authors_[targetId].insert(entity.id);
+  }
+}
+
+bool Registry::HasPair(const Entity entity, const Entity relationship, const Entity target) {
+  const auto it = pairs_.find(entity.id);
+  if (it == pairs_.end()) return false;
+  const EcsId pairId =
+      (static_cast<EcsId>(relationship.GetId()) << kPairRelationshipOffset) | static_cast<EcsId>(target.GetId());
+  return it->second.contains(pairId);
+}
+
+void Registry::SetParent(const Entity child, const Entity parent) {
+  // Detach previous parent, if any.
+  if (const auto it = child_to_parent_.find(child.id); it != child_to_parent_.end()) {
+    if (const auto p = parent_to_children_.find(it->second.id); p != parent_to_children_.end()) {
+      p->second.erase(child.id);
+      if (p->second.empty()) parent_to_children_.erase(p);
+    }
+  }
+  child_to_parent_[child.id] = parent;
+  parent_to_children_[parent.id].insert(child.id);
+  ++hierarchy_generation_;
+
+  // Also insert relationship pair for generic pair queries.
+  const Entity childOf = ChildOfEntity();
+  AddPair(child, childOf, parent);
+}
+
+std::optional<Entity> Registry::GetParent(const Entity child) const {
+  const auto it = child_to_parent_.find(child.id);
+  if (it == child_to_parent_.end()) return std::nullopt;
+  return it->second;
+}
+
+std::vector<Entity> Registry::GetChildren(const Entity parent) const {
+  std::vector<Entity> children;
+  const auto it = parent_to_children_.find(parent.id);
+  if (it == parent_to_children_.end()) return children;
+  children.reserve(it->second.size());
+  for (const EntityID id : it->second) {
+    children.emplace_back(id);
+  }
+  return children;
+}
+
+void CommandBuffer::Playback(Registry* registry) const {
+  PROFILE_NAMED_SCOPE("CommandBuffer::Playback");
+  auto& chan = state_->commands;
+  const size_t total = std::min(chan.count.load(std::memory_order_relaxed), chan.buffer.size());
+  for (size_t i = 0; i < total; ++i) {
+    if (chan.buffer[i].type == CommandType::Blam) {
+      registry->QueueBlamEntity(chan.buffer[i].entity);
+    } else {
+      registry->QueueDespawnEntity(chan.buffer[i].entity);
+    }
+  }
+  for (const EntityCommand& cmd : chan.overflow_buffer) {
+    if (cmd.type == CommandType::Blam) {
+      registry->QueueBlamEntity(cmd.entity);
+    } else {
+      registry->QueueDespawnEntity(cmd.entity);
+    }
+  }
+  chan.Clear();
+
+  auto& deferred = state_->deferred;
+  const size_t deferredTotal = std::min(deferred.count.load(std::memory_order_relaxed), deferred.buffer.size());
+  for (size_t i = 0; i < deferredTotal; ++i) {
+    deferred.buffer[i](registry);
+    deferred.buffer[i] = nullptr;
+  }
+  for (const auto& fn : deferred.overflow_buffer) fn(registry);
+  deferred.Clear();
+}

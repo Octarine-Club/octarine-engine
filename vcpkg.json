@@ -1,0 +1,91 @@
+{
+  "name": "octarine-engine",
+  "version": "0.1.0",
+  "dependencies": [
+    {
+      "name": "benchmark",
+      "version>=": "1.9.1"
+    },
+    {
+      "name": "glm",
+      "version>=": "1.0.1#3"
+    },
+    {
+      "name": "imgui",
+      "features": [
+        "sdl3-binding",
+        "sdl3-renderer-binding",
+        "docking-experimental"
+      ],
+      "version>=": "1.91.8"
+    },
+    {
+      "name": "lua",
+      "features": [
+        "tools"
+      ],
+      "version>=": "5.4.7"
+    },
+    {
+      "name": "sdl3",
+      "version>=": "3.2.14"
+    },
+    {
+      "name": "sdl3",
+      "features": [
+        "x11",
+        "wayland",
+        "alsa",
+        "dbus"
+      ],
+      "platform": "linux"
+    },
+    {
+      "name": "dbus",
+      "default-features": false,
+      "platform": "linux"
+    },
+    {
+      "name": "sdl3-image",
+      "features": [
+        "jpeg",
+        "png"
+      ],
+      "version>=": "3.2.4"
+    },
+    {
+      "name": "sdl3-mixer",
+      "version>=": "3.2.0"
+    },
+    {
+      "name": "sdl3-ttf",
+      "version>=": "3.2.2"
+    },
+    {
+      "name": "freetype",
+      "default-features": false,
+      "features": [
+        "png",
+        "zlib"
+      ]
+    },
+    {
+      "name": "sol2",
+      "version>=": "3.5.0"
+    },
+    {
+      "name": "sol2-imgui-bindings",
+      "platform": "!android"
+    },
+    {
+      "name": "spdlog",
+      "version>=": "1.15.3"
+    }
+  ],
+  "overrides": [
+    {
+      "name": "lua",
+      "version": "5.4.7"
+    }
+  ]
+}

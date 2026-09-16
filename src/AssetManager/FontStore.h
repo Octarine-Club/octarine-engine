@@ -1,0 +1,55 @@
+#pragma once
+
+#include <SDL3/SDL.h>
+#include <SDL3_ttf/SDL_ttf.h>
+
+#include <functional>
+#include <map>
+#include <memory>
+#include <string>
+
+class GlyphAtlas;
+
+// Owns the resident TTF_Font* handles keyed by asset id, plus the per-font glyph atlases probed
+// alongside them. Like TextureStore it is pak-agnostic: AssetManager opens the font's IO stream and
+// passes it in, along with an optional IO opener used to probe for an `atlases/<id>.atlas.{png,lua}`
+// sidecar pair (the glyph-atlas opt-in consumed by RenderTextSystem's compose path).
+class FontStore {
+ public:
+  using IoOpener = std::function<SDL_IOStream*(const std::string& relativePath)>;
+
+  FontStore();
+  FontStore(const FontStore&) = delete;
+  FontStore& operator=(const FontStore&) = delete;
+  FontStore(FontStore&&) noexcept;
+  FontStore& operator=(FontStore&&) noexcept;
+  ~FontStore();
+
+  // Load a font from an already-opened, owned IO stream (consumed and closed by the loader) at
+  // `fontSize`px, replacing any prior handle under `id`. When `openIO` or `basePath` is non-empty,
+  // also probes for and loads a glyph-atlas sidecar for `id`. Returns the resident font, or nullptr on failure.
+  TTF_Font* Add(const std::string& id, SDL_IOStream* io, float fontSize, const std::string& basePath,
+                const IoOpener& openIO = nullptr);
+
+  [[nodiscard]] TTF_Font* Get(const std::string& id) const;
+  [[nodiscard]] bool Contains(const std::string& id) const { return fonts_.contains(id); }
+
+  // Resident glyph atlas for `id`, or nullptr when none was loaded.
+  [[nodiscard]] const GlyphAtlas* GetGlyphAtlas(const std::string& id) const;
+
+  // Close and erase the font under `id`; returns whether one was removed.
+  // Any associated glyph atlas remains resident until Store destruction or replacement.
+  bool Remove(const std::string& id);
+
+  // Close every font. Loaded glyph atlases remain cached until the store is destroyed.
+  void Clear();
+
+  [[nodiscard]] const std::map<std::string, TTF_Font*>& All() const { return fonts_; }
+
+ private:
+  std::map<std::string, TTF_Font*> fonts_;
+  // Per-font glyph atlases keyed by font catalog id (e.g. "main-16"). unique_ptr keeps each
+  // GlyphAtlas pinned across the map's rehashes (its surface wraps a vector<uint8_t> that must not
+  // move underneath SDL).
+  std::map<std::string, std::unique_ptr<GlyphAtlas>> glyph_atlases_;
+};

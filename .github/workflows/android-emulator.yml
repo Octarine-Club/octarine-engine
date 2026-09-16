@@ -1,0 +1,171 @@
+name: Android emulator
+
+# Runtime smoke for the Android APK: boot a fresh x86_64 emulator, install the example APK, launch
+# the main activity, and assert the engine reached its AssetCatalog manifest-load line via logcat.
+# Mirrors ios.yml's simulator-launch assertion — catches regressions a build-only leg can't see
+# (libmain.so loading, SDL_main wiring through SDLActivity, AGP asset staging at runtime path,
+# Vulkan/GLES renderer init on the emulator).
+#
+# Emulator cold-boot on an x86_64 image takes ~3-5 min on KVM-enabled ubuntu runners, so this is
+# gated on push-to-main / dispatch / nightly cron — not every PR. PR coverage stays on android.yml
+# (build-only). Drop back to dispatch-only if the cost or flakiness becomes a problem.
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * *'   # 06:00 UTC nightly
+
+env:
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  OCTARINE_NDK_VERSION: "28.2.13676358"
+  OCTARINE_API_LEVEL: "35"
+  OCTARINE_EMULATOR_ABI: "x86_64"
+
+jobs:
+  emulator:
+    # Hardcoded API level in the name: `env.*` context is NOT available in `jobs.<id>.name` at
+    # workflow-load time (per GHA expression docs — only github/needs/vars/inputs/matrix/strategy
+    # are valid here). Using `${{ env.OCTARINE_API_LEVEL }}` makes GitHub reject the whole
+    # workflow with a "workflow file issue" and no jobs ever start. Keep the env var for use
+    # inside steps below; mirror its value into this label by hand when bumping.
+    name: android-emulator (x86_64, api 35)
+    # ubuntu-latest 4-core enables KVM, which the reactivecircus/android-emulator-runner action
+    # needs for headless x86_64 boot. macOS runners ship without KVM and would fall back to a slow
+    # software emulator.
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout engine
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Checkout example project
+        uses: actions/checkout@v4
+        with:
+          repository: Octarine-Club/octarine-engine-example
+          path: example_repo
+
+      - name: Export GitHub Actions cache env (vcpkg binary cache)
+        uses: ./.github/actions/vcpkg-cache-env
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # Same host tools android.yml needs to build vcpkg android deps from source.
+      - name: Install host build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build pkg-config autoconf automake autoconf-archive libtool libltdl-dev
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+
+      - name: Install Android SDK packages
+        run: |
+          sdkmanager "platforms;android-${OCTARINE_API_LEVEL}" \
+                     "build-tools;${OCTARINE_API_LEVEL}.0.0" \
+                     "ndk;${OCTARINE_NDK_VERSION}" "cmake;3.22.1"
+
+      # Build the APK for x86_64 — the emulator ABI. Triplet auto-derives via the mapping in
+      # android/app/build.gradle (x86_64 -> x64-android). First run pays the full vcpkg cold cost
+      # for the x64-android triplet; subsequent runs hit the x-gha binary cache.
+      - name: Build x86_64 APK
+        working-directory: android
+        run: |
+          export VCPKG_ROOT="$VCPKG_INSTALLATION_ROOT"
+          export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/${OCTARINE_NDK_VERSION}"
+          ./gradlew assembleDebug \
+            -Poctarine.projectDir="$GITHUB_WORKSPACE/example_repo" \
+            -Poctarine.abi="${OCTARINE_EMULATOR_ABI}" \
+            --no-daemon --console=plain
+
+      # KVM is gated behind /dev/kvm permissions on the ubuntu runner; the udev rule below is the
+      # standard pattern from reactivecircus/android-emulator-runner README.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # Stage the smoke script to a file. The android-emulator-runner action's `script:` input
+      # splits the value by newlines and runs each line in its OWN `sh -c` invocation — variables
+      # set in one line are not visible in the next, `set -e` only scopes its own line, etc. Write
+      # the actual script body to disk and invoke it as a single shell process from the action.
+      - name: Stage emulator smoke script
+        run: |
+          cat > "$RUNNER_TEMP/octarine-smoke.sh" <<'SH'
+          #!/usr/bin/env bash
+          # Boot emulator → install APK → launch activity → poll logcat for the manifest-load line.
+          # Mirrors ios.yml's launch+assert step. Tag is `Octarine` (set by Logger::Init's
+          # spdlog::android_logger_mt). The catalog logs
+          # "AssetCatalog: loaded N entries from manifest" once the bake is consumed; absence
+          # within the budget means the APK never reached scene load.
+          set -e
+          adb wait-for-device
+          apk="android/app/build/outputs/apk/debug/app-debug.apk"
+          [ -f "$apk" ] || { echo "missing APK at $apk"; exit 1; }
+          adb install -r "$apk"
+          adb logcat -c
+          # Read applicationId from project.ini fallback chain — example_repo's package_id is the
+          # canonical value; if missing, fall back to the gradle default.
+          pkg=$(awk -F= '/^[[:space:]]*package_id[[:space:]]*=/{gsub(/[[:space:]]/,"",$2); print $2; exit}' \
+            "$GITHUB_WORKSPACE/example_repo/project.ini" 2>/dev/null || true)
+          [ -n "$pkg" ] || pkg="com.octarine.example"
+          # Resolve the declared LAUNCHER activity from the installed package instead of assuming a
+          # fixed class. The host ships com.octarine.host.MainActivity (a thin SDLActivity subclass,
+          # see android/app/src/main/AndroidManifest.xml) and downstream projects can swap in their
+          # own subclass — hardcoding org.libsdl.app.SDLActivity here errors with "Activity class
+          # does not exist". `cmd package resolve-activity --brief <pkg>` prints <pkg>/<activity>.
+          cmp=$(adb shell cmd package resolve-activity --brief "$pkg" | tail -n1 | tr -d '\r')
+          case "$cmp" in
+            "$pkg/"*) ;;
+            *) echo "could not resolve launcher activity for $pkg (got: '$cmp')"; exit 1 ;;
+          esac
+          adb shell am start -W -n "$cmp"
+          manifest=0
+          for i in $(seq 1 24); do
+            adb logcat -d -s Octarine:I OctarineLua:I '*:S' > logcat.txt 2>&1 || true
+            if grep -q "AssetCatalog: loaded .* entries from manifest" logcat.txt; then
+              manifest=1
+              break
+            fi
+            sleep 5
+          done
+          echo "=== logcat (Octarine subsystem, last snapshot) ==="
+          cat logcat.txt || true
+          echo "=== end logcat ==="
+          if [ $manifest -ne 1 ]; then
+            echo "FAIL: AssetCatalog manifest-load line missing within budget"
+            exit 1
+          fi
+          echo "PASS: emulator launch reached manifest-load"
+          SH
+          chmod +x "$RUNNER_TEMP/octarine-smoke.sh"
+
+      - name: Run APK on emulator + assert manifest-load
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ env.OCTARINE_API_LEVEL }}
+          arch: ${{ env.OCTARINE_EMULATOR_ABI }}
+          target: google_apis
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: bash "$RUNNER_TEMP/octarine-smoke.sh"
+
+      - name: Upload logcat
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-emulator-logcat
+          path: logcat.txt
+          if-no-files-found: ignore

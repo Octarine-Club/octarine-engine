@@ -1,0 +1,335 @@
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'CMakePresets.json'
+      - 'vcpkg.json'
+      - 'vcpkg-configuration.json'
+      - 'vcpkg-overlay-ports/**'
+      - 'libs/**'
+      - 'scripts/**'
+      - '.github/actions/**'
+      - '.github/workflows/build.yml'
+  workflow_dispatch:
+
+# Cancel a PR's in-flight build when a newer commit lands on it — e.g. the fixup the autoformat
+# workflow pushes — so the full matrix doesn't run twice. Pushes to main are NOT cancelled (each
+# gets its own group via github.ref) so every mainline build completes.
+concurrency:
+  group: build-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+
+jobs:
+  build:
+    name: ${{ matrix.platform }} (${{ matrix.preset }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        preset: [editor-release, player-release]
+        include:
+          - os: ubuntu-latest
+            platform: linux
+          - os: windows-latest
+            platform: windows
+          - os: macos-latest
+            platform: macos
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          # Full history so the advisory clang-tidy step can diff against the PR base.
+          fetch-depth: 0
+
+      - name: Checkout Example Game
+        if: matrix.platform == 'linux' && matrix.preset == 'editor-release'
+        uses: actions/checkout@v4
+        with:
+          repository: Octarine-Club/octarine-engine-example
+          ref: main
+          path: example_repo
+
+      - name: Export GitHub Actions cache env (vcpkg binary cache)
+        uses: ./.github/actions/vcpkg-cache-env
+
+      - name: Install Linux build deps (SDL3 / X11 / Wayland)
+        if: matrix.platform == 'linux'
+        uses: ./.github/actions/linux-build-deps
+
+      - name: Install Ninja (Windows/macOS)
+        if: matrix.platform != 'linux'
+        uses: seanmiddleditch/gha-setup-ninja@v6
+
+      - name: Setup MSVC dev environment (Windows)
+        if: matrix.platform == 'windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # Compiler cache for the engine build (vcpkg deps are already binary-cached separately).
+      # ccache integrates cleanly with GCC/Clang on Linux/macOS; the CMakeLists auto-detects it on
+      # PATH and wires CMAKE_CXX_COMPILER_LAUNCHER. Skipped on Windows/MSVC where ccache support is
+      # weaker. Cache is keyed per platform+preset.
+      - name: Setup ccache
+        if: matrix.platform != 'windows'
+        uses: hendrikmuhs/ccache-action@v1
+        with:
+          key: ${{ matrix.platform }}-${{ matrix.preset }}
+          max-size: 500M
+
+      - name: Configure CMake
+        shell: bash
+        run: cmake --preset ${{ matrix.preset }} ${{ matrix.preset == 'editor-release' && '-DOCTARINE_ENABLE_TESTS=ON' || '' }}
+
+      - name: Build
+        run: cmake --build build/${{ matrix.preset }} --config Release --parallel
+
+      # All three OSes, not just linux: MSVC-specific breakage (AVX2 chunk alignment) and
+      # macOS-specific behavior otherwise ship untested.
+      - name: Run engine tests (ctest)
+        if: matrix.preset == 'editor-release'
+        run: ctest --test-dir build/${{ matrix.preset }} --output-on-failure
+
+      # Headless bake against the example project. Catches unresolved-asset regressions and
+      # AssetCatalog::Build / startup-script breakage on every PR — the bake walks the catalog,
+      # runs the startup script, and emits asset_manifest.lua. Non-zero exit fails the job;
+      # an empty manifest means the catalog produced no entries, which is also a regression.
+      - name: Bake smoke (example project)
+        if: matrix.platform == 'linux' && matrix.preset == 'editor-release'
+        shell: bash
+        run: |
+          ./build/${{ matrix.preset }}/bin/release/OctarineEngine "$GITHUB_WORKSPACE/example_repo" -m bake
+          test -s "$GITHUB_WORKSPACE/example_repo/asset_manifest.lua"
+
+      # Runtime boot smoke: actually run the engine against the example project, headless. The
+      # bake smoke above never enters the frame loop, so setup-order bugs, Lua binding
+      # regressions, and asset-load failures ship invisibly past unit tests without this. The
+      # frame-capture env vars bound the run — FrameLoop quits right after writing frame 120
+      # (~2s of simulation). Gates: engine exit code, the capture file existing (proves the
+      # render path produced frames), and zero error/critical log lines (runtime Lua errors
+      # log-and-continue, so the exit code alone can't catch them).
+      - name: Runtime boot smoke (example project)
+        if: matrix.platform == 'linux' && matrix.preset == 'editor-release'
+        shell: bash
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+          OCTARINE_CAPTURE_FRAME: "120"
+        run: |
+          export OCTARINE_CAPTURE_PATH="$RUNNER_TEMP/boot-smoke.bmp"
+          log="$RUNNER_TEMP/boot-smoke.log"
+          ./build/${{ matrix.preset }}/bin/release/OctarineEngine "$GITHUB_WORKSPACE/example_repo" | tee "$log"
+          test -s "$OCTARINE_CAPTURE_PATH"
+          if grep -E '\[(error|critical)\]' "$log"; then
+            echo "::error::Runtime boot smoke logged error/critical lines (see log above)."
+            exit 1
+          fi
+
+      - name: Check Lua API artifact drift
+        id: lua_drift
+        if: matrix.platform == 'linux' && matrix.preset == 'editor-release'
+        shell: bash
+        run: |
+          paths="lua_api.smoke.lua components.json modules.json"
+          if ! git diff --quiet -- $paths; then
+            echo "::error::One of $paths drifted. Run OctarineLuaApiTest (editor preset) locally and commit the regenerated files."
+            git diff -- $paths | head -400
+            exit 1
+          fi
+
+      - name: Upload regenerated Lua API artifacts on drift
+        if: always() && steps.lua_drift.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lua-api-artifacts-from-ci
+          path: |
+            lua_api.smoke.lua
+            components.json
+            modules.json
+          if-no-files-found: error
+
+      # Blocking clang-tidy over the PR's changed LINES (not whole files), using the
+      # compile_commands.json the editor-release build just emitted. clang-tidy-diff.py with -U0
+      # restricts diagnostics to lines the PR actually touched, so pre-existing debt in a modified
+      # file never blocks an unrelated change while any new violation fails the job. (Previously
+      # advisory/continue-on-error; tightened now that the changed-file set is reliably clean.)
+      - name: clang-tidy (changed lines, blocking)
+        if: matrix.platform == 'linux' && matrix.preset == 'editor-release' && github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          sudo apt-get update && sudo apt-get install -y clang-tidy-18
+          base="${{ github.event.pull_request.base.sha }}"
+          changed="$(git diff --name-only --diff-filter=ACMR "$base"...HEAD -- 'src/*' 'tests/*' | grep -E '\.cpp$' || true)"
+          if [ -z "$changed" ]; then
+            echo "No changed .cpp files to lint."
+            exit 0
+          fi
+          printf 'tidying changed lines in:\n%s\n' "$(printf '  %s\n' $changed)"
+          # clang-tidy-diff.py ships inside the llvm-18 toolchain; fall back to the pinned upstream copy.
+          diff_tool="$(find /usr/lib/llvm-18 -name 'clang-tidy-diff.py' 2>/dev/null | head -1)"
+          if [ -z "$diff_tool" ]; then
+            diff_tool="$RUNNER_TEMP/clang-tidy-diff.py"
+            curl -fsSL https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-18.1.8/clang-tools-extra/clang-tidy/tool/clang-tidy-diff.py -o "$diff_tool"
+          fi
+          # -p1 strips the a/ b/ diff prefixes; -path points at compile_commands.json. Note: no
+          # released clang-tidy-diff.py accepts -warnings-as-errors (it forwards only post-`--` args,
+          # and those go to the *compiler*, not clang-tidy), and the wrapper exits 0 on warnings — so
+          # we capture its output and fail the step ourselves on any diagnostic against a touched line.
+          #
+          # `|| true`: clang-tidy-diff.py exits non-zero whenever clang-tidy hits a file-level compiler
+          # error — including the harmless `-fno-fat-lto-objects` that a GCC-built (LTO) editor-release
+          # compile_commands carries but clang rejects. Under `set -e -o pipefail` that non-zero would
+          # abort the capture *before* we print/grep, so the step would die with no diagnostics shown.
+          # We judge on real `file:line:col:` diagnostics below, not on the wrapper's exit code.
+          report="$(git diff -U0 "$base"...HEAD -- 'src/*' 'tests/*' \
+            | python3 "$diff_tool" -p1 -path "build/${{ matrix.preset }}" -clang-tidy-binary clang-tidy-18 2>&1)" || true
+          printf '%s\n' "$report"
+          # Count only clang-tidy CHECK findings on the changed lines. Drop [clang-diagnostic-*]:
+          # those are the clang *frontend's* own diagnostics that clang-tidy passes through — clang
+          # choking on a GCC-only flag in the LTO compile_commands, or on a sol2+glm template
+          # instantiation that GCC accepts. The GCC -Werror build is the compiler-error gate; this
+          # step is for lint checks, whose names never start with clang-diagnostic-.
+          findings="$(printf '%s\n' "$report" \
+            | grep -E '^[^ ]+:[0-9]+:[0-9]+: (warning|error):' | grep -v '\[clang-diagnostic-' || true)"
+          if [ -n "$findings" ]; then
+            echo "::error::clang-tidy reported issues on changed lines (see log above)."
+            exit 1
+          fi
+
+      - name: Stage runtime DLLs (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $out = "build/${{ matrix.preset }}/bin/release"
+          # Ninja single-config writes directly to bin/release; vcpkg dlls already copied next to exe by CMake.
+          Get-ChildItem $out
+
+      - name: List artifact contents
+        shell: bash
+        run: ls -la build/${{ matrix.preset }}/bin/release
+
+      - name: Upload artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: OctarineEngine-${{ matrix.platform }}-${{ matrix.preset }}
+          path: build/${{ matrix.preset }}/bin/release
+          if-no-files-found: error
+
+  # ASan+UBSan over the full unit-test suite. Catches the memory-bug class (chunk over-alignment,
+  # archetype-move use-after-free) that plain builds only surface as crashes, plus UB like
+  # misaligned loads and signed overflow. Debug preset so asserts stay live. The TSan counterpart
+  # (ThreadPool/parallel-system races ASan cannot see) is nightly-only in sanitize-tsan.yml —
+  # the two sanitizers cannot be combined in one binary.
+  sanitize:
+    name: linux (asan+ubsan, editor-debug)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Export GitHub Actions cache env (vcpkg binary cache)
+        uses: ./.github/actions/vcpkg-cache-env
+
+      - name: Install Linux build deps (SDL3 / X11 / Wayland)
+        uses: ./.github/actions/linux-build-deps
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1
+        with:
+          key: linux-editor-debug-asan
+          max-size: 500M
+
+      - name: Configure CMake
+        run: cmake --preset editor-debug -DOCTARINE_SANITIZE=asan -DOCTARINE_ENABLE_TESTS=ON
+
+      - name: Build
+        run: cmake --build build/editor-debug --parallel
+
+      - name: Run engine tests (ctest under ASan+UBSan)
+        env:
+          # halt_on_error makes the first finding fail the test instead of logging past it.
+          # Leak checking stays off for now: exit-time leaks in non-instrumented third-party
+          # libs (SDL/Lua via vcpkg) would drown real findings — revisit once a baseline exists.
+          ASAN_OPTIONS: halt_on_error=1:detect_leaks=0
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: ctest --test-dir build/editor-debug --output-on-failure
+
+  # Style gate. Lightweight (no vcpkg/SDL): formats only the files a PR actually changed, so the
+  # large pre-existing tree never blocks on legacy style. Auto-fixable via the CMake `format` target.
+  # clang-tidy runs as a blocking changed-lines gate in the editor-release build leg above, which
+  # has the compile_commands.json it needs. This job also drift-gates the static system/event catalogs.
+  lint:
+    name: lint (clang-format)
+    runs-on: ubuntu-latest
+    env:
+      # Pinned for reproducibility. clang-format output differs between major versions, so a floating
+      # `apt install clang-format` (Ubuntu runner default) drifts from contributors' local versions and
+      # churns formatting. The pip wheel is the same binary on every platform. Bump here AND re-run the
+      # `format` target tree-wide when upgrading. Match locally: pipx install clang-format==<this version>
+      CLANG_FORMAT_VERSION: 18.1.8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install pinned clang-format
+        run: pipx install "clang-format==${CLANG_FORMAT_VERSION}"
+
+      - name: clang-format changed files
+        shell: bash
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$base" ]; then base="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"; fi
+          mapfile -t files < <(git diff --name-only --diff-filter=ACMR "$base"...HEAD -- 'src/*' 'tests/*' \
+            | grep -E '\.(cpp|h|hpp)$' || true)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No changed C/C++ sources to format-check."
+            exit 0
+          fi
+          printf 'checking:\n%s\n' "$(printf '  %s\n' "${files[@]}")"
+          if ! clang-format --dry-run --Werror -style=file "${files[@]}"; then
+            echo "::error::clang-format violations. Fix with pinned clang-format ${CLANG_FORMAT_VERSION}: cmake --build build/editor-release --target format"
+            exit 1
+          fi
+
+      # systems.json / events.json are produced by static source inspection (no build needed), so
+      # the drift gate lives here in the lightweight lint job rather than the editor-release leg that
+      # gates the runtime-introspected components.json / modules.json. Regenerate + diff.
+      - name: Check system/event catalog drift
+        shell: bash
+        run: |
+          if ! python3 scripts/gen_api_catalogs.py --check; then
+            git diff -- systems.json events.json | head -200
+            exit 1
+          fi
+
+      # Includes under src/ must be src-rooted (src/ is on every target's include path via
+      # cmake/octarine_library.cmake), never parent-relative ("../"). Parent-relative paths are
+      # brittle (break when a file moves) and the same header ends up spelled two ways across the
+      # tree. Keep this an invariant, not a one-time cleanup.
+      - name: Check for parent-relative includes under src/
+        shell: bash
+        run: |
+          if hits="$(git grep -n '#include "\.\.' -- 'src/' || true)" && [ -n "$hits" ]; then
+            echo "::error::parent-relative ('../') includes found under src/. Use src-rooted paths (e.g. \"EventBus/EventBus.h\"):"
+            echo "$hits"
+            exit 1
+          fi

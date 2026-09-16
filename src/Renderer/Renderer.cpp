@@ -1,0 +1,134 @@
+#include "./Renderer.h"
+
+#include <cmath>
+#include <string>
+
+#include "General/AngleUnit.h"
+#include "General/Constants.h"
+#include "General/Logger.h"
+#include "General/Rotation2D.h"
+
+namespace {
+constexpr Uint8 kSceneClearGrey = 24;
+constexpr Uint8 kWindowClearBlack = 0;
+}  // namespace
+
+bool Renderer::CreateScene(SDL_Renderer* sdlRenderer, const int width, const int height) {
+  if (sdlRenderer == nullptr) return false;
+  scene_texture_ = SDL_CreateTexture(sdlRenderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, width, height);
+  if (scene_texture_ == nullptr) {
+    Logger::Error("Renderer::CreateScene SDL_CreateTexture failed: " + std::string(SDL_GetError()));
+    return false;
+  }
+  return true;
+}
+
+void Renderer::DestroyScene() {
+  if (scene_texture_ != nullptr) {
+    SDL_DestroyTexture(scene_texture_);
+    scene_texture_ = nullptr;
+  }
+}
+
+void Renderer::BeginScene(SDL_Renderer* sdlRenderer) const {
+  SDL_SetRenderTarget(sdlRenderer, scene_texture_);
+  SDL_SetRenderDrawColor(sdlRenderer, kSceneClearGrey, kSceneClearGrey, kSceneClearGrey, Constants::kUint8Max);
+  SDL_RenderClear(sdlRenderer);
+}
+
+void Renderer::EndScene(SDL_Renderer* sdlRenderer) const {
+  SDL_SetRenderTarget(sdlRenderer, nullptr);
+  SDL_SetRenderDrawColor(sdlRenderer, kWindowClearBlack, kWindowClearBlack, kWindowClearBlack, Constants::kUint8Max);
+  SDL_RenderClear(sdlRenderer);
+}
+
+void Renderer::CompositeSceneToWindow(SDL_Renderer* sdlRenderer) const {
+  if (scene_texture_ != nullptr) {
+    SDL_RenderTexture(sdlRenderer, scene_texture_, nullptr, nullptr);
+  }
+}
+
+void Renderer::Present(SDL_Renderer* sdlRenderer) const { SDL_RenderPresent(sdlRenderer); }
+
+#ifndef OCTARINE_SHIPPED
+bool Renderer::CaptureScene(SDL_Renderer* sdlRenderer, const std::string& path) const {
+  if (scene_texture_ == nullptr) {
+    Logger::Error("Renderer::CaptureScene: no scene texture to capture");
+    return false;
+  }
+  // Read back from the scene target (the off-screen texture the frame was drawn into). In bench
+  // mode the window backbuffer is never composited, so the scene texture is the only place the
+  // rendered frame lives.
+  SDL_SetRenderTarget(sdlRenderer, scene_texture_);
+  SDL_Surface* surface = SDL_RenderReadPixels(sdlRenderer, nullptr);
+  SDL_SetRenderTarget(sdlRenderer, nullptr);
+  if (surface == nullptr) {
+    Logger::Error("Renderer::CaptureScene SDL_RenderReadPixels failed: " + std::string(SDL_GetError()));
+    return false;
+  }
+  const bool ok = SDL_SaveBMP(surface, path.c_str());
+  if (!ok) {
+    Logger::Error("Renderer::CaptureScene SDL_SaveBMP failed: " + std::string(SDL_GetError()));
+  }
+  SDL_DestroySurface(surface);
+  return ok;
+}
+#endif
+
+void Renderer::DrawQueue(const RenderQueue& renderQueue, SDL_Renderer* renderer) const {
+  for (const RenderKey& key : renderQueue) {
+    switch (key.type) {
+      case SPRITE: {
+        const auto& cmd = key.payload.sprite;
+        const SDL_FRect destRect = {cmd.destX, cmd.destY, cmd.destW, cmd.destH};
+        // Transforms carry radians regardless of AngleUnit; SDL_RenderTextureRotated wants degrees.
+        const float deg = cmd.rotation * octarine::kRadiansToDegrees;
+        // Modulation state lives on the shared SDL_Texture, so set it on every draw — the
+        // previous sprite using this texture may have left different values behind. Same-state
+        // sets are cheap (SDL just stores them; they apply at draw time).
+        SDL_SetTextureColorMod(cmd.texture, cmd.colorMod.r, cmd.colorMod.g, cmd.colorMod.b);
+        SDL_SetTextureAlphaMod(cmd.texture, cmd.colorMod.a);
+        SDL_SetTextureBlendMode(cmd.texture, cmd.blendMode);
+        SDL_RenderTextureRotated(renderer, cmd.texture, &cmd.srcRect, &destRect, deg, &cmd.pivot, cmd.flip);
+        break;
+      }
+      case SQUARE_PRIMITIVE: {
+        const auto& cmd = key.payload.square;
+        // Applies to both the fill-rect and the SDL_RenderGeometry (untextured) path.
+        SDL_SetRenderDrawBlendMode(renderer, cmd.blendMode);
+        if (cmd.rotation == 0.0F) {
+          SDL_SetRenderDrawColor(renderer, cmd.color.r, cmd.color.g, cmd.color.b, cmd.color.a);
+          SDL_RenderFillRect(renderer, &cmd.destRect);
+        } else {
+          // Spin about destRect origin + pivot, matching SDL_RenderTextureRotated on the sprite
+          // path. Corner offsets are measured from that pivot, so they are not symmetric.
+          const glm::vec2 centre = {cmd.destRect.x + cmd.pivot.x, cmd.destRect.y + cmd.pivot.y};
+          const glm::vec2 topLeft = {-cmd.pivot.x, -cmd.pivot.y};
+          const glm::vec2 bottomRight = {cmd.destRect.w - cmd.pivot.x, cmd.destRect.h - cmd.pivot.y};
+          const auto rot = octarine::Rotation2D::FromRadians(cmd.rotation);
+          const SDL_FColor fcol = {cmd.color.r / 255.0f, cmd.color.g / 255.0f, cmd.color.b / 255.0f,
+                                   cmd.color.a / 255.0f};
+          const glm::vec2 offsets[4] = {topLeft, {bottomRight.x, topLeft.y}, bottomRight, {topLeft.x, bottomRight.y}};
+          SDL_Vertex verts[4];
+          for (int i = 0; i < 4; ++i) {
+            const glm::vec2 p = centre + octarine::Rotate(offsets[i], rot);
+            verts[i].position = {p.x, p.y};
+            verts[i].color = fcol;
+            verts[i].tex_coord = {0.0f, 0.0f};
+          }
+          const int indices[6] = {0, 1, 2, 0, 2, 3};
+          SDL_RenderGeometry(renderer, nullptr, verts, 4, indices, 6);
+        }
+        break;
+      }
+      case TEXT: {
+        const auto& cmd = key.payload.text;
+        SDL_RenderTexture(renderer, cmd.texture, nullptr, &cmd.destRect);
+        break;
+      }
+      default:
+        Logger::Error("Unknown renderable type");
+        break;
+    }
+  }
+}

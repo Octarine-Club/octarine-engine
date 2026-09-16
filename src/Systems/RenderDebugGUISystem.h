@@ -1,0 +1,44 @@
+#pragma once
+
+#include <SDL3/SDL.h>
+
+#include "Components/ScriptComponent.h"
+#include "ECS/Iterable.h"
+#include "ECS/Registry.h"
+#include "General/Logger.h"
+
+#ifdef OCTARINE_WITH_IMGUI
+
+class Game;
+struct EngineOptions;
+
+// Per-frame ImGui pass. In editor builds it delegates the whole editor chrome to
+// Editor/Panels/EditorPanelHost; here it owns only the game-facing overlays (the script
+// onDebugGUI hook, FPS plot, entity count) and the ImGui frame begin/end that both the editor
+// and the IMGUI-only player-debug build share.
+class RenderDebugGUISystem {
+ public:
+  void operator()(const ContextFacade& context, ScriptComponent& script) const {
+    if (script.onDebugGUIFunction == sol::lua_nil) {
+      return;
+    }
+    if (auto result = script.onDebugGUIFunction(script.scriptTable, context.GetEntity()); !result.valid()) {
+      const sol::error err = result;
+      Logger::ErrorLua(std::string(err.what()));
+    }
+  }
+
+  static void Render(Game* game, SDL_Renderer* renderer, SDL_Texture* gameTexture, float deltaTime);
+  static void ReturnFocusToGame(Game* game);
+  // True while any recent script error is inside its toast window — used both to draw the toast
+  // and to keep the ImGui frame alive when nothing else would render it.
+  static bool HasActiveScriptErrorToast();
+
+ private:
+  static void DrawDebugOverlays(Registry* registry, const EngineOptions& engineOptions, bool showGameOverlays,
+                                bool projectLoaded, float deltaTime);
+  static void FPSWindow(float deltaTime);
+  static void EntityInfoWindow(const Registry* registry);
+  static void ScriptErrorToastWindow();
+};
+#endif

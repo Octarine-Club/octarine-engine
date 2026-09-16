@@ -1,0 +1,99 @@
+name: Benchmark
+
+on:
+#  schedule:
+#    - cron: '0 9 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: benchmark-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  benchmark:
+    name: Run Benchmarks
+    runs-on: self-hosted
+    # A wedged benchmark (infinite spin, leak-into-swap) should fail the run, not squat the
+    # self-hosted runner until someone notices. A healthy full run takes well under an hour.
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Export GitHub Actions cache env (vcpkg binary cache)
+        uses: ./.github/actions/vcpkg-cache-env
+
+      - name: Install Linux build deps (SDL3 / X11 / Wayland + self-hosted bootstrap)
+        uses: ./.github/actions/linux-build-deps
+        with:
+          extras: cmake build-essential python3 curl zip unzip tar
+
+      - name: Setup vcpkg
+        run: |
+          git clone https://github.com/Microsoft/vcpkg.git $GITHUB_WORKSPACE/vcpkg
+          $GITHUB_WORKSPACE/vcpkg/bootstrap-vcpkg.sh -disableMetrics
+          echo "VCPKG_ROOT=$GITHUB_WORKSPACE/vcpkg" >> $GITHUB_ENV
+
+      - name: Configure CMake
+        shell: bash
+        run: cmake --preset player-profile -DOCTARINE_ENABLE_BENCHMARKS=ON
+
+      - name: Build Benchmarks
+        run: cmake --build build/player-profile --target OctarineBenchmarks --parallel
+
+      # Write the JSON via --benchmark_out rather than piping stdout through tee: the profiling
+      # build logs TIMER/ACCUM lines to stdout, which both pollutes a stdout-captured JSON and,
+      # through the pipe, makes the step's exit code tee's (always 0) instead of the benchmark's —
+      # a crashed benchmark exe then "passes" and only the store step fails on the bad file.
+      - name: Run Micro-Benchmarks
+        run: ./build/player-profile/bin/relwithdebinfo/OctarineBenchmarks --benchmark_out=benchmark_result.json --benchmark_out_format=json > /dev/null
+
+      - name: Store micro-benchmark result
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: Octarine Engine Micro-Benchmarks
+          tool: 'googlecpp'
+          output-file-path: benchmark_result.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: false
+          alert-threshold: '200%'
+          # Alerts were silenced in b14d80e while stabilizing the action itself; the workflow is
+          # nightly-only now, so a >200% regression posts a commit comment instead of vanishing
+          # into the dashboard. fail-on-alert stays off until comment noise proves low.
+          comment-on-alert: true
+          fail-on-alert: false
+
+      - name: Checkout Example Game
+        uses: actions/checkout@v4
+        with:
+          repository: Octarine-Club/octarine-engine-example
+          path: example_repo
+
+      - name: Run Macro-Benchmarks
+        run: |
+          chmod +x scripts/bench.sh
+          chmod +x scripts/parse_bench_output.py
+          OCT_BENCH_GAME=example_repo scripts/bench.sh 8 | python3 scripts/parse_bench_output.py --warmup 2 > macro_bench.json
+
+      - name: Store macro-benchmark result
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: Octarine Engine Macro-Benchmarks
+          tool: 'customSmallerIsBetter'
+          output-file-path: macro_bench.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          skip-fetch-gh-pages: true
+          auto-push: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+          alert-threshold: '200%'
+          comment-on-alert: true
+          fail-on-alert: false

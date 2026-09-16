@@ -1,0 +1,25 @@
+{
+  "name": "sol2-imgui-bindings",
+  "version": "1.92.7",
+  "description": "Dear ImGui bindings for sol2 / Lua 5.4, packaged as an overlay port for Octarine Engine.",
+  "homepage": "https://github.com/Octarine-Club/sol2-imgui-bindings",
+  "license": "MIT",
+  "dependencies": [
+    {
+      "name": "imgui",
+      "features": [
+        "docking-experimental"
+      ]
+    },
+    "sol2",
+    "lua",
+    {
+      "name": "vcpkg-cmake",
+      "host": true
+    },
+    {
+      "name": "vcpkg-cmake-config",
+      "host": true
+    }
+  ]
+}
