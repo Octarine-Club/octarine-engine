@@ -7,11 +7,9 @@ name: Android emulator
 # Vulkan/GLES renderer init on the emulator).
 #
 # Emulator cold-boot on an x86_64 image takes ~3-5 min on KVM-enabled ubuntu runners, so this is
-# gated on push-to-main / dispatch / nightly cron — not every PR. PR coverage stays on android.yml
+# gated on dispatch / nightly cron — not every commit or PR. PR coverage stays on android.yml
 # (build-only). Drop back to dispatch-only if the cost or flakiness becomes a problem.
 on:
-  push:
-    branches: [ main ]
   workflow_dispatch:
   schedule:
     - cron: '0 6 * * *'   # 06:00 UTC nightly
@@ -169,3 +167,4 @@ jobs:
           name: android-emulator-logcat
           path: logcat.txt
           if-no-files-found: ignore
+          retention-days: 3

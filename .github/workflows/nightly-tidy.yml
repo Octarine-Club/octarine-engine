@@ -81,4 +81,4 @@ jobs:
             tidy-report.txt
             tidy-summary.txt
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7
