@@ -17,10 +17,32 @@ on:
       - '.github/actions/**'
       - '.github/workflows/build.yml'
   workflow_dispatch:
+    inputs:
+      preset:
+        description: 'Preset to build'
+        type: choice
+        options:
+          - 'all'
+          - 'player-release'
+          - 'player-debug'
+          - 'editor-release'
+        default: 'all'
+      platform:
+        description: 'Platform to build'
+        type: choice
+        options:
+          - 'all'
+          - 'linux'
+          - 'windows'
+          - 'macos'
+        default: 'all'
+      save_artifacts:
+        description: 'Save and upload build artifacts'
+        type: boolean
+        default: true
 
 # Cancel a PR's in-flight build when a newer commit lands on it — e.g. the fixup the autoformat
-# workflow pushes — so the full matrix doesn't run twice. Pushes to main are NOT cancelled (each
-# gets its own group via github.ref) so every mainline build completes.
+# workflow pushes — so the full matrix doesn't run twice.
 concurrency:
   group: build-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -31,6 +53,9 @@ env:
 jobs:
   build:
     name: ${{ matrix.platform }} (${{ matrix.preset }})
+    if: |
+      (github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == matrix.platform) &&
+      (github.event_name != 'workflow_dispatch' || inputs.preset == 'all' || inputs.preset == matrix.preset)
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -159,6 +184,7 @@ jobs:
             components.json
             modules.json
           if-no-files-found: error
+          retention-days: 7
 
       # Blocking clang-tidy over the PR's changed LINES (not whole files), using the
       # compile_commands.json the editor-release build just emitted. clang-tidy-diff.py with -U0
@@ -212,21 +238,25 @@ jobs:
         if: matrix.platform == 'windows'
         shell: pwsh
         run: |
-          $out = "build/${{ matrix.preset }}/bin/release"
-          # Ninja single-config writes directly to bin/release; vcpkg dlls already copied next to exe by CMake.
+          $cfg = if ("${{ matrix.preset }}" -match "debug") { "debug" } else { "release" }
+          $out = "build/${{ matrix.preset }}/bin/$cfg"
+          # Ninja single-config writes directly to bin/$cfg; vcpkg dlls already copied next to exe by CMake.
           Get-ChildItem $out
 
       - name: List artifact contents
         shell: bash
-        run: ls -la build/${{ matrix.preset }}/bin/release
+        run: |
+          cfg="${{ contains(matrix.preset, 'debug') && 'debug' || 'release' }}"
+          ls -la "build/${{ matrix.preset }}/bin/$cfg"
 
       - name: Upload artifact
-        if: github.event_name != 'pull_request'
+        if: github.event_name == 'workflow_dispatch' && inputs.save_artifacts
         uses: actions/upload-artifact@v4
         with:
           name: OctarineEngine-${{ matrix.platform }}-${{ matrix.preset }}
-          path: build/${{ matrix.preset }}/bin/release
+          path: build/${{ matrix.preset }}/bin/${{ contains(matrix.preset, 'debug') && 'debug' || 'release' }}
           if-no-files-found: error
+          retention-days: 7
 
   # ASan+UBSan over the full unit-test suite. Catches the memory-bug class (chunk over-alignment,
   # archetype-move use-after-free) that plain builds only surface as crashes, plus UB like

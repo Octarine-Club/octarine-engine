@@ -127,6 +127,7 @@ jobs:
           name: OctarineEngine-sdk-${{ matrix.platform }}-${{ matrix.flavor }}
           path: OctarineEngine-sdk.*
           if-no-files-found: error
+          retention-days: 1
 
   # Create the GitHub Release and attach SDK binaries. Runs only on v* tag pushes after all sdk
   # legs complete.

@@ -6,7 +6,6 @@ name: Android
 # Runtime smoke is separate: android-emulator.yml.
 on:
   push:
-    branches: [ main ]
     tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
@@ -28,6 +27,10 @@ on:
         description: 'Octarine-Engine-Example branch/tag/SHA to build against (default: main)'
         required: false
         default: 'main'
+      save_artifacts:
+        description: 'Save and upload APK/AAB build artifacts'
+        type: boolean
+        default: true
 
 concurrency:
   group: android-${{ github.event.pull_request.number || github.ref }}
@@ -109,12 +112,13 @@ jobs:
           ./gradlew "${args[@]}"
 
       - name: Upload APK
-        if: github.event_name != 'pull_request'
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.save_artifacts)
         uses: actions/upload-artifact@v4
         with:
           name: OctarineEngine-android-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+          retention-days: 7
 
       # Decode the release keystore on demand. Secrets are not available to fork PRs (so HAS_KEYSTORE
       # stays empty there), in which case bundleRelease falls back to the debug key — still a useful
@@ -241,12 +245,13 @@ jobs:
             --aab android/app/build/outputs/bundle/release/app-release.aab
 
       - name: Upload AAB
-        if: github.event_name != 'pull_request'
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.save_artifacts)
         uses: actions/upload-artifact@v4
         with:
           name: OctarineEngine-android-aab
           path: android/app/build/outputs/bundle/release/app-release.aab
           if-no-files-found: error
+          retention-days: 7
 
       # Tag-gated Play Store internal-track upload. Requires PLAY_SERVICE_ACCOUNT_JSON secret
       # (raw JSON contents, not base64) — service account must hold Release Manager on the
@@ -272,7 +277,7 @@ jobs:
   # the second AAB build is the slowest leg in the file and the keep-rules don't churn on every PR.
   android-minify-probe:
     name: android (minify probe)
-    if: github.event_name != 'pull_request'
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout engine
@@ -361,10 +366,3 @@ jobs:
             exit 1
           fi
           echo "PASS: keep-rules preserved $count SDL JNI exports under R8/ProGuard"
-
-      - name: Upload minified AAB (probe artifact)
-        uses: actions/upload-artifact@v4
-        with:
-          name: OctarineEngine-android-aab-minified
-          path: android/app/build/outputs/bundle/release/app-release.aab
-          if-no-files-found: error
