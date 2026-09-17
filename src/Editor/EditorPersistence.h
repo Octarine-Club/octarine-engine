@@ -47,6 +47,10 @@ struct EditorPersistence {
   bool showExportOutput = false;
   bool showSigningSettings = false;
   bool showDevices = false;
+  bool showDebugGUI = false;
+  bool drawColliders = false;
+  bool showFpsCounter = true;
+  bool showEntityInfo = false;
 
   // Single source of truth for persisted window-visibility flags. Both the project-prefs
   // serializer (EditorPersistence.cpp) and the layout-preset serializer (EditorLayoutPresets.cpp)

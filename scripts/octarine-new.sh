@@ -104,7 +104,6 @@ cat > "$dir/.gitignore" <<'EOF'
 # Engine-generated runtime/editor state
 imgui.ini
 editor_prefs.ini
-preferences.ini
 *_prefs.ini
 
 # Asset bake outputs + caches

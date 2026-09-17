@@ -311,7 +311,7 @@ tasks.register('stageOctarineAssets', Copy) {
     description = 'Copies the game project (+ baked asset_manifest.lua) into the APK assets.'
     from(gameProjectDir) {
         // Scratch / editor-only files never belong in a shipped bundle.
-        exclude '*.meta', 'editor_prefs.ini', 'preferences.ini', 'imgui.ini', '.git', '.git/**'
+        exclude '*.meta', 'editor_prefs.ini', 'imgui.ini', '.git', '.git/**'
     }
     into stagedAssetsDir
     doFirst {

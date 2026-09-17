@@ -4,7 +4,6 @@
 #include <SDL3/SDL_storage.h>
 #include <SDL3/SDL_timer.h>
 
-#include <fstream>
 #include <sstream>
 #include <unordered_map>
 
@@ -14,7 +13,6 @@
 #include "General/Utils.h"
 
 inline constexpr auto kConfigFileName = "config.ini";
-inline constexpr auto kPreferencesFileName = "preferences.ini";
 inline constexpr auto kWhiteSpaceSymbols = " \t\n\r\f\v";
 
 std::string TrimRight(const std::string& s) {
@@ -113,60 +111,6 @@ bool GameConfig::LoadConfigFromFile(const std::string& assetPath) {
   SetAssetPath(assetPath);
   has_loaded_config_ = true;
   return LoadConfig(config);
-}
-
-void GameConfig::SaveUserPreferences() {
-  if (!has_loaded_config_) return;
-
-  std::ofstream file(asset_path_ + "/" + kPreferencesFileName);
-  if (!file.is_open()) {
-    Logger::Error("Failed to open preferences file for writing: " + asset_path_ + "/" + kPreferencesFileName);
-    return;
-  }
-
-  file << "showDebugGUI=" << (engine_options_.showDebugGUI ? "true" : "false") << "\n";
-  file << "drawColliders=" << (engine_options_.drawColliders ? "true" : "false") << "\n";
-  file << "showFpsCounter=" << (engine_options_.showFpsCounter ? "true" : "false") << "\n";
-  file << "showEntityInfo=" << (engine_options_.showEntityInfo ? "true" : "false") << "\n";
-  // showPerfOverlay is intentionally NOT persisted here: it is a project config.ini knob
-  // (PerfOverlay=) and config.ini is its single source of truth. Persisting it to preferences (which
-  // loads after config.ini) would let a stale prefs value silently shadow the config the dev edits.
-  // The editor's "Show Perf Overlay" checkbox is therefore a live, session-only toggle.
-  file << "masterVolume=" << engine_options_.masterVolume << "\n";
-
-  file.close();
-}
-
-void GameConfig::LoadUserPreferences() {
-  if (!has_loaded_config_) return;
-
-  std::ifstream file(asset_path_ + "/" + kPreferencesFileName);
-  if (!file.is_open()) {
-    return;  // Silent because it's okay if preferences don't exist yet
-  }
-
-  std::string line;
-  while (std::getline(file, line)) {
-    const auto keyValue = line.find('=');
-    if (keyValue == std::string::npos) continue;
-
-    const auto key = line.substr(0, keyValue);
-    const auto value = line.substr(keyValue + 1);
-
-    if (key == "showDebugGUI")
-      engine_options_.showDebugGUI = (value == "true");
-    else if (key == "drawColliders")
-      engine_options_.drawColliders = (value == "true");
-    else if (key == "showFpsCounter")
-      engine_options_.showFpsCounter = (value == "true");
-    else if (key == "showEntityInfo")
-      engine_options_.showEntityInfo = (value == "true");
-    // showPerfOverlay deliberately not read here — config.ini's PerfOverlay= is authoritative, so a
-    // legacy line left in preferences.ini (from before this knob was config-only) is ignored rather
-    // than shadowing config.
-    else if (key == "masterVolume")
-      engine_options_.masterVolume = std::stof(value);
-  }
 }
 
 bool GameConfig::LoadConfig(const std::unordered_map<std::string, std::string>& settings) {

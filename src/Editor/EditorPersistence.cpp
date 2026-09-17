@@ -110,6 +110,10 @@ void EditorPersistence::SaveProject(const std::string& projectAssetPath) const {
   for (const auto& [key, member] : kWindowFlags) {
     file << key << "=" << (this->*member ? "true" : "false") << "\n";
   }
+  file << "showDebugGUI=" << (showDebugGUI ? "true" : "false") << "\n";
+  file << "drawColliders=" << (drawColliders ? "true" : "false") << "\n";
+  file << "showFpsCounter=" << (showFpsCounter ? "true" : "false") << "\n";
+  file << "showEntityInfo=" << (showEntityInfo ? "true" : "false") << "\n";
 }
 
 void EditorPersistence::LoadProject(const std::string& projectAssetPath) {
@@ -127,6 +131,22 @@ void EditorPersistence::LoadProject(const std::string& projectAssetPath) {
 
     if (key == "currentScenePath") {
       currentScenePath = value;
+      continue;
+    }
+    if (key == "showDebugGUI") {
+      showDebugGUI = (value == "true");
+      continue;
+    }
+    if (key == "drawColliders") {
+      drawColliders = (value == "true");
+      continue;
+    }
+    if (key == "showFpsCounter") {
+      showFpsCounter = (value == "true");
+      continue;
+    }
+    if (key == "showEntityInfo") {
+      showEntityInfo = (value == "true");
       continue;
     }
     for (const auto& [flagKey, member] : kWindowFlags) {

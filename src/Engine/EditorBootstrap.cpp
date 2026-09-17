@@ -36,11 +36,16 @@ void OnProjectLoaded(Registry& registry, const std::string& path) {
   editorPersistence.LoadProject(path);
   editorPersistence.lastProjectPath = path;
   editorPersistence.SaveGlobal();
+
+  auto& options = registry.Get<GameConfig>().GetEngineOptions();
+  options.showDebugGUI = editorPersistence.showDebugGUI;
+  options.drawColliders = editorPersistence.drawColliders;
+  options.showFpsCounter = editorPersistence.showFpsCounter;
+  options.showEntityInfo = editorPersistence.showEntityInfo;
 }
 
 void ApplyAudioPrefs(Registry& registry) {
-  // Editor-global audio prefs are authoritative for editor sessions, so apply them after the
-  // per-project LoadUserPreferences (which may have set masterVolume from preferences.ini).
+  // Editor-global audio prefs are authoritative for editor sessions, applied at startup.
   auto& editorPersistence = registry.Get<EditorPersistence>();
   auto& audioOptions = registry.Get<GameConfig>().GetEngineOptions();
   audioOptions.audioEnabled = !editorPersistence.audioMuted;
@@ -87,9 +92,13 @@ void SetupEditorImGui(Registry& registry) {
 void SaveOnShutdown(Registry& registry) {
   auto& gameConfig = registry.Get<GameConfig>();
   if (auto* editorPersistence = registry.TryGet<EditorPersistence>()) {
-    const auto& audioOptions = gameConfig.GetEngineOptions();
-    editorPersistence->audioMuted = !audioOptions.audioEnabled;
-    editorPersistence->masterVolume = audioOptions.masterVolume;
+    const auto& options = gameConfig.GetEngineOptions();
+    editorPersistence->audioMuted = !options.audioEnabled;
+    editorPersistence->masterVolume = options.masterVolume;
+    editorPersistence->showDebugGUI = options.showDebugGUI;
+    editorPersistence->drawColliders = options.drawColliders;
+    editorPersistence->showFpsCounter = options.showFpsCounter;
+    editorPersistence->showEntityInfo = options.showEntityInfo;
     editorPersistence->SaveGlobal();
     if (gameConfig.HasLoadedConfig()) {
       editorPersistence->SaveProject(gameConfig.GetAssetPath());

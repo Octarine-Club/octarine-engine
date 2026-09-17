@@ -34,9 +34,12 @@ void DrawToolbar(Game* game, bool& showProjectSelector, bool& openSaveLayoutModa
         showProjectSelector = true;
       }
       if (ImGui::MenuItem("Save Preferences", "Ctrl+S")) {
-        gameConfig.SaveUserPreferences();
         editorPersistence.audioMuted = !engineOptions.audioEnabled;
         editorPersistence.masterVolume = engineOptions.masterVolume;
+        editorPersistence.showDebugGUI = engineOptions.showDebugGUI;
+        editorPersistence.drawColliders = engineOptions.drawColliders;
+        editorPersistence.showFpsCounter = engineOptions.showFpsCounter;
+        editorPersistence.showEntityInfo = engineOptions.showEntityInfo;
         editorPersistence.SaveGlobal();
         if (projectLoaded) editorPersistence.SaveProject(gameConfig.GetAssetPath());
       }
