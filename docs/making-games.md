@@ -67,17 +67,17 @@ and vcpkg (the engine uses manifest mode and manages its own dependencies).
 ```bash
 git clone https://github.com/Octarine-Club/octarine-engine
 cd octarine-engine
-cmake --preset editor-debug
-cmake --build build/editor-debug
+cmake --preset player-debug
+cmake --build build/player-debug
 ```
 
-The resulting binary is `build/editor-debug/bin/debug/OctarineEngine` (Linux/macOS)
-or `build\editor-debug\bin\debug\OctarineEngine.exe` (Windows).
+The resulting binary is `build/player-debug/bin/debug/OctarineEngine` (Linux/macOS)
+or `build\player-debug\bin\debug\OctarineEngine.exe` (Windows).
 
 **Run against your project**
 
 ```bash
-./build/editor-debug/bin/debug/OctarineEngine path/to/MyGame
+./build/player-debug/bin/debug/OctarineEngine path/to/MyGame
 ```
 
 The engine takes your game's root directory as its only positional argument. The

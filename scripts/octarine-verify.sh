@@ -11,7 +11,7 @@
 #   --tidy-strict treat clang-tidy findings as a failure (default: advisory/non-blocking)
 #   -h, --help    show this help
 #
-# Pinned to the editor-release preset + OCTARINE_ENABLE_TESTS=ON so local green == CI green
+# Pinned to the player-debug preset + OCTARINE_ENABLE_TESTS=ON so local green == CI green
 # (.github/workflows/build.yml validates exactly this leg).
 #
 # Exit codes (distinct, so callers can branch):
@@ -27,8 +27,8 @@
 
 set -uo pipefail
 
-preset=editor-release
-config_dir=release
+preset=player-debug
+config_dir=debug
 
 mode=fast
 keep_going=0

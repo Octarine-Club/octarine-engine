@@ -30,16 +30,16 @@ trigger.
 Build with CMake presets:
 
 ```bash
-cmake --preset editor-debug
-cmake --build --preset editor-debug
+cmake --preset player-debug
+cmake --build --preset player-debug
 ```
 
 Engine tests are gated behind `OCTARINE_ENABLE_TESTS=ON`:
 
 ```bash
-cmake --preset editor-debug -DOCTARINE_ENABLE_TESTS=ON
-cmake --build --preset editor-debug
-ctest --test-dir build/editor-debug --output-on-failure
+cmake --preset player-debug -DOCTARINE_ENABLE_TESTS=ON
+cmake --build --preset player-debug
+ctest --test-dir build/player-debug --output-on-failure
 ```
 
 Two tests live in `tests/`:
@@ -51,7 +51,7 @@ Two tests live in `tests/`:
 - **`AssetPipelineTest`** — exercises `.meta` sidecar parsing, catalog build,
   manifest round-trip, and validation against a fixture asset tree.
 
-CI runs both on the Linux editor-release leg.
+CI runs both on the Linux player-debug leg.
 
 ## Coding standards
 
@@ -117,7 +117,7 @@ locally as a warning yet fail the PR.
 To get CI's exact verdict before you push:
 
 ```bash
-cmake --preset editor-release          # emits build/editor-release/compile_commands.json
+cmake --preset player-debug          # emits build/player-debug/compile_commands.json
 scripts/lint-diff.sh                   # tidies your changed lines, warnings-as-errors, vs origin/main
 ```
 
@@ -174,7 +174,7 @@ The engine is split into per-layer static libraries, so every new `.cpp` under
 (`octarine_core`, `_assets`, `_renderer`, `_lua`, `_systems`, `_editor`, or
 `_engine`) — not the root `CMakeLists.txt`. Header-only additions don't need
 this. Forgetting it means your file compiles locally but fails CI on the
-editor-release leg.
+player-debug leg.
 
 ### File organization
 

@@ -11,9 +11,9 @@
 # Usage:
 #   scripts/lint-diff.sh [BASE_REF] [BUILD_DIR]
 #     BASE_REF   git ref to diff against (default: origin/main, then main)
-#     BUILD_DIR  dir containing compile_commands.json (default: build/editor-release)
+#     BUILD_DIR  dir containing compile_commands.json (default: build/player-debug)
 #
-# Requires a configured build that emitted compile_commands.json (editor-release matches CI).
+# Requires a configured build that emitted compile_commands.json (player-debug matches CI).
 # Prefers clang-tidy-18 to match CI's pinned major version; falls back to whatever clang-tidy is on
 # PATH with a warning, since diagnostics can differ across clang-tidy versions.
 set -euo pipefail
@@ -21,7 +21,7 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
 base="${1:-}"
-build_dir="${2:-build/editor-release}"
+build_dir="${2:-build/player-debug}"
 
 # Resolve a base ref. `git diff A...HEAD` already diffs from the merge-base of A and HEAD, so this
 # only ever surfaces your branch's own changes — exactly what CI passes as the PR base.
@@ -38,7 +38,7 @@ fi
 
 if [ ! -f "$build_dir/compile_commands.json" ]; then
   echo "lint-diff: $build_dir/compile_commands.json not found." >&2
-  echo "  Configure a build first, e.g.:  cmake --preset editor-release" >&2
+  echo "  Configure a build first, e.g.:  cmake --preset player-debug" >&2
   exit 2
 fi
 

@@ -45,11 +45,12 @@ reserved. FreeType is used under the terms of the FreeType License (FTL); see th
 
 ## Building the Engine
 
-The engine uses **CMake Presets** to manage different build configurations. There are three primary variants:
+The engine uses **CMake Presets** to manage different build configurations. The primary development variants are:
 
-- **Editor:** Includes ImGui and the yellowish-purple editor tools. Best for development and level design.
-- **Player:** A minimal, high-performance runtime without the editor.
-- **Profile:** An optimized player with performance instrumentation (`spdlog` timers) enabled.
+- **Player (Debug with UI):** Day-to-day development with Dear ImGui debug overlays and Lua ImGui bindings (`player-debug`).
+- **Player (Dev, live-scan):** Minimal, optimized dev player runtime without ImGui (`player-release`).
+- **Profile:** Optimized player with performance instrumentation (`spdlog` timers) enabled (`player-profile`).
+- **Editor [Experimental]:** The C++ editor (`OCTARINE_WITH_EDITOR`) is currently experimental and disabled by default. Active game development uses Lua-based ImGui debug tools (`onDebugGUI`) instead.
 
 ### Build Commands
 
@@ -61,9 +62,9 @@ cd octarine-engine
 # List all available presets
 cmake --list-presets
 
-# Build the Editor (Standard development)
-cmake --preset editor-debug
-cmake --build --preset editor-debug
+# Build the Player with ImGui debug tooling (Standard development)
+cmake --preset player-debug
+cmake --build --preset player-debug
 
 # Build the Player (optimized dev runtime, live-scan catalog)
 cmake --preset player-release

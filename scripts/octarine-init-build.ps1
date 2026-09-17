@@ -245,15 +245,17 @@ engine_dir="${OCTARINE_ENGINE_DIR:-@@ENGINE_DEFAULT@@}"
 bin="${OCTARINE_ENGINE_BIN:-}"
 if [[ -z "$bin" ]]; then
   for candidate in \
-    "$engine_dir/build/editor-debug/bin/debug/OctarineEngine" \
-    "$engine_dir/build/editor-debug/bin/OctarineEngine" \
     "$engine_dir/build/player-debug/bin/debug/OctarineEngine" \
-    "$engine_dir/build/player-debug/bin/OctarineEngine"
+    "$engine_dir/build/player-debug/bin/OctarineEngine" \
+    "$engine_dir/build/player-release/bin/release/OctarineEngine" \
+    "$engine_dir/build/player-release/bin/OctarineEngine" \
+    "$engine_dir/build/editor-debug/bin/debug/OctarineEngine" \
+    "$engine_dir/build/editor-debug/bin/OctarineEngine"
   do
     if [[ -x "$candidate" ]]; then bin="$candidate"; break; fi
   done
 fi
-[[ -z "$bin" ]] && { echo "no engine binary; build editor-debug or set OCTARINE_ENGINE_BIN" >&2; exit 1; }
+[[ -z "$bin" ]] && { echo "no engine binary; build player-debug or set OCTARINE_ENGINE_BIN" >&2; exit 1; }
 
 exec "$bin" "$project_dir" "$@"
 '@
@@ -274,16 +276,16 @@ if (-not $engineDir) {
 $bin = $env:OCTARINE_ENGINE_BIN
 if (-not $bin) {
   $candidates = @(
-    "$engineDir/build/editor-debug/bin/debug/OctarineEngine.exe",
-    "$engineDir/build/editor-debug/bin/OctarineEngine.exe",
     "$engineDir/build/player-debug/bin/debug/OctarineEngine.exe",
     "$engineDir/build/player-debug/bin/OctarineEngine.exe",
-    "$engineDir/build/editor-debug/bin/debug/OctarineEngine",
-    "$engineDir/build/editor-debug/bin/OctarineEngine"
+    "$engineDir/build/player-release/bin/release/OctarineEngine.exe",
+    "$engineDir/build/player-release/bin/OctarineEngine.exe",
+    "$engineDir/build/editor-debug/bin/debug/OctarineEngine.exe",
+    "$engineDir/build/editor-debug/bin/OctarineEngine.exe"
   )
   $bin = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 }
-if (-not $bin) { Write-Error "no engine binary; build editor-debug or set OCTARINE_ENGINE_BIN"; exit 1 }
+if (-not $bin) { Write-Error "no engine binary; build player-debug or set OCTARINE_ENGINE_BIN"; exit 1 }
 
 & $bin $projectDir @Extra
 exit $LASTEXITCODE

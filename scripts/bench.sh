@@ -28,7 +28,10 @@ config_dir=relwithdebinfo
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
 build_dir="$repo_root/build/$preset"
-binary="$build_dir/bin/$config_dir/OctarineEngine-player"
+binary="$build_dir/bin/$config_dir/OctarineEngine"
+if [[ ! -x "$binary" && -x "$build_dir/bin/$config_dir/OctarineEngine-player" ]]; then
+  binary="$build_dir/bin/$config_dir/OctarineEngine-player"
+fi
 
 game_path="${OCT_BENCH_GAME:-$repo_root/../Octarine-Engine-Example}"
 if [[ ! -d "$game_path" ]]; then

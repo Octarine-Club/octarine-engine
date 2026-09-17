@@ -10,50 +10,14 @@
       "toolchainFile": "${sourceDir}/cmake/vcpkg-toolchain.cmake"
     },
     {
-      "name": "editor-debug",
-      "inherits": "base",
-      "displayName": "Editor (Debug)",
-      "description": "Full development environment with yellowish-purple editor tools.",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "OCTARINE_ENABLE_PROFILING": "OFF",
-        "OCTARINE_WITH_IMGUI": "ON",
-        "OCTARINE_WITH_EDITOR": "ON"
-      }
-    },
-    {
-      "name": "editor-release",
-      "inherits": "base",
-      "displayName": "Editor (Release)",
-      "description": "Optimized build with full editor tools.",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "OCTARINE_ENABLE_PROFILING": "OFF",
-        "OCTARINE_WITH_IMGUI": "ON",
-        "OCTARINE_WITH_EDITOR": "ON"
-      }
-    },
-    {
       "name": "player-debug",
       "inherits": "base",
       "displayName": "Player (Debug with UI)",
-      "description": "Debug player with ImGui debug overlays enabled. Useful for testing.",
+      "description": "Primary development build with ImGui debug overlays enabled. Recommended for game development and Lua debug tooling.",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "OCTARINE_ENABLE_PROFILING": "OFF",
         "OCTARINE_WITH_IMGUI": "ON",
-        "OCTARINE_WITH_EDITOR": "OFF"
-      }
-    },
-    {
-      "name": "player-profile",
-      "inherits": "base",
-      "displayName": "Player (Profile)",
-      "description": "Optimized build with profiling instrumentation enabled. No editor, no ImGui.",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "OCTARINE_ENABLE_PROFILING": "ON",
-        "OCTARINE_WITH_IMGUI": "OFF",
         "OCTARINE_WITH_EDITOR": "OFF"
       }
     },
@@ -65,6 +29,18 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "OCTARINE_ENABLE_PROFILING": "OFF",
+        "OCTARINE_WITH_IMGUI": "OFF",
+        "OCTARINE_WITH_EDITOR": "OFF"
+      }
+    },
+    {
+      "name": "player-profile",
+      "inherits": "base",
+      "displayName": "Player (Profile)",
+      "description": "Optimized build with profiling instrumentation enabled. No editor, no ImGui.",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "OCTARINE_ENABLE_PROFILING": "ON",
         "OCTARINE_WITH_IMGUI": "OFF",
         "OCTARINE_WITH_EDITOR": "OFF"
       }
@@ -97,15 +73,39 @@
         "lhs": "${hostSystemName}",
         "rhs": "Darwin"
       }
+    },
+    {
+      "name": "editor-debug",
+      "inherits": "base",
+      "displayName": "Editor (Debug) [Experimental]",
+      "description": "Experimental C++ editor tools with Dear ImGui dockspace (work-in-progress; not built by default; use player-debug for game development).",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "OCTARINE_ENABLE_PROFILING": "OFF",
+        "OCTARINE_WITH_IMGUI": "ON",
+        "OCTARINE_WITH_EDITOR": "ON"
+      }
+    },
+    {
+      "name": "editor-release",
+      "inherits": "base",
+      "displayName": "Editor (Release) [Experimental]",
+      "description": "Experimental optimized C++ editor build.",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "OCTARINE_ENABLE_PROFILING": "OFF",
+        "OCTARINE_WITH_IMGUI": "ON",
+        "OCTARINE_WITH_EDITOR": "ON"
+      }
     }
   ],
   "buildPresets": [
-    { "name": "editor-debug", "configurePreset": "editor-debug" },
-    { "name": "editor-release", "configurePreset": "editor-release" },
     { "name": "player-debug", "configurePreset": "player-debug" },
-    { "name": "player-profile", "configurePreset": "player-profile" },
     { "name": "player-release", "configurePreset": "player-release" },
+    { "name": "player-profile", "configurePreset": "player-profile" },
     { "name": "ship-release", "configurePreset": "ship-release" },
-    { "name": "ship-mac-universal", "configurePreset": "ship-mac-universal" }
+    { "name": "ship-mac-universal", "configurePreset": "ship-mac-universal" },
+    { "name": "editor-debug", "configurePreset": "editor-debug" },
+    { "name": "editor-release", "configurePreset": "editor-release" }
   ]
 }

@@ -5,20 +5,20 @@ The shortest path from a fresh clone to a code change you can verify. For deeper
 ## 1. Build
 
 ```bash
-# Editor build (ImGui + yellowish-purple editor tools, debug).
-cmake --preset editor-debug
-cmake --build build/editor-debug
+# Player build (ImGui debug overlays + Lua ImGui debug tooling, debug).
+cmake --preset player-debug
+cmake --build build/player-debug
 ```
 
 CMake presets live in `CMakePresets.json`. The common ones:
 
 | Preset            | When to use                                       |
 |-------------------|---------------------------------------------------|
-| `editor-debug`    | Day-to-day dev with editor + ImGui debug overlays |
-| `editor-release`  | Optimized editor build                            |
-| `player-release`  | Optimized runtime, no editor (live-scan catalog)  |
+| `player-debug`    | Day-to-day dev with ImGui debug overlays & Lua UI |
+| `player-release`  | Optimized runtime, no editor/ImGui (live-scan catalog) |
 | `player-profile`  | RelWithDebInfo + `OCTARINE_ENABLE_PROFILING` for timing |
 | `ship-release`    | Canonical shipping config (manifest-load catalog) |
+| `editor-debug`    | [Experimental] C++ editor dockspace (disabled by default) |
 
 ### Linux build prerequisites
 
@@ -54,7 +54,7 @@ for s in wayland x11 alsa; do strings build/<preset>/bin/debug/OctarineEngine* |
 The engine takes the game project directory as a positional argument:
 
 ```bash
-./build/editor-debug/bin/debug/OctarineEngine ../Octarine-Engine-Example
+./build/player-debug/bin/debug/OctarineEngine ../Octarine-Engine-Example
 ```
 
 [`Octarine-Engine-Example`](https://github.com/Octarine-Club/octarine-engine-example) is the reference project — a small but complete Lua-driven game that exercises every binding the engine ships.
@@ -62,7 +62,7 @@ The engine takes the game project directory as a positional argument:
 Bake-only (headless, no window): runs the asset pipeline and writes `asset_manifest.lua` next to the project. Nonzero exit on any unresolved asset reference.
 
 ```bash
-./build/editor-debug/bin/debug/OctarineEngine ../Octarine-Engine-Example -m bake
+./build/player-debug/bin/debug/OctarineEngine ../Octarine-Engine-Example -m bake
 ```
 
 ## 3. Verify
@@ -70,15 +70,15 @@ Bake-only (headless, no window): runs the asset pipeline and writes `asset_manif
 Two engine tests are gated behind `OCTARINE_ENABLE_TESTS=ON`:
 
 ```bash
-cmake --preset editor-debug -DOCTARINE_ENABLE_TESTS=ON
-cmake --build build/editor-debug
-ctest --test-dir build/editor-debug --output-on-failure
+cmake --preset player-debug -DOCTARINE_ENABLE_TESTS=ON
+cmake --build build/player-debug
+ctest --test-dir build/player-debug --output-on-failure
 ```
 
 - **`LuaApiSmokeTest`** — constructs `Game` headlessly, replays `Game::Setup`'s Lua-binding sequence, and asserts every registered component/module/system surface is reachable from Lua. Also re-emits the EmmyLua stub at `lua_api.smoke.lua` (CI fails on drift; commit the regenerated file).
 - **`AssetPipelineTest`** — exercises `.meta` sidecar parsing, catalog build, manifest round-trip, and validation against a tiny fixture asset tree.
 
-CI (`.github/workflows/build.yml`) runs both on the Linux editor-release leg on every push to `main` and PR.
+CI (`.github/workflows/build.yml`) runs both on the Linux player-debug leg on every PR.
 
 ## 4. Where things live
 

@@ -195,7 +195,17 @@ bool Game::Initialize(const std::string& assetPath) {
     return false;
   }
 
-  if (!projectLoaded || startupDecision.defaultToEditor) {
+  if (!projectLoaded) {
+    if (startupDecision.defaultToEditor) {
+      Logger::Info("Starting in Editor Mode.");
+      gameConfig.SetIsEditorMode(true);
+      engine_bootstrap::editor::PauseForEditorSession(*registry_);
+    } else {
+      Logger::Error("Failed to load project from path: '" + effectivePath +
+                    "'. A valid project directory containing config.ini is required.");
+      return false;
+    }
+  } else if (startupDecision.defaultToEditor) {
     Logger::Info("Starting in Editor Mode.");
     gameConfig.SetIsEditorMode(true);
     engine_bootstrap::editor::PauseForEditorSession(*registry_);
@@ -265,7 +275,9 @@ bool Game::CreateWindowAndScene(bool projectLoaded) {
   auto& gameConfig = registry_->Get<GameConfig>();
   gameConfig.windowWidth = projectLoaded ? gameConfig.GetDefaultWidth() : Constants::kDefaultWindowWidth;
   gameConfig.windowHeight = projectLoaded ? gameConfig.GetDefaultHeight() : Constants::kDefaultWindowHeight;
-  const std::string title = projectLoaded ? gameConfig.GetGameTitle() : "Octarine Engine - Editor";
+  const std::string title = projectLoaded
+                                ? gameConfig.GetGameTitle()
+                                : (gameConfig.IsEditorMode() ? "Octarine Engine - Editor" : "Octarine Engine");
 
   if (!runtime_.CreateWindow(title, gameConfig.windowWidth, gameConfig.windowHeight)) {
     return false;

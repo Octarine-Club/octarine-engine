@@ -4,7 +4,7 @@
 
 .DESCRIPTION
   Runs the same gates CI runs, in dependency order, and prints an unambiguous final verdict.
-  Pinned to the editor-release preset + OCTARINE_ENABLE_TESTS=ON so local green == CI green.
+  Pinned to the player-debug preset + OCTARINE_ENABLE_TESTS=ON so local green == CI green.
 
   Exit codes: 0 ok | 2 setup | 10 configure | 11 build | 12 ctest | 13 bake | 14 drift |
               15 clang-format | 16 clang-tidy (only with -TidyStrict)
@@ -26,8 +26,8 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
-$preset = 'editor-release'
-$configDir = 'release'
+$preset = 'player-debug'
+$configDir = 'debug'
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Set-Location $repoRoot
