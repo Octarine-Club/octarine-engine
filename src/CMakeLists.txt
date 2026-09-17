@@ -32,6 +32,9 @@ set(OCTARINE_CORE_SOURCES
         Process/Process.cpp
         Project/ProjectIni.cpp
 )
+if (NOT OCTARINE_SHIPPED)
+    list(APPEND OCTARINE_CORE_SOURCES Editor/EditorPersistence.cpp)
+endif ()
 if (UNIX AND NOT APPLE AND NOT ANDROID)
     list(APPEND OCTARINE_CORE_SOURCES General/SDL3_Linux_Stubs.cpp)
 endif ()
@@ -167,7 +170,6 @@ if (OCTARINE_WITH_IMGUI OR OCTARINE_WITH_EDITOR)
     if (OCTARINE_WITH_EDITOR)
         list(APPEND OCTARINE_EDITOR_SOURCES
                 Editor/EditorLayoutPresets.cpp
-                Editor/EditorPersistence.cpp
                 Editor/ExportBuilder.cpp
                 Editor/PlayerLauncher.cpp
                 Editor/Inspectors/RegisterAllInspectors.cpp

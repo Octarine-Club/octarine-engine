@@ -118,18 +118,58 @@ void DisableBenchOverlays(Registry& registry) {
 
 }  // namespace engine_bootstrap::editor
 
-#else  // OCTARINE_WITH_EDITOR — player build: no-op stubs (plus the default ImGui font when ImGui is on).
+#else  // OCTARINE_WITH_EDITOR — player build: dev-player persistence (non-shipped) or no-op stubs (shipped).
 
 #include "General/Logger.h"
 #ifdef OCTARINE_WITH_IMGUI
 #include "imgui.h"
 #endif
 
+#ifndef OCTARINE_SHIPPED
+#include "ECS/Registry.h"
+#include "Editor/EditorPersistence.h"
+#include "Game/GameConfig.h"
+#endif
+
 namespace engine_bootstrap::editor {
 
+#ifndef OCTARINE_SHIPPED
+void InstallSingletons(Registry& registry, std::string& /*effectivePath*/) {
+  registry.Set<EditorPersistence>(EditorPersistence());
+}
+
+void OnProjectLoaded(Registry& registry, const std::string& path) {
+  if (auto* editorPersistence = registry.TryGet<EditorPersistence>()) {
+    editorPersistence->LoadProject(path);
+    auto& options = registry.Get<GameConfig>().GetEngineOptions();
+    options.showDebugGUI = editorPersistence->showDebugGUI;
+    options.drawColliders = editorPersistence->drawColliders;
+    options.showFpsCounter = editorPersistence->showFpsCounter;
+    options.showEntityInfo = editorPersistence->showEntityInfo;
+  }
+}
+
+void ApplyAudioPrefs(Registry& /*registry*/) {}
+
+void SaveOnShutdown(Registry& registry) {
+  auto& gameConfig = registry.Get<GameConfig>();
+  if (auto* editorPersistence = registry.TryGet<EditorPersistence>()) {
+    const auto& options = gameConfig.GetEngineOptions();
+    editorPersistence->showDebugGUI = options.showDebugGUI;
+    editorPersistence->drawColliders = options.drawColliders;
+    editorPersistence->showFpsCounter = options.showFpsCounter;
+    editorPersistence->showEntityInfo = options.showEntityInfo;
+    if (gameConfig.HasLoadedConfig()) {
+      editorPersistence->SaveProject(gameConfig.GetAssetPath());
+    }
+  }
+}
+#else   // OCTARINE_SHIPPED — shipping build: no-ops, never touches editor_prefs.ini
 void InstallSingletons(Registry& /*registry*/, std::string& /*effectivePath*/) {}
 void OnProjectLoaded(Registry& /*registry*/, const std::string& /*path*/) {}
 void ApplyAudioPrefs(Registry& /*registry*/) {}
+void SaveOnShutdown(Registry& /*registry*/) {}
+#endif  // OCTARINE_SHIPPED
 
 StartupModeDecision DecideStartupMode(const std::string& startupMode) {
   if (startupMode == "editor") {
@@ -152,7 +192,6 @@ void SetupEditorImGui(Registry& /*registry*/) {
 #endif
 }
 
-void SaveOnShutdown(Registry& /*registry*/) {}
 void DisableBenchOverlays(Registry& /*registry*/) {}
 
 }  // namespace engine_bootstrap::editor

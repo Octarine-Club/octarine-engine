@@ -1,6 +1,6 @@
 #include "EditorPersistence.h"
 
-#ifdef OCTARINE_WITH_EDITOR
+#ifndef OCTARINE_SHIPPED
 
 #include <SDL3/SDL_filesystem.h>
 
@@ -158,4 +158,4 @@ void EditorPersistence::LoadProject(const std::string& projectAssetPath) {
   }
 }
 
-#endif  // OCTARINE_WITH_EDITOR
+#endif  // OCTARINE_SHIPPED
