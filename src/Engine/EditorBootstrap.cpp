@@ -125,7 +125,8 @@ void ApplyAudioPrefs(Registry& /*registry*/) {}
 StartupModeDecision DecideStartupMode(const std::string& startupMode) {
   if (startupMode == "editor") {
     Logger::Error(
-        "--startup-mode editor was requested but this is a player build (built without OCTARINE_WITH_EDITOR).");
+        "--startup-mode editor was requested, but the editor is experimental and disabled in this build. "
+        "Recompile with -DOCTARINE_WITH_EDITOR=ON to enable.");
     return {/*ok=*/false, /*defaultToEditor=*/false};
   }
   return {/*ok=*/true, /*defaultToEditor=*/false};

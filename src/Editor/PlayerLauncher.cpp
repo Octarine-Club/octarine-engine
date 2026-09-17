@@ -12,9 +12,9 @@
 namespace octarine::editor {
 namespace {
 #ifdef _WIN32
-constexpr const char* kPlayerExeName = "OctarineEngine-player.exe";
+constexpr const char* kPlayerExeNames[] = {"OctarineEngine.exe", "OctarineEngine-player.exe"};
 #else
-constexpr const char* kPlayerExeName = "OctarineEngine-player";
+constexpr const char* kPlayerExeNames[] = {"OctarineEngine", "OctarineEngine-player"};
 #endif
 
 bool FileExists(const std::filesystem::path& p) {
@@ -26,14 +26,10 @@ bool FileExists(const std::filesystem::path& p) {
 std::optional<std::filesystem::path> PlayerLauncher::ResolvePlayerBinary(const std::filesystem::path& editor_dir) {
   // Probe order matches plan recommendation: prefer a side-by-side install layout, then
   // fall back to sibling dev presets. The first existing candidate wins.
-  //
-  // Editor exe lives at `<build>/<editor-preset>/bin/<config>/OctarineEngine[.exe]`. Player
-  // exe (renamed via CMakeLists.txt OUTPUT_NAME) lives at the mirror path under a sibling
-  // `player-*` preset dir with the matching `<config>` subdir.
 
   // (1) Same directory (installed layout, or dev manually copied next to the editor).
-  {
-    std::filesystem::path candidate = editor_dir / kPlayerExeName;
+  for (const auto* exeName : kPlayerExeNames) {
+    std::filesystem::path candidate = editor_dir / exeName;
     if (FileExists(candidate)) {
       return candidate;
     }
@@ -61,9 +57,11 @@ std::optional<std::filesystem::path> PlayerLauncher::ResolvePlayerBinary(const s
       "player-profile",
   };
   for (const auto preset : candidates) {
-    std::filesystem::path candidate = build_dir / preset / "bin" / config_name / kPlayerExeName;
-    if (FileExists(candidate)) {
-      return candidate;
+    for (const auto* exeName : kPlayerExeNames) {
+      std::filesystem::path candidate = build_dir / preset / "bin" / config_name / exeName;
+      if (FileExists(candidate)) {
+        return candidate;
+      }
     }
   }
   // Cross-config fallback: the matching config dir may not exist (e.g. editor built Debug,
@@ -71,9 +69,11 @@ std::optional<std::filesystem::path> PlayerLauncher::ResolvePlayerBinary(const s
   const std::string_view configs[] = {"debug", "release", "relwithdebinfo", "minsizerel"};
   for (const auto preset : candidates) {
     for (const auto cfg : configs) {
-      std::filesystem::path candidate = build_dir / preset / "bin" / cfg / kPlayerExeName;
-      if (FileExists(candidate)) {
-        return candidate;
+      for (const auto* exeName : kPlayerExeNames) {
+        std::filesystem::path candidate = build_dir / preset / "bin" / cfg / exeName;
+        if (FileExists(candidate)) {
+          return candidate;
+        }
       }
     }
   }

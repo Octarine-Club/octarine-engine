@@ -21,7 +21,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # =============================================================================
 
 # Engine features
-option(OCTARINE_WITH_EDITOR "Build with the editor environment" ON)
+option(OCTARINE_WITH_EDITOR "Build with the experimental editor environment (work-in-progress)" OFF)
 option(OCTARINE_WITH_IMGUI "Build with Dear ImGui debug tools" ON)
 option(OCTARINE_ENABLE_PROFILING "Enable per-system performance instrumentation" OFF)
 option(OCTARINE_SHIPPED "Build a shipping artifact (loads baked asset manifest, skips filesystem scan)" OFF)
@@ -172,16 +172,12 @@ add_subdirectory(src)
 # Primary Artifact: OctarineEngine
 # =============================================================================
 
-# On Android, SDLActivity dlopens libmain.so and calls SDL_main. Everywhere else it is an executable.
-# Dev player builds rename the executable to OctarineEngine-player to coexist with the editor binary.
+# On Android, SDLActivity dlopens libmain.so and calls SDL_main. Everywhere else it is the OctarineEngine executable.
 if (ANDROID)
     add_library(${PROJECT_NAME} SHARED src/Main.cpp)
     set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME main)
 else ()
     add_executable(${PROJECT_NAME} src/Main.cpp)
-    if (NOT OCTARINE_WITH_EDITOR AND NOT OCTARINE_SHIPPED)
-        set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME OctarineEngine-player)
-    endif ()
 endif ()
 
 set_target_properties(${PROJECT_NAME} PROPERTIES

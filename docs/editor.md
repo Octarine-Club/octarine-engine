@@ -1,13 +1,14 @@
 # Editor
 
-The editor is the engine binary built with `OCTARINE_WITH_EDITOR=ON` — every
-`editor-*` preset turns it on. It hosts the game inside an ImGui dockspace
-alongside scene controls, an entity inspector, a Lua console, build/export
-tooling, and an embedded debug overlay surface.
+> [!WARNING]
+> **Status: Experimental / Work-in-Progress**
+> The C++ editor is currently experimental and disabled by default (`OCTARINE_WITH_EDITOR=OFF`). It is not built in standard CI runs or default developer presets.
+>
+> For active game development and debugging, use the **`player-debug`** preset and build interactive debug tools directly in Lua using Dear ImGui via the `onDebugGUI` callback and global `ImGui.*` API. See [`docs/lua-scripting.md`](lua-scripting.md) for debug tooling patterns.
 
-Audience: project authors driving the editor day-to-day. The shipping bake
-step and packaging live in [`docs/asset-pipeline.md`](asset-pipeline.md) and
-[`docs/device-builds.md`](device-builds.md).
+The editor is the engine binary built with `OCTARINE_WITH_EDITOR=ON` — the experimental `editor-*` presets turn it on. It hosts the game inside an ImGui dockspace alongside scene controls, an entity inspector, a Lua console, build/export tooling, and an embedded debug overlay surface.
+
+Audience: developers experimenting with or working on the editor itself. The shipping bake step and packaging live in [`docs/asset-pipeline.md`](asset-pipeline.md) and [`docs/device-builds.md`](device-builds.md).
 
 ---
 
