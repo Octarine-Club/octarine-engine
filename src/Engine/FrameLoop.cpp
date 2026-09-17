@@ -38,7 +38,6 @@
 #include "imgui_impl_sdl3.h"
 #endif
 
-#ifndef OCTARINE_SHIPPED
 namespace {
 // Portable env read. MSVC deprecates std::getenv (C4996) and the build treats warnings as errors,
 // so use _dupenv_s there — mirrors the split in Lua/LuaApiManifest.cpp. Returns "" when unset.
@@ -56,7 +55,6 @@ std::string GetEnvVar(const char* name) {
 #endif
 }
 }  // namespace
-#endif
 
 FrameLoop::FrameLoop(Game* game, Registry* registry, EventBus* eventBus, Renderer* renderer, EngineRuntime* runtime,
                      sol::state& lua)
@@ -64,14 +62,12 @@ FrameLoop::FrameLoop(Game* game, Registry* registry, EventBus* eventBus, Rendere
   // Pre-build the debug-collider query once so we don't allocate per render frame.
   collider_query_ = registry_->CreateQuery<GlobalTransformComponent, BoxColliderComponent>();
 
-#ifndef OCTARINE_SHIPPED
   if (const std::string path = GetEnvVar("OCTARINE_CAPTURE_PATH"); !path.empty()) {
     capture_path_ = path;
     if (const std::string frame = GetEnvVar("OCTARINE_CAPTURE_FRAME"); !frame.empty()) {
       capture_frame_ = std::stol(frame);
     }
   }
-#endif
 }
 
 void FrameLoop::SubscribeToEvents() {
@@ -250,7 +246,6 @@ void FrameLoop::UpdateViewportInfo([[maybe_unused]] const bool editorSession,
 #endif
 }
 
-#ifndef OCTARINE_SHIPPED
 void FrameLoop::CheckHeadlessCapture() {
   // Headless capture: once the target frame is reached, write the rendered scene to disk and quit.
   if (!capture_path_.empty() && !capture_done_) {
@@ -264,7 +259,6 @@ void FrameLoop::CheckHeadlessCapture() {
     ++frame_index_;
   }
 }
-#endif
 
 void FrameLoop::Render(const float deltaTime) {
   PROFILE_NAMED_SCOPE("Game::Render (total)");
@@ -331,9 +325,7 @@ void FrameLoop::Render(const float deltaTime) {
   PROFILE_COUNTERS_REPORT();
   renderQueue.Clear();
 
-#ifndef OCTARINE_SHIPPED
   CheckHeadlessCapture();
-#endif
 }
 
 float FrameLoop::WaitTime() {

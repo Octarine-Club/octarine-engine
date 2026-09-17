@@ -60,9 +60,7 @@ class FrameLoop {
  private:
   static KeyInputEvent GetKeyInputEvent(SDL_KeyboardEvent* event);
   void UpdateViewportInfo(bool editorSession, bool showDebugGUI);
-#ifndef OCTARINE_SHIPPED
   void CheckHeadlessCapture();
-#endif
 
   Game* game_;
   Registry* registry_;
@@ -79,8 +77,7 @@ class FrameLoop {
   // is a long-lived member rather than reconstructed each frame.
   PerfOverlaySystem perf_overlay_;
 
-#ifndef OCTARINE_SHIPPED
-  // Headless frame-capture (env-driven, dev/bench only). When OCTARINE_CAPTURE_PATH is set, the
+  // Headless frame-capture (env-driven). When OCTARINE_CAPTURE_PATH is set, the
   // loop renders up to OCTARINE_CAPTURE_FRAME (default 180 ≈ 3s @60fps, past the stress warmup),
   // writes that frame's scene texture to the path as BMP, then quits. Lets a headless run produce
   // a viewable rendered frame.
@@ -89,5 +86,4 @@ class FrameLoop {
   long capture_frame_ = kDefaultCaptureFrame;
   long frame_index_ = 0;
   bool capture_done_ = false;
-#endif
 };

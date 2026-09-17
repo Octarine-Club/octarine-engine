@@ -33,16 +33,16 @@ jobs:
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1
         with:
-          key: linux-editor-release-tidy
+          key: linux-player-debug-tidy
           max-size: 500M
 
       # Build first so every generated header exists when clang-tidy parses the tree. The
       # compile_commands.json this emits is what run-clang-tidy consumes.
       - name: Configure CMake
-        run: cmake --preset editor-release -DOCTARINE_ENABLE_TESTS=ON
+        run: cmake --preset player-debug -DOCTARINE_ENABLE_TESTS=ON
 
       - name: Build
-        run: cmake --build build/editor-release --parallel
+        run: cmake --build build/player-debug --parallel
 
       # Full-tree sweep over src/ + tests/. clang-diagnostic-* lines are dropped from the
       # finding count for the same reason as the PR gate: the GCC-built compile_commands carries
@@ -56,7 +56,7 @@ jobs:
           runner="$(command -v run-clang-tidy-18 || find /usr/lib/llvm-18 -name 'run-clang-tidy*' | head -1)"
           # || true: run-clang-tidy exits non-zero on any diagnostic; findings must not fail the
           # job, and the file-level clang-diagnostic errors described above are expected noise.
-          "$runner" -p build/editor-release -quiet "^$GITHUB_WORKSPACE/(src|tests)/" \
+          "$runner" -p build/player-debug -quiet "^$GITHUB_WORKSPACE/(src|tests)/" \
             > tidy-report.txt 2>&1 || true
 
           findings="$(grep -E '^[^ ]+:[0-9]+:[0-9]+: (warning|error):' tidy-report.txt \

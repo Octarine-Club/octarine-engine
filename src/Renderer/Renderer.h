@@ -60,13 +60,11 @@ class Renderer {
   // window. Returns nullptr when CreateScene never ran (headless / bake / pre-Init paths).
   [[nodiscard]] SDL_Texture* GetSceneTexture() const { return scene_texture_; }
 
-#ifndef OCTARINE_SHIPPED
   // Dev/headless capture: read the scene texture back to a surface and write it to `path` as a
   // BMP. Lets a headless run (SDL_VIDEODRIVER=dummy, software renderer) produce a viewable frame
   // of what was rendered. Returns false (and logs) if there's no scene texture, the readback
-  // fails, or the write fails. Not compiled into shipped builds.
+  // fails, or the write fails.
   bool CaptureScene(SDL_Renderer* sdlRenderer, const std::string& path) const;
-#endif
 
  private:
   SDL_Texture* scene_texture_ = nullptr;

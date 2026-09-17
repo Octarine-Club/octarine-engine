@@ -50,7 +50,6 @@ void Renderer::CompositeSceneToWindow(SDL_Renderer* sdlRenderer) const {
 
 void Renderer::Present(SDL_Renderer* sdlRenderer) const { SDL_RenderPresent(sdlRenderer); }
 
-#ifndef OCTARINE_SHIPPED
 bool Renderer::CaptureScene(SDL_Renderer* sdlRenderer, const std::string& path) const {
   if (scene_texture_ == nullptr) {
     Logger::Error("Renderer::CaptureScene: no scene texture to capture");
@@ -73,7 +72,6 @@ bool Renderer::CaptureScene(SDL_Renderer* sdlRenderer, const std::string& path) 
   SDL_DestroySurface(surface);
   return ok;
 }
-#endif
 
 void Renderer::DrawQueue(const RenderQueue& renderQueue, SDL_Renderer* renderer) const {
   for (const RenderKey& key : renderQueue) {

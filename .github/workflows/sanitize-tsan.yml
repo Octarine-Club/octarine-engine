@@ -15,7 +15,7 @@ env:
 
 jobs:
   tsan:
-    name: linux (tsan, editor-debug)
+    name: linux (tsan, player-debug)
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -33,16 +33,16 @@ jobs:
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1
         with:
-          key: linux-editor-debug-tsan
+          key: linux-player-debug-tsan
           max-size: 500M
 
       - name: Configure CMake
-        run: cmake --preset editor-debug -DOCTARINE_SANITIZE=tsan -DOCTARINE_ENABLE_TESTS=ON
+        run: cmake --preset player-debug -DOCTARINE_SANITIZE=tsan -DOCTARINE_ENABLE_TESTS=ON
 
       - name: Build
-        run: cmake --build build/editor-debug --parallel
+        run: cmake --build build/player-debug --parallel
 
       - name: Run engine tests (ctest under TSan)
         env:
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
-        run: ctest --test-dir build/editor-debug --output-on-failure
+        run: ctest --test-dir build/player-debug --output-on-failure

@@ -23,9 +23,9 @@ on:
         type: choice
         options:
           - 'all'
-          - 'player-release'
           - 'player-debug'
-          - 'editor-release'
+          - 'player-release'
+          - 'ship-release'
         default: 'all'
       platform:
         description: 'Platform to build'
@@ -61,7 +61,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        preset: [editor-release, player-release]
+        preset: [player-debug, player-release, ship-release]
         include:
           - os: ubuntu-latest
             platform: linux
@@ -79,7 +79,7 @@ jobs:
           fetch-depth: 0
 
       - name: Checkout Example Game
-        if: matrix.platform == 'linux' && matrix.preset == 'editor-release'
+        if: matrix.platform == 'linux' && (matrix.preset == 'player-debug' || matrix.preset == 'ship-release')
         uses: actions/checkout@v4
         with:
           repository: Octarine-Club/octarine-engine-example
@@ -116,46 +116,45 @@ jobs:
 
       - name: Configure CMake
         shell: bash
-        run: cmake --preset ${{ matrix.preset }} ${{ matrix.preset == 'editor-release' && '-DOCTARINE_ENABLE_TESTS=ON' || '' }}
+        run: cmake --preset ${{ matrix.preset }} ${{ matrix.preset == 'player-debug' && '-DOCTARINE_ENABLE_TESTS=ON' || '' }}
 
       - name: Build
-        run: cmake --build build/${{ matrix.preset }} --config Release --parallel
+        run: cmake --build build/${{ matrix.preset }} --config ${{ contains(matrix.preset, 'debug') && 'Debug' || 'Release' }} --parallel
 
       # All three OSes, not just linux: MSVC-specific breakage (AVX2 chunk alignment) and
-      # macOS-specific behavior otherwise ship untested.
+      # macOS-specific behavior otherwise ship untested. Runs on player-debug (tests enabled).
       - name: Run engine tests (ctest)
-        if: matrix.preset == 'editor-release'
+        if: matrix.preset == 'player-debug'
         run: ctest --test-dir build/${{ matrix.preset }} --output-on-failure
 
       # Headless bake against the example project. Catches unresolved-asset regressions and
       # AssetCatalog::Build / startup-script breakage on every PR — the bake walks the catalog,
-      # runs the startup script, and emits asset_manifest.lua. Non-zero exit fails the job;
-      # an empty manifest means the catalog produced no entries, which is also a regression.
+      # runs the startup script, and emits asset_manifest.lua.
       - name: Bake smoke (example project)
-        if: matrix.platform == 'linux' && matrix.preset == 'editor-release'
+        if: matrix.platform == 'linux' && (matrix.preset == 'player-debug' || matrix.preset == 'ship-release')
         shell: bash
         run: |
-          ./build/${{ matrix.preset }}/bin/release/OctarineEngine "$GITHUB_WORKSPACE/example_repo" -m bake
+          cfg="${{ contains(matrix.preset, 'debug') && 'debug' || 'release' }}"
+          exe="$(find "build/${{ matrix.preset }}/bin/$cfg" -maxdepth 1 -type f \( -name 'OctarineEngine' -o -name 'OctarineEngine-player' -o -name 'OctarineEngine.exe' -o -name 'OctarineEngine-player.exe' \) | head -1)"
+          "$exe" "$GITHUB_WORKSPACE/example_repo" -m bake
           test -s "$GITHUB_WORKSPACE/example_repo/asset_manifest.lua"
 
-      # Runtime boot smoke: actually run the engine against the example project, headless. The
-      # bake smoke above never enters the frame loop, so setup-order bugs, Lua binding
-      # regressions, and asset-load failures ship invisibly past unit tests without this. The
-      # frame-capture env vars bound the run — FrameLoop quits right after writing frame 120
-      # (~2s of simulation). Gates: engine exit code, the capture file existing (proves the
-      # render path produced frames), and zero error/critical log lines (runtime Lua errors
-      # log-and-continue, so the exit code alone can't catch them).
+      # Runtime boot smoke: actually run the engine against the example project, headless.
+      # Runs on both player-debug (testing ImGui overlays & debug loop) and ship-release (testing
+      # the shipping binary loading baked asset_manifest.lua).
       - name: Runtime boot smoke (example project)
-        if: matrix.platform == 'linux' && matrix.preset == 'editor-release'
+        if: matrix.platform == 'linux' && (matrix.preset == 'player-debug' || matrix.preset == 'ship-release')
         shell: bash
         env:
           SDL_VIDEODRIVER: dummy
           SDL_AUDIODRIVER: dummy
           OCTARINE_CAPTURE_FRAME: "120"
         run: |
+          cfg="${{ contains(matrix.preset, 'debug') && 'debug' || 'release' }}"
+          exe="$(find "build/${{ matrix.preset }}/bin/$cfg" -maxdepth 1 -type f \( -name 'OctarineEngine' -o -name 'OctarineEngine-player' -o -name 'OctarineEngine.exe' -o -name 'OctarineEngine-player.exe' \) | head -1)"
           export OCTARINE_CAPTURE_PATH="$RUNNER_TEMP/boot-smoke.bmp"
           log="$RUNNER_TEMP/boot-smoke.log"
-          ./build/${{ matrix.preset }}/bin/release/OctarineEngine "$GITHUB_WORKSPACE/example_repo" | tee "$log"
+          "$exe" "$GITHUB_WORKSPACE/example_repo" | tee "$log"
           test -s "$OCTARINE_CAPTURE_PATH"
           if grep -E '\[(error|critical)\]' "$log"; then
             echo "::error::Runtime boot smoke logged error/critical lines (see log above)."
@@ -164,12 +163,12 @@ jobs:
 
       - name: Check Lua API artifact drift
         id: lua_drift
-        if: matrix.platform == 'linux' && matrix.preset == 'editor-release'
+        if: matrix.platform == 'linux' && matrix.preset == 'player-debug'
         shell: bash
         run: |
           paths="lua_api.smoke.lua components.json modules.json"
           if ! git diff --quiet -- $paths; then
-            echo "::error::One of $paths drifted. Run OctarineLuaApiTest (editor preset) locally and commit the regenerated files."
+            echo "::error::One of $paths drifted. Run OctarineLuaApiTest (player-debug preset) locally and commit the regenerated files."
             git diff -- $paths | head -400
             exit 1
           fi
@@ -187,12 +186,9 @@ jobs:
           retention-days: 7
 
       # Blocking clang-tidy over the PR's changed LINES (not whole files), using the
-      # compile_commands.json the editor-release build just emitted. clang-tidy-diff.py with -U0
-      # restricts diagnostics to lines the PR actually touched, so pre-existing debt in a modified
-      # file never blocks an unrelated change while any new violation fails the job. (Previously
-      # advisory/continue-on-error; tightened now that the changed-file set is reliably clean.)
+      # compile_commands.json the player-debug build just emitted.
       - name: clang-tidy (changed lines, blocking)
-        if: matrix.platform == 'linux' && matrix.preset == 'editor-release' && github.event_name == 'pull_request'
+        if: matrix.platform == 'linux' && matrix.preset == 'player-debug' && github.event_name == 'pull_request'
         shell: bash
         run: |
           sudo apt-get update && sudo apt-get install -y clang-tidy-18
@@ -264,7 +260,7 @@ jobs:
   # (ThreadPool/parallel-system races ASan cannot see) is nightly-only in sanitize-tsan.yml —
   # the two sanitizers cannot be combined in one binary.
   sanitize:
-    name: linux (asan+ubsan, editor-debug)
+    name: linux (asan+ubsan, player-debug)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -281,14 +277,14 @@ jobs:
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1
         with:
-          key: linux-editor-debug-asan
+          key: linux-player-debug-asan
           max-size: 500M
 
       - name: Configure CMake
-        run: cmake --preset editor-debug -DOCTARINE_SANITIZE=asan -DOCTARINE_ENABLE_TESTS=ON
+        run: cmake --preset player-debug -DOCTARINE_SANITIZE=asan -DOCTARINE_ENABLE_TESTS=ON
 
       - name: Build
-        run: cmake --build build/editor-debug --parallel
+        run: cmake --build build/player-debug --parallel
 
       - name: Run engine tests (ctest under ASan+UBSan)
         env:
@@ -297,11 +293,11 @@ jobs:
           # libs (SDL/Lua via vcpkg) would drown real findings — revisit once a baseline exists.
           ASAN_OPTIONS: halt_on_error=1:detect_leaks=0
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
-        run: ctest --test-dir build/editor-debug --output-on-failure
+        run: ctest --test-dir build/player-debug --output-on-failure
 
   # Style gate. Lightweight (no vcpkg/SDL): formats only the files a PR actually changed, so the
   # large pre-existing tree never blocks on legacy style. Auto-fixable via the CMake `format` target.
-  # clang-tidy runs as a blocking changed-lines gate in the editor-release build leg above, which
+  # clang-tidy runs as a blocking changed-lines gate in the player-debug build leg above, which
   # has the compile_commands.json it needs. This job also drift-gates the static system/event catalogs.
   lint:
     name: lint (clang-format)
@@ -334,12 +330,12 @@ jobs:
           fi
           printf 'checking:\n%s\n' "$(printf '  %s\n' "${files[@]}")"
           if ! clang-format --dry-run --Werror -style=file "${files[@]}"; then
-            echo "::error::clang-format violations. Fix with pinned clang-format ${CLANG_FORMAT_VERSION}: cmake --build build/editor-release --target format"
+            echo "::error::clang-format violations. Fix with pinned clang-format ${CLANG_FORMAT_VERSION}: cmake --build build/player-debug --target format"
             exit 1
           fi
 
       # systems.json / events.json are produced by static source inspection (no build needed), so
-      # the drift gate lives here in the lightweight lint job rather than the editor-release leg that
+      # the drift gate lives here in the lightweight lint job rather than the player-debug leg that
       # gates the runtime-introspected components.json / modules.json. Regenerate + diff.
       - name: Check system/event catalog drift
         shell: bash

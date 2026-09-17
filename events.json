@@ -103,7 +103,7 @@
       "emit_sites": [
         {
           "file": "src/Engine/FrameLoop.cpp",
-          "line": 144
+          "line": 140
         }
       ],
       "subscribe_sites": [
@@ -140,13 +140,13 @@
       "emit_sites": [
         {
           "file": "src/Engine/FrameLoop.cpp",
-          "line": 115
+          "line": 111
         }
       ],
       "subscribe_sites": [
         {
           "file": "src/Engine/FrameLoop.cpp",
-          "line": 78,
+          "line": 74,
           "owner": "FrameLoop"
         },
         {
@@ -174,7 +174,7 @@
       "emit_sites": [
         {
           "file": "src/Engine/FrameLoop.cpp",
-          "line": 121
+          "line": 117
         }
       ],
       "subscribe_sites": [
@@ -207,7 +207,7 @@
       "emit_sites": [
         {
           "file": "src/Engine/FrameLoop.cpp",
-          "line": 125
+          "line": 121
         }
       ],
       "subscribe_sites": [

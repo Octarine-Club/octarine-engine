@@ -1696,16 +1696,6 @@ function play_sound(...) end
 position_component = {}
 
 
----@class project
-project = {}
-
-function project.path(...) end
-
-function project.write_file(...) end
-
-function project.write_table(...) end
-
-
 ---@class projectile_emitter_component
 projectile_emitter_component = {}
 
