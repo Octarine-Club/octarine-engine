@@ -90,6 +90,9 @@ void SetupEditorImGui(Registry& registry) {
 }
 
 void SaveOnShutdown(Registry& registry) {
+#ifdef OCTARINE_PLATFORM_MOBILE
+  (void)registry;
+#else
   auto& gameConfig = registry.Get<GameConfig>();
   if (auto* editorPersistence = registry.TryGet<EditorPersistence>()) {
     const auto& options = gameConfig.GetEngineOptions();
@@ -104,6 +107,7 @@ void SaveOnShutdown(Registry& registry) {
       editorPersistence->SaveProject(gameConfig.GetAssetPath());
     }
   }
+#endif
 }
 
 void DisableBenchOverlays(Registry& registry) {
@@ -152,6 +156,9 @@ void OnProjectLoaded(Registry& registry, const std::string& path) {
 void ApplyAudioPrefs(Registry& /*registry*/) {}
 
 void SaveOnShutdown(Registry& registry) {
+#ifdef OCTARINE_PLATFORM_MOBILE
+  (void)registry;
+#else
   auto& gameConfig = registry.Get<GameConfig>();
   if (auto* editorPersistence = registry.TryGet<EditorPersistence>()) {
     const auto& options = gameConfig.GetEngineOptions();
@@ -163,6 +170,7 @@ void SaveOnShutdown(Registry& registry) {
       editorPersistence->SaveProject(gameConfig.GetAssetPath());
     }
   }
+#endif
 }
 #else   // OCTARINE_SHIPPED — shipping build: no-ops, never touches editor_prefs.ini
 void InstallSingletons(Registry& /*registry*/, std::string& /*effectivePath*/) {}

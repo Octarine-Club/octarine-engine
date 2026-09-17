@@ -2,6 +2,15 @@
 
 #ifndef OCTARINE_SHIPPED
 
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+
+#if defined(__ANDROID__) || defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS) || \
+    (defined(__APPLE__) && defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+#define OCTARINE_PLATFORM_MOBILE 1
+#endif
+
 #include <array>
 #include <string>
 #include <utility>
