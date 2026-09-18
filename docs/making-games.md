@@ -120,8 +120,6 @@ script — organise the rest however suits your project.
 
 ```ini
 Title=My Awesome Game
-Version=1.0.0
-Author=Your Name
 StartupScript=game.lua
 DefaultWindowWidth=1280
 DefaultWindowHeight=720

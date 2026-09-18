@@ -353,7 +353,7 @@ The host app under `android/` is a thin wrapper:
   link into `libmain.so`. There is no separate `libSDL3.so` —
   `SDLActivity.getLibraries()` returns only `{"main"}`.
 - `stageOctarineAssets` copies the game project (excluding scratch like
-  `*.meta`, `editor_prefs.ini`, `preferences.ini`, `imgui.ini`, `.git`) into
+  `*.meta`, `editor_prefs.ini`, `imgui.ini`, `.git`) into
   the APK assets dir, where SDL's `AAssetManager` shim resolves it via
   `SDL_IOFromFile`. The committed `asset_manifest.lua` rides along.
 - `generateOctarineIcons` runs `scripts/octarine-icons.cmake` to produce

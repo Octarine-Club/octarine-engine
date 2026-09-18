@@ -23,9 +23,6 @@ class GameConfig {
 
   bool LoadConfigFromFile(const std::string& assetPath);
 
-  void SaveUserPreferences();
-  void LoadUserPreferences();
-
   [[nodiscard]] bool HasLoadedConfig() const { return has_loaded_config_; }
   [[nodiscard]] bool IsEditorMode() const { return is_editor_mode_; }
   void SetIsEditorMode(bool isEditorMode) { is_editor_mode_ = isEditorMode; }

@@ -177,7 +177,6 @@ bool Game::Initialize(const std::string& assetPath) {
   bool projectLoaded = false;
   if (engine_bootstrap::platform::ShouldAttemptProjectLoad(effectivePath)) {
     if (gameConfig.LoadConfigFromFile(effectivePath)) {
-      gameConfig.LoadUserPreferences();
       engine_bootstrap::editor::OnProjectLoaded(*registry_, effectivePath);
       projectLoaded = true;
     } else {
@@ -345,8 +344,7 @@ void Game::Destroy() {
     // GameConfig is only Set once Initialize gets past subsystem init; a failed Initialize
     // (e.g. SDL_Init with no video device) tears down here with the singleton absent, so guard
     // against it rather than throwing out of Destroy.
-    if (auto* gameConfig = registry_->TryGet<GameConfig>()) {
-      gameConfig->SaveUserPreferences();
+    if (registry_->TryGet<GameConfig>() != nullptr) {
       // Persist editor prefs (audio + per-project layout); no-op in player builds.
       engine_bootstrap::editor::SaveOnShutdown(*registry_);
     }

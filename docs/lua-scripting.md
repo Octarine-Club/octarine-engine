@@ -28,12 +28,10 @@ MyGame/
 
 ## 2. Configuration (`config.ini`)
 
-The `config.ini` file defines the game's metadata and initial window settings.
+The `config.ini` file defines the game's initial window settings and engine options.
 
 ```ini
 Title=My Awesome Game
-Version=1.0.0
-Author=Developer Name
 StartupScript=game.lua
 DefaultWindowWidth=1280
 DefaultWindowHeight=720

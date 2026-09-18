@@ -1,19 +1,28 @@
 #pragma once
 
-#ifdef OCTARINE_WITH_EDITOR
+#ifndef OCTARINE_SHIPPED
+
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+
+#if defined(__ANDROID__) || defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS) || \
+    (defined(__APPLE__) && defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+#define OCTARINE_PLATFORM_MOBILE 1
+#endif
 
 #include <array>
 #include <string>
 #include <utility>
 
-// Editor-only persistent state. Lives outside GameConfig so the player build
-// neither carries these fields nor reads/writes their files.
+// Persistent state for development sessions (editor and dev player). Compiled out of shipped builds
+// (OCTARINE_SHIPPED) so shipping releases never read or write local project preference files.
 //
 // Two stores:
 //   * Global  — SDL pref dir / "editor_settings.ini": which project to reopen,
 //               font size, theme. Survives across projects.
-//   * Project — "<project>/editor_prefs.ini": per-project window layout,
-//               last-open scene. Travels with the project.
+//   * Project — "<project>/editor_prefs.ini": per-project window layout and debug toggles.
+//               Travels with the project during development.
 struct EditorPersistence {
   // Global
   std::string lastProjectPath;
@@ -47,6 +56,10 @@ struct EditorPersistence {
   bool showExportOutput = false;
   bool showSigningSettings = false;
   bool showDevices = false;
+  bool showDebugGUI = false;
+  bool drawColliders = false;
+  bool showFpsCounter = true;
+  bool showEntityInfo = false;
 
   // Single source of truth for persisted window-visibility flags. Both the project-prefs
   // serializer (EditorPersistence.cpp) and the layout-preset serializer (EditorLayoutPresets.cpp)
@@ -78,4 +91,4 @@ struct EditorPersistence {
 // hand edits). Returns false when the line has no '='.
 bool ParseIniLine(const std::string& line, std::string& key, std::string& value);
 
-#endif  // OCTARINE_WITH_EDITOR
+#endif  // OCTARINE_SHIPPED

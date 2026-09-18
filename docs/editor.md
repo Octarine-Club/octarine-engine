@@ -180,9 +180,8 @@ Live-editable runtime knobs:
 - Audio Enabled, Master Volume slider
 - Pause Execution, Step Frame, Time Scale slider
 
-These mutate `EngineOptions` directly; values are persisted via
-`GameConfig::SaveUserPreferences` (File → Save Preferences) and auto-saved on
-exit.
+These mutate `EngineOptions` directly; values are persisted per-project via
+`<project>/editor_prefs.ini` (File → Save Preferences) and auto-saved on exit.
 
 ### Editor Settings
 
@@ -309,7 +308,7 @@ The editor maintains two stores, both INI-keyed text:
 | Scope | File | Keys |
 |-------|------|------|
 | Global | `SDL_GetPrefPath("Octarine","Engine")/editor_settings.ini` | `lastProjectPath`, `editorFontSize`, `editorStyleIndex`, `audioMuted`, `masterVolume` |
-| Per-project | `<project>/editor_prefs.ini` | `currentScenePath` and every `show*` window-visibility flag |
+| Per-project | `<project>/editor_prefs.ini` | `currentScenePath`, debug overlay flags (`showDebugGUI`, `drawColliders`, `showFpsCounter`, `showEntityInfo`), and every `show*` window-visibility flag |
 
 `SDL_GetPrefPath` resolves to:
 

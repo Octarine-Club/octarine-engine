@@ -1,6 +1,6 @@
 #include "EditorPersistence.h"
 
-#ifdef OCTARINE_WITH_EDITOR
+#ifndef OCTARINE_SHIPPED
 
 #include <SDL3/SDL_filesystem.h>
 
@@ -26,6 +26,35 @@ std::string ProjectPath(const std::string& projectAssetPath) {
   if (projectAssetPath.empty()) return {};
   return projectAssetPath + "/" + kProjectFileName;
 }
+
+void ApplyProjectSetting(EditorPersistence& prefs, const std::string& key, const std::string& value) {
+  if (key == "currentScenePath") {
+    prefs.currentScenePath = value;
+    return;
+  }
+  if (key == "showDebugGUI") {
+    prefs.showDebugGUI = (value == "true");
+    return;
+  }
+  if (key == "drawColliders") {
+    prefs.drawColliders = (value == "true");
+    return;
+  }
+  if (key == "showFpsCounter") {
+    prefs.showFpsCounter = (value == "true");
+    return;
+  }
+  if (key == "showEntityInfo") {
+    prefs.showEntityInfo = (value == "true");
+    return;
+  }
+  for (const auto& [flagKey, member] : EditorPersistence::kWindowFlags) {
+    if (key == flagKey) {
+      prefs.*member = (value == "true");
+      return;
+    }
+  }
+}
 }  // namespace
 
 bool ParseIniLine(const std::string& line, std::string& key, std::string& value) {
@@ -41,6 +70,9 @@ bool ParseIniLine(const std::string& line, std::string& key, std::string& value)
 }
 
 void EditorPersistence::SaveGlobal() const {
+#ifdef OCTARINE_PLATFORM_MOBILE
+  return;
+#else
   const auto path = GlobalPath();
   if (path.empty()) {
     Logger::Error("Failed to resolve editor global pref path: " + std::string(SDL_GetError()));
@@ -58,9 +90,13 @@ void EditorPersistence::SaveGlobal() const {
   file << "editorStyleIndex=" << editorStyleIndex << "\n";
   file << "audioMuted=" << (audioMuted ? "true" : "false") << "\n";
   file << "masterVolume=" << masterVolume << "\n";
+#endif
 }
 
 void EditorPersistence::LoadGlobal() {
+#ifdef OCTARINE_PLATFORM_MOBILE
+  return;
+#else
   const auto path = GlobalPath();
   if (path.empty()) return;
 
@@ -94,9 +130,16 @@ void EditorPersistence::LoadGlobal() {
       }
     }
   }
+#endif
 }
 
 void EditorPersistence::SaveProject(const std::string& projectAssetPath) const {
+#ifdef OCTARINE_PLATFORM_MOBILE
+  // On iOS and Android, assets live in read-only bundles/APKs. Suppress writing editor_prefs.ini
+  // to avoid disk write errors on mobile devices.
+  (void)projectAssetPath;
+  return;
+#else
   const auto path = ProjectPath(projectAssetPath);
   if (path.empty()) return;
 
@@ -110,9 +153,18 @@ void EditorPersistence::SaveProject(const std::string& projectAssetPath) const {
   for (const auto& [key, member] : kWindowFlags) {
     file << key << "=" << (this->*member ? "true" : "false") << "\n";
   }
+  file << "showDebugGUI=" << (showDebugGUI ? "true" : "false") << "\n";
+  file << "drawColliders=" << (drawColliders ? "true" : "false") << "\n";
+  file << "showFpsCounter=" << (showFpsCounter ? "true" : "false") << "\n";
+  file << "showEntityInfo=" << (showEntityInfo ? "true" : "false") << "\n";
+#endif
 }
 
 void EditorPersistence::LoadProject(const std::string& projectAssetPath) {
+#ifdef OCTARINE_PLATFORM_MOBILE
+  (void)projectAssetPath;
+  return;
+#else
   const auto path = ProjectPath(projectAssetPath);
   if (path.empty()) return;
 
@@ -123,19 +175,11 @@ void EditorPersistence::LoadProject(const std::string& projectAssetPath) {
   std::string key;
   std::string value;
   while (std::getline(file, line)) {
-    if (!ParseIniLine(line, key, value)) continue;
-
-    if (key == "currentScenePath") {
-      currentScenePath = value;
-      continue;
-    }
-    for (const auto& [flagKey, member] : kWindowFlags) {
-      if (key == flagKey) {
-        this->*member = (value == "true");
-        break;
-      }
+    if (ParseIniLine(line, key, value)) {
+      ApplyProjectSetting(*this, key, value);
     }
   }
+#endif
 }
 
-#endif  // OCTARINE_WITH_EDITOR
+#endif  // OCTARINE_SHIPPED
