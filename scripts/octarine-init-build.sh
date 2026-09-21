@@ -83,10 +83,13 @@ target="$out_dir/build-android.sh"
 if write_if "$target"; then
   cat > "$target" <<EOF
 #!/usr/bin/env bash
-# Build the Android AAB (release) or APK (debug) for $name.
+# [Experimental] Build the Android AAB (release) or APK (debug) for $name.
 # Calls the engine repo's gradlew with -Poctarine.projectDir pointing at this project.
-# Mirrors .github/workflows/android.yml. Signing creds come from env (never project.ini).
+# Note: Android shipping build support is experimental and work-in-progress.
+# Signing creds come from env (never project.ini).
 set -euo pipefail
+
+echo "[Octarine] Warning: Android shipping build support is experimental (work-in-progress)." >&2
 
 here="\$(cd "\$(dirname "\$0")" && pwd)"
 project_dir="\$(cd "\$here/.." && pwd)"
@@ -133,7 +136,8 @@ fi
 target="$out_dir/build-android.ps1"
 if write_if "$target"; then
   cat > "$target" <<EOF
-# Build the Android AAB (release) or APK (debug) for $name.
+# [Experimental] Build the Android AAB (release) or APK (debug) for $name.
+# Note: Android shipping build support is experimental and work-in-progress.
 # Parity with build-android.sh.
 [CmdletBinding()]
 param(
@@ -141,6 +145,7 @@ param(
   [Parameter(ValueFromRemainingArguments=\$true)][string[]]\$Extra
 )
 \$ErrorActionPreference = 'Stop'
+Write-Warning "[Octarine] Android shipping build support is experimental (work-in-progress)."
 
 \$here = Split-Path -Parent \$MyInvocation.MyCommand.Path
 \$projectDir = (Resolve-Path (Join-Path \$here '..')).Path

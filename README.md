@@ -51,6 +51,7 @@ The engine uses **CMake Presets** to manage different build configurations. The 
 - **Player (Dev, live-scan):** Minimal, optimized dev player runtime without ImGui (`player-release`).
 - **Profile:** Optimized player with performance instrumentation (`spdlog` timers) enabled (`player-profile`).
 - **Editor [Experimental]:** The C++ editor (`OCTARINE_WITH_EDITOR`) is currently experimental and disabled by default. Active game development uses Lua-based ImGui debug tools (`onDebugGUI`) instead.
+- **Mobile Shipping (Android / iOS) [Experimental]:** Shipping build support for Android and iOS is experimental and deferred into the future. Current engine development and production shipping workflows target desktop platforms (Windows, Linux, macOS).
 
 ### Build Commands
 
@@ -77,7 +78,7 @@ cmake --build --preset player-profile
 
 The compiled binaries will be located in `build/[preset-name]/bin/`.
 
-For producing shippable artifacts (Windows ZIP/NSIS, Linux TGZ, macOS DMG, Android APK/AAB)
+For producing shippable desktop artifacts (Windows ZIP/NSIS, Linux TGZ, macOS DMG; Android and iOS shipping support is experimental)
 see [`docs/device-builds.md`](docs/device-builds.md). Shipping config is the `ship-release`
 preset (and `ship-mac-universal` for universal macOS).
 

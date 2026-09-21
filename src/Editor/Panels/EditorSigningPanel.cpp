@@ -59,6 +59,7 @@ void DrawSigningSettingsWindow(bool* p_open) {
     return octarine::secrets::Get(key).has_value() ? "(stored)" : "(empty)";
   };
 
+  ImGui::TextDisabled("Android-release signing credentials [Experimental]");
   ImGui::TextWrapped(
       "Android-release signing credentials. Stored via the OS secret backend (DPAPI on Windows, "
       "Keychain on macOS) and injected into the build subprocess as OCTARINE_ANDROID_* env vars.");

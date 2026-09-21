@@ -49,7 +49,7 @@
       "name": "ship-release",
       "inherits": "base",
       "displayName": "Ship (Shipping, manifest-load)",
-      "description": "Shippable artifact: no editor/ImGui/profiling, loads the baked asset_manifest.lua (no FS scan). Canonical desktop shipping config; Android reaches the same state via the if(ANDROID) block in CMakeLists.txt.",
+      "description": "Shippable artifact: no editor/ImGui/profiling, loads the baked asset_manifest.lua (no FS scan). Canonical desktop shipping config; mobile (Android/iOS) shipping build support is experimental / work-in-progress.",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "OCTARINE_ENABLE_PROFILING": "OFF",

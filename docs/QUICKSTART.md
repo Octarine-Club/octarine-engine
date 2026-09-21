@@ -120,6 +120,6 @@ CI (`.github/workflows/build.yml`) runs both on the Linux player-debug leg on ev
 - [`docs/tilemaps.md`](tilemaps.md) — what the scene `tilemap` field does (and doesn't) today
 - [`docs/asset-pipeline.md`](asset-pipeline.md) — `.meta` sidecars, bake step, atlases, audio normalize
 - [`docs/profiling.md`](profiling.md) — profiling build, PerfUtils, benchmarks, the perf dashboard
-- [`docs/device-builds.md`](device-builds.md) — shipping artifacts for desktop and Android
+- [`docs/device-builds.md`](device-builds.md) — shipping artifacts for desktop (and experimental Android/iOS)
 - [`docs/commenting-guide.md`](commenting-guide.md) — code commenting philosophy and guidelines
 - `lua_api.smoke.lua` — generated, exhaustive reference for the live Lua surface

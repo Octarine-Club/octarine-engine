@@ -158,8 +158,8 @@ benchmark harness.
 | Platform | Commit it? |
 |----------|------------|
 | Desktop dev | No. Dev runs scan; manifest is regenerated at package time. |
-| Android | **Yes** — or pass `-Poctarine.bakeExe=<host binary>` so Gradle re-bakes during the APK build. The cross-compiled engine binary can't run on the build host, so Gradle can't bake at package time. Most projects commit. |
-| iOS | (Parked on `defer/ios`.) Same constraint as Android once it reattaches. |
+| Android (experimental) | **Yes** — or pass `-Poctarine.bakeExe=<host binary>` so Gradle re-bakes during the APK build. The cross-compiled engine binary can't run on the build host, so Gradle can't bake at package time. Most projects commit. |
+| iOS (deferred) | (Parked on `defer/ios`.) Same constraint as Android once it reattaches. |
 
 The `--use-manifest` CLI flag forces a non-shipped engine binary to load
 the manifest path instead of scanning. Useful for verifying the

@@ -259,7 +259,7 @@ void DrawDevicesWindow(Game* game, bool* p_open) {
       ImGui::TableSetColumnIndex(0);
       ImGui::TextDisabled("No Android devices connected");
       ImGui::TableSetColumnIndex(1);
-      ImGui::TextDisabled("Android");
+      ImGui::TextDisabled("Android [Experimental]");
     }
 
     for (std::size_t i = 0; i < g_adbDevices.size(); ++i) {
@@ -281,7 +281,7 @@ void DrawDevicesWindow(Game* game, bool* p_open) {
       }
 
       ImGui::TableSetColumnIndex(1);
-      ImGui::TextDisabled("Android");
+      ImGui::TextDisabled("Android [Experimental]");
 
       ImGui::TableSetColumnIndex(2);
       if (dev.IsReady()) {

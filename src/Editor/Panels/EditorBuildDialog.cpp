@@ -38,8 +38,8 @@ void DrawBuildDialogs(Game* game, bool openSaveLayoutModal, bool openExportBuild
 
     constexpr const char* kTargetLabels[] = {
         "Desktop (host OS, ship-release)",
-        "Android (debug APK)",
-        "Android (release AAB)",
+        "Android (debug APK) [Experimental]",
+        "Android (release AAB) [Experimental]",
     };
     const auto targetForIdx = [](int idx) {
       switch (idx) {
@@ -76,6 +76,10 @@ void DrawBuildDialogs(Game* game, bool openSaveLayoutModal, bool openExportBuild
     if (ImGui::Combo("Target", &targetIdx, kTargetLabels, IM_ARRAYSIZE(kTargetLabels))) {
       validationErrors =
           octarine::editor::ExportBuilder::Validate(std::filesystem::path(projectDir), targetForIdx(targetIdx));
+    }
+    if (targetIdx == 1 || targetIdx == 2) {
+      ImGui::TextColored(ImVec4(1.0F, 0.75F, 0.25F, 1.0F),
+                         "Notice: Android export is experimental (shipping support is deferred).");
     }
     ImGui::Separator();
 
