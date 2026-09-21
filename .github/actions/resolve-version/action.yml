@@ -9,9 +9,8 @@ description: |
   returns version_code=1 forever, silently breaking monotonic versioning on
   every release.
 
-  Used by package.yml, android.yml, ios-ipa.yml — every workflow that produces
-  a store-bound deliverable. Keep one copy so a future tag format change lands
-  in one place.
+  Used by package.yml and distribution packaging workflows. Keep one copy
+  so a future tag format change lands in one place.
 
 inputs:
   fallback-version-name:

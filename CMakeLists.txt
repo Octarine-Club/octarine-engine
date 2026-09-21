@@ -22,6 +22,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Engine features
 option(OCTARINE_WITH_EDITOR "Build with the experimental editor environment (work-in-progress)" OFF)
+option(OCTARINE_ENABLE_ANDROID "Build with experimental Android shipping support (work-in-progress)" OFF)
 option(OCTARINE_WITH_IMGUI "Build with Dear ImGui debug tools" ON)
 option(OCTARINE_ENABLE_PROFILING "Enable per-system performance instrumentation" OFF)
 option(OCTARINE_SHIPPED "Build a shipping artifact (loads baked asset manifest, skips filesystem scan)" OFF)
@@ -45,8 +46,13 @@ option(OCTARINE_ENABLE_TESTS "Build engine tests" OFF)
 # Platform Overrides & Constraints
 # =============================================================================
 
-# Android is always a shipping shared-library build (no editor or ImGui)
+# Android is an experimental shipping target (work-in-progress)
 if (ANDROID)
+    if (NOT OCTARINE_ENABLE_ANDROID)
+        message(WARNING "Octarine: Android shipping build support is experimental and work-in-progress. Pass -DOCTARINE_ENABLE_ANDROID=ON to acknowledge and enable.")
+    else ()
+        message(STATUS "Octarine: Android shipping build support is ENABLED [Experimental]")
+    endif ()
     set(OCTARINE_WITH_EDITOR OFF CACHE BOOL "Disabled on Android" FORCE)
     set(OCTARINE_WITH_IMGUI OFF CACHE BOOL "Disabled on Android" FORCE)
     set(OCTARINE_SHIPPED ON CACHE BOOL "Forced ON on Android (manifest loading, no filesystem scan)" FORCE)

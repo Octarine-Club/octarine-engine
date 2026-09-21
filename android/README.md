@@ -1,4 +1,10 @@
-# Android build
+# Android build (Experimental)
+
+> [!WARNING]
+> **Status: Experimental / Work-in-Progress**
+> Android shipping build support is currently experimental and deferred well into the future. Developers should not depend on Android shipping builds for active game releases. Active game development and production shipping workflows target desktop platforms (Windows, Linux, macOS).
+>
+> Automated CI workflows for Android have been removed from running until Android shipping is officially supported. Local builds can be triggered manually via Gradle as detailed below.
 
 Builds the example into an `.apk`/`.aab`. The engine cross-compiles to `libmain.so` (via CMake + the
 NDK, with SDL3 + deps resolved from a vcpkg android triplet); this Gradle host app (the SDL3 template)
@@ -271,15 +277,11 @@ Re-enable in `build.gradle` (or just keep `-Poctarine.minify=true` in your proje
 confirmed startup works on a real device for that project. Size win is modest (only the Java side
 shrinks; SDL3 + engine are in `libmain.so`, untouched).
 
-## CI
+## CI & Automation
 
-`.github/workflows/android.yml` builds the APK and AAB on every push/PR to `main` (and on demand) —
-the gate that any project still cross-compiles for Android. ubuntu runner: JDK 17, `sdkmanager`
-installs the pinned NDK + cmake, vcpkg android deps from the shared `x-gha` binary cache, then runs
-`gradlew assembleDebug` (debug APK) followed by `gradlew bundleRelease` (release AAB) against the
-example. Both artifacts upload. Build-only (no device/emulator). Release signing uses the
-`OCTARINE_ANDROID_*` secrets (see above) when set; otherwise falls back to the debug key so fork
-PRs still build a complete artifact.
+Automated CI workflows for Android have been removed from running while Android shipping build support is experimental (to prevent mobile builds from blocking day-to-day engine developments). Once Android support is stabilized and prioritized, CI workflows will be reinstated.
+
+Local builds remain functional via Gradle: release signing uses the `OCTARINE_ANDROID_*` env vars or property flags (see above) when set, falling back to the debug key.
 
 ## Status
 

@@ -5,8 +5,8 @@ description: |
   envs are set by the runner for the github-script action but not for
   shell-launched processes; the github-script step below copies them through.
 
-  Used by every workflow that runs `cmake --preset` against the vcpkg toolchain
-  (build.yml, package.yml, android.yml, ios.yml, ios-ipa.yml, benchmark.yml).
+  Used by workflows that run `cmake --preset` against the vcpkg toolchain
+  (build.yml, package.yml, benchmark.yml).
   Drift here would silently disable the binary cache and turn every PR into a
   cold vcpkg build — keep one copy.
 

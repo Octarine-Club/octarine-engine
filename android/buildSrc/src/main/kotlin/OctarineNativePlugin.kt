@@ -98,6 +98,7 @@ class OctarineNativePlugin : Plugin<Project> {
                 "-DVCPKG_TARGET_TRIPLET=$triplet",
                 "-DVCPKG_MANIFEST_MODE=ON",
                 "-DVCPKG_OVERLAY_PORTS=${ext.vcpkgOverlayPorts.get()}",
+                "-DOCTARINE_ENABLE_ANDROID=ON",
                 "-DCMAKE_BUILD_TYPE=Release",
             )
         }

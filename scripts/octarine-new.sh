@@ -69,7 +69,7 @@ fi
 mkdir -p "$dir/assets" "$dir/THIRD_PARTY_LICENSES.d"
 
 cat > "$dir/project.ini" <<EOF
-# Game identity for packaging. Read by desktop CPack, Android Gradle, iOS Info.plist (later).
+# Game identity for packaging. Read by desktop CPack (supported), Android Gradle (experimental), and iOS (deferred).
 # Single source of truth across every platform. Flat key=value, no sections.
 
 name           = ${name}

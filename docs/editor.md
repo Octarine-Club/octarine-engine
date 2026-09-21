@@ -273,12 +273,11 @@ Wraps the project's scaffolded build script
 
 The modal:
 
-- **Target**: Desktop (host OS, `ship-release` preset), Android (debug APK),
-  or Android (release AAB).
+- **Target**: Desktop (host OS, `ship-release` preset), or Android (debug APK / release AAB) [Experimental; shipping support deferred].
 - **Version name / Version code**: leave blank to fall through to
   `project.ini`.
 - For Android release, surfaces a reminder of the `OCTARINE_ANDROID_*` env
-  vars the build expects. Configure them via Signing Settings if a secret
+  vars the build expects. Configure them via Signing Settings [Experimental] if a secret
   backend is available, or set them in the shell that launches the editor.
 - **Re-validate** re-runs `ExportBuilder::Validate` (verifies project.ini and
   the target's build script exist).

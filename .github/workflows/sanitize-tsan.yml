@@ -3,7 +3,7 @@ name: Sanitize (TSan)
 # ThreadSanitizer leg of the sanitizer coverage. Targets the ThreadPool parallel paths
 # (parallel collision response, RegisterParallelSystem chunk fan-out) whose data races ASan
 # cannot see. TSan and ASan cannot be combined in one binary, and TSan's slowdown is too large
-# for every PR, so this runs nightly + on dispatch — same gating rationale as android-emulator.yml.
+# for every PR, so this runs nightly + on dispatch.
 # The per-PR ASan+UBSan job lives in build.yml.
 on:
   workflow_dispatch:

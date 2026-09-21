@@ -1,7 +1,13 @@
 # Device Builds
 
+> [!WARNING]
+> **Status: Android and iOS Shipping Support is Experimental / Work-in-Progress**
+> Shipping build support for Android and iOS is currently experimental and deferred well into the future. Developers should not depend on mobile shipping builds for production releases. Active game development and production shipping workflows target desktop platforms (Windows, Linux, macOS).
+>
+> Automated CI workflows for Android and iOS have been removed from running until mobile platforms are officially supported.
+
 End-to-end reference for producing shippable artifacts on every platform Octarine
-targets: Windows, Linux, macOS (per-arch and universal), and Android (APK + AAB).
+targets: Windows, Linux, macOS (per-arch and universal), and experimental Android (APK + AAB).
 (iOS work is parked on the `defer/ios` branch.)
 
 This document covers:
@@ -291,7 +297,7 @@ working NSIS install.
 
 ---
 
-## 6. Android — APK + AAB
+## 6. Android — APK + AAB [Experimental]
 
 ### Prerequisites
 
@@ -502,11 +508,10 @@ traits from `__cpp_noexcept_function_type` and breaks differently.
 
 ---
 
-## 7. iOS — parked
+## 7. iOS — parked [Experimental]
 
 iOS build target (`ship-ios-*` presets, `_octarine_setup_ios_bundle`,
-`scripts/build-ios-ipa.sh`, `os_log` sink, `.github/workflows/ios*.yml`,
-the `Settings.bundle` license pointer) is parked on the `defer/ios` branch
+`scripts/build-ios-ipa.sh`, `os_log` sink, the `Settings.bundle` license pointer) is parked on the `defer/ios` branch
 pending an Apple Developer account. Snapshot tag `ios-snapshot-2026-05-29`
 points at the last known-good commit.
 
@@ -517,11 +522,12 @@ points at the last known-good commit.
 | Workflow                    | Runner          | Triggers                                | Output                                         |
 |-----------------------------|-----------------|-----------------------------------------|------------------------------------------------|
 | `.github/workflows/package.yml`  | matrix (win/linux/mac/mac-universal) | dispatch + push to `main` + tags `v*` + PRs | per-OS ZIP/TGZ/DMG                |
-| `.github/workflows/android.yml`  | ubuntu-latest   | dispatch + push/PR to `main` + tags `v*` | debug APK + signed release AAB (multi-ABI)   |
+
+*(Mobile CI: Automated workflows for Android and iOS are removed from running while mobile shipping support is experimental to ensure day-to-day engine developments on desktop are not blocked.)*
 
 ### Common machinery
 
-All four workflows share:
+Workflows share:
 
 - `VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"` — vcpkg uses the GitHub
   Actions cache for binary artifacts. First-ever run for a new triplet is
@@ -543,17 +549,11 @@ install-time manifest bake inside CPack is the CI gate. macOS universal
 additionally `lipo -archs` the binary out of the mounted DMG to assert both
 slices made it through.
 
-### `android.yml`
+### Mobile CI (Deferred while Experimental)
 
-ubuntu runner: JDK 17, `android-actions/setup-android` + `sdkmanager`
-installs the pinned NDK + cmake. Builds debug APK (`assembleDebug`) and
-multi-ABI release AAB (`bundleRelease -Poctarine.abis=arm64-v8a,armeabi-v7a,x86_64`).
-The AAB step uses the GitHub-secret-driven keystore if available, else falls
-back to the debug key. A sanity step `unzip -l` the AAB and asserts
-`base/lib/<abi>/libmain.so` is present for every ABI.
+Automated Android CI workflows (`android.yml`, `android-emulator.yml`) and iOS workflows (`ios.yml`, `ios-ipa.yml` on `defer/ios`) are not active in GitHub Actions while mobile shipping support is experimental.
 
-(iOS CI legs — `ios.yml` simulator launch assertion + `ios-ipa.yml`
-unsigned device archive — live on `defer/ios`.)
+Local Android builds remain functional via Gradle under `android/` with `-DOCTARINE_ENABLE_ANDROID=ON` supplied by the host Gradle configuration.
 
 ---
 
@@ -712,14 +712,9 @@ cd android
 git tag v0.1.0 && git push --tags
 ```
 
-Tag push fires two workflows:
+Tag push fires the desktop release workflow:
 
 - `package.yml` — per-OS ZIP/TGZ/DMG + universal macOS DMG.
-- `android.yml` — debug APK + signed multi-ABI AAB (debug-key fallback
-  when the keystore secrets aren't wired).
-
-Drop the shipping artifacts into Steam / Play Store once distribution
-automation lands.
 
 ---
 
@@ -728,10 +723,10 @@ automation lands.
 | Concern                          | File                                                  |
 |----------------------------------|-------------------------------------------------------|
 | CMake presets                    | `CMakePresets.json`                                   |
-| Android shipping flag force      | `CMakeLists.txt` (`if (ANDROID)` block)               |
+| Android shipping support [Exp]   | `CMakeLists.txt` (`if (ANDROID)` block)               |
 | Desktop packaging                | `cmake/OctarinePackage.cmake`                         |
 | Icon / splash generator          | `scripts/octarine-icons.cmake`                        |
-| Android host app                 | `android/app/build.gradle`, `android/README.md`       |
+| Android host app [Exp]           | `android/app/build.gradle`, `android/README.md`       |
 | Asset bake mode                  | `Game::Bake` + `acquire_scene_assets` / `load_asset`  |
 | Manifest load gate               | `AssetCatalog::Build` (`allowManifest` parameter)     |
 | `project.ini` parsers            | `OctarinePackage.cmake` `octarine_read_project_ini`, `build.gradle` `identityProp` |

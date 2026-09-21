@@ -32,8 +32,8 @@ enum class ExportStatus {
 
 enum class ExportTarget {
   Desktop,         // host-OS via scripts/build-desktop.{sh,ps1}
-  AndroidDebug,    // assembleDebug via scripts/build-android.{sh,ps1} debug
-  AndroidRelease,  // bundleRelease via scripts/build-android.{sh,ps1} release
+  AndroidDebug,    // [Experimental] assembleDebug via scripts/build-android.{sh,ps1} debug
+  AndroidRelease,  // [Experimental] bundleRelease via scripts/build-android.{sh,ps1} release
 };
 
 struct ExportLogLine {

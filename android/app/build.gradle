@@ -5,7 +5,8 @@ plugins {
     id 'octarine-native'
 }
 
-// --- Octarine host app ---------------------------------------------------------------------------
+// --- Octarine host app [Experimental] ------------------------------------------------------------
+logger.warn('Octarine: Android shipping build support is experimental (work-in-progress). Do not depend on this functionality for production releases.')
 // Builds the engine as the native lib (libmain.so) via CMake + the NDK, resolving SDL3 + deps from a
 // vcpkg android triplet. SDLActivity dlopens libmain.so and jumps to SDL_main (src/Main.cpp's
 // <SDL3/SDL_main.h>). SDL3 is statically linked into libmain.so, so SDLActivity.getLibraries() loads
@@ -206,6 +207,7 @@ android {
                               "-DVCPKG_CHAINLOAD_TOOLCHAIN_FILE=${ndkToolchain}",
                               "-DVCPKG_TARGET_TRIPLET=${vcpkgTriplet}",
                               "-DVCPKG_MANIFEST_MODE=ON",
+                              "-DOCTARINE_ENABLE_ANDROID=ON",
                               // Overlay sol2 port patched for the NDK clang noexcept bug (LLVM #91362);
                               // see vcpkg-overlay-ports/sol2. Without it the engine won't compile.
                               "-DVCPKG_OVERLAY_PORTS=${rootDir}/vcpkg-overlay-ports"

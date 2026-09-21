@@ -75,10 +75,13 @@ function Expand-Template {
 
 $buildAndroidSh = @'
 #!/usr/bin/env bash
-# Build the Android AAB (release) or APK (debug) for @@NAME@@.
+# [Experimental] Build the Android AAB (release) or APK (debug) for @@NAME@@.
 # Calls the engine repo's gradlew with -Poctarine.projectDir pointing at this project.
-# Mirrors .github/workflows/android.yml. Signing creds come from env (never project.ini).
+# Note: Android shipping build support is experimental and work-in-progress.
+# Signing creds come from env (never project.ini).
 set -euo pipefail
+
+echo "[Octarine] Warning: Android shipping build support is experimental (work-in-progress)." >&2
 
 here="$(cd "$(dirname "$0")" && pwd)"
 project_dir="$(cd "$here/.." && pwd)"
@@ -119,13 +122,15 @@ fi
 '@
 
 $buildAndroidPs1 = @'
-# Build the Android AAB (release) or APK (debug) for @@NAME@@.
+# [Experimental] Build the Android AAB (release) or APK (debug) for @@NAME@@.
+# Note: Android shipping build support is experimental and work-in-progress.
 [CmdletBinding()]
 param(
   [ValidateSet('release','debug')][string]$Mode = 'release',
   [Parameter(ValueFromRemainingArguments=$true)][string[]]$Extra
 )
 $ErrorActionPreference = 'Stop'
+Write-Warning "[Octarine] Android shipping build support is experimental (work-in-progress)."
 
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectDir = (Resolve-Path (Join-Path $here '..')).Path
