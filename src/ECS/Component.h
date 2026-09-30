@@ -363,6 +363,8 @@ class Archetype {
 
  private:
   void CalculateLayout() {
+    constexpr size_t kCacheLineAlignment = 64;
+
     size_t entityComponentSize = sizeof(Entity);
     for (const auto& info : component_infos_) {
       entityComponentSize += info.size;
@@ -381,10 +383,14 @@ class Archetype {
     component_offsets_.resize(component_infos_.size());
     for (size_t i = 0; i < component_infos_.size(); ++i) {
       const auto& info = component_infos_[i];
+      if (info.size == 0) {
+        component_offsets_[i] = current_offset;
+        continue;
+      }
 
-      const size_t padding = info.alignment ? (info.alignment - (current_offset % info.alignment)) % info.alignment : 0;
+      const size_t align = std::max(info.alignment, kCacheLineAlignment);
+      const size_t padding = (align - (current_offset % align)) % align;
       current_offset += padding;
-
       component_offsets_[i] = current_offset;
       current_offset += chunk_capacity_ * info.size;
     }
@@ -395,8 +401,13 @@ class Archetype {
       current_offset = chunk_capacity_ * sizeof(Entity);
       for (size_t i = 0; i < component_infos_.size(); ++i) {
         const auto& info = component_infos_[i];
-        const size_t padding =
-            info.alignment ? (info.alignment - (current_offset % info.alignment)) % info.alignment : 0;
+        if (info.size == 0) {
+          component_offsets_[i] = current_offset;
+          continue;
+        }
+
+        const size_t align = std::max(info.alignment, kCacheLineAlignment);
+        const size_t padding = (align - (current_offset % align)) % align;
         current_offset += padding;
         component_offsets_[i] = current_offset;
         current_offset += chunk_capacity_ * info.size;
