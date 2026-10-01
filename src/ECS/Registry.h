@@ -233,11 +233,12 @@ class Registry {
     const auto componentEntity = Component<T>();
     const auto [archetype, chunkIndex, indexInChunk] = entity_locations_[id];
 
-    if (!archetype->HasComponent(componentEntity.GetId())) {
+    const auto compIdx = archetype->GetComponentIndex(componentEntity.GetId());
+    if (compIdx == Archetype::kInvalidComponentIndex) {
       throw std::runtime_error("Failed to get required component " + std::string(typeid(T).name()) + " for entity " +
                                std::to_string(entity.id));
     }
-    const auto componentArray = archetype->GetComponentArray<T>(chunkIndex, componentEntity.GetId());
+    const auto componentArray = archetype->GetComponentArrayByIndex<T>(chunkIndex, compIdx);
 
     if (componentArray == nullptr) {
       throw std::runtime_error("Failed to get required component " + std::string(typeid(T).name()) + " for entity " +

@@ -216,11 +216,10 @@ class Archetype {
       : archetype_id_(Internal::GetNextArchetypeID()), component_infos_(componentsInfo), chunk_capacity_(0) {
     archetype_type_.reserve(component_infos_.size());
 
-    // Sort component_infos_ by id so component_type_to_index_ matches archetype_type_ ordering.
+    // Sort component_infos_ by id so component ordering matches archetype_type_ ordering.
     std::ranges::sort(component_infos_, [](const ComponentInfo& a, const ComponentInfo& b) { return a.id < b.id; });
 
     for (size_t i = 0; i < component_infos_.size(); ++i) {
-      component_type_to_index_[component_infos_[i].id] = i;
       archetype_type_.push_back(component_infos_[i].id);
     }
 
@@ -306,23 +305,41 @@ class Archetype {
     return result;
   }
 
-  [[nodiscard]] bool HasComponent(const ComponentID id) const { return component_type_to_index_.contains(id); }
+  static constexpr size_t kInvalidComponentIndex = static_cast<size_t>(-1);
+
+  [[nodiscard]] size_t GetComponentIndex(const ComponentID id) const {
+    for (size_t i = 0; i < archetype_type_.size(); ++i) {
+      if (archetype_type_[i] == id) return i;
+      if (archetype_type_[i] > id) break;
+    }
+    return kInvalidComponentIndex;
+  }
+
+  [[nodiscard]] bool HasComponent(const ComponentID id) const {
+    return GetComponentIndex(id) != kInvalidComponentIndex;
+  }
 
   template <typename T>
   void AddComponent(const EntityLocation& location, const Entity& componentEntity, const T& component) {
     AssertLocation(location);
     const auto id = componentEntity.GetId();
-    assert(HasComponent(id));
-    const auto index = component_type_to_index_[id];
+    const auto index = GetComponentIndex(id);
+    assert(index != kInvalidComponentIndex);
     chunks_[location.chunkIndex].AddComponent(component, component_offsets_[index], location.indexInChunk);
   }
 
   template <typename T>
-  T* GetComponentArray(const size_t chunkIndex, const ComponentID componentId) {
+  T* GetComponentArrayByIndex(const size_t chunkIndex, const size_t componentIndex) const {
     assert(chunkIndex < chunks_.size());
-    assert(HasComponent(componentId));
-    assert(component_type_to_index_.contains(componentId));
-    const auto index = component_type_to_index_[componentId];
+    assert(componentIndex < component_offsets_.size());
+    return static_cast<T*>(chunks_[chunkIndex].GetComponentArray(component_offsets_[componentIndex]));
+  }
+
+  template <typename T>
+  T* GetComponentArray(const size_t chunkIndex, const ComponentID componentId) const {
+    assert(chunkIndex < chunks_.size());
+    const auto index = GetComponentIndex(componentId);
+    assert(index != kInvalidComponentIndex);
     return static_cast<T*>(chunks_[chunkIndex].GetComponentArray(component_offsets_[index]));
   }
 
@@ -336,10 +353,10 @@ class Archetype {
     auto& destChunk = chunks_[destinationLocation.chunkIndex];
 
     for (const ComponentID id : sourceType) {
-      const auto destIt = this->component_type_to_index_.find(id);
-      if (destIt == this->component_type_to_index_.end()) continue;
-      const auto destTypeIndex = destIt->second;
-      const auto sourceTypeIndex = sourceLocation.archetype->component_type_to_index_.at(id);
+      const auto destTypeIndex = GetComponentIndex(id);
+      if (destTypeIndex == kInvalidComponentIndex) continue;
+      const auto sourceTypeIndex = sourceLocation.archetype->GetComponentIndex(id);
+      assert(sourceTypeIndex != kInvalidComponentIndex);
       const auto& info = this->component_infos_[destTypeIndex];
       if (info.size == 0) continue;  // tag — nothing to copy
 
@@ -363,6 +380,8 @@ class Archetype {
 
  private:
   void CalculateLayout() {
+    constexpr size_t kCacheLineAlignment = 64;
+
     size_t entityComponentSize = sizeof(Entity);
     for (const auto& info : component_infos_) {
       entityComponentSize += info.size;
@@ -381,10 +400,14 @@ class Archetype {
     component_offsets_.resize(component_infos_.size());
     for (size_t i = 0; i < component_infos_.size(); ++i) {
       const auto& info = component_infos_[i];
+      if (info.size == 0) {
+        component_offsets_[i] = current_offset;
+        continue;
+      }
 
-      const size_t padding = info.alignment ? (info.alignment - (current_offset % info.alignment)) % info.alignment : 0;
+      const size_t align = std::max(info.alignment, kCacheLineAlignment);
+      const size_t padding = (align - (current_offset % align)) % align;
       current_offset += padding;
-
       component_offsets_[i] = current_offset;
       current_offset += chunk_capacity_ * info.size;
     }
@@ -395,8 +418,13 @@ class Archetype {
       current_offset = chunk_capacity_ * sizeof(Entity);
       for (size_t i = 0; i < component_infos_.size(); ++i) {
         const auto& info = component_infos_[i];
-        const size_t padding =
-            info.alignment ? (info.alignment - (current_offset % info.alignment)) % info.alignment : 0;
+        if (info.size == 0) {
+          component_offsets_[i] = current_offset;
+          continue;
+        }
+
+        const size_t align = std::max(info.alignment, kCacheLineAlignment);
+        const size_t padding = (align - (current_offset % align)) % align;
         current_offset += padding;
         component_offsets_[i] = current_offset;
         current_offset += chunk_capacity_ * info.size;
@@ -415,7 +443,6 @@ class Archetype {
   ArchetypeType archetype_type_;
   std::vector<ComponentInfo> component_infos_;
   std::vector<size_t> component_offsets_;
-  std::unordered_map<ComponentID, size_t> component_type_to_index_;
   std::vector<Chunk> chunks_;
   size_t chunk_capacity_;
   size_t first_non_full_chunk_ = 0;
