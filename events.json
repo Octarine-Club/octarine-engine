@@ -38,13 +38,13 @@
       "emit_sites": [
         {
           "file": "src/Systems/CollisionSystem.h",
-          "line": 231
+          "line": 230
         }
       ],
       "subscribe_sites": [
         {
           "file": "src/Systems/DamageSystem.h",
-          "line": 21,
+          "line": 20,
           "owner": "DamageSystem"
         },
         {
@@ -67,7 +67,7 @@
       "emit_sites": [
         {
           "file": "src/Systems/CollisionSystem.h",
-          "line": 232
+          "line": 231
         }
       ],
       "subscribe_sites": [

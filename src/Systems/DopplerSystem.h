@@ -12,7 +12,6 @@
 #include "Components/AudioSourceComponent.h"
 #include "Components/GlobalTransformComponent.h"
 #include "Components/RigidBodyComponent.h"
-#include "ECS/Iterable.h"
 #include "ECS/Registry.h"
 
 // Per-emitter system: applies Doppler shift via MIX_SetTrackFrequencyRatio. Registered on

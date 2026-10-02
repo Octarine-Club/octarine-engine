@@ -2,10 +2,9 @@
 
 #include <any>
 #include <array>
-#include <atomic>
-#include <cstring>
 #include <memory>
 #include <optional>
+#include <ranges>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -28,8 +27,6 @@ class Query;
 template <typename... TComponents>
 class ComponentQuery;
 
-class Iterable;
-
 class ComponentRegistry {
  public:
   template <typename T>
@@ -39,7 +36,7 @@ class ComponentRegistry {
     if constexpr (std::is_move_constructible_v<T>) {
       info.move_construct = [](void* dst, void* src) { ::new (dst) T(std::move(*static_cast<T*>(src))); };
     } else {
-      info.move_construct = [](void* dst, void* src) { std::memcpy(dst, src, sizeof(T)); };
+      info.move_construct = [](void* dst, const void* src) { std::memcpy(dst, src, sizeof(T)); };
     }
     info.destroy = [](void* ptr) { static_cast<T*>(ptr)->~T(); };
     if constexpr (std::is_swappable_v<T>) {
@@ -55,7 +52,7 @@ class ComponentRegistry {
   }
 
   // Registers a zero-sized tag component.
-  void RegisterTag(const ComponentID id, std::string name) {
+  void RegisterTag(const ComponentID id, const std::string& name) {
     ComponentInfo info{id, name, 0, 1};
     info.move_construct = [](void*, void*) {};
     info.destroy = [](void*) {};
@@ -180,7 +177,7 @@ class Registry {
   }
 
   template <typename T>
-  Entity Component() const {
+  [[nodiscard]] Entity Component() const {
     std::type_index type_idx(typeid(T));
     if (auto it = type_to_entity_.find(type_idx); it != type_to_entity_.end()) {
       return it->second;
@@ -308,7 +305,6 @@ class Registry {
 
   // Registers a system running per-entity callbacks in parallel across chunks on ThreadPool.
   template <typename... TArgs, typename Func>
-  // NOLINTNEXTLINE(readability-function-cognitive-complexity)
   SystemHandle<std::decay_t<Func>> RegisterParallelSystem(Func&& func) {
     using StoredFunc = std::decay_t<Func>;
     static_assert(std::is_invocable_v<StoredFunc, Entity, float, TArgs&...> ||
@@ -333,43 +329,26 @@ class Registry {
           func_.Prepare(registry_);
         }
 
-        if constexpr (std::is_invocable_v<StoredFunc, Entity, float, TArgs&...> ||
-                      std::is_invocable_v<StoredFunc, Entity, TArgs&...>) {
-          query_->ParallelForEach([this, dt](Entity entity, TArgs&... args) {
-            (void)dt;
-            if constexpr (std::is_invocable_v<StoredFunc, Entity, float, TArgs&...>) {
-              func_(entity, dt, args...);
-            } else if constexpr (std::is_invocable_v<StoredFunc, Entity, TArgs&...>) {
-              func_(entity, args...);
-            } else {
-              static_assert(!std::is_same_v<Func, Func>,
-                            "The function passed to ForEach does not match the required signatures. "
-                            "Expected one of: void(Entity, T&...), void(Entity, float, T&...).");
-            }
-          });
-        } else if constexpr (std::is_invocable_v<StoredFunc, float, TArgs&...> ||
-                             std::is_invocable_v<StoredFunc, TArgs&...>) {
-          query_->ParallelForEach([this, dt](TArgs&... args) {
-            (void)dt;
-            if constexpr (std::is_invocable_v<StoredFunc, float, TArgs&...>) {
-              func_(dt, args...);
-            } else if constexpr (std::is_invocable_v<StoredFunc, TArgs&...>) {
-              func_(args...);
-            } else {
-              static_assert(!std::is_same_v<Func, Func>,
-                            "The function passed to ForEach does not match the required signatures. "
-                            "Expected one of: void(float, T&...), void(T&...).");
-            }
-          });
-        } else {
-          static_assert(
-              !std::is_same_v<Func, Func>,
-              "The function passed to ForEach does not match the required signatures. "
-              "Expected one of: void(Entity, T&...), void(Entity, float, T&...), void(float, T&...), void(T&...).");
-        }
+        DispatchParallel(dt);
 
         if constexpr (requires { func_.GetCommandBuffer(); }) {
           func_.GetCommandBuffer().Playback(registry_);
+        }
+      }
+
+      void DispatchParallel(float dt) {
+        if constexpr (std::is_invocable_v<StoredFunc, Entity, float, TArgs&...>) {
+          query_->ParallelForEach([this, dt](Entity entity, TArgs&... args) { func_(entity, dt, args...); });
+        } else if constexpr (std::is_invocable_v<StoredFunc, Entity, TArgs&...>) {
+          query_->ParallelForEach([this](Entity entity, TArgs&... args) { func_(entity, args...); });
+        } else if constexpr (std::is_invocable_v<StoredFunc, float, TArgs&...>) {
+          query_->ParallelForEach([this, dt](TArgs&... args) { func_(dt, args...); });
+        } else if constexpr (std::is_invocable_v<StoredFunc, TArgs&...>) {
+          query_->ParallelForEach([this](TArgs&... args) { func_(args...); });
+        } else {
+          static_assert(!std::is_same_v<StoredFunc, StoredFunc>,
+                        "RegisterParallelSystem func must match void(Entity, float, TArgs&...), "
+                        "void(Entity, TArgs&...), void(float, TArgs&...), or void(TArgs&...).");
         }
       }
 
@@ -388,7 +367,7 @@ class Registry {
     return SystemHandle<StoredFunc>(id, &ref);
   }
 
-  // Registers a system invoked once per Update with matching Iterable.
+  // Registers a system invoked once per Update with a ContextFacade for registry access.
   template <typename... TArgs, typename Func>
   SystemHandle<std::decay_t<Func>> RegisterBulkSystem(Func&& func) {
     using StoredFunc = std::decay_t<Func>;
@@ -403,11 +382,9 @@ class Registry {
         query_->Update();
         auto* registryPtr = const_cast<Registry*>(&registry);
         const float dt = registry.delta_time_;
-        query_->Iterate([this, registryPtr, dt](const Iterable& iter) {
-          Internal::BulkContextImpl bulkCtx(registryPtr, dt);
-          ContextFacade ctx(&bulkCtx);
-          func_(ctx, iter);
-        });
+        Internal::BulkContextImpl bulkCtx(registryPtr, dt);
+        ContextFacade ctx(&bulkCtx);
+        func_(ctx);
       }
 
       StoredFunc& GetFunc() { return func_; }
@@ -594,7 +571,7 @@ class Registry {
   // descent without scanning the whole world for parentless entities.
   template <typename F>
   void ForEachHierarchyRoot(F&& func) const {
-    for (const auto& [parentId, children] : parent_to_children_) {
+    for (const auto& parentId : parent_to_children_ | std::views::keys) {
       if (!child_to_parent_.contains(parentId)) {
         func(Entity{parentId});
       }

@@ -1,9 +1,64 @@
 #pragma once
 #include <algorithm>
+#include <array>
+#include <tuple>
 
+#include "ArchetypeQuery.h"
 #include "General/PerfUtils.h"
-#include "Iterable.h"
 #include "Registry.h"
+
+namespace Internal {
+
+template <typename... TComponents>
+class ContextImpl final : public AnyContext {
+ public:
+  ContextImpl(Registry* registry, const float dt)
+      : registry_(registry), dt_(dt), ids_{registry->Component<Internal::unwrap_opt_t<TComponents>>().GetId()...} {}
+
+  void Update(const Entity entity, std::tuple<Internal::resolve_yield_t<TComponents>...> components) {
+    entity_ = entity;
+    components_ = std::apply(
+        []<typename... T0>(T0&&... comps) {
+          return std::make_tuple([&]() {
+            if constexpr (std::is_pointer_v<std::remove_reference_t<T0>>) {
+              return comps;
+            } else {
+              return &comps;
+            }
+          }()...);
+        },
+        components);
+  }
+
+  [[nodiscard]] Entity GetEntity() const override { return entity_; }
+  [[nodiscard]] Registry* GetRegistry() const override { return registry_; }
+  [[nodiscard]] float GetDeltaTime() const override { return dt_; }
+
+  void* GetComponentPtr(EntityID id) override {
+    void* ptr = nullptr;
+    size_t i = 0;
+    auto check = [&]<typename T0>(T0* component) {
+      if (ptr) {
+        return;
+      }
+      if (ids_[i] == id) {
+        ptr = component;
+      }
+      ++i;
+    };
+    std::apply([&](auto... comps) { (check(comps), ...); }, components_);
+    return ptr;
+  }
+
+ private:
+  Registry* registry_;
+  float dt_;
+  Entity entity_{};
+  std::tuple<Internal::unwrap_opt_t<TComponents>*...> components_;
+  std::array<ComponentID, sizeof...(TComponents)> ids_;
+};
+
+}  // namespace Internal
 
 class Query {
  public:
@@ -18,9 +73,6 @@ class Query {
 
   virtual void Update() = 0;
 };
-
-template <typename T>
-struct Opt {};  // marker only — never instantiated
 
 template <typename... TComponents>
 class ComponentQuery final : public Query {
@@ -42,7 +94,7 @@ class ComponentQuery final : public Query {
     if (cached_generation_ == UINT64_MAX) {
       matched_ = registry_->GetMatchingArchetypes(sorted_type_);
       if (!excluded_.empty()) {
-        std::erase_if(matched_, [&](Archetype* arch) { return IsExcluded(*arch); });
+        std::erase_if(matched_, [&](const Archetype* arch) { return IsExcluded(*arch); });
       }
     } else if (!sorted_type_.empty()) {
       // Incrementally test archetypes created since last update.
@@ -101,22 +153,7 @@ class ComponentQuery final : public Query {
                   std::is_invocable_v<Func, ContextFacade&, TComponents&...>) {
       ForEachWithFacade(std::forward<Func>(func));
     } else {
-      for (auto it = archetype_query_.begin(), endIt = archetype_query_.end(); it != endIt; ++it) {
-        std::apply(
-            [&](Entity e, auto&&... comps) {
-              if constexpr (std::is_invocable_v<Func, Entity, decltype(comps)...>) {
-                func(e, std::forward<decltype(comps)>(comps)...);
-              } else if constexpr (std::is_invocable_v<Func, decltype(comps)...>) {
-                func(std::forward<decltype(comps)>(comps)...);
-              } else {
-                static_assert(!std::is_same_v<Func, Func>,
-                              "The function passed to ForEach does not match the required signatures. "
-                              "Expected one of: void(ContextFacade&, Entity, T&...), void(ContextFacade&, T&...), "
-                              "void(Entity, T&..., U*...), or void(T&..., U*...).");
-              }
-            },
-            *it);
-      }
+      archetype_query_.ForEach(std::forward<Func>(func));
     }
   }
 
@@ -127,28 +164,25 @@ class ComponentQuery final : public Query {
     archetype_query_.ParallelForEach(std::forward<Func>(func), serialBelowEntities);
   }
 
-  template <typename Func>
-  void Iterate(Func&& func) {
-    func(CreateIterable());
-  }
-
   [[nodiscard]] size_t GetCount() const { return archetype_query_.GetTotalEntityCount(); }
 
  private:
-  // ContextFacade-based iteration doesn't easily support optional components yet (requires
-  // updating ContextFacade and IteratorImpl). For now, systems using Opt<T> must use the
-  // simpler void(Entity, T&, U*...) or void(T&, U*...) signatures.
+  // ContextFacade-based iteration doesn't support optional components yet. Systems using
+  // Opt<T> must use the simpler void(Entity, T&, U*...) or void(T&, U*...) signatures.
   template <typename Func>
   void ForEachWithFacade(Func&& func) {
     static_assert(!(... || Internal::is_optional_v<TComponents>),
                   "Optional components are not yet supported in ContextFacade-based ForEach.");
-    for (const auto iterable = CreateIterable(); auto&& context : iterable) {
+    Internal::ContextImpl<TComponents...> contextImpl(registry_, registry_->DeltaTime());
+    ContextFacade facade(&contextImpl);
+    archetype_query_.ForEach([&](Entity entity, TComponents&... comps) {
+      contextImpl.Update(entity, std::forward_as_tuple(comps...));
       if constexpr (std::is_invocable_v<Func, ContextFacade&, Entity, TComponents&...>) {
-        func(context, context.GetEntity(), context.template Component<TComponents>()...);
+        func(facade, entity, comps...);
       } else {
-        func(context, context.template Component<TComponents>()...);
+        func(facade, comps...);
       }
-    }
+    });
   }
 
   [[nodiscard]] bool IsExcluded(const Archetype& arch) const {
@@ -174,22 +208,8 @@ class ComponentQuery final : public Query {
     std::ranges::sort(sorted_type_);
   }
 
-  Iterable CreateIterable() {
-    // CreateIterable currently only works for required components because IteratorImpl is not
-    // yet optional-aware.
-    return Iterable(
-        [&] {
-          return AnyIterator(std::make_unique<Internal::IteratorImpl<TComponents...>>(
-              archetype_query_.begin(), registry_, registry_->DeltaTime()));
-        },
-        [&] {
-          return AnyIterator(std::make_unique<Internal::IteratorImpl<TComponents...>>(archetype_query_.end(), registry_,
-                                                                                      registry_->DeltaTime()));
-        });
-  }
-
   Registry* registry_;
-  ArchetypeType type_;               // user-pack order — used by ArchetypeQuery::Iterator
+  ArchetypeType type_;               // user-pack order — used by ArchetypeQuery::ForEach
   ArchetypeType sorted_type_;        // sorted ascending — used for archetype matching
   ArchetypeType extra_required_;     // additional ComponentIDs required (e.g., tag filters)
   ArchetypeType excluded_;           // ComponentIDs that disqualify an archetype

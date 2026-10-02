@@ -6,7 +6,7 @@
 
 class LifetimeSystem {
  public:
-  void operator()(const ContextFacade& ctx, const Iterable& /*iter*/) {
+  void operator()(const ContextFacade& ctx) {
     auto* registry = ctx.GetRegistry();
     const auto deltaTime = ctx.GetDeltaTime();
     EnsureInitialized(registry);

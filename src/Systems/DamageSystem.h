@@ -5,7 +5,6 @@
 
 #include "Components/HealthComponent.h"
 #include "Components/ProjectileComponent.h"
-#include "ECS/Iterable.h"
 #include "EventBus/EventBus.h"
 #include "Events/CollisionBatchEvent.h"
 #include "General/Constants.h"

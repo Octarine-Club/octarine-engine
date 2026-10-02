@@ -14,7 +14,6 @@
 #include "Components/EntityMaskComponent.h"
 #include "Components/GlobalTransformComponent.h"
 #include "ECS/Entity.h"
-#include "ECS/Iterable.h"
 #include "ECS/Query.h"
 #include "ECS/Registry.h"
 #include "Engine/EngineContext.h"
@@ -93,7 +92,7 @@ struct Partitions {
 
 class CollisionSystem {
  public:
-  void operator()(const ContextFacade& ctx, const Iterable& /*iter*/) {
+  void operator()(const ContextFacade& ctx) {
     // No scope timer here: Registry::Update already times this span as "CollisionSystem";
     // a second name for the same span double-counts on the benchmark dashboard.
     auto* registry = ctx.GetRegistry();

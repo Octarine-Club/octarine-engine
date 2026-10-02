@@ -18,7 +18,6 @@
 #include "Components/TextLabelComponent.h"
 #include "Components/UIRectComponent.h"
 #include "ECS/Entity.h"
-#include "ECS/Iterable.h"
 #include "ECS/Registry.h"
 #include "Engine/EngineContext.h"
 #include "Game/GameConfig.h"
