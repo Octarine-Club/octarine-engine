@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -24,38 +25,32 @@ class SystemHandle {
   StoredFunc* func_;
 };
 
-class ISystem {
- public:
-  virtual ~ISystem() = default;
-  virtual void Update(const Registry& registry) = 0;
+// Strips compiler typeid prefixes and mangling for profiler labels.
+inline std::string PrettifyTypeName(const char* raw) {
+  std::string_view sv(raw);
+  constexpr std::string_view kClass = "class ";
+  constexpr std::string_view kStruct = "struct ";
+  if (sv.starts_with(kClass))
+    sv.remove_prefix(kClass.size());
+  else if (sv.starts_with(kStruct))
+    sv.remove_prefix(kStruct.size());
 
-  [[nodiscard]] const std::string& GetName() const { return name_; }
-
- protected:
-  explicit ISystem(std::string name) : name_(std::move(name)) {}
-
-  // Strips compiler typeid prefixes and mangling for profiler labels.
-  static std::string PrettifyTypeName(const char* raw) {
-    std::string_view sv(raw);
-    constexpr std::string_view kClass = "class ";
-    constexpr std::string_view kStruct = "struct ";
-    if (sv.starts_with(kClass))
-      sv.remove_prefix(kClass.size());
-    else if (sv.starts_with(kStruct))
-      sv.remove_prefix(kStruct.size());
-
-    // Trim leading numbers (GCC/Clang typeid(T).name() often starts with length)
-    size_t firstNonDigit = 0;
-    while (firstNonDigit < sv.size() && std::isdigit(static_cast<unsigned char>(sv[firstNonDigit]))) {
-      firstNonDigit++;
-    }
-    if (firstNonDigit > 0) {
-      sv.remove_prefix(firstNonDigit);
-    }
-
-    return std::string(sv);
+  // Trim leading numbers (GCC/Clang typeid(T).name() often starts with length)
+  size_t firstNonDigit = 0;
+  while (firstNonDigit < sv.size() && std::isdigit(static_cast<unsigned char>(sv[firstNonDigit]))) {
+    firstNonDigit++;
+  }
+  if (firstNonDigit > 0) {
+    sv.remove_prefix(firstNonDigit);
   }
 
- private:
-  std::string name_;
+  return std::string(sv);
+}
+
+struct RegisteredSystem {
+  std::string name;
+  std::function<void(const Registry&)> update;
+
+  [[nodiscard]] const std::string& GetName() const { return name; }
+  void Update(const Registry& registry) const { update(registry); }
 };

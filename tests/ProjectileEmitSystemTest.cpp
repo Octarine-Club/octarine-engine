@@ -2,7 +2,7 @@
 //
 // Part 1 calls operator() directly (no Registry interaction) to verify the timer
 // arithmetic — the same approach as SystemLogicTest for VelocityIntegrationSystem.
-// A minimal TestContext stub is sufficient because the early-return (frequency <= 0)
+// A minimal ContextFacade stub is sufficient because the early-return (frequency <= 0)
 // and the decrement-only path (timer still positive) never touch the Registry.
 //
 // Part 2 needs the pool infrastructure (EntityPoolManager + Init) and uses a real
@@ -15,34 +15,14 @@
 
 #include "Components/PositionComponent.h"
 #include "Components/ProjectileEmitterComponent.h"
-#include "ECS/Context.h"  // AnyContext, ContextFacade, Internal::BulkContextImpl
-#include "ECS/Query.h"    // full ComponentQuery for RegisterPool's CreateEntityWithBundle
+#include "ECS/Context.h"
+#include "ECS/Query.h"
 #include "ECS/Registry.h"
 #include "Systems/EntityPoolSystem.h"
 #include "Systems/ProjectileEmitSystem.h"
 #include "TestHarness.h"
 
 using octarine::test::Check;
-
-namespace {
-
-// Minimal AnyContext for tests that need a real entity identity (spawn path).
-class TestContext final : public AnyContext {
- public:
-  TestContext(Registry* reg, const float dt, const Entity entity) : reg_(reg), dt_(dt), entity_(entity) {}
-
-  [[nodiscard]] Entity GetEntity() const override { return entity_; }
-  [[nodiscard]] Registry* GetRegistry() const override { return reg_; }
-  [[nodiscard]] float GetDeltaTime() const override { return dt_; }
-  void* GetComponentPtr(EntityID /*id*/) override { return nullptr; }
-
- private:
-  Registry* reg_;
-  float dt_;
-  Entity entity_;
-};
-
-}  // namespace
 
 int main() {
   // --- Part 1: timer arithmetic — no Registry interaction needed.
@@ -55,8 +35,7 @@ int main() {
     const PositionComponent pos{};
 
     Registry reg;
-    Internal::BulkContextImpl implCtx(&reg, 1.0f / 60.0f);
-    ContextFacade ctx(&implCtx);
+    ContextFacade ctx(&reg, 1.0f / 60.0f, nullptr, &Internal::BulkGetComponent);
 
     system(ctx, emitter, pos);
 
@@ -72,8 +51,7 @@ int main() {
     const PositionComponent pos{};
 
     Registry reg;
-    Internal::BulkContextImpl implCtx(&reg, 0.5f);
-    ContextFacade ctx(&implCtx);
+    ContextFacade ctx(&reg, 0.5f, nullptr, &Internal::BulkGetComponent);
 
     system(ctx, emitter, pos);
 
@@ -90,8 +68,7 @@ int main() {
     const PositionComponent pos{};
 
     Registry reg;
-    Internal::BulkContextImpl implCtx(&reg, 1.0f / 60.0f);
-    ContextFacade ctx(&implCtx);
+    ContextFacade ctx(&reg, 1.0f / 60.0f, nullptr, &Internal::BulkGetComponent);
 
     system(ctx, emitter, pos);
 
@@ -119,8 +96,8 @@ int main() {
     const PositionComponent pos{glm::vec2(100.0f, 200.0f)};
 
     // dt=0.05 → timer = 0.001 - 0.05 = −0.049 → fires.
-    TestContext testCtx{&reg, 0.05f, emitterEntity};
-    ContextFacade ctx{&testCtx};
+    ContextFacade ctx(&reg, 0.05f, nullptr, &Internal::BulkGetComponent);
+    ctx.SetEntity(emitterEntity);
 
     system(ctx, emitter, pos);
 
@@ -143,8 +120,8 @@ int main() {
     ProjectileEmitterComponent emitter{{100.0f, 0.0f}, 1.0f, 1.0f, 10};  // frequency=1.0
     const PositionComponent pos{};
 
-    TestContext testCtx{&reg, 0.5f, emitterEntity};
-    ContextFacade ctx{&testCtx};
+    ContextFacade ctx(&reg, 0.5f, nullptr, &Internal::BulkGetComponent);
+    ctx.SetEntity(emitterEntity);
 
     system(ctx, emitter, pos);  // timer 1.0 → 0.5, no fire
     Check(emitter.countDownTimer > 0.0f, "tick 1: timer at 0.5, no fire yet");

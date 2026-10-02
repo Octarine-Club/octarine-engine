@@ -13,13 +13,13 @@
 namespace {
 // Names of the systems still blocked (indegree > 0) when Kahn's algorithm stalls — i.e. the
 // members of the constraint cycle, for the error message.
-std::string CollectBlockedSystemNames(const std::vector<std::unique_ptr<ISystem>>& systems,
+std::string CollectBlockedSystemNames(const std::vector<RegisteredSystem>& systems,
                                       const std::vector<size_t>& indegree) {
   std::string names;
   for (size_t i = 0; i < systems.size(); ++i) {
     if (indegree[i] > 0) {
       if (!names.empty()) names += ", ";
-      names += systems[i]->GetName();
+      names += systems[i].GetName();
     }
   }
   return names;
@@ -79,10 +79,10 @@ void Registry::Update(const float deltaTime) {
   }
   for (const SystemId id : system_execution_order_) {
 #ifdef OCTARINE_PROFILING
-    ACCUMULATE_PROFILE_SCOPE(systems_[id]->GetName());
-    PROFILE_NAMED_SCOPE(systems_[id]->GetName());
+    ACCUMULATE_PROFILE_SCOPE(systems_[id].GetName());
+    PROFILE_NAMED_SCOPE(systems_[id].GetName());
 #endif
-    systems_[id]->Update(*this);
+    systems_[id].Update(*this);
   }
   FlushPendingDestruction();
 }

@@ -22,8 +22,6 @@
 #include "General/Logger.h"
 #include "System.h"
 
-class Query;
-
 template <typename... TComponents>
 class ComponentQuery;
 
@@ -277,37 +275,27 @@ class Registry {
   template <typename... TArgs, typename Func>
   SystemHandle<std::decay_t<Func>> RegisterSystem(Func&& func) {
     using StoredFunc = std::decay_t<Func>;
-    class SystemWrapper final : public ISystem {
-     public:
-      SystemWrapper(Registry* registry, Func&& f)
-          : ISystem(PrettifyTypeName(typeid(StoredFunc).name())),
-            registry_(registry),
-            func_(std::forward<Func>(f)),
-            query_(registry->CreateQuery<TArgs...>()) {}
+    struct SystemState {
+      StoredFunc func;
+      std::unique_ptr<ComponentQuery<TArgs...>> query;
+    };
+    auto state = std::make_shared<SystemState>(SystemState{std::forward<Func>(func), CreateQuery<TArgs...>()});
 
-      void Update(const Registry& /*registry*/) override {
-        query_->Update();
-        // Pass by reference so captured state in the system lambda persists across invocations.
-        query_->ForEach(func_);
+    RegisteredSystem sys;
+    sys.name = PrettifyTypeName(typeid(StoredFunc).name());
+    sys.update = [state](const Registry& registry) {
+      state->query->Update();
+      // Pass by reference so captured state in the system lambda persists across invocations.
+      state->query->ForEach(state->func);
 
-        if constexpr (requires { func_.GetCommandBuffer(); }) {
-          func_.GetCommandBuffer().Playback(registry_);
-        }
+      if constexpr (requires { state->func.GetCommandBuffer(); }) {
+        state->func.GetCommandBuffer().Playback(const_cast<Registry*>(&registry));
       }
-
-      StoredFunc& GetFunc() { return func_; }
-
-     private:
-      Registry* registry_;
-      StoredFunc func_;
-      std::unique_ptr<ComponentQuery<TArgs...>> query_;
     };
 
-    auto wrapper = std::make_unique<SystemWrapper>(this, std::forward<Func>(func));
-    StoredFunc& ref = wrapper->GetFunc();
     const SystemId id = systems_.size();
-    systems_.push_back(std::move(wrapper));
-    return SystemHandle<StoredFunc>(id, &ref);
+    systems_.push_back(std::move(sys));
+    return SystemHandle<StoredFunc>(id, &state->func);
   }
 
   // Registers a system running per-entity callbacks in parallel across chunks on ThreadPool.
@@ -320,92 +308,69 @@ class Registry {
                   "RegisterParallelSystem func must match void(Entity, float, TArgs&...), void(Entity, TArgs&...), "
                   "void(float, TArgs&...), or void(TArgs&...). "
                   "ContextFacade signatures are not supported on the parallel path.");
-    class ParallelSystemWrapper final : public ISystem {
-     public:
-      ParallelSystemWrapper(Registry* registry, Func&& f)
-          : ISystem(PrettifyTypeName(typeid(StoredFunc).name())),
-            registry_(registry),
-            func_(std::forward<Func>(f)),
-            query_(registry->CreateQuery<TArgs...>()) {}
 
-      void Update(const Registry& registry) override {
-        query_->Update();
-        const float dt = registry.delta_time_;
+    struct SystemState {
+      StoredFunc func;
+      std::unique_ptr<ComponentQuery<TArgs...>> query;
+    };
+    auto state = std::make_shared<SystemState>(SystemState{std::forward<Func>(func), CreateQuery<TArgs...>()});
 
-        if constexpr (requires { func_.Prepare(registry_); }) {
-          func_.Prepare(registry_);
-        }
+    RegisteredSystem sys;
+    sys.name = PrettifyTypeName(typeid(StoredFunc).name());
+    sys.update = [state](const Registry& registry) {
+      state->query->Update();
+      const float dt = registry.DeltaTime();
+      auto* regPtr = const_cast<Registry*>(&registry);
 
-        DispatchParallel(dt);
-
-        if constexpr (requires { func_.GetCommandBuffer(); }) {
-          func_.GetCommandBuffer().Playback(registry_);
-        }
+      if constexpr (requires { state->func.Prepare(regPtr); }) {
+        state->func.Prepare(regPtr);
       }
 
-      void DispatchParallel(float dt) {
-        if constexpr (std::is_invocable_v<StoredFunc, Entity, float, TArgs&...>) {
-          query_->ParallelForEach([this, dt](Entity entity, TArgs&... args) { func_(entity, dt, args...); });
-        } else if constexpr (std::is_invocable_v<StoredFunc, Entity, TArgs&...>) {
-          query_->ParallelForEach([this](Entity entity, TArgs&... args) { func_(entity, args...); });
-        } else if constexpr (std::is_invocable_v<StoredFunc, float, TArgs&...>) {
-          query_->ParallelForEach([this, dt](TArgs&... args) { func_(dt, args...); });
-        } else if constexpr (std::is_invocable_v<StoredFunc, TArgs&...>) {
-          query_->ParallelForEach([this](TArgs&... args) { func_(args...); });
-        } else {
-          static_assert(!std::is_same_v<StoredFunc, StoredFunc>,
-                        "RegisterParallelSystem func must match void(Entity, float, TArgs&...), "
-                        "void(Entity, TArgs&...), void(float, TArgs&...), or void(TArgs&...).");
-        }
+      if constexpr (std::is_invocable_v<StoredFunc, Entity, float, TArgs&...>) {
+        state->query->ParallelForEach([&](Entity entity, TArgs&... args) { state->func(entity, dt, args...); });
+      } else if constexpr (std::is_invocable_v<StoredFunc, Entity, TArgs&...>) {
+        state->query->ParallelForEach([&](Entity entity, TArgs&... args) { state->func(entity, args...); });
+      } else if constexpr (std::is_invocable_v<StoredFunc, float, TArgs&...>) {
+        state->query->ParallelForEach([&](TArgs&... args) { state->func(dt, args...); });
+      } else if constexpr (std::is_invocable_v<StoredFunc, TArgs&...>) {
+        state->query->ParallelForEach([&](TArgs&... args) { state->func(args...); });
+      } else {
+        static_assert(!std::is_same_v<StoredFunc, StoredFunc>, "RegisterParallelSystem func signature mismatch.");
       }
 
-      StoredFunc& GetFunc() { return func_; }
-
-     private:
-      Registry* registry_;
-      StoredFunc func_;
-      std::unique_ptr<ComponentQuery<TArgs...>> query_;
+      if constexpr (requires { state->func.GetCommandBuffer(); }) {
+        state->func.GetCommandBuffer().Playback(regPtr);
+      }
     };
 
-    auto wrapper = std::make_unique<ParallelSystemWrapper>(this, std::forward<Func>(func));
-    StoredFunc& ref = wrapper->GetFunc();
     const SystemId id = systems_.size();
-    systems_.push_back(std::move(wrapper));
-    return SystemHandle<StoredFunc>(id, &ref);
+    systems_.push_back(std::move(sys));
+    return SystemHandle<StoredFunc>(id, &state->func);
   }
 
   // Registers a system invoked once per Update with a ContextFacade for registry access.
   template <typename... TArgs, typename Func>
   SystemHandle<std::decay_t<Func>> RegisterBulkSystem(Func&& func) {
     using StoredFunc = std::decay_t<Func>;
-    class BulkSystemWrapper final : public ISystem {
-     public:
-      BulkSystemWrapper(Registry* registry, Func&& f)
-          : ISystem(PrettifyTypeName(typeid(StoredFunc).name())),
-            func_(std::forward<Func>(f)),
-            query_(registry->CreateQuery<TArgs...>()) {}
+    struct SystemState {
+      StoredFunc func;
+      std::unique_ptr<ComponentQuery<TArgs...>> query;
+    };
+    auto state = std::make_shared<SystemState>(SystemState{std::forward<Func>(func), CreateQuery<TArgs...>()});
 
-      void Update(const Registry& registry) override {
-        query_->Update();
-        auto* registryPtr = const_cast<Registry*>(&registry);
-        const float dt = registry.delta_time_;
-        Internal::BulkContextImpl bulkCtx(registryPtr, dt);
-        ContextFacade ctx(&bulkCtx);
-        func_(ctx);
-      }
-
-      StoredFunc& GetFunc() { return func_; }
-
-     private:
-      StoredFunc func_;
-      std::unique_ptr<ComponentQuery<TArgs...>> query_;
+    RegisteredSystem sys;
+    sys.name = PrettifyTypeName(typeid(StoredFunc).name());
+    sys.update = [state](const Registry& registry) {
+      state->query->Update();
+      auto* registryPtr = const_cast<Registry*>(&registry);
+      const float dt = registry.DeltaTime();
+      ContextFacade ctx(registryPtr, dt, nullptr, &Internal::BulkGetComponent);
+      state->func(ctx);
     };
 
-    auto wrapper = std::make_unique<BulkSystemWrapper>(this, std::forward<Func>(func));
-    StoredFunc& ref = wrapper->GetFunc();
     const SystemId id = systems_.size();
-    systems_.push_back(std::move(wrapper));
-    return SystemHandle<StoredFunc>(id, &ref);
+    systems_.push_back(std::move(sys));
+    return SystemHandle<StoredFunc>(id, &state->func);
   }
 
   // Builds execution-order constraints between registered systems:
@@ -649,7 +614,7 @@ class Registry {
   std::vector<EntityLocation> entity_locations_;
   std::unordered_map<ArchetypeID, std::unique_ptr<Archetype>> archetypes_;
   std::unique_ptr<Archetype> root_archetype_;
-  std::vector<std::unique_ptr<ISystem>> systems_;
+  std::vector<RegisteredSystem> systems_;
   std::vector<std::pair<SystemId, SystemId>> system_order_edges_;
   std::vector<SystemId> system_execution_order_;
   bool system_order_dirty_ = false;
@@ -675,7 +640,7 @@ class Registry {
 
 template <typename T>
 inline T& ContextFacade::Component() const {
-  const auto componentEntity = impl_->GetRegistry()->Component<T>();
-  void* ptr = impl_->GetComponentPtr(componentEntity.GetId());
+  const auto componentEntity = registry_->template Component<T>();
+  void* ptr = get_component_ptr_(ctx_data_, componentEntity.GetId());
   return *static_cast<T*>(ptr);
 }
