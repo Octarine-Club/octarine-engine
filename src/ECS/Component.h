@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstring>
 #include <new>
 #include <optional>
 #include <unordered_map>
@@ -484,7 +485,7 @@ class Archetype {
     assert(chunk_capacity_ > 0);
   }
 
-  static void AssertLocation([[maybe_unused]] const EntityLocation& location) {
+  void AssertLocation([[maybe_unused]] const EntityLocation& location) const {
     assert(location.archetype == this);
     assert(location.chunkIndex < chunks_.size());
     assert(location.indexInChunk < chunks_[location.chunkIndex].GetEntityCount());
