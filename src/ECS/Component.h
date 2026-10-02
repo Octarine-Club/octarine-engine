@@ -20,8 +20,15 @@ struct ChunkHeader {
   uint32_t active_count;
 };
 
-// Tracks entity relocation indices during Chunk::RemoveEntity.
+// Tracks entity relocation indices during Archetype::RemoveEntity.
 struct ChunkRemoveSwap {
+  Entity entity;
+  size_t chunkIndex;
+  size_t indexInChunk;
+};
+
+// Tracks intra-chunk entity relocation indices during Chunk::RemoveEntity.
+struct ChunkLocalSwap {
   Entity entity;
   size_t indexInChunk;
 };
@@ -130,7 +137,7 @@ class Chunk {
 
   // Swaps entity and component data between two slots in the chunk.
   void Swap(const size_t i, const size_t j, const std::vector<size_t>& componentOffsets,
-            const std::vector<ComponentInfo>& componentInfos) {
+            const std::vector<ComponentInfo>& componentInfos) const {
     assert(componentOffsets.size() == componentInfos.size());
     assert(i < header_.entity_count && j < header_.entity_count);
     if (i == j) return;
@@ -146,35 +153,23 @@ class Chunk {
   }
 
   // Removes entity and relocates boundary entities to preserve dense storage.
-  std::vector<ChunkRemoveSwap> RemoveEntity(const size_t index, const std::vector<size_t>& componentOffsets,
-                                            const std::vector<ComponentInfo>& componentInfos) {
+  std::vector<ChunkLocalSwap> RemoveEntity(const size_t index, const std::vector<size_t>& componentOffsets,
+                                           const std::vector<ComponentInfo>& componentInfos) {
     assert(componentOffsets.size() == componentInfos.size());
-    std::vector<ChunkRemoveSwap> swaps;
+    std::vector<ChunkLocalSwap> swaps;
     if (index >= header_.entity_count) return swaps;
 
-    auto* entity_array = reinterpret_cast<Entity*>(buffer_);
+    const auto* entityArray = reinterpret_cast<Entity*>(buffer_);
     const bool wasActive = index < header_.active_count;
 
-    // Destroy components at the removed slot.
-    for (size_t c = 0; c < componentOffsets.size(); ++c) {
-      const auto& info = componentInfos[c];
-      unsigned char* slot_ptr = buffer_ + componentOffsets[c] + index * info.size;
-      if (info.destroy) info.destroy(slot_ptr);
-    }
+    DestroyComponentsAt(index, componentOffsets, componentInfos);
 
     // Active-region collapse: pull the last active entity into the freed slot so the active
     // prefix stays dense. Skip when the removed entity was already at the boundary.
     if (wasActive && index + 1 < header_.active_count) {
       const size_t srcIdx = header_.active_count - 1;
-      for (size_t c = 0; c < componentOffsets.size(); ++c) {
-        const auto& info = componentInfos[c];
-        unsigned char* dest_ptr = buffer_ + componentOffsets[c] + index * info.size;
-        unsigned char* source_ptr = buffer_ + componentOffsets[c] + srcIdx * info.size;
-        if (info.move_construct) info.move_construct(dest_ptr, source_ptr);
-        if (info.destroy) info.destroy(source_ptr);
-      }
-      entity_array[index] = entity_array[srcIdx];
-      swaps.push_back({entity_array[index], index});
+      MoveEntitySlot(index, srcIdx, componentOffsets, componentInfos);
+      swaps.push_back({entityArray[index], index});
     }
 
     if (wasActive) --header_.active_count;
@@ -187,22 +182,44 @@ class Chunk {
     // Standard swap-with-end: pull the last entity (always inactive at this point) into the
     // freed slot. Skip when there's nothing to pull.
     if (freedSlot != lastSlot) {
-      for (size_t c = 0; c < componentOffsets.size(); ++c) {
-        const auto& info = componentInfos[c];
-        unsigned char* dest_ptr = buffer_ + componentOffsets[c] + freedSlot * info.size;
-        unsigned char* source_ptr = buffer_ + componentOffsets[c] + lastSlot * info.size;
-        if (info.move_construct) info.move_construct(dest_ptr, source_ptr);
-        if (info.destroy) info.destroy(source_ptr);
-      }
-      entity_array[freedSlot] = entity_array[lastSlot];
-      swaps.push_back({entity_array[freedSlot], freedSlot});
+      MoveEntitySlot(freedSlot, lastSlot, componentOffsets, componentInfos);
+      swaps.push_back({entityArray[freedSlot], freedSlot});
     }
 
     --header_.entity_count;
+    assert(header_.active_count <= header_.entity_count);
     return swaps;
   }
 
  private:
+  void DestroyComponentsAt(const size_t slot, const std::vector<size_t>& componentOffsets,
+                           const std::vector<ComponentInfo>& componentInfos) const {
+    assert(slot < header_.entity_count);
+    assert(componentOffsets.size() == componentInfos.size());
+    for (size_t c = 0; c < componentOffsets.size(); ++c) {
+      const auto& info = componentInfos[c];
+      unsigned char* slot_ptr = buffer_ + componentOffsets[c] + slot * info.size;
+      if (info.destroy) info.destroy(slot_ptr);
+    }
+  }
+
+  void MoveEntitySlot(const size_t destSlot, const size_t srcSlot, const std::vector<size_t>& componentOffsets,
+                      const std::vector<ComponentInfo>& componentInfos) const {
+    assert(destSlot < header_.entity_count);
+    assert(srcSlot < header_.entity_count);
+    assert(destSlot != srcSlot);
+    assert(componentOffsets.size() == componentInfos.size());
+    auto* entityArray = reinterpret_cast<Entity*>(buffer_);
+    for (size_t c = 0; c < componentOffsets.size(); ++c) {
+      const auto& info = componentInfos[c];
+      unsigned char* dest_ptr = buffer_ + componentOffsets[c] + destSlot * info.size;
+      unsigned char* source_ptr = buffer_ + componentOffsets[c] + srcSlot * info.size;
+      if (info.move_construct) info.move_construct(dest_ptr, source_ptr);
+      if (info.destroy) info.destroy(source_ptr);
+    }
+    entityArray[destSlot] = entityArray[srcSlot];
+  }
+
   ChunkHeader header_;
   unsigned char* buffer_;
 };
@@ -219,8 +236,8 @@ class Archetype {
     // Sort component_infos_ by id so component ordering matches archetype_type_ ordering.
     std::ranges::sort(component_infos_, [](const ComponentInfo& a, const ComponentInfo& b) { return a.id < b.id; });
 
-    for (size_t i = 0; i < component_infos_.size(); ++i) {
-      archetype_type_.push_back(component_infos_[i].id);
+    for (auto& component_info : component_infos_) {
+      archetype_type_.push_back(component_info.id);
     }
 
     CalculateLayout();
@@ -241,6 +258,27 @@ class Archetype {
     return chunks_[chunkIndex].GetActiveCount();
   }
 
+  [[nodiscard]] size_t GetChunkCount() const { return chunks_.size(); }
+  [[nodiscard]] size_t GetChunkCapacity() const { return chunk_capacity_; }
+
+  [[nodiscard]] size_t GetEntityCount() const {
+    size_t count = 0;
+    for (const auto& chunk : chunks_) {
+      count += chunk.GetEntityCount();
+    }
+    return count;
+  }
+
+  [[nodiscard]] size_t GetActiveCount() const {
+    size_t count = 0;
+    for (const auto& chunk : chunks_) {
+      count += chunk.GetActiveCount();
+    }
+    return count;
+  }
+
+  [[nodiscard]] bool IsEmpty() const { return chunks_.empty(); }
+
   EntityLocation AddEntity(const Entity entity) {
     // Cached first-non-full chunk index advances monotonically as earlier chunks fill.
     while (first_non_full_chunk_ < chunks_.size() &&
@@ -259,13 +297,27 @@ class Archetype {
     return {this, chunks_.size() - 1, 0};
   }
 
-  // Returns relocations from removal (boundary collapse and swap-with-end).
+  // Returns relocations from removal (boundary collapse, swap-with-end, and chunk pruning).
   std::vector<ChunkRemoveSwap> RemoveEntity(const EntityLocation& location) {
     AssertLocation(location);
-    auto swaps = chunks_[location.chunkIndex].RemoveEntity(location.indexInChunk, component_offsets_, component_infos_);
-    if (location.chunkIndex < first_non_full_chunk_) {
-      first_non_full_chunk_ = location.chunkIndex;
+    const size_t targetChunk = location.chunkIndex;
+    const auto localSwaps =
+        chunks_[targetChunk].RemoveEntity(location.indexInChunk, component_offsets_, component_infos_);
+
+    std::vector<ChunkRemoveSwap> swaps;
+    swaps.reserve(localSwaps.size());
+    for (const auto& swap : localSwaps) {
+      assert(swap.indexInChunk < chunks_[targetChunk].GetEntityCount());
+      swaps.push_back({swap.entity, targetChunk, swap.indexInChunk});
     }
+
+    if (chunks_[targetChunk].GetEntityCount() == 0) {
+      PruneEmptyChunkAt(targetChunk, swaps);
+    } else if (targetChunk < first_non_full_chunk_) {
+      first_non_full_chunk_ = targetChunk;
+    }
+    assert(targetChunk >= chunks_.size() || chunks_[targetChunk].GetEntityCount() > 0);
+
     return swaps;
   }
 
@@ -437,6 +489,33 @@ class Archetype {
     assert(location.archetype == this);
     assert(location.chunkIndex < chunks_.size());
     assert(location.indexInChunk < chunks_[location.chunkIndex].GetEntityCount());
+  }
+
+  void PruneEmptyChunkAt(const size_t targetChunk, std::vector<ChunkRemoveSwap>& swaps) {
+    assert(!chunks_.empty());
+    assert(targetChunk < chunks_.size());
+    assert(chunks_[targetChunk].GetEntityCount() == 0);
+    const size_t lastChunkIdx = chunks_.size() - 1;
+    if (targetChunk == lastChunkIdx) {
+      chunks_.pop_back();
+    } else {
+      chunks_[targetChunk] = std::move(chunks_.back());
+      chunks_.pop_back();
+      assert(chunks_[targetChunk].GetEntityCount() > 0);
+      const auto* entityArray = chunks_[targetChunk].GetEntityArray();
+      const size_t count = chunks_[targetChunk].GetEntityCount();
+      swaps.reserve(swaps.size() + count);
+      for (size_t i = 0; i < count; ++i) {
+        swaps.push_back({entityArray[i], targetChunk, i});
+      }
+    }
+
+    if (first_non_full_chunk_ > chunks_.size()) {
+      first_non_full_chunk_ = chunks_.size();
+    } else if (targetChunk < first_non_full_chunk_) {
+      first_non_full_chunk_ = targetChunk;
+    }
+    assert(first_non_full_chunk_ <= chunks_.size());
   }
 
   ArchetypeID archetype_id_;
