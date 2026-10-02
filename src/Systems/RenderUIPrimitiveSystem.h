@@ -4,7 +4,6 @@
 
 #include "Components/SquarePrimitiveComponent.h"
 #include "Components/UIRectComponent.h"
-#include "ECS/Iterable.h"
 #include "ECS/Registry.h"
 #include "General/BlendMode.h"
 #include "Renderer/RenderQueue.h"

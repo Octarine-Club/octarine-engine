@@ -11,7 +11,6 @@
 #include "Components/AudioSinkComponent.h"
 #include "Components/AudioSourceComponent.h"
 #include "Components/GlobalTransformComponent.h"
-#include "ECS/Iterable.h"
 #include "ECS/Registry.h"
 
 // Per-emitter system: applies distance attenuation + stereo pan to spatial sources each

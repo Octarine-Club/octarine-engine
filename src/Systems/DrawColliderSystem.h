@@ -7,7 +7,6 @@
 #include "Components/BoxColliderComponent.h"
 #include "Components/CameraComponents.h"
 #include "Components/GlobalTransformComponent.h"
-#include "ECS/Iterable.h"
 #include "ECS/Registry.h"
 #include "Engine/EngineContext.h"
 #include "General/Constants.h"

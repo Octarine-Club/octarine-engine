@@ -8,7 +8,6 @@
 #include "AssetManager/AssetManager.h"
 #include "Components/SpriteComponent.h"
 #include "Components/UIRectComponent.h"
-#include "ECS/Iterable.h"
 #include "ECS/Query.h"
 #include "ECS/Registry.h"
 #include "General/PerfUtils.h"

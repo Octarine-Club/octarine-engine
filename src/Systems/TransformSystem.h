@@ -16,7 +16,6 @@
 #include "Components/ScaleComponent.h"
 #include "Components/SpriteComponent.h"
 #include "Components/SquarePrimitiveComponent.h"
-#include "ECS/Iterable.h"
 #include "ECS/Query.h"
 #include "ECS/Registry.h"
 #include "General/LocalSize.h"
@@ -25,7 +24,7 @@
 
 class TransformSystem {
  public:
-  void operator()(const ContextFacade& ctx, const Iterable& /*iter*/) {
+  void operator()(const ContextFacade& ctx) {
     auto* registry = ctx.GetRegistry();
     EnsureInitialized(registry);
     optionalQuery_->Update();

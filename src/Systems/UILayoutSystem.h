@@ -8,14 +8,13 @@
 #include "Components/UICanvasComponent.h"
 #include "Components/UIRectComponent.h"
 #include "Components/UIZIndexComponent.h"
-#include "ECS/Iterable.h"
 #include "ECS/Query.h"
 #include "ECS/Registry.h"
 #include "Game/GameConfig.h"
 
 class UILayoutSystem {
  public:
-  void operator()(const ContextFacade& ctx, const Iterable& /*iter*/) {
+  void operator()(const ContextFacade& ctx) {
     auto* registry = ctx.GetRegistry();
     EnsureInitialized(registry);
     canvasQuery_->Update();

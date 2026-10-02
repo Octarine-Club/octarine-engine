@@ -36,7 +36,6 @@
 #include "Components/SquarePrimitiveComponent.h"
 #include "Components/TextLabelComponent.h"
 #include "Components/ViewportInfo.h"
-#include "ECS/Iterable.h"
 #include "ECS/Query.h"
 #include "ECS/Registry.h"
 #include "Engine/EditorBootstrap.h"

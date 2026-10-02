@@ -5,7 +5,6 @@
 #include "Components/AudioListenerComponent.h"
 #include "Components/GlobalTransformComponent.h"
 #include "Components/RigidBodyComponent.h"
-#include "ECS/Iterable.h"
 #include "ECS/Query.h"
 #include "ECS/Registry.h"
 #include "General/Logger.h"
@@ -16,7 +15,7 @@
 // cache once per emitter — no second archetype walk for the listener.
 class UpdateListenerTransformSystem {
  public:
-  void operator()(const ContextFacade& ctx, const Iterable& /*iter*/) {
+  void operator()(const ContextFacade& ctx) {
     auto* registry = ctx.GetRegistry();
     auto& cache = registry->Get<AudioListenerCache>();
     cache.valid = false;

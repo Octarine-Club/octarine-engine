@@ -7,7 +7,6 @@
 #include "Components/BoxColliderComponent.h"
 #include "Components/EntityMaskComponent.h"
 #include "Components/GlobalTransformComponent.h"
-#include "ECS/Iterable.h"
 #include "ECS/Query.h"
 #include "ECS/Registry.h"
 #include "Engine/EngineContext.h"
@@ -46,13 +45,6 @@ struct CollisionCounter {
   void OnCollisionBatch(const CollisionBatchEvent& /*e*/) { ++count; }
 };
 
-// CollisionSystem builds its own query and ignores the Iterable argument, but the call signature
-// requires one. begin()/end() are never invoked, so throwing stubs are safe placeholders.
-Iterable MakeUnusedIterable() {
-  return {[]() -> AnyIterator { throw std::logic_error("unused"); },
-          []() -> AnyIterator { throw std::logic_error("unused"); }};
-}
-
 // Two boxes overlap at the origin so the narrowphase has at least one hit to process; the rest sit
 // on a wide diagonal grid, non-overlapping, to keep narrowphase cheap and the dispatch overhead
 // visible. (The overlap is sustained, so after the first cycle it is deduplicated out of the
@@ -86,7 +78,6 @@ static void BM_CollisionDispatch(benchmark::State& state) {
   CollisionSystem system;
   StubContext impl(&registry);
   const ContextFacade ctx(&impl);
-  const Iterable iter = MakeUnusedIterable();
 
   // Each timed iteration advances exactly one full dispatch->collect cycle: the system polls the
   // outstanding future (cheap early-returns) until it is ready, collects + emits (bumping the
@@ -94,7 +85,7 @@ static void BM_CollisionDispatch(benchmark::State& state) {
   for (auto _ : state) {
     const std::uint64_t before = counter.count;
     do {
-      system(ctx, iter);
+      system(ctx);
     } while (counter.count == before);
   }
   state.SetItemsProcessed(static_cast<int64_t>(state.iterations()));
@@ -136,12 +127,11 @@ static void BM_CollisionDispatchDense(benchmark::State& state) {
   CollisionSystem system;
   StubContext impl(&registry);
   const ContextFacade ctx(&impl);
-  const Iterable iter = MakeUnusedIterable();
 
   for (auto _ : state) {
     const std::uint64_t before = counter.count;
     do {
-      system(ctx, iter);
+      system(ctx);
     } while (counter.count == before);
   }
   state.SetItemsProcessed(static_cast<int64_t>(state.iterations()));

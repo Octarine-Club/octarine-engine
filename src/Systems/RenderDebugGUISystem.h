@@ -3,7 +3,6 @@
 #include <SDL3/SDL.h>
 
 #include "Components/ScriptComponent.h"
-#include "ECS/Iterable.h"
 #include "ECS/Registry.h"
 #include "General/Logger.h"
 
