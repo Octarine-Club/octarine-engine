@@ -166,21 +166,26 @@ class Registry {
   // Component management
   template <typename T>
   Entity Component() {
-    std::type_index type_idx(typeid(T));
-    if (auto it = type_to_entity_.find(type_idx); it != type_to_entity_.end()) {
-      return it->second;
+    const uint32_t family = GetComponentFamily<T>();
+    if (family < family_to_entity_.size() && family_to_entity_[family].GetId() != static_cast<std::uint32_t>(-1) &&
+        entity_manager_->IsValid(family_to_entity_[family])) {
+      return family_to_entity_[family];
     }
     const auto entity = CreateInternalEntity();
-    type_to_entity_[type_idx] = entity;
+    if (family >= family_to_entity_.size()) {
+      family_to_entity_.resize(family + 1, Entity(static_cast<EcsId>(-1)));
+    }
+    family_to_entity_[family] = entity;
     component_registry_->RegisterComponent<T>(entity);
     return entity;
   }
 
   template <typename T>
   [[nodiscard]] Entity Component() const {
-    std::type_index type_idx(typeid(T));
-    if (auto it = type_to_entity_.find(type_idx); it != type_to_entity_.end()) {
-      return it->second;
+    const uint32_t family = GetComponentFamily<T>();
+    if (family < family_to_entity_.size() && family_to_entity_[family].GetId() != static_cast<std::uint32_t>(-1) &&
+        entity_manager_->IsValid(family_to_entity_[family])) {
+      return family_to_entity_[family];
     }
     throw std::runtime_error("Component type " + std::string(typeid(T).name()) +
                              " has not been used yet. Cannot get component.");
@@ -189,9 +194,10 @@ class Registry {
   // Non-throwing equivalent of Component<T>() const. Returns nullopt when the type was never registered.
   template <typename T>
   [[nodiscard]] std::optional<Entity> TryComponent() const {
-    std::type_index type_idx(typeid(T));
-    if (auto it = type_to_entity_.find(type_idx); it != type_to_entity_.end()) {
-      return it->second;
+    const uint32_t family = GetComponentFamily<T>();
+    if (family < family_to_entity_.size() && family_to_entity_[family].GetId() != static_cast<std::uint32_t>(-1) &&
+        entity_manager_->IsValid(family_to_entity_[family])) {
+      return family_to_entity_[family];
     }
     return std::nullopt;
   }
@@ -214,9 +220,10 @@ class Registry {
 
   template <typename T>
   void RemoveComponent(const Entity entity) {
-    std::type_index type_idx(typeid(T));
-    if (auto it = type_to_entity_.find(type_idx); it != type_to_entity_.end()) {
-      TransitionRemoveComponent(entity, it->second.GetId());
+    const uint32_t family = GetComponentFamily<T>();
+    if (family < family_to_entity_.size() && family_to_entity_[family].GetId() != static_cast<std::uint32_t>(-1) &&
+        entity_manager_->IsValid(family_to_entity_[family])) {
+      TransitionRemoveComponent(entity, family_to_entity_[family].GetId());
     }
   }
 
@@ -433,20 +440,29 @@ class Registry {
   // Stores singleton service wrapped in shared_ptr to support move-only types.
   template <typename T>
   T& Set(T value) {
+    const uint32_t family = GetComponentFamily<T>();
     auto ptr = std::make_shared<T>(std::move(value));
     T& ref = *ptr;
-    singleton_components_[typeid(T).name()] = std::move(ptr);
+    if (family >= singleton_components_.size()) {
+      singleton_components_.resize(family + 1);
+    }
+    singleton_components_[family] = std::move(ptr);
     return ref;
   }
 
   template <typename T>
   const T& Get() const {
+    const uint32_t family = GetComponentFamily<T>();
+    if (family >= singleton_components_.size()) {
+      throw std::runtime_error("Attempted to Get a singleton component that has not been Set.");
+    }
+    const auto& anyVal = singleton_components_[family];
+    if (!anyVal.has_value()) {
+      throw std::runtime_error("Attempted to Get a singleton component that has not been Set.");
+    }
     try {
-      const auto& anyVal = singleton_components_.at(typeid(T).name());
       const auto& ptr = std::any_cast<const std::shared_ptr<T>&>(anyVal);
       return *ptr;
-    } catch (const std::out_of_range&) {
-      throw std::runtime_error("Attempted to Get a singleton component that has not been Set.");
     } catch (const std::bad_any_cast&) {
       throw std::runtime_error("Type mismatch in Get. This indicates a logic error.");
     }
@@ -460,9 +476,11 @@ class Registry {
   // Returns nullptr if T has never been Set.
   template <typename T>
   [[nodiscard]] T* TryGet() {
-    const auto it = singleton_components_.find(typeid(T).name());
-    if (it == singleton_components_.end()) return nullptr;
-    if (const auto* ptr = std::any_cast<std::shared_ptr<T>>(&it->second)) return ptr->get();
+    const uint32_t family = GetComponentFamily<T>();
+    if (family >= singleton_components_.size()) return nullptr;
+    const auto& anyVal = singleton_components_[family];
+    if (!anyVal.has_value()) return nullptr;
+    if (const auto* ptr = std::any_cast<std::shared_ptr<T>>(&anyVal)) return ptr->get();
     return nullptr;
   }
 
@@ -481,12 +499,16 @@ class Registry {
   template <typename T>
   Entity Tag() {
     static_assert(std::is_empty_v<T>, "Tag<T>() requires an empty struct type");
-    std::type_index type_idx(typeid(T));
-    if (auto it = type_to_entity_.find(type_idx); it != type_to_entity_.end()) {
-      return it->second;
+    const uint32_t family = GetComponentFamily<T>();
+    if (family < family_to_entity_.size() && family_to_entity_[family].GetId() != static_cast<std::uint32_t>(-1) &&
+        entity_manager_->IsValid(family_to_entity_[family])) {
+      return family_to_entity_[family];
     }
     const auto entity = CreateInternalEntity();
-    type_to_entity_[type_idx] = entity;
+    if (family >= family_to_entity_.size()) {
+      family_to_entity_.resize(family + 1, Entity(static_cast<EcsId>(-1)));
+    }
+    family_to_entity_[family] = entity;
     component_registry_->RegisterTag(entity.GetId(), typeid(T).name());
     return entity;
   }
@@ -510,9 +532,10 @@ class Registry {
 
   template <typename T>
   void RemoveTag(const Entity entity) {
-    std::type_index type_idx(typeid(T));
-    if (auto it = type_to_entity_.find(type_idx); it != type_to_entity_.end()) {
-      TransitionRemoveComponent(entity, it->second.GetId());
+    const uint32_t family = GetComponentFamily<T>();
+    if (family < family_to_entity_.size() && family_to_entity_[family].GetId() != static_cast<std::uint32_t>(-1) &&
+        entity_manager_->IsValid(family_to_entity_[family])) {
+      TransitionRemoveComponent(entity, family_to_entity_[family].GetId());
     }
   }
 
@@ -532,9 +555,10 @@ class Registry {
 
   template <typename T>
   [[nodiscard]] bool HasTag(const Entity entity) const {
-    std::type_index type_idx(typeid(T));
-    if (auto it = type_to_entity_.find(type_idx); it != type_to_entity_.end()) {
-      return HasTag(entity, it->second);
+    const uint32_t family = GetComponentFamily<T>();
+    if (family < family_to_entity_.size() && family_to_entity_[family].GetId() != static_cast<std::uint32_t>(-1) &&
+        entity_manager_->IsValid(family_to_entity_[family])) {
+      return HasTag(entity, family_to_entity_[family]);
     }
     return false;
   }
@@ -629,9 +653,8 @@ class Registry {
   std::vector<std::pair<SystemId, SystemId>> system_order_edges_;
   std::vector<SystemId> system_execution_order_;
   bool system_order_dirty_ = false;
-  // Keyed by type name rather than type_index to safely compare across translation units with hidden visibility.
-  std::unordered_map<std::string_view, std::any> singleton_components_;
-  std::unordered_map<std::type_index, Entity> type_to_entity_;
+  std::vector<std::any> singleton_components_;
+  std::vector<Entity> family_to_entity_;
   std::unordered_map<std::string, Entity> tag_to_entity_;
   std::unordered_map<ComponentID, ArchetypeList> component_index_;
   std::vector<Archetype*> archetype_log_;
