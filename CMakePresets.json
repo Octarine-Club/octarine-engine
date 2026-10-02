@@ -12,7 +12,7 @@
     {
       "name": "player-debug",
       "inherits": "base",
-      "displayName": "Player (Debug with UI)",
+      "displayName": "Debug",
       "description": "Primary development build with ImGui debug overlays enabled. Recommended for game development and Lua debug tooling.",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
@@ -24,8 +24,8 @@
     {
       "name": "player-release",
       "inherits": "base",
-      "displayName": "Player (Dev, live-scan)",
-      "description": "Optimized player with no editor/ImGui/profiling. Catalog live-scans the asset dir — fast dev iteration, NOT a shippable artifact. Use ship-release for that.",
+      "displayName": "Release",
+      "description": "Optimized player with no editor/ImGui/profiling. Catalog live-scans the asset dir \u2014 fast dev iteration, NOT a shippable artifact. Use ship-release for that.",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "OCTARINE_ENABLE_PROFILING": "OFF",
@@ -36,7 +36,7 @@
     {
       "name": "player-profile",
       "inherits": "base",
-      "displayName": "Player (Profile)",
+      "displayName": "Profile",
       "description": "Optimized build with profiling instrumentation enabled. No editor, no ImGui.",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
@@ -48,7 +48,7 @@
     {
       "name": "ship-release",
       "inherits": "base",
-      "displayName": "Ship (Shipping, manifest-load)",
+      "displayName": "Ship Release",
       "description": "Shippable artifact: no editor/ImGui/profiling, loads the baked asset_manifest.lua (no FS scan). Canonical desktop shipping config; mobile (Android/iOS) shipping build support is experimental / work-in-progress.",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
@@ -61,8 +61,8 @@
     {
       "name": "ship-mac-universal",
       "inherits": "ship-release",
-      "displayName": "Ship (macOS universal arm64+x86_64)",
-      "description": "Shippable macOS .app: universal binary (arm64 + x86_64) so one .dmg runs on both Apple silicon and Intel. Uses the universal-osx overlay triplet so vcpkg deps are fat too. macOS-only — vcpkg's universal triplet drives lipo'd dylibs/static archives that Linux/Windows hosts can't cross-build.",
+      "displayName": "Ship Mac Universal",
+      "description": "Shippable macOS .app: universal binary (arm64 + x86_64) so one .dmg runs on both Apple silicon and Intel. Uses the universal-osx overlay triplet so vcpkg deps are fat too. macOS-only \u2014 vcpkg's universal triplet drives lipo'd dylibs/static archives that Linux/Windows hosts can't cross-build.",
       "cacheVariables": {
         "CMAKE_OSX_ARCHITECTURES": "arm64;x86_64",
         "VCPKG_TARGET_TRIPLET": "universal-osx",
@@ -77,7 +77,7 @@
     {
       "name": "editor-debug",
       "inherits": "base",
-      "displayName": "Editor (Debug) [Experimental]",
+      "displayName": "Editor Debug",
       "description": "Experimental C++ editor tools with Dear ImGui dockspace (work-in-progress; not built by default; use player-debug for game development).",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
@@ -89,7 +89,7 @@
     {
       "name": "editor-release",
       "inherits": "base",
-      "displayName": "Editor (Release) [Experimental]",
+      "displayName": "Editor Release",
       "description": "Experimental optimized C++ editor build.",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
