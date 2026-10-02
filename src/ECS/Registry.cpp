@@ -1,6 +1,7 @@
 #include "Registry.h"
 
 #include <algorithm>
+#include <cassert>
 #include <set>
 #include <stdexcept>
 
@@ -185,8 +186,10 @@ void Registry::BlamEntity(const Entity entity) {
   entity_manager_->BlamEntity(entity);
   entity_locations_[id] = EntityLocation{nullptr, 0, 0};
   for (const auto& swap : swaps) {
+    assert(entity_manager_->IsValid(swap.entity));
+    assert(swap.chunkIndex < removedLocation.archetype->GetChunkCount());
     entity_locations_[swap.entity.GetId()] =
-        EntityLocation{removedLocation.archetype, removedLocation.chunkIndex, swap.indexInChunk};
+        EntityLocation{removedLocation.archetype, swap.chunkIndex, swap.indexInChunk};
   }
   if (internal_entity_ids_.erase(entity.id) == 0 && user_entity_count_ > 0) {
     --user_entity_count_;
@@ -330,8 +333,9 @@ EntityLocation Registry::TransitionAddComponent(const Entity entity, const Compo
   const auto swaps = oldLocation.archetype->RemoveEntity(oldLocation);
   entity_locations_[id] = newLocation;
   for (const auto& swap : swaps) {
-    entity_locations_[swap.entity.GetId()] =
-        EntityLocation{oldLocation.archetype, oldLocation.chunkIndex, swap.indexInChunk};
+    assert(entity_manager_->IsValid(swap.entity));
+    assert(swap.chunkIndex < oldLocation.archetype->GetChunkCount());
+    entity_locations_[swap.entity.GetId()] = EntityLocation{oldLocation.archetype, swap.chunkIndex, swap.indexInChunk};
   }
   PromoteToActive(entity_locations_[id]);
   return entity_locations_[id];
@@ -370,8 +374,9 @@ EntityLocation Registry::TransitionRemoveComponent(const Entity entity, const Co
   const auto swaps = oldLocation.archetype->RemoveEntity(oldLocation);
   entity_locations_[id] = newLocation;
   for (const auto& swap : swaps) {
-    entity_locations_[swap.entity.GetId()] =
-        EntityLocation{oldLocation.archetype, oldLocation.chunkIndex, swap.indexInChunk};
+    assert(entity_manager_->IsValid(swap.entity));
+    assert(swap.chunkIndex < oldLocation.archetype->GetChunkCount());
+    entity_locations_[swap.entity.GetId()] = EntityLocation{oldLocation.archetype, swap.chunkIndex, swap.indexInChunk};
   }
   PromoteToActive(entity_locations_[id]);
   return entity_locations_[id];
