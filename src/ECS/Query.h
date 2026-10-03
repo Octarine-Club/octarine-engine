@@ -34,7 +34,7 @@ class ContextImpl final {
         components);
   }
 
-  void* GetComponentPtr(const EntityID id) const {
+  [[nodiscard]] void* GetComponentPtr(const EntityID id) const {
     void* ptr = nullptr;
     size_t i = 0;
     auto check = [&]<typename T0>(T0* component) {
