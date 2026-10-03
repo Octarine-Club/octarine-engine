@@ -12,7 +12,32 @@
 
 constexpr size_t kChunkSize = 16 * 1024;  // 16KB
 
+#include <mutex>
+#include <string_view>
+#include <unordered_map>
+
 class Archetype;
+
+class ComponentTypeManager {
+ public:
+  static uint32_t GetId(std::string_view name) {
+    static std::unordered_map<std::string_view, uint32_t> name_to_id;
+    static uint32_t next_id = 0;
+    static std::mutex mutex;
+    std::lock_guard<std::mutex> lock(mutex);
+    auto it = name_to_id.find(name);
+    if (it != name_to_id.end()) return it->second;
+    uint32_t id = next_id++;
+    name_to_id[name] = id;
+    return id;
+  }
+};
+
+template <typename T>
+inline uint32_t GetComponentFamily() {
+  static uint32_t id = ComponentTypeManager::GetId(typeid(T).name());
+  return id;
+}
 
 struct ChunkHeader {
   uint32_t entity_count;

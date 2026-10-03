@@ -22,8 +22,6 @@
 #include "General/Logger.h"
 #include "System.h"
 
-class Query;
-
 template <typename... TComponents>
 class ComponentQuery;
 
@@ -166,21 +164,26 @@ class Registry {
   // Component management
   template <typename T>
   Entity Component() {
-    std::type_index type_idx(typeid(T));
-    if (auto it = type_to_entity_.find(type_idx); it != type_to_entity_.end()) {
-      return it->second;
+    const uint32_t family = GetComponentFamily<T>();
+    if (family < family_to_entity_.size() && family_to_entity_[family].GetId() != static_cast<std::uint32_t>(-1) &&
+        entity_manager_->IsValid(family_to_entity_[family])) {
+      return family_to_entity_[family];
     }
     const auto entity = CreateInternalEntity();
-    type_to_entity_[type_idx] = entity;
+    if (family >= family_to_entity_.size()) {
+      family_to_entity_.resize(family + 1, Entity(static_cast<EcsId>(-1)));
+    }
+    family_to_entity_[family] = entity;
     component_registry_->RegisterComponent<T>(entity);
     return entity;
   }
 
   template <typename T>
   [[nodiscard]] Entity Component() const {
-    std::type_index type_idx(typeid(T));
-    if (auto it = type_to_entity_.find(type_idx); it != type_to_entity_.end()) {
-      return it->second;
+    const uint32_t family = GetComponentFamily<T>();
+    if (family < family_to_entity_.size() && family_to_entity_[family].GetId() != static_cast<std::uint32_t>(-1) &&
+        entity_manager_->IsValid(family_to_entity_[family])) {
+      return family_to_entity_[family];
     }
     throw std::runtime_error("Component type " + std::string(typeid(T).name()) +
                              " has not been used yet. Cannot get component.");
@@ -189,9 +192,10 @@ class Registry {
   // Non-throwing equivalent of Component<T>() const. Returns nullopt when the type was never registered.
   template <typename T>
   [[nodiscard]] std::optional<Entity> TryComponent() const {
-    std::type_index type_idx(typeid(T));
-    if (auto it = type_to_entity_.find(type_idx); it != type_to_entity_.end()) {
-      return it->second;
+    const uint32_t family = GetComponentFamily<T>();
+    if (family < family_to_entity_.size() && family_to_entity_[family].GetId() != static_cast<std::uint32_t>(-1) &&
+        entity_manager_->IsValid(family_to_entity_[family])) {
+      return family_to_entity_[family];
     }
     return std::nullopt;
   }
@@ -214,9 +218,10 @@ class Registry {
 
   template <typename T>
   void RemoveComponent(const Entity entity) {
-    std::type_index type_idx(typeid(T));
-    if (auto it = type_to_entity_.find(type_idx); it != type_to_entity_.end()) {
-      TransitionRemoveComponent(entity, it->second.GetId());
+    const uint32_t family = GetComponentFamily<T>();
+    if (family < family_to_entity_.size() && family_to_entity_[family].GetId() != static_cast<std::uint32_t>(-1) &&
+        entity_manager_->IsValid(family_to_entity_[family])) {
+      TransitionRemoveComponent(entity, family_to_entity_[family].GetId());
     }
   }
 
@@ -270,37 +275,27 @@ class Registry {
   template <typename... TArgs, typename Func>
   SystemHandle<std::decay_t<Func>> RegisterSystem(Func&& func) {
     using StoredFunc = std::decay_t<Func>;
-    class SystemWrapper final : public ISystem {
-     public:
-      SystemWrapper(Registry* registry, Func&& f)
-          : ISystem(PrettifyTypeName(typeid(StoredFunc).name())),
-            registry_(registry),
-            func_(std::forward<Func>(f)),
-            query_(registry->CreateQuery<TArgs...>()) {}
+    struct SystemState {
+      StoredFunc func;
+      std::unique_ptr<ComponentQuery<TArgs...>> query;
+    };
+    auto state = std::make_shared<SystemState>(SystemState{std::forward<Func>(func), CreateQuery<TArgs...>()});
 
-      void Update(const Registry& /*registry*/) override {
-        query_->Update();
-        // Pass by reference so captured state in the system lambda persists across invocations.
-        query_->ForEach(func_);
+    RegisteredSystem sys;
+    sys.name = PrettifyTypeName(typeid(StoredFunc).name());
+    sys.update = [state](const Registry& registry) {
+      state->query->Update();
+      // Pass by reference so captured state in the system lambda persists across invocations.
+      state->query->ForEach(state->func);
 
-        if constexpr (requires { func_.GetCommandBuffer(); }) {
-          func_.GetCommandBuffer().Playback(registry_);
-        }
+      if constexpr (requires { state->func.GetCommandBuffer(); }) {
+        state->func.GetCommandBuffer().Playback(const_cast<Registry*>(&registry));
       }
-
-      StoredFunc& GetFunc() { return func_; }
-
-     private:
-      Registry* registry_;
-      StoredFunc func_;
-      std::unique_ptr<ComponentQuery<TArgs...>> query_;
     };
 
-    auto wrapper = std::make_unique<SystemWrapper>(this, std::forward<Func>(func));
-    StoredFunc& ref = wrapper->GetFunc();
     const SystemId id = systems_.size();
-    systems_.push_back(std::move(wrapper));
-    return SystemHandle<StoredFunc>(id, &ref);
+    systems_.push_back(std::move(sys));
+    return SystemHandle<StoredFunc>(id, &state->func);
   }
 
   // Registers a system running per-entity callbacks in parallel across chunks on ThreadPool.
@@ -313,92 +308,69 @@ class Registry {
                   "RegisterParallelSystem func must match void(Entity, float, TArgs&...), void(Entity, TArgs&...), "
                   "void(float, TArgs&...), or void(TArgs&...). "
                   "ContextFacade signatures are not supported on the parallel path.");
-    class ParallelSystemWrapper final : public ISystem {
-     public:
-      ParallelSystemWrapper(Registry* registry, Func&& f)
-          : ISystem(PrettifyTypeName(typeid(StoredFunc).name())),
-            registry_(registry),
-            func_(std::forward<Func>(f)),
-            query_(registry->CreateQuery<TArgs...>()) {}
 
-      void Update(const Registry& registry) override {
-        query_->Update();
-        const float dt = registry.delta_time_;
+    struct SystemState {
+      StoredFunc func;
+      std::unique_ptr<ComponentQuery<TArgs...>> query;
+    };
+    auto state = std::make_shared<SystemState>(SystemState{std::forward<Func>(func), CreateQuery<TArgs...>()});
 
-        if constexpr (requires { func_.Prepare(registry_); }) {
-          func_.Prepare(registry_);
-        }
+    RegisteredSystem sys;
+    sys.name = PrettifyTypeName(typeid(StoredFunc).name());
+    sys.update = [state](const Registry& registry) {
+      state->query->Update();
+      const float dt = registry.DeltaTime();
+      auto* regPtr = const_cast<Registry*>(&registry);
 
-        DispatchParallel(dt);
-
-        if constexpr (requires { func_.GetCommandBuffer(); }) {
-          func_.GetCommandBuffer().Playback(registry_);
-        }
+      if constexpr (requires { state->func.Prepare(regPtr); }) {
+        state->func.Prepare(regPtr);
       }
 
-      void DispatchParallel(float dt) {
-        if constexpr (std::is_invocable_v<StoredFunc, Entity, float, TArgs&...>) {
-          query_->ParallelForEach([this, dt](Entity entity, TArgs&... args) { func_(entity, dt, args...); });
-        } else if constexpr (std::is_invocable_v<StoredFunc, Entity, TArgs&...>) {
-          query_->ParallelForEach([this](Entity entity, TArgs&... args) { func_(entity, args...); });
-        } else if constexpr (std::is_invocable_v<StoredFunc, float, TArgs&...>) {
-          query_->ParallelForEach([this, dt](TArgs&... args) { func_(dt, args...); });
-        } else if constexpr (std::is_invocable_v<StoredFunc, TArgs&...>) {
-          query_->ParallelForEach([this](TArgs&... args) { func_(args...); });
-        } else {
-          static_assert(!std::is_same_v<StoredFunc, StoredFunc>,
-                        "RegisterParallelSystem func must match void(Entity, float, TArgs&...), "
-                        "void(Entity, TArgs&...), void(float, TArgs&...), or void(TArgs&...).");
-        }
+      if constexpr (std::is_invocable_v<StoredFunc, Entity, float, TArgs&...>) {
+        state->query->ParallelForEach([&](Entity entity, TArgs&... args) { state->func(entity, dt, args...); });
+      } else if constexpr (std::is_invocable_v<StoredFunc, Entity, TArgs&...>) {
+        state->query->ParallelForEach([&](Entity entity, TArgs&... args) { state->func(entity, args...); });
+      } else if constexpr (std::is_invocable_v<StoredFunc, float, TArgs&...>) {
+        state->query->ParallelForEach([&](TArgs&... args) { state->func(dt, args...); });
+      } else if constexpr (std::is_invocable_v<StoredFunc, TArgs&...>) {
+        state->query->ParallelForEach([&](TArgs&... args) { state->func(args...); });
+      } else {
+        static_assert(!std::is_same_v<StoredFunc, StoredFunc>, "RegisterParallelSystem func signature mismatch.");
       }
 
-      StoredFunc& GetFunc() { return func_; }
-
-     private:
-      Registry* registry_;
-      StoredFunc func_;
-      std::unique_ptr<ComponentQuery<TArgs...>> query_;
+      if constexpr (requires { state->func.GetCommandBuffer(); }) {
+        state->func.GetCommandBuffer().Playback(regPtr);
+      }
     };
 
-    auto wrapper = std::make_unique<ParallelSystemWrapper>(this, std::forward<Func>(func));
-    StoredFunc& ref = wrapper->GetFunc();
     const SystemId id = systems_.size();
-    systems_.push_back(std::move(wrapper));
-    return SystemHandle<StoredFunc>(id, &ref);
+    systems_.push_back(std::move(sys));
+    return SystemHandle<StoredFunc>(id, &state->func);
   }
 
   // Registers a system invoked once per Update with a ContextFacade for registry access.
   template <typename... TArgs, typename Func>
   SystemHandle<std::decay_t<Func>> RegisterBulkSystem(Func&& func) {
     using StoredFunc = std::decay_t<Func>;
-    class BulkSystemWrapper final : public ISystem {
-     public:
-      BulkSystemWrapper(Registry* registry, Func&& f)
-          : ISystem(PrettifyTypeName(typeid(StoredFunc).name())),
-            func_(std::forward<Func>(f)),
-            query_(registry->CreateQuery<TArgs...>()) {}
+    struct SystemState {
+      StoredFunc func;
+      std::unique_ptr<ComponentQuery<TArgs...>> query;
+    };
+    auto state = std::make_shared<SystemState>(SystemState{std::forward<Func>(func), CreateQuery<TArgs...>()});
 
-      void Update(const Registry& registry) override {
-        query_->Update();
-        auto* registryPtr = const_cast<Registry*>(&registry);
-        const float dt = registry.delta_time_;
-        Internal::BulkContextImpl bulkCtx(registryPtr, dt);
-        ContextFacade ctx(&bulkCtx);
-        func_(ctx);
-      }
-
-      StoredFunc& GetFunc() { return func_; }
-
-     private:
-      StoredFunc func_;
-      std::unique_ptr<ComponentQuery<TArgs...>> query_;
+    RegisteredSystem sys;
+    sys.name = PrettifyTypeName(typeid(StoredFunc).name());
+    sys.update = [state](const Registry& registry) {
+      state->query->Update();
+      auto* registryPtr = const_cast<Registry*>(&registry);
+      const float dt = registry.DeltaTime();
+      ContextFacade ctx(registryPtr, dt, nullptr, &Internal::BulkGetComponent);
+      state->func(ctx);
     };
 
-    auto wrapper = std::make_unique<BulkSystemWrapper>(this, std::forward<Func>(func));
-    StoredFunc& ref = wrapper->GetFunc();
     const SystemId id = systems_.size();
-    systems_.push_back(std::move(wrapper));
-    return SystemHandle<StoredFunc>(id, &ref);
+    systems_.push_back(std::move(sys));
+    return SystemHandle<StoredFunc>(id, &state->func);
   }
 
   // Builds execution-order constraints between registered systems:
@@ -433,20 +405,29 @@ class Registry {
   // Stores singleton service wrapped in shared_ptr to support move-only types.
   template <typename T>
   T& Set(T value) {
+    const uint32_t family = GetComponentFamily<T>();
     auto ptr = std::make_shared<T>(std::move(value));
     T& ref = *ptr;
-    singleton_components_[typeid(T).name()] = std::move(ptr);
+    if (family >= singleton_components_.size()) {
+      singleton_components_.resize(family + 1);
+    }
+    singleton_components_[family] = std::move(ptr);
     return ref;
   }
 
   template <typename T>
   const T& Get() const {
+    const uint32_t family = GetComponentFamily<T>();
+    if (family >= singleton_components_.size()) {
+      throw std::runtime_error("Attempted to Get a singleton component that has not been Set.");
+    }
+    const auto& anyVal = singleton_components_[family];
+    if (!anyVal.has_value()) {
+      throw std::runtime_error("Attempted to Get a singleton component that has not been Set.");
+    }
     try {
-      const auto& anyVal = singleton_components_.at(typeid(T).name());
       const auto& ptr = std::any_cast<const std::shared_ptr<T>&>(anyVal);
       return *ptr;
-    } catch (const std::out_of_range&) {
-      throw std::runtime_error("Attempted to Get a singleton component that has not been Set.");
     } catch (const std::bad_any_cast&) {
       throw std::runtime_error("Type mismatch in Get. This indicates a logic error.");
     }
@@ -460,9 +441,11 @@ class Registry {
   // Returns nullptr if T has never been Set.
   template <typename T>
   [[nodiscard]] T* TryGet() {
-    const auto it = singleton_components_.find(typeid(T).name());
-    if (it == singleton_components_.end()) return nullptr;
-    if (const auto* ptr = std::any_cast<std::shared_ptr<T>>(&it->second)) return ptr->get();
+    const uint32_t family = GetComponentFamily<T>();
+    if (family >= singleton_components_.size()) return nullptr;
+    const auto& anyVal = singleton_components_[family];
+    if (!anyVal.has_value()) return nullptr;
+    if (const auto* ptr = std::any_cast<std::shared_ptr<T>>(&anyVal)) return ptr->get();
     return nullptr;
   }
 
@@ -481,12 +464,16 @@ class Registry {
   template <typename T>
   Entity Tag() {
     static_assert(std::is_empty_v<T>, "Tag<T>() requires an empty struct type");
-    std::type_index type_idx(typeid(T));
-    if (auto it = type_to_entity_.find(type_idx); it != type_to_entity_.end()) {
-      return it->second;
+    const uint32_t family = GetComponentFamily<T>();
+    if (family < family_to_entity_.size() && family_to_entity_[family].GetId() != static_cast<std::uint32_t>(-1) &&
+        entity_manager_->IsValid(family_to_entity_[family])) {
+      return family_to_entity_[family];
     }
     const auto entity = CreateInternalEntity();
-    type_to_entity_[type_idx] = entity;
+    if (family >= family_to_entity_.size()) {
+      family_to_entity_.resize(family + 1, Entity(static_cast<EcsId>(-1)));
+    }
+    family_to_entity_[family] = entity;
     component_registry_->RegisterTag(entity.GetId(), typeid(T).name());
     return entity;
   }
@@ -510,9 +497,10 @@ class Registry {
 
   template <typename T>
   void RemoveTag(const Entity entity) {
-    std::type_index type_idx(typeid(T));
-    if (auto it = type_to_entity_.find(type_idx); it != type_to_entity_.end()) {
-      TransitionRemoveComponent(entity, it->second.GetId());
+    const uint32_t family = GetComponentFamily<T>();
+    if (family < family_to_entity_.size() && family_to_entity_[family].GetId() != static_cast<std::uint32_t>(-1) &&
+        entity_manager_->IsValid(family_to_entity_[family])) {
+      TransitionRemoveComponent(entity, family_to_entity_[family].GetId());
     }
   }
 
@@ -532,9 +520,10 @@ class Registry {
 
   template <typename T>
   [[nodiscard]] bool HasTag(const Entity entity) const {
-    std::type_index type_idx(typeid(T));
-    if (auto it = type_to_entity_.find(type_idx); it != type_to_entity_.end()) {
-      return HasTag(entity, it->second);
+    const uint32_t family = GetComponentFamily<T>();
+    if (family < family_to_entity_.size() && family_to_entity_[family].GetId() != static_cast<std::uint32_t>(-1) &&
+        entity_manager_->IsValid(family_to_entity_[family])) {
+      return HasTag(entity, family_to_entity_[family]);
     }
     return false;
   }
@@ -625,13 +614,12 @@ class Registry {
   std::vector<EntityLocation> entity_locations_;
   std::unordered_map<ArchetypeID, std::unique_ptr<Archetype>> archetypes_;
   std::unique_ptr<Archetype> root_archetype_;
-  std::vector<std::unique_ptr<ISystem>> systems_;
+  std::vector<RegisteredSystem> systems_;
   std::vector<std::pair<SystemId, SystemId>> system_order_edges_;
   std::vector<SystemId> system_execution_order_;
   bool system_order_dirty_ = false;
-  // Keyed by type name rather than type_index to safely compare across translation units with hidden visibility.
-  std::unordered_map<std::string_view, std::any> singleton_components_;
-  std::unordered_map<std::type_index, Entity> type_to_entity_;
+  std::vector<std::any> singleton_components_;
+  std::vector<Entity> family_to_entity_;
   std::unordered_map<std::string, Entity> tag_to_entity_;
   std::unordered_map<ComponentID, ArchetypeList> component_index_;
   std::vector<Archetype*> archetype_log_;
@@ -652,7 +640,7 @@ class Registry {
 
 template <typename T>
 inline T& ContextFacade::Component() const {
-  const auto componentEntity = impl_->GetRegistry()->Component<T>();
-  void* ptr = impl_->GetComponentPtr(componentEntity.GetId());
+  const auto componentEntity = registry_->template Component<T>();
+  void* ptr = get_component_ptr_(ctx_data_, componentEntity.GetId());
   return *static_cast<T*>(ptr);
 }

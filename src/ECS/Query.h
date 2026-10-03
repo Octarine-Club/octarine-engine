@@ -10,13 +10,17 @@
 namespace Internal {
 
 template <typename... TComponents>
-class ContextImpl final : public AnyContext {
+class ContextImpl final {
  public:
-  ContextImpl(Registry* registry, const float dt)
-      : registry_(registry), dt_(dt), ids_{registry->Component<Internal::unwrap_opt_t<TComponents>>().GetId()...} {}
+  ContextImpl() : ids_{} {}
 
-  void Update(const Entity entity, std::tuple<Internal::resolve_yield_t<TComponents>...> components) {
-    entity_ = entity;
+  void Initialize(Registry* registry) {
+    // Must be called once before use. We can't do this in the constructor because
+    // Component<T>() requires a complete Registry.
+    ids_ = {registry->Component<Internal::unwrap_opt_t<TComponents>>().GetId()...};
+  }
+
+  void Update(std::tuple<Internal::resolve_yield_t<TComponents>...> components) {
     components_ = std::apply(
         []<typename... T0>(T0&&... comps) {
           return std::make_tuple([&]() {
@@ -30,17 +34,11 @@ class ContextImpl final : public AnyContext {
         components);
   }
 
-  [[nodiscard]] Entity GetEntity() const override { return entity_; }
-  [[nodiscard]] Registry* GetRegistry() const override { return registry_; }
-  [[nodiscard]] float GetDeltaTime() const override { return dt_; }
-
-  void* GetComponentPtr(EntityID id) override {
+  [[nodiscard]] void* GetComponentPtr(const EntityID id) const {
     void* ptr = nullptr;
     size_t i = 0;
     auto check = [&]<typename T0>(T0* component) {
-      if (ptr) {
-        return;
-      }
+      if (ptr) return;
       if (ids_[i] == id) {
         ptr = component;
       }
@@ -50,32 +48,19 @@ class ContextImpl final : public AnyContext {
     return ptr;
   }
 
+  static void* GetComponentPtrStatic(const void* ctx, const EntityID id) {
+    return static_cast<const ContextImpl*>(ctx)->GetComponentPtr(id);
+  }
+
  private:
-  Registry* registry_;
-  float dt_;
-  Entity entity_{};
   std::tuple<Internal::unwrap_opt_t<TComponents>*...> components_;
   std::array<ComponentID, sizeof...(TComponents)> ids_;
 };
 
 }  // namespace Internal
 
-class Query {
- public:
-  Query() = default;
-  virtual ~Query() = default;
-
-  Query(Query&&) = default;
-  Query(Query& query) = default;
-
-  Query& operator=(Query&&) = default;
-  Query& operator=(const Query& query) = default;
-
-  virtual void Update() = 0;
-};
-
 template <typename... TComponents>
-class ComponentQuery final : public Query {
+class ComponentQuery final {
  public:
   explicit ComponentQuery(Registry* registry)
       : registry_(registry), type_({(registry->Component<Internal::unwrap_opt_t<TComponents>>().GetId())...}) {
@@ -83,7 +68,7 @@ class ComponentQuery final : public Query {
     RebuildSorted();
   }
 
-  void Update() override {
+  void Update() {
     ACCUMULATE_PROFILE_SCOPE("Query::Update");
     const uint64_t current_gen = registry_->ArchetypeGeneration();
     if (current_gen == cached_generation_) {
@@ -173,10 +158,14 @@ class ComponentQuery final : public Query {
   void ForEachWithFacade(Func&& func) {
     static_assert(!(... || Internal::is_optional_v<TComponents>),
                   "Optional components are not yet supported in ContextFacade-based ForEach.");
-    Internal::ContextImpl<TComponents...> contextImpl(registry_, registry_->DeltaTime());
-    ContextFacade facade(&contextImpl);
+    Internal::ContextImpl<TComponents...> contextImpl;
+    contextImpl.Initialize(registry_);
+    ContextFacade facade(registry_, registry_->DeltaTime(), &contextImpl,
+                         &Internal::ContextImpl<TComponents...>::GetComponentPtrStatic);
+
     archetype_query_.ForEach([&](Entity entity, TComponents&... comps) {
-      contextImpl.Update(entity, std::forward_as_tuple(comps...));
+      contextImpl.Update(std::forward_as_tuple(comps...));
+      facade.SetEntity(entity);
       if constexpr (std::is_invocable_v<Func, ContextFacade&, Entity, TComponents&...>) {
         func(facade, entity, comps...);
       } else {

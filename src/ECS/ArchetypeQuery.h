@@ -22,6 +22,14 @@ class ArchetypeQuery {
         matching_archetypes_(std::move(matching_archetypes)),
         include_inactive_(include_inactive) {
     assert(sizeof...(TComponents) == type_.size());
+    arch_component_offsets_.reserve(matching_archetypes_.size());
+    for (const auto* arch : matching_archetypes_) {
+      std::array<size_t, sizeof...(TComponents)> offsets;
+      for (size_t i = 0; i < type_.size(); ++i) {
+        offsets[i] = arch->GetComponentIndex(type_[i]);
+      }
+      arch_component_offsets_.push_back(offsets);
+    }
   }
 
   [[nodiscard]] size_t GetTotalEntityCount() const {
@@ -37,11 +45,13 @@ class ArchetypeQuery {
   // Process matching entities serially via direct chunk-batched loops.
   template <typename Func>
   void ForEach(Func&& func) const {
-    for (auto* arch : matching_archetypes_) {
+    for (size_t a = 0; a < matching_archetypes_.size(); ++a) {
+      auto* arch = matching_archetypes_[a];
+      const auto& offsets = arch_component_offsets_[a];
       for (size_t c = 0; c < arch->chunks_.size(); ++c) {
         const size_t count = include_inactive_ ? arch->chunks_[c].GetEntityCount() : arch->chunks_[c].GetActiveCount();
         if (count == 0) continue;
-        ProcessChunk(arch, c, count, func);
+        ProcessChunk(arch, offsets, c, count, func);
       }
     }
   }
@@ -94,6 +104,7 @@ class ArchetypeQuery {
  private:
   struct ChunkWork {
     Archetype* archetype;
+    const std::array<size_t, sizeof...(TComponents)>* offsets;
     size_t chunkIdx;
     size_t entityCount;
   };
@@ -121,15 +132,16 @@ class ArchetypeQuery {
   using ArrayTuple = std::tuple<Internal::resolve_pointer_t<TComponents>...>;
 
   // Resolves typed component arrays for a single chunk.
-  auto ResolveChunkArrays(const Archetype* arch, const size_t chunkIdx) const {
+  auto ResolveChunkArrays(const Archetype* arch, const std::array<size_t, sizeof...(TComponents)>& offsets,
+                          const size_t chunkIdx) const {
     return [&]<std::size_t... Is>(std::index_sequence<Is...>) {
       return ArrayTuple{[&]() -> Internal::resolve_pointer_t<TComponents> {
         using Comp = std::tuple_element_t<Is, std::tuple<TComponents...>>;
         using RawT = Internal::unwrap_opt_t<Comp>;
         if constexpr (Internal::is_optional_v<Comp>) {
-          if (!arch->HasComponent(type_[Is])) return nullptr;
+          if (offsets[Is] == Archetype::kInvalidComponentIndex) return nullptr;
         }
-        return arch->template GetComponentArray<RawT>(chunkIdx, type_[Is]);
+        return arch->template GetComponentArrayByIndex<RawT>(chunkIdx, offsets[Is]);
       }()...};
     }(std::index_sequence_for<TComponents...>{});
   }
@@ -164,8 +176,9 @@ class ArchetypeQuery {
 
   // Resolves typed component arrays and iterates entities within a single chunk.
   template <typename Func>
-  void ProcessChunk(Archetype* arch, size_t chunkIdx, size_t count, Func& func) const {
-    const auto arrays = ResolveChunkArrays(arch, chunkIdx);
+  void ProcessChunk(Archetype* arch, const std::array<size_t, sizeof...(TComponents)>& offsets, size_t chunkIdx,
+                    size_t count, Func& func) const {
+    const auto arrays = ResolveChunkArrays(arch, offsets, chunkIdx);
     const Entity* entities = arch->chunks_[chunkIdx].GetEntityArray();
     for (size_t e = 0; e < count; ++e) {
       InvokePerEntity(func, entities[e], arrays, e, std::index_sequence_for<TComponents...>{});
@@ -174,11 +187,13 @@ class ArchetypeQuery {
 
   std::vector<ChunkWork> CollectChunkWork() const {
     std::vector<ChunkWork> work;
-    for (auto* arch : matching_archetypes_) {
+    for (size_t a = 0; a < matching_archetypes_.size(); ++a) {
+      auto* arch = matching_archetypes_[a];
+      const auto& offsets = arch_component_offsets_[a];
       for (size_t c = 0; c < arch->chunks_.size(); ++c) {
         const size_t count = include_inactive_ ? arch->chunks_[c].GetEntityCount() : arch->chunks_[c].GetActiveCount();
         if (count > 0) {
-          work.push_back({arch, c, count});
+          work.push_back({arch, &offsets, c, count});
         }
       }
     }
@@ -202,11 +217,12 @@ class ArchetypeQuery {
   void ProcessChunks(const std::vector<ChunkWork>& work, size_t begin, size_t end, Func& func) const {
     for (size_t i = begin; i < end; ++i) {
       const auto& w = work[i];
-      ProcessChunk(w.archetype, w.chunkIdx, w.entityCount, func);
+      ProcessChunk(w.archetype, *w.offsets, w.chunkIdx, w.entityCount, func);
     }
   }
 
   ArchetypeType type_;
   std::vector<Archetype*> matching_archetypes_;
+  std::vector<std::array<size_t, sizeof...(TComponents)>> arch_component_offsets_;
   bool include_inactive_ = false;
 };
