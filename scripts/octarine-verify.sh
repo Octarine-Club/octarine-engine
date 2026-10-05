@@ -98,7 +98,10 @@ check_format() {
     echo "  -> SKIP clang-format (not on PATH)" >&2
     return 0
   fi
-  local files; mapfile -t files < <(changed_sources)
+  local files=()
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && files+=("$line")
+  done < <(changed_sources)
   if [[ ${#files[@]} -eq 0 ]]; then
     echo "  ok   clang-format (no changed sources)"
     return 0
@@ -121,7 +124,10 @@ check_tidy() {
     echo "  -> SKIP clang-tidy (no compile_commands.json — configure first)" >&2
     return 0
   fi
-  local files; mapfile -t files < <(changed_sources | grep -E '\.cpp$' || true)
+  local files=()
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && files+=("$line")
+  done < <(changed_sources | grep -E '\.cpp$' || true)
   if [[ ${#files[@]} -eq 0 ]]; then
     echo "  ok   clang-tidy (no changed .cpp files)"
     return 0

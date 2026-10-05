@@ -340,3 +340,39 @@ if (OCTARINE_ENABLE_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif ()
+
+# =============================================================================
+# Documentation
+# =============================================================================
+
+find_package(Doxygen)
+if (DOXYGEN_FOUND)
+    set(DOXYGEN_PROJECT_NAME "${PROJECT_NAME}")
+    set(DOXYGEN_PROJECT_NUMBER "${PROJECT_VERSION}")
+    set(DOXYGEN_PROJECT_BRIEF "${PROJECT_DESCRIPTION}")
+    set(DOXYGEN_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/docs")
+    set(DOXYGEN_GENERATE_HTML YES)
+    set(DOXYGEN_GENERATE_LATEX NO)
+    set(DOXYGEN_RECURSIVE YES)
+    
+    # Extract all classes/methods even if undocumented
+    set(DOXYGEN_EXTRACT_ALL YES)
+    set(DOXYGEN_WARN_IF_UNDOCUMENTED NO)
+    
+    # Apply Doxygen Awesome CSS theme
+    set(DOXYGEN_GENERATE_TREEVIEW YES)
+    set(DOXYGEN_HTML_EXTRA_STYLESHEET 
+        "${CMAKE_CURRENT_SOURCE_DIR}/docs/theme/doxygen-awesome.css"
+        "${CMAKE_CURRENT_SOURCE_DIR}/docs/theme/doxygen-awesome-sidebar-only.css"
+    )
+    
+    set(DOXYGEN_USE_MDFILE_AS_MAINPAGE "${CMAKE_CURRENT_SOURCE_DIR}/docs/mainpage.md")
+    
+    doxygen_add_docs(docs
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+            ${CMAKE_CURRENT_SOURCE_DIR}/docs/mainpage.md
+            COMMENT "Generating API documentation with Doxygen"
+    )
+    message(STATUS "Octarine: Doxygen docs target ADDED")
+endif ()
+
