@@ -1012,3 +1012,7 @@ imgui.ini
 
 # Ignore auto-cloned game repo for benchmarking
 .benchmark_game/
+
+# Local benchmark output and reports
+benchmarks/
+
