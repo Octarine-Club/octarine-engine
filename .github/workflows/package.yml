@@ -9,13 +9,37 @@ env:
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
 
 jobs:
+  check-branch:
+    name: Check if tag is on main
+    runs-on: ubuntu-latest
+    outputs:
+      is_main: ${{ steps.check.outputs.is_main }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: check
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "is_main=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git fetch origin main
+          if git branch -r --contains ${{ github.sha }} | grep -q 'origin/main'; then
+            echo "is_main=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_main=false" >> "$GITHUB_OUTPUT"
+            echo "Tag is not on main branch. Skipping release."
+          fi
+
   # Build standalone SDK binaries (no game project bundled) for both editor-release (full editor
   # UI, for game development) and player-release (no editor/ImGui, for game packaging CI).
   # Only runs on v* tag pushes.
   sdk:
     name: SDK ${{ matrix.flavor }} — ${{ matrix.platform }}
+    needs: check-branch
     runs-on: ${{ matrix.os }}
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    if: needs.check-branch.outputs.is_main == 'true' || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:

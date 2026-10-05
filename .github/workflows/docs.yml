@@ -1,0 +1,51 @@
+name: Generate and Deploy Documentation
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  deploy-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Export GitHub Actions cache env (vcpkg binary cache)
+        uses: ./.github/actions/vcpkg-cache-env
+
+      - name: Install Linux build deps (SDL3 / X11 / Wayland)
+        uses: ./.github/actions/linux-build-deps
+
+      - name: Install Doxygen
+        run: sudo apt-get update && sudo apt-get install -y doxygen
+
+      - name: Configure CMake
+        run: cmake --preset player-release
+
+      - name: Build Docs
+        run: cmake --build build/player-release --target docs
+
+      - name: Disable Jekyll Processing
+        run: touch build/player-release/docs/html/.nojekyll
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./build/player-release/docs/html
+          destination_dir: ${{ github.ref_name }} # e.g. /v0.1.0/
+          keep_files: true # Prevents deleting previous versions
