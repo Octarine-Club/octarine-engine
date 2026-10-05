@@ -22,7 +22,7 @@ bool SDL_IBus_ProcessKeyEvent(Uint32 keysym, Uint32 keycode, bool down) {
   return false;
 }
 
-void SDL_IBus_UpdateTextInputArea(const SDL_Rect *rect) { (void)rect; }
+void SDL_IBus_UpdateTextInputArea(const SDL_Rect* rect) { (void)rect; }
 
 void SDL_IBus_PumpEvents(void) {}
 }

@@ -43,7 +43,7 @@ void CheckRotation2D() {
   using octarine::Rotation2D;
 
   std::cout << "[rotation2d] identity short-circuit and basic rotation\n";
-  // FromRadians(0) must be *exactly* identity, not merely close: CollisionSystem uses
+  // FromRadians(0) must be *exactly* identity, not merely close: KDTreeCollisionSystem uses
   // IsIdentity() to skip the oriented narrowphase, and a 0.9999999 cosine would defeat it.
   const Rotation2D identity = Rotation2D::FromRadians(0.0);
   Check(identity.IsIdentity(), "zero radians resolves to exact identity");

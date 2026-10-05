@@ -37,8 +37,8 @@
       "fields": [],
       "emit_sites": [
         {
-          "file": "src/Systems/CollisionSystem.h",
-          "line": 230
+          "file": "src/Systems/KDTreeCollisionSystem.h",
+          "line": 232
         }
       ],
       "subscribe_sites": [
@@ -66,8 +66,8 @@
       "fields": [],
       "emit_sites": [
         {
-          "file": "src/Systems/CollisionSystem.h",
-          "line": 231
+          "file": "src/Systems/KDTreeCollisionSystem.h",
+          "line": 233
         }
       ],
       "subscribe_sites": [

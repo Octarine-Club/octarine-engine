@@ -1,6 +1,6 @@
-// Integration tests for CollisionSystem's enter/exit filtering (W2.2).
+// Integration tests for KDTreeCollisionSystem's enter/exit filtering (W2.2).
 //
-// CollisionSystem is async: operator() on call N gathers the current entity positions and
+// KDTreeCollisionSystem is async: operator() on call N gathers the current entity positions and
 // starts BVH detection; call N+1 consumes that result and emits CollisionBatchEvent. A 20 ms
 // sleep between Update() calls gives the async work time to complete (it finishes in µs for
 // 2-3 entities). Because the detection result is one frame behind the gather, each scenario
@@ -22,7 +22,7 @@
 #include "Engine/EngineContext.h"
 #include "EventBus/EventBus.h"
 #include "Events/CollisionBatchEvent.h"
-#include "Systems/CollisionSystem.h"
+#include "Systems/KDTreeCollisionSystem.h"
 #include "TestHarness.h"
 
 using octarine::test::Check;
@@ -63,7 +63,7 @@ struct TestScene {
     EngineContext ctx;
     ctx.eventBus = bus.get();
     reg.Set<EngineContext>(ctx);
-    reg.RegisterBulkSystem(CollisionSystem());
+    reg.RegisterBulkSystem(KDTreeCollisionSystem());
     capture.subscription =
         bus->SubscribeEvent<CollisionCapture, CollisionBatchEvent>(&capture, &CollisionCapture::OnBatch);
   }
@@ -90,7 +90,7 @@ struct TestScene {
     reg.GetComponent<GlobalTransformComponent>(e).position = glm::vec2(x, y);
   }
 
-  // Advance one engine tick. CollisionSystem starts async detection this call;
+  // Advance one engine tick. KDTreeCollisionSystem starts async detection this call;
   // the resulting pairs are emitted on the NEXT call, so most scenarios need an
   // extra trailing tick to flush the pipeline.
   void Tick() {

@@ -93,7 +93,7 @@ class LuaEntityLoader {
 
   // Reads top-level `mask` int from the entity table and attaches an EntityMaskComponent.
   // Also attaches a default EntityMaskComponent when the entity declares a `box_collider`
-  // (CollisionSystem queries this component, so collider entities must have one).
+  // (KDTreeCollisionSystem queries this component, so collider entities must have one).
   static void ApplyEntityMask(const sol::table& currentData, Registry* registry, const Entity& entity) {
     const sol::object topLevelMask = currentData.get<sol::object>("entity_mask");
     const bool hasTopLevelMask = topLevelMask.valid() && topLevelMask.is<int>();

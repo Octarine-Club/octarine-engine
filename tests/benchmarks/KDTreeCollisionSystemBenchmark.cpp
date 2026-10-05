@@ -12,33 +12,22 @@
 #include "Engine/EngineContext.h"
 #include "EventBus/EventBus.h"
 #include "Events/CollisionBatchEvent.h"
-#include "Systems/CollisionSystem.h"
+#include "Systems/KDTreeCollisionSystem.h"
 
-// Micro-bench for the CollisionSystem async-dispatch path. The system hands each detection cycle
+// Micro-bench for the KDTreeCollisionSystem async-dispatch path. The system hands each detection cycle
 // to a worker and polls the returned future on later ticks; the change under test swapped a
 // per-cycle std::async(launch::async) (a fresh OS thread spun up and joined every cycle) for a
 // submit to the persistent ThreadPool. This drives complete dispatch->collect cycles so the
 // per-cycle dispatch overhead is what's timed. At small box counts that overhead dominates the
 // (trivial) detection work; at large counts the detection work dominates and any delta shrinks
 // toward the noise floor. Compare against the std::async baseline by re-running with the change
-// reverted (the build is identical; only CollisionSystem.h differs).
+// reverted (the build is identical; only KDTreeCollisionSystem.h differs).
 
 namespace {
-class StubContext final : public AnyContext {
- public:
-  explicit StubContext(Registry* r) : registry_(r) {}
-  [[nodiscard]] Entity GetEntity() const override { return Entity{}; }
-  [[nodiscard]] Registry* GetRegistry() const override { return registry_; }
-  [[nodiscard]] float GetDeltaTime() const override { return 0.016f; }
-  void* GetComponentPtr(EntityID) override { return nullptr; }
-
- private:
-  Registry* registry_;
-};
 
 struct CollisionCounter {
   std::uint64_t count = 0;
-  // CollisionSystem emits exactly one batched event per collect cycle, so counting events (not
+  // KDTreeCollisionSystem emits exactly one batched event per collect cycle, so counting events (not
   // pairs) advances once per cycle — what the timing loop below keys on. Counting pairs would
   // hang: only *entering* pairs are emitted, so a sustained overlap reports its pair on the
   // first cycle and every later batch is empty.
@@ -75,9 +64,8 @@ static void BM_CollisionDispatch(benchmark::State& state) {
 
   BuildBoxes(registry, static_cast<int>(state.range(0)));
 
-  CollisionSystem system;
-  StubContext impl(&registry);
-  const ContextFacade ctx(&impl);
+  KDTreeCollisionSystem system;
+  ContextFacade ctx(&registry, 0.016f, nullptr, Internal::BulkGetComponent);
 
   // Each timed iteration advances exactly one full dispatch->collect cycle: the system polls the
   // outstanding future (cheap early-returns) until it is ready, collects + emits (bumping the
@@ -124,9 +112,8 @@ static void BM_CollisionDispatchDense(benchmark::State& state) {
 
   BuildDenseCluster(registry, static_cast<int>(state.range(0)));
 
-  CollisionSystem system;
-  StubContext impl(&registry);
-  const ContextFacade ctx(&impl);
+  KDTreeCollisionSystem system;
+  ContextFacade ctx(&registry, 0.016f, nullptr, Internal::BulkGetComponent);
 
   for (auto _ : state) {
     const std::uint64_t before = counter.count;
