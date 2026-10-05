@@ -44,7 +44,7 @@ class DrawColliderSystem {
       return;
     }
 
-    // Match CollisionSystem: orbit the box centre about `position + pivot` before drawing the
+    // Match KDTreeCollisionSystem: orbit the box centre about `position + pivot` before drawing the
     // OBB, so the debug outline lands on the box the broadphase actually tested.
     centre = octarine::RotateAround(centre, origin, rot);
     DrawOrientedBox(renderer, centre, {hx, hy}, rot);

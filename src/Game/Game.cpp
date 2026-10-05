@@ -68,11 +68,11 @@
 #include "Systems/AudioCullingSystem.h"
 #include "Systems/AudioSystem.h"
 #include "Systems/CameraFollowSystem.h"
-#include "Systems/CollisionSystem.h"
 #include "Systems/DamageSystem.h"
 #include "Systems/DopplerSystem.h"
 #include "Systems/DrawColliderSystem.h"
 #include "Systems/InputSystem.h"
+#include "Systems/KDTreeCollisionSystem.h"
 #include "Systems/LifetimeSystem.h"
 #include "Systems/ObstacleBounceSystem.h"
 #include "Systems/OffScreenDespawnSystem.h"
@@ -706,11 +706,11 @@ void Game::Setup() {
   // Resolve the transform hierarchy into global positions/scales.
   auto transform = registry_->RegisterBulkSystem<GlobalTransformComponent>(TransformSystem());
 
-  auto collision = registry_->RegisterBulkSystem(CollisionSystem());
+  auto collision = registry_->RegisterBulkSystem(KDTreeCollisionSystem());
   // Store a pointer so the Lua are_colliding() query can reach IsOverlapping() without coupling
   // the module binding to the BulkSystem registration mechanism. The pointer is stable for the
   // registry's lifetime (the wrapper is owned by registry_->systems_).
-  registry_->Set<CollisionSystem*>(&collision.Func());
+  registry_->Set<KDTreeCollisionSystem*>(&collision.Func());
 
   // Lifetime system for expiring and despawning entities.
   registry_->RegisterBulkSystem<LifetimeComponent>(LifetimeSystem());

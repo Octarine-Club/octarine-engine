@@ -13,7 +13,7 @@
 #include "General/Logger.h"
 #include "Lua/Bindings/LuaComponentRegistry.h"
 #include "Lua/LuaBindingContext.h"
-#include "Systems/CollisionSystem.h"
+#include "Systems/KDTreeCollisionSystem.h"
 
 namespace {
 glm::vec2 GetEntityPosition(Registry* registry, const Entity entity) {
@@ -122,7 +122,7 @@ void LuaModuleBinding<EntityModule>::install(sol::state& lua, LuaBindingContext&
   });
 
   lua.set_function("are_colliding", [&ctx](const Entity a, const Entity b) {
-    CollisionSystem* cs = ctx.GetRegistry()->Get<CollisionSystem*>();
+    KDTreeCollisionSystem* cs = ctx.GetRegistry()->Get<KDTreeCollisionSystem*>();
     return cs != nullptr && cs->IsOverlapping(a, b);
   });
 

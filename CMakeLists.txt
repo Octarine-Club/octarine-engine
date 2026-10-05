@@ -301,7 +301,7 @@ if (OCTARINE_ENABLE_BENCHMARKS)
             tests/benchmarks/EcsCoreBenchmark.cpp
             tests/benchmarks/EntityPoolBenchmark.cpp
             tests/benchmarks/SpatialAudioBenchmark.cpp
-            tests/benchmarks/CollisionSystemBenchmark.cpp
+            tests/benchmarks/KDTreeCollisionSystemBenchmark.cpp
             tests/benchmarks/TextCacheBenchmark.cpp
     )
     set_target_properties(OctarineBenchmarks PROPERTIES

@@ -54,7 +54,7 @@ Subscriptions are wired once during startup (`Game::Setup`, each system's `Init`
 | Event | Payload | Emitted by | Subscribed by |
 |-------|---------|------------|---------------|
 | `AudioPlayEvent` | `clipId: string`, `volume: float` | Lua `play_sound()` (`AudioModuleLuaBinding.cpp`) | `AudioSystem::OnAudioPlay` |
-| `CollisionBatchEvent` | `pairs: const std::vector<std::pair<Entity, Entity>>&` (frame's *entering* pairs — first-contact overlaps not seen last frame) | `CollisionSystem` (narrowphase) | `DamageSystem::OnCollisionBatch`, `ObstacleBounceSystem::OnCollisionBatch` |
+| `CollisionBatchEvent` | `pairs: const std::vector<std::pair<Entity, Entity>>&` (frame's *entering* pairs — first-contact overlaps not seen last frame) | `KDTreeCollisionSystem` (narrowphase) | `DamageSystem::OnCollisionBatch`, `ObstacleBounceSystem::OnCollisionBatch` |
 | `GamepadButtonEvent` | `which: SDL_JoystickID`, `button: SDL_GamepadButton`, `buttonName: string`, `isPressed: bool` | `Game::ProcessInput` / `FrameLoop` (SDL gamepad button events) | `InputSystem::OnGamepadButton`, `UIButtonSystem::OnGamepadButton` |
 | `KeyInputEvent` | `inputKey: SDL_Keycode`, `inputModifier: SDL_Keymod`, `isPressed: bool` | `Game::ProcessInput` (SDL key events) | `InputSystem::OnKeyInput`, `FrameLoop::OnKeyInputEvent`, `UIButtonSystem::OnKeyInput` |
 | `MouseInputEvent` | `event: SDL_MouseButtonEvent` | `Game::ProcessInput` (SDL mouse-button events) | `InputSystem::OnMouseInput`, `UIButtonSystem::OnMouseInput` |
@@ -67,7 +67,7 @@ Event types live in `src/Events/`.
 - **Input:** SDL events → `Game::ProcessInput` / `FrameLoop` emit `KeyInputEvent` / `MouseInputEvent` /
   `MouseWheelEvent` / `GamepadButtonEvent` → `InputSystem` folds them into per-frame state (also `FrameLoop` for engine
   hotkeys, `UIButtonSystem` for mouse clicks and keyboard/gamepad/action bindings).
-- **Collision:** `CollisionSystem` detects overlaps and emits a single `CollisionBatchEvent` carrying
+- **Collision:** `KDTreeCollisionSystem` detects overlaps and emits a single `CollisionBatchEvent` carrying
   the frame's *entering* pairs (first-contact overlaps not seen last frame) → `DamageSystem` and
   `ObstacleBounceSystem` iterate the batch and react. (One batched event per frame rather than one
   per pair keeps dispatch cost off the bus at high density; enter-only filtering avoids re-firing on

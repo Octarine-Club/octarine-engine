@@ -28,7 +28,7 @@ class RenderPrimitiveSystem {
 
   void operator()(const SquarePrimitiveComponent& square, const GlobalTransformComponent& transform) const {
     // square.position is a local offset from the entity's transform, so it scales with the
-    // entity the same way BoxColliderComponent::offset does in CollisionSystem — otherwise a
+    // entity the same way BoxColliderComponent::offset does in KDTreeCollisionSystem — otherwise a
     // scaled entity's primitive grows but stays pinned at its unscaled offset.
     const glm::vec2 scaledOffset = square.position * transform.scale;
     const glm::vec2 origin = transform.position + scaledOffset;

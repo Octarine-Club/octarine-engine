@@ -42,7 +42,7 @@ That is the whole integration. In particular, the engine does **not**:
 - **build a tile grid** or expose any tile-query API (no "tile at (x, y)").
 - **render tiles.** `RenderSpriteSystem` draws individual sprite entities; there
   is no tilemap layer/renderer. See [`docs/systems.md`](systems.md).
-- **collide against tiles.** `CollisionSystem` operates on `BoxColliderComponent`
+- **collide against tiles.** `KDTreeCollisionSystem` operates on `BoxColliderComponent`
   entities, not tiles.
 
 Treat `tilemap.map` as a forward-looking convention a project may adopt: today it
