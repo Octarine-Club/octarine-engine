@@ -283,6 +283,11 @@ class Archetype {
     return chunks_[chunkIndex].GetActiveCount();
   }
 
+  [[nodiscard]] size_t GetEntityCountInChunk(size_t chunkIndex) const {
+    assert(chunkIndex < chunks_.size());
+    return chunks_[chunkIndex].GetEntityCount();
+  }
+
   [[nodiscard]] size_t GetChunkCount() const { return chunks_.size(); }
   [[nodiscard]] size_t GetChunkCapacity() const { return chunk_capacity_; }
 

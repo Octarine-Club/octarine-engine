@@ -33,14 +33,42 @@ SRC = REPO / "src"
 
 # Register{,Parallel,Bulk}System<Components...>(SystemName()) -- the optional
 # <...> holds the queried components (no nested templates in practice), and the
-# constructor call names the system. \s* spans the multi-line DopplerSystem case.
-REG_RE = re.compile(r"Register(Parallel|Bulk)?System\s*(?:<([^>]*)>)?\s*\(\s*([A-Za-z_]\w*)\s*\(")
+# constructor or getter call names the system. \s* spans the multi-line DopplerSystem case.
+REG_RE = re.compile(
+    r"Register(Parallel|Bulk)?System\s*(?:<([^>]*)>)?\s*\(\s*(?:std::ref\s*\(\s*)?(?:[A-Za-z_]\w*->(?:Get|TryGet)<\s*([A-Za-z_]\w+)\s*>\(\)|([A-Za-z_]\w+)\s*\()"
+)
+CREATE_QUERY_RE = re.compile(r"CreateQuery<((?:[^<>]|<[^<>]*>)+)>")
 EMIT_RE = re.compile(r"EmitEvent\s*<\s*([A-Za-z_]\w*)\s*>")
 SUB_RE = re.compile(r"SubscribeEvent\s*<\s*([A-Za-z_]\w*)\s*,\s*([A-Za-z_]\w*)\s*>")
 EVENT_DECL_RE = re.compile(r"\b(struct|class)\s+([A-Za-z_]\w*)\s*:\s*(?:public\s+)?Event\b")
 FIELD_RE = re.compile(r"^\s+([A-Za-z_][\w:]*(?:\s*<[^>]*>)?)\s+([A-Za-z_]\w*)\s*(?:=\s*[^;]+|\{[^}]*\})?\s*;\s*$")
 
 TIER = {"": "serial", "Parallel": "parallel", "Bulk": "bulk"}
+
+
+def split_template_args(arg_str: str) -> list[str]:
+    args, current, depth = [], [], 0
+    for char in arg_str:
+        if char == "<":
+            depth += 1
+            current.append(char)
+        elif char == ">":
+            depth -= 1
+            current.append(char)
+        elif char == "," and depth == 0:
+            args.append("".join(current).strip())
+            current = []
+        else:
+            current.append(char)
+    if current:
+        args.append("".join(current).strip())
+    cleaned = []
+    for a in args:
+        if a.startswith("Opt<") and a.endswith(">"):
+            a = a[4:-1].strip()
+        if a:
+            cleaned.append(a)
+    return cleaned
 
 
 def rel(path: Path) -> str:
@@ -53,16 +81,24 @@ def all_src_files():
 
 
 def parse_registrations():
-    """system name -> {tier, order, queried_components} from Game::Setup."""
-    text = (SRC / "Game" / "Game.cpp").read_text(encoding="utf-8")
+    """system name -> {tier, order, queried_components} from Game::Setup and Pipelines."""
+    files = [SRC / "Game" / "Game.cpp"]
+    pipeline_dir = SRC / "Engine" / "Pipelines"
+    if pipeline_dir.is_dir():
+        files.extend(sorted(pipeline_dir.glob("*.cpp")))
     out = {}
-    for order, m in enumerate(REG_RE.finditer(text)):
-        kind, comps, name = m.group(1) or "", m.group(2), m.group(3)
-        out[name] = {
-            "tier": TIER[kind],
-            "order": order,
-            "queried_components": [c.strip() for c in comps.split(",")] if comps and comps.strip() else [],
-        }
+    order = 0
+    for f in files:
+        text = f.read_text(encoding="utf-8")
+        for m in REG_RE.finditer(text):
+            kind, comps, name1, name2 = m.group(1) or "", m.group(2), m.group(3), m.group(4)
+            name = name1 or name2
+            out[name] = {
+                "tier": TIER[kind],
+                "order": order,
+                "queried_components": [c.strip() for c in comps.split(",")] if comps and comps.strip() else [],
+            }
+            order += 1
     return out
 
 
@@ -128,12 +164,20 @@ def parse_systems(regs, emits, subs):
     for path in sorted((SRC / "Systems").glob("*.h")):
         name = path.stem
         reg = regs.get(name)
+        queried = list(reg["queried_components"]) if reg and reg["queried_components"] else []
+        if not queried:
+            for p in (path, path.with_suffix(".cpp")):
+                if p.exists():
+                    for qm in CREATE_QUERY_RE.finditer(p.read_text(encoding="utf-8")):
+                        for c in split_template_args(qm.group(1)):
+                            if c and c not in queried:
+                                queried.append(c)
         systems.append({
             "name": name,
             "source": rel(path),
             "tier": reg["tier"] if reg else None,
             "setup_order": reg["order"] if reg else None,
-            "queried_components": reg["queried_components"] if reg else [],
+            "queried_components": queried,
             "emits": sorted(emit_by_system.get(name, [])),
             "subscribes": sorted(sub_by_system.get(name, [])),
             "lua_surface": has_lua_surface(name),

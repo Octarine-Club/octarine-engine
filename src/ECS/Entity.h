@@ -76,6 +76,12 @@ class EntityManager {
     return baseId < generations_.size() && generations_[baseId] == entity.GetGeneration();
   }
 
+  [[nodiscard]] EntityGeneration GetGeneration(const std::uint32_t baseId) const {
+    return baseId < generations_.size() ? generations_[baseId] : 0;
+  }
+
+  [[nodiscard]] size_t GetPoolCapacity() const { return generations_.size(); }
+
  private:
   std::queue<std::uint32_t> available_entities_;
   std::vector<EntityGeneration> generations_;

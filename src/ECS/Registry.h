@@ -81,6 +81,11 @@ class Registry {
 
   void Update(float deltaTime);
 
+  // Deep sanity checker for ECS data structures. Verifies entity generation integrity,
+  // valid archetype pointers, and active/inactive partition bounds across all chunks.
+  // Throws std::runtime_error on any invariant failure.
+  void ValidateInvariants() const;
+
   Entity CreateEntity();
 
   // Creates an entity populated with components in a single archetype transition.

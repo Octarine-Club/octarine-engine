@@ -37,6 +37,14 @@ class Game : public LuaBindingContext {
   void Destroy();
   void Run();
 
+  // Advances the game simulation by one tick with explicit deltaTime (defaults to 1/60s).
+  // Enables headless simulation testing, deterministic replays, and step-debugging.
+  void Step(float deltaTime = 1.0f / 60.0f);
+  void StepTicks(uint32_t count, float deltaTime = 1.0f / 60.0f);
+
+  void SetPaused(bool paused);
+  [[nodiscard]] bool IsPaused() const;
+
   // Headless asset bake (startup mode "bake"): scan the project at `assetPath` for assets, run its
   // startup script to derive every referenced asset id (validating each against the catalog), and
   // emit a scan-free `asset_manifest.lua` (relative paths) next to it. Creates no window, renderer,
@@ -133,6 +141,7 @@ class Game : public LuaBindingContext {
 
   EngineRuntime runtime_;
   static inline bool s_is_running_{false};
+  bool is_setup_ = false;
   bool bake_mode_ = false;
   bool use_manifest_ = false;
 #ifndef OCTARINE_SHIPPED

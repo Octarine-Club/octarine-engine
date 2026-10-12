@@ -60,6 +60,26 @@ octarine_add_core_test(OctarineSystemLogicTest SystemLogicTest SystemLogicTest.c
 octarine_add_core_test(OctarineCollisionResponseTest CollisionResponseTest CollisionResponseTest.cpp)
 octarine_add_core_test(OctarineKDTreeCollisionSystemTest KDTreeCollisionSystemTest KDTreeCollisionSystemTest.cpp)
 octarine_add_core_test(OctarineProjectileEmitSystemTest ProjectileEmitSystemTest ProjectileEmitSystemTest.cpp)
+octarine_add_test(OctarineStateInspectorTest StateInspectorTest
+        SOURCES StateInspectorTest.cpp
+        INCLUDES "${CMAKE_SOURCE_DIR}/src" "${CMAKE_SOURCE_DIR}/libs"
+        LIBS octarine_core
+)
+octarine_add_test(OctarineGoldenPathIntegrationTest GoldenPathIntegrationTest
+        SOURCES GoldenPathIntegrationTest.cpp
+        INCLUDES "${CMAKE_SOURCE_DIR}/src" "${CMAKE_SOURCE_DIR}/libs"
+        LIBS octarine_core
+)
+octarine_add_test(OctarineSimulationFuzzTest SimulationFuzzTest
+        SOURCES SimulationFuzzTest.cpp
+        INCLUDES "${CMAKE_SOURCE_DIR}/src" "${CMAKE_SOURCE_DIR}/libs"
+        LIBS octarine_core
+)
+octarine_add_test(OctarineScenarioRunnerTest ScenarioRunnerTest
+        SOURCES ScenarioRunnerTest.cpp
+        INCLUDES "${CMAKE_SOURCE_DIR}/src" "${CMAKE_SOURCE_DIR}/libs"
+        LIBS octarine_core
+)
 
 octarine_add_test(OctarineEventBusTest EventBusTest
         SOURCES "${CMAKE_SOURCE_DIR}/src/General/Logger.cpp" EventBusTest.cpp

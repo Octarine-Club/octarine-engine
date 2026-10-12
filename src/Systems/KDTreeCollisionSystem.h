@@ -94,77 +94,103 @@ struct Partitions {
 
 class KDTreeCollisionSystem {
  public:
+  explicit KDTreeCollisionSystem(bool synchronous = false) : synchronous_(synchronous) {}
+
+  void SetSynchronous(bool sync) { synchronous_ = sync; }
+  [[nodiscard]] bool IsSynchronous() const { return synchronous_; }
+
+  static Box BuildBox(Entity entity, const GlobalTransformComponent& transform, const BoxColliderComponent& collider,
+                      const EntityMaskComponent& entityMask) {
+    const float w = static_cast<float>(collider.width) * transform.scale.x;
+    const float h = static_cast<float>(collider.height) * transform.scale.y;
+    const float hx = w * 0.5f;
+    const float hy = h * 0.5f;
+
+    // transform.position is top-left. apply collider offset (scaled).
+    const float boxCx = transform.position.x + collider.offset.x * transform.scale.x + hx;
+    const float boxCy = transform.position.y + collider.offset.y * transform.scale.y + hy;
+
+    // FromRadians short-circuits the unrotated majority, and RotateAround collapses to a
+    // copy for identity — so a world of axis-aligned colliders pays no trig at all here.
+    const octarine::Rotation2D rot = octarine::Rotation2D::FromRadians(transform.rotation);
+    const glm::vec2 centre = octarine::RotateAround({boxCx, boxCy}, transform.position + transform.pivot, rot);
+    const glm::vec2 aabbHalf = octarine::RotatedHalfExtents({hx, hy}, rot);
+
+    return {.entity = entity,
+            .entityMask = entityMask.mask,
+            .collisionMask = collider.collisionMask,
+            .minX = centre.x - aabbHalf.x,
+            .minY = centre.y - aabbHalf.y,
+            .maxX = centre.x + aabbHalf.x,
+            .maxY = centre.y + aabbHalf.y,
+            .cx = centre.x,
+            .cy = centre.y,
+            .hx = hx,
+            .hy = hy,
+            .rot = rot};
+  }
+
   void operator()(const ContextFacade& ctx) {
     // No scope timer here: Registry::Update already times this span as "KDTreeCollisionSystem";
     // a second name for the same span double-counts on the benchmark dashboard.
     auto* registry = ctx.GetRegistry();
     auto* eventBus = registry->Get<EngineContext>().eventBus;
 
-    if (collisionResult_.valid() &&
-        collisionResult_.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
-      return;
-    }
-
-    if (collisionResult_.valid()) {
-      PROFILE_NAMED_SCOPE("Emit Events");
-      CollisionResult result = collisionResult_.get();
-      EmitCollisionEvents(eventBus, result.intersectingPairs);
-      cachedBoxes_ = std::move(result.boxes);
-      cachedBoxes_.clear();
-    }
-
-    std::vector<Box> boxes = std::move(cachedBoxes_);
-    {
-      PROFILE_NAMED_SCOPE("Gather Boxes");
-
-      if (!query_) {
-        query_ = ctx.GetRegistry()->CreateQuery<GlobalTransformComponent, BoxColliderComponent, EntityMaskComponent>();
+    if (!synchronous_) {
+      if (collisionResult_.valid() &&
+          collisionResult_.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+        return;
       }
-      query_->Update();
 
-      const size_t count = query_->GetCount();
-      boxes.resize(count);
+      if (collisionResult_.valid()) {
+        PROFILE_NAMED_SCOPE("Emit Events");
+        CollisionResult result = collisionResult_.get();
+        EmitCollisionEvents(eventBus, result.intersectingPairs);
+        cachedBoxes_ = std::move(result.boxes);
+        cachedBoxes_.clear();
+      }
+    }
+
+    if (!query_) {
+      query_ = ctx.GetRegistry()->CreateQuery<GlobalTransformComponent, BoxColliderComponent, EntityMaskComponent>();
+    }
+    query_->Update();
+
+    std::vector<Box> boxes;
+    if (synchronous_) {
+      boxes.reserve(query_->GetCount());
+      query_->ForEach([&](Entity entity, const GlobalTransformComponent& transform,
+                          const BoxColliderComponent& collider, const EntityMaskComponent& entityMask) {
+        boxes.push_back(BuildBox(entity, transform, collider, entityMask));
+      });
+      std::sort(boxes.begin(), boxes.end(), [](const Box& a, const Box& b) { return a.entity.id < b.entity.id; });
+    } else {
+      PROFILE_NAMED_SCOPE("Gather Boxes");
+      boxes = std::move(cachedBoxes_);
+      boxes.resize(query_->GetCount());
       std::atomic<size_t> nextIndex{0};
 
       query_->ParallelForEach([&](Entity entity, const GlobalTransformComponent& transform,
                                   const BoxColliderComponent& collider, const EntityMaskComponent& entityMask) {
         const size_t idx = nextIndex.fetch_add(1, std::memory_order_relaxed);
-        const float w = static_cast<float>(collider.width) * transform.scale.x;
-        const float h = static_cast<float>(collider.height) * transform.scale.y;
-        const float hx = w * 0.5f;
-        const float hy = h * 0.5f;
-
-        // transform.position is top-left. apply collider offset (scaled).
-        const float boxCx = transform.position.x + collider.offset.x * transform.scale.x + hx;
-        const float boxCy = transform.position.y + collider.offset.y * transform.scale.y + hy;
-
-        // FromRadians short-circuits the unrotated majority, and RotateAround collapses to a
-        // copy for identity — so a world of axis-aligned colliders pays no trig at all here.
-        const octarine::Rotation2D rot = octarine::Rotation2D::FromRadians(transform.rotation);
-
-        // The entity turns about `position + pivot`, not about the collider's own centre, so
-        // orbit the box centre around that point. Otherwise a pivoted sprite and its collider
-        // separate as soon as the entity rotates. The OBB axes are unaffected — only where the
-        // centre lands changes.
-        const glm::vec2 centre = octarine::RotateAround({boxCx, boxCy}, transform.position + transform.pivot, rot);
-        const glm::vec2 aabbHalf = octarine::RotatedHalfExtents({hx, hy}, rot);
-
-        boxes[idx] = {.entity = entity,
-                      .entityMask = entityMask.mask,
-                      .collisionMask = collider.collisionMask,
-                      .minX = centre.x - aabbHalf.x,
-                      .minY = centre.y - aabbHalf.y,
-                      .maxX = centre.x + aabbHalf.x,
-                      .maxY = centre.y + aabbHalf.y,
-                      .cx = centre.x,
-                      .cy = centre.y,
-                      .hx = hx,
-                      .hy = hy,
-                      .rot = rot};
+        boxes[idx] = BuildBox(entity, transform, collider, entityMask);
       });
     }
 
     PROFILE_COUNTER_SET("Collision: Box count", static_cast<long long>(boxes.size()));
+
+    if (synchronous_) {
+      std::vector<std::pair<Entity, Entity>> intersectingPairs;
+      if (!boxes.empty()) {
+        ComputeAsyncCollisions(boxes, intersectingPairs);
+        std::sort(intersectingPairs.begin(), intersectingPairs.end(), [](const auto& a, const auto& b) {
+          if (a.first.id != b.first.id) return a.first.id < b.first.id;
+          return a.second.id < b.second.id;
+        });
+      }
+      EmitCollisionEvents(eventBus, intersectingPairs);
+      return;
+    }
 
     if (boxes.empty()) {
       return;
@@ -197,6 +223,7 @@ class KDTreeCollisionSystem {
   std::vector<Box> cachedBoxes_;
   std::future<CollisionResult> collisionResult_;
   std::unique_ptr<ComponentQuery<GlobalTransformComponent, BoxColliderComponent, EntityMaskComponent>> query_;
+  bool synchronous_{false};
 
   // Diff this frame's overlaps against the previous frame and emit the enter/exit batches.
   //   - enter: pairs overlapping now but not last frame — first-contact only, so persistent

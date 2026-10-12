@@ -7,13 +7,16 @@
 #include <filesystem>
 #include <fstream>
 #include <sol/sol.hpp>
+#include <sstream>
 #include <string>
 #include <vector>
 
 #include "AssetManager/AssetManager.h"
 #include "ECS/Registry.h"
+#include "ECS/StateInspector.h"
 #include "Engine/EngineContext.h"
 #include "Engine/SceneLoader.h"
+#include "Game/Game.h"
 #include "General/Logger.h"
 #include "Lua/HotReload/ScriptHotReload.h"
 
@@ -129,12 +132,80 @@ void HandlePushAsset(Registry& registry, const std::vector<char>& body, std::str
   reply_body = OkReply(path);
 }
 
+void HandleStep(Game* game, const std::vector<char>& body, std::string& reply_body) {
+  if (game == nullptr) {
+    reply_body = ErrReply("no game instance");
+    return;
+  }
+  uint32_t ticks = 1;
+  float dt = 1.0f / 60.0f;
+  if (!body.empty()) {
+    if (body.size() >= sizeof(uint32_t) && !(body[0] >= '0' && body[0] <= '9')) {
+      std::memcpy(&ticks, body.data(), sizeof(ticks));
+      if (body.size() >= sizeof(uint32_t) + sizeof(float)) {
+        std::memcpy(&dt, body.data() + sizeof(uint32_t), sizeof(dt));
+      }
+    } else {
+      std::string str(body.data(), body.size());
+      std::istringstream iss(str);
+      if (!(iss >> ticks)) ticks = 1;
+      if (!(iss >> dt)) dt = 1.0f / 60.0f;
+    }
+  }
+  game->StepTicks(ticks, dt);
+  reply_body = OkReply();
+}
+
+void HandlePause(Game* game, const std::vector<char>& body, std::string& reply_body) {
+  if (game == nullptr) {
+    reply_body = ErrReply("no game instance");
+    return;
+  }
+  if (!body.empty()) {
+    bool pause = (body[0] == '1' || body[0] == '\1' || body[0] == 't');
+    game->SetPaused(pause);
+  }
+  reply_body = OkReply(game->IsPaused() ? "true" : "false");
+}
+
+void HandleInspect(Registry& registry, const std::vector<char>& body, std::string& reply_body) {
+  std::string cmd(body.data(), body.size());
+  while (!cmd.empty() && (cmd.back() == '\n' || cmd.back() == '\r' || cmd.back() == ' ')) {
+    cmd.pop_back();
+  }
+  if (cmd.empty() || cmd == "summary") {
+    reply_body = OkReply(inspect::StateInspector::DumpSummary(registry));
+  } else if (cmd == "entities") {
+    reply_body = OkReply(inspect::StateInspector::DumpEntities(registry));
+  } else if (cmd == "hash") {
+    uint64_t hash = inspect::StateInspector::ComputeStateHash(registry);
+    reply_body = OkReply(std::to_string(hash));
+  } else if (cmd.rfind("entity:", 0) == 0) {
+    std::string idStr = cmd.substr(7);
+    Entity id = static_cast<Entity>(std::strtoull(idStr.c_str(), nullptr, 10));
+    reply_body = OkReply(inspect::StateInspector::DumpEntity(registry, id));
+  } else if (cmd.rfind("query:", 0) == 0) {
+    std::string q = cmd.substr(6);
+    std::vector<std::string> names;
+    std::istringstream iss(q);
+    std::string item;
+    while (std::getline(iss, item, ',')) {
+      if (!item.empty()) names.push_back(item);
+    }
+    reply_body = OkReply(inspect::StateInspector::QueryComponents(registry, names));
+  } else {
+    reply_body = ErrReply("unknown inspect mode: " + cmd);
+  }
+}
+
 }  // namespace
 
-CommandHandler MakeEngineCommandHandler(Registry& registry, sol::state& lua) {
+CommandHandler MakeEngineCommandHandler(Registry& registry, sol::state& lua, Game* game) {
   Registry* reg = &registry;
   sol::state* lua_ptr = &lua;
-  return [reg, lua_ptr](OpCode op, const std::vector<char>& body, std::uint32_t& reply_op, std::string& reply_body) {
+  Game* game_ptr = game;
+  return [reg, lua_ptr, game_ptr](OpCode op, const std::vector<char>& body, std::uint32_t& reply_op,
+                                  std::string& reply_body) {
     reply_op = static_cast<std::uint32_t>(op);
     switch (op) {
       case OpCode::EvalLua:
@@ -148,6 +219,15 @@ CommandHandler MakeEngineCommandHandler(Registry& registry, sol::state& lua) {
         return;
       case OpCode::PushAsset:
         HandlePushAsset(*reg, body, reply_body);
+        return;
+      case OpCode::Step:
+        HandleStep(game_ptr, body, reply_body);
+        return;
+      case OpCode::Pause:
+        HandlePause(game_ptr, body, reply_body);
+        return;
+      case OpCode::Inspect:
+        HandleInspect(*reg, body, reply_body);
         return;
       default:
         reply_op = kErrorReplyOp;

@@ -258,7 +258,7 @@ void Game::StartDevListenServer() {
   // host the dev-iterate loop too.
   auto& devListen = registry_->Set<octarine::dev::DevListenServer>(octarine::dev::DevListenServer());
   // Install the engine handler so parked eval/reload/push ops apply on the main thread in Pump().
-  devListen.SetCommandHandler(octarine::dev::MakeEngineCommandHandler(*registry_, lua));
+  devListen.SetCommandHandler(octarine::dev::MakeEngineCommandHandler(*registry_, lua, this));
   if (dev_listen_port_ > 0) {
     octarine::dev::ServerOptions opts;
     opts.port = static_cast<std::uint16_t>(dev_listen_port_);
@@ -564,10 +564,11 @@ bool Game::RunBakeValidation(const std::string& assetPath, const std::string& sc
 }
 
 void Game::Run() {
-  Setup();
-
-  // Seed previous-frame tick so the first WaitTime call produces a sane delta.
-  frame_loop_->Begin();
+  if (!is_setup_) {
+    Setup();
+    frame_loop_->Begin();
+    is_setup_ = true;
+  }
 
   while (s_is_running_) {
     frame_loop_->ProcessInput();
@@ -575,6 +576,40 @@ void Game::Run() {
     frame_loop_->Update(deltaTime);
     frame_loop_->Render(deltaTime);
   }
+}
+
+void Game::Step(const float deltaTime) {
+  if (!is_setup_) {
+    Setup();
+    frame_loop_->Begin();
+    is_setup_ = true;
+  }
+
+  frame_loop_->ProcessInput();
+  if (registry_ && registry_->TryGet<GameConfig>()) {
+    registry_->Get<GameConfig>().GetEngineOptions().stepFrame = true;
+  }
+  frame_loop_->Update(deltaTime);
+  frame_loop_->Render(deltaTime);
+}
+
+void Game::StepTicks(const uint32_t count, const float deltaTime) {
+  for (uint32_t i = 0; i < count && s_is_running_; ++i) {
+    Step(deltaTime);
+  }
+}
+
+void Game::SetPaused(const bool paused) {
+  if (registry_ && registry_->TryGet<GameConfig>()) {
+    registry_->Get<GameConfig>().GetEngineOptions().isPaused = paused;
+  }
+}
+
+bool Game::IsPaused() const {
+  if (registry_ && registry_->TryGet<GameConfig>()) {
+    return registry_->Get<GameConfig>().GetEngineOptions().isPaused;
+  }
+  return false;
 }
 
 void Game::Setup() {

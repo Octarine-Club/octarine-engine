@@ -27,6 +27,7 @@ set(OCTARINE_CORE_SOURCES
         General/LuaEscape.cpp
         General/SystemMemory.cpp
         ECS/Registry.cpp
+        ECS/StateInspector.cpp
         Game/GameConfig.cpp
         Deploy/Adb.cpp
         Process/Process.cpp

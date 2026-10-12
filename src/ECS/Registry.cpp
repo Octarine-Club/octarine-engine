@@ -603,3 +603,44 @@ void CommandBuffer::Playback(Registry* registry) const {
   for (const auto& fn : deferred.overflow_buffer) fn(registry);
   deferred.Clear();
 }
+
+void Registry::ValidateInvariants() const {
+  for (std::uint32_t id = 0; id < entity_locations_.size(); ++id) {
+    const auto& loc = entity_locations_[id];
+    if (loc.archetype == nullptr) continue;
+    const EntityGeneration gen = entity_manager_->GetGeneration(id);
+    const Entity e(static_cast<EntityID>(id) | (static_cast<EntityID>(gen) << kEntityGenerationOffset));
+    if (!entity_manager_->IsValid(e)) {
+      throw std::runtime_error("ValidateInvariants failed: EntityLocation exists for invalidated entity id " +
+                               std::to_string(id));
+    }
+    if (loc.chunkIndex >= loc.archetype->GetChunkCount()) {
+      throw std::runtime_error("ValidateInvariants failed: chunkIndex " + std::to_string(loc.chunkIndex) +
+                               " out of bounds for archetype on entity id " + std::to_string(id));
+    }
+    const size_t entityCount = loc.archetype->GetEntityCountInChunk(loc.chunkIndex);
+    if (loc.indexInChunk >= entityCount) {
+      throw std::runtime_error("ValidateInvariants failed: indexInChunk " + std::to_string(loc.indexInChunk) +
+                               " >= entityCount " + std::to_string(entityCount) + " on entity id " +
+                               std::to_string(id));
+    }
+    const Entity actualEntity = loc.archetype->GetEntity(loc.chunkIndex, loc.indexInChunk);
+    if (actualEntity != e) {
+      throw std::runtime_error("ValidateInvariants failed: chunk slot holds entity " + std::to_string(actualEntity.id) +
+                               " but expected " + std::to_string(e.id));
+    }
+  }
+
+  for (const auto& [archId, archPtr] : archetypes_) {
+    const size_t chunkCount = archPtr->GetChunkCount();
+    for (size_t c = 0; c < chunkCount; ++c) {
+      const size_t active = archPtr->GetActiveCountInChunk(c);
+      const size_t total = archPtr->GetEntityCountInChunk(c);
+      if (active > total) {
+        throw std::runtime_error("ValidateInvariants failed: active count " + std::to_string(active) +
+                                 " > total count " + std::to_string(total) + " in archetype " + std::to_string(archId) +
+                                 " chunk " + std::to_string(c));
+      }
+    }
+  }
+}

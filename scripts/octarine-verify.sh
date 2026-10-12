@@ -35,6 +35,7 @@ keep_going=0
 do_build=1
 format_only=0
 tidy_strict=0
+json_output=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -44,6 +45,7 @@ while [[ $# -gt 0 ]]; do
     --no-build) do_build=0 ;;
     --format-only) format_only=1 ;;
     --tidy-strict) tidy_strict=1 ;;
+    --json) json_output=1 ;;
     -h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "error: unknown argument '$1' (try --help)" >&2; exit 2 ;;
   esac
@@ -74,6 +76,14 @@ fail() {  # fail <code> <name>
 }
 
 verdict() {
+  if [[ $json_output -eq 1 ]]; then
+    if [[ $first_fail_code -eq 0 ]]; then
+      printf '{"status": "passed", "exit_code": 0, "mode": "%s"}\n' "$mode"
+    else
+      printf '{"status": "failed", "exit_code": %d, "stage": "%s", "mode": "%s"}\n' "$first_fail_code" "$first_fail_name" "$mode"
+    fi
+    return
+  fi
   if [[ $first_fail_code -eq 0 ]]; then
     echo "VERIFY OK ($mode)"
   else
@@ -218,6 +228,14 @@ if [[ "$mode" == "full" ]]; then
     echo "  -> regenerated stubs differ — commit them:" >&2
     git diff --stat -- "${drift_paths[@]}" >&2
     fail 14 "lua-api-drift"
+  fi
+
+  echo "== System & event catalog drift =="
+  if python3 scripts/gen_api_catalogs.py --check; then
+    echo "  ok   no system/event catalog drift"
+  else
+    echo "  -> regenerated catalogs differ — run: python3 scripts/gen_api_catalogs.py" >&2
+    fail 16 "system-event-catalog-drift"
   fi
 
   echo "== clang-tidy (changed files) =="
