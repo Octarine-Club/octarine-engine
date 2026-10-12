@@ -119,7 +119,7 @@ void AppendHealthJson(const Registry& registry, Entity entity, std::vector<std::
   if (!registry.HasComponent<HealthComponent>(entity)) return;
   const auto& h = registry.GetComponent<HealthComponent>(entity);
   std::ostringstream ss;
-  ss << "\"HealthComponent\": {\"currentHealth\": " << h.currentHealth << ", \"maxHealth\": " << h.maxHealth << "}";
+  ss << R"("HealthComponent": {"currentHealth": )" << h.currentHealth << R"(, "maxHealth": )" << h.maxHealth << "}";
   comps.push_back(ss.str());
 }
 
@@ -127,7 +127,7 @@ void AppendNameJson(const Registry& registry, Entity entity, std::vector<std::st
   if (!registry.HasComponent<NameComponent>(entity)) return;
   const auto& n = registry.GetComponent<NameComponent>(entity);
   std::ostringstream ss;
-  ss << "\"NameComponent\": {\"name\": \"" << EscapeJsonString(n.name) << "\"}";
+  ss << R"("NameComponent": {"name": ")" << EscapeJsonString(n.name) << R"("})";
   comps.push_back(ss.str());
 }
 
@@ -200,7 +200,7 @@ std::string StateInspector::DumpEntities(const Registry& registry) {
 
 std::string StateInspector::DumpEntity(const Registry& registry, Entity entity, const InspectOptions& opts) {
   if (!registry.IsAlive(entity)) {
-    return "{\"error\": \"Entity is not alive\"}";
+    return R"({"error": "Entity is not alive"})";
   }
 
   std::vector<std::string> comps;

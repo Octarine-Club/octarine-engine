@@ -10,9 +10,11 @@ class Registry;
 
 namespace octarine::inspect {
 
+constexpr float kDefaultFloatPrecision = 10000.0f;
+
 struct InspectOptions {
   bool quantizeFloats = true;
-  float floatPrecision = 10000.0f;
+  float floatPrecision = kDefaultFloatPrecision;
   std::vector<std::string> componentFilter;
 };
 
@@ -32,7 +34,7 @@ class StateInspector {
                                      const InspectOptions& opts = {});
 
   // Computes a deterministic 64-bit canonical FNV-1a state hash with float quantization.
-  static uint64_t ComputeStateHash(const Registry& registry, float floatScale = 10000.0f);
+  static uint64_t ComputeStateHash(const Registry& registry, float floatScale = kDefaultFloatPrecision);
 
   // Compares two JSON state snapshots line-by-line and formats a human-readable diff.
   static std::string DiffSnapshots(const std::string& expectedJson, const std::string& actualJson);
