@@ -57,10 +57,12 @@ class ArchetypeQuery {
     }
   }
 
+  static constexpr size_t kDefaultSerialBelowEntities = 512;
+
   // Process matching entities in parallel across chunks.
   // serialBelowEntities: threshold below which execution runs serially on the calling thread.
   template <typename Func>
-  void ParallelForEach(Func&& func, const size_t serialBelowEntities = 0) const {
+  void ParallelForEach(Func&& func, const size_t serialBelowEntities = kDefaultSerialBelowEntities) const {
     const auto work = CollectChunkWork();
     if (work.empty()) return;
 

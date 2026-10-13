@@ -17,6 +17,7 @@ constexpr int kGridHeight = 128;
 constexpr float kGridOriginX = kGridWidth * kCellSize * 0.5f;
 constexpr float kGridOriginY = kGridHeight * kCellSize * 0.5f;
 constexpr size_t kGridCellCount = static_cast<size_t>(kGridWidth) * kGridHeight;
+constexpr size_t kSeparationParallelThreshold = 50000;
 
 inline int GetCellIndex(float x, float y) {
   int cx = static_cast<int>((x + kGridOriginX) * kInvCellSize);
@@ -99,6 +100,57 @@ void SeparationSystem::ResolveNeighbors(int cellIdx, int cx, int begin1, int end
   }
 }
 
+void SeparationSystem::ResolveGrid(const size_t count) {
+  PROFILE_NAMED_SCOPE("Grid Resolve");
+  if (count < kSeparationParallelThreshold) {
+    for (const int cellIdx : active_cells_) {
+      const int cx = cellIdx % kGridWidth;
+      const int begin1 = cell_offsets_[static_cast<size_t>(cellIdx)];
+      const int end1 = begin1 + cell_counts_[static_cast<size_t>(cellIdx)];
+
+      ResolveCell(begin1, end1);
+      ResolveNeighbors(cellIdx, cx, begin1, end1);
+    }
+  } else {
+    ThreadPool::ParallelChunks(active_cells_.size(), [&](size_t /*batchIdx*/, size_t beginChunk, size_t endChunk) {
+      for (size_t iter = beginChunk; iter < endChunk; ++iter) {
+        int cellIdx = active_cells_[iter];
+        int cx = cellIdx % kGridWidth;
+        int begin1 = cell_offsets_[static_cast<size_t>(cellIdx)];
+        int end1 = begin1 + cell_counts_[static_cast<size_t>(cellIdx)];
+
+        ResolveCell(begin1, end1);
+        ResolveNeighbors(cellIdx, cx, begin1, end1);
+      }
+    });
+  }
+}
+
+void SeparationSystem::ApplyForces(const size_t count) {
+  PROFILE_NAMED_SCOPE("Apply Separation Forces");
+  if (count < kSeparationParallelThreshold) {
+    for (size_t i = 0; i < count; ++i) {
+      grid_entities_[i].cx += accum_dx_[i];
+      grid_entities_[i].cy += accum_dy_[i];
+    }
+  } else {
+    ThreadPool::ParallelChunks(count, [&](size_t /*batchIdx*/, size_t beginChunk, size_t endChunk) {
+      for (size_t i = beginChunk; i < endChunk; ++i) {
+        grid_entities_[i].cx += accum_dx_[static_cast<size_t>(i)];
+        grid_entities_[i].cy += accum_dy_[static_cast<size_t>(i)];
+      }
+    });
+  }
+}
+
+void SeparationSystem::WritePositions() {
+  PROFILE_NAMED_SCOPE("Write Positions");
+  for (const auto& e : grid_entities_) {
+    e.targetPos->value.x = e.cx;
+    e.targetPos->value.y = e.cy;
+  }
+}
+
 void SeparationSystem::operator()(const ContextFacade& ctx) {
   if (ctx.IsPaused()) return;
   auto* registry = ctx.GetRegistry();
@@ -112,16 +164,24 @@ void SeparationSystem::operator()(const ContextFacade& ctx) {
   if (count < 2) return;
 
   entities_.resize(count);
-  cell_counts_.assign(kGridCellCount, 0);
+  if (cell_counts_.empty()) {
+    cell_counts_.assign(kGridCellCount, 0);
+  } else {
+    for (const int cellIdx : active_cells_) {
+      cell_counts_[static_cast<size_t>(cellIdx)] = 0;
+    }
+  }
   active_cells_.clear();
 
   {
     PROFILE_NAMED_SCOPE("Extract & Count");
     std::atomic<size_t> nextIndex{0};
-    query_->ParallelForEach([&](Entity entity, PositionComponent& pos, const SeparationComponent& sep) {
-      const size_t idx = nextIndex.fetch_add(1, std::memory_order_relaxed);
-      entities_[idx] = {entity, pos.value.x, pos.value.y, sep.radius, sep.weight};
-    });
+    query_->ParallelForEach(
+        [&](Entity entity, PositionComponent& pos, const SeparationComponent& sep) {
+          const size_t idx = nextIndex.fetch_add(1, std::memory_order_relaxed);
+          entities_[idx] = {&pos, entity, pos.value.x, pos.value.y, sep.radius, sep.weight};
+        },
+        kSeparationParallelThreshold);
 
     for (const auto& e : entities_) {
       const auto cellIdx = static_cast<size_t>(GetCellIndex(e.cx, e.cy));
@@ -153,46 +213,10 @@ void SeparationSystem::operator()(const ContextFacade& ctx) {
     }
   }
 
-  accum_dx_.resize(count);
-  accum_dy_.resize(count);
+  accum_dx_.assign(count, 0.0f);
+  accum_dy_.assign(count, 0.0f);
 
-  for (size_t i = 0; i < count; ++i) {
-    accum_dx_[i] = 0.0f;
-    accum_dy_[i] = 0.0f;
-  }
-
-  {
-    PROFILE_NAMED_SCOPE("Grid Resolve");
-
-    ThreadPool::ParallelChunks(active_cells_.size(), [&](size_t /*batchIdx*/, size_t beginChunk, size_t endChunk) {
-      for (size_t iter = beginChunk; iter < endChunk; ++iter) {
-        int cellIdx = active_cells_[iter];
-        int cx = cellIdx % kGridWidth;
-        int begin1 = cell_offsets_[static_cast<size_t>(cellIdx)];
-        int end1 = begin1 + cell_counts_[static_cast<size_t>(cellIdx)];
-
-        ResolveCell(begin1, end1);
-        ResolveNeighbors(cellIdx, cx, begin1, end1);
-      }
-    });
-  }
-
-  {
-    PROFILE_NAMED_SCOPE("Apply Separation Forces");
-    ThreadPool::ParallelChunks(count, [&](size_t /*batchIdx*/, size_t beginChunk, size_t endChunk) {
-      for (size_t i = beginChunk; i < endChunk; ++i) {
-        grid_entities_[i].cx += accum_dx_[static_cast<size_t>(i)];
-        grid_entities_[i].cy += accum_dy_[static_cast<size_t>(i)];
-      }
-    });
-  }
-
-  {
-    PROFILE_NAMED_SCOPE("Write Positions");
-    for (const auto& e : grid_entities_) {
-      auto& pos = registry->GetComponent<PositionComponent>(e.entity);
-      pos.value.x = e.cx;
-      pos.value.y = e.cy;
-    }
-  }
+  ResolveGrid(count);
+  ApplyForces(count);
+  WritePositions();
 }

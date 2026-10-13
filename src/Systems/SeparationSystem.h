@@ -5,7 +5,10 @@
 #include "ECS/Query.h"
 #include "ECS/Registry.h"
 
+struct PositionComponent;
+
 struct SeparationEntity {
+  PositionComponent* targetPos;
   Entity entity;
   float cx, cy;
   float radius;
@@ -20,6 +23,9 @@ class SeparationSystem {
   void ResolvePair(int i, int j);
   void ResolveCell(int begin1, int end1);
   void ResolveNeighbors(int cellIdx, int cx, int begin1, int end1);
+  void ResolveGrid(size_t count);
+  void ApplyForces(size_t count);
+  void WritePositions();
 
   std::unique_ptr<ComponentQuery<struct PositionComponent, struct SeparationComponent>> query_;
 
