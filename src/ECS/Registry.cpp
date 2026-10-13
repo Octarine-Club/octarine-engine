@@ -603,3 +603,54 @@ void CommandBuffer::Playback(Registry* registry) const {
   for (const auto& fn : deferred.overflow_buffer) fn(registry);
   deferred.Clear();
 }
+
+namespace {
+
+void ValidateEntityLocation(const EntityManager& entityManager, std::uint32_t id, const EntityLocation& loc) {
+  if (loc.archetype == nullptr) return;
+  const EntityGeneration gen = entityManager.GetGeneration(id);
+  const Entity e(static_cast<EntityID>(id) | (static_cast<EntityID>(gen) << kEntityGenerationOffset));
+  if (!entityManager.IsValid(e)) {
+    throw std::runtime_error("ValidateInvariants failed: EntityLocation exists for invalidated entity id " +
+                             std::to_string(id));
+  }
+  if (loc.chunkIndex >= loc.archetype->GetChunkCount()) {
+    throw std::runtime_error("ValidateInvariants failed: chunkIndex " + std::to_string(loc.chunkIndex) +
+                             " out of bounds for archetype on entity id " + std::to_string(id));
+  }
+  const size_t entityCount = loc.archetype->GetEntityCountInChunk(loc.chunkIndex);
+  if (loc.indexInChunk >= entityCount) {
+    throw std::runtime_error("ValidateInvariants failed: indexInChunk " + std::to_string(loc.indexInChunk) +
+                             " >= entityCount " + std::to_string(entityCount) + " on entity id " + std::to_string(id));
+  }
+  const Entity actualEntity = loc.archetype->GetEntity(loc.chunkIndex, loc.indexInChunk);
+  if (actualEntity != e) {
+    throw std::runtime_error("ValidateInvariants failed: chunk slot holds entity " + std::to_string(actualEntity.id) +
+                             " but expected " + std::to_string(e.id));
+  }
+}
+
+void ValidateArchetypeChunks(ArchetypeID archId, const Archetype& arch) {
+  const size_t chunkCount = arch.GetChunkCount();
+  for (size_t c = 0; c < chunkCount; ++c) {
+    const size_t active = arch.GetActiveCountInChunk(c);
+    const size_t total = arch.GetEntityCountInChunk(c);
+    if (active > total) {
+      throw std::runtime_error("ValidateInvariants failed: active count " + std::to_string(active) + " > total count " +
+                               std::to_string(total) + " in archetype " + std::to_string(archId) + " chunk " +
+                               std::to_string(c));
+    }
+  }
+}
+
+}  // namespace
+
+void Registry::ValidateInvariants() const {
+  for (std::uint32_t id = 0; id < entity_locations_.size(); ++id) {
+    ValidateEntityLocation(*entity_manager_, id, entity_locations_[id]);
+  }
+
+  for (const auto& [archId, archPtr] : archetypes_) {
+    ValidateArchetypeChunks(archId, *archPtr);
+  }
+}

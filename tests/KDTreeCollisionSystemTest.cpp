@@ -63,7 +63,7 @@ struct TestScene {
     EngineContext ctx;
     ctx.eventBus = bus.get();
     reg.Set<EngineContext>(ctx);
-    reg.RegisterBulkSystem(KDTreeCollisionSystem());
+    reg.RegisterBulkSystem(KDTreeCollisionSystem(true));
     capture.subscription =
         bus->SubscribeEvent<CollisionCapture, CollisionBatchEvent>(&capture, &CollisionCapture::OnBatch);
   }
@@ -90,13 +90,8 @@ struct TestScene {
     reg.GetComponent<GlobalTransformComponent>(e).position = glm::vec2(x, y);
   }
 
-  // Advance one engine tick. KDTreeCollisionSystem starts async detection this call;
-  // the resulting pairs are emitted on the NEXT call, so most scenarios need an
-  // extra trailing tick to flush the pipeline.
-  void Tick() {
-    reg.Update(1.0f / 60.0f);
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-  }
+  // Advance one engine tick synchronously.
+  void Tick() { reg.Update(1.0f / 60.0f); }
 };
 
 }  // namespace

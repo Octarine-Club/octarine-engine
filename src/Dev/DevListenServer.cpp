@@ -174,6 +174,9 @@ bool IsMainThreadOp(OpCode op) {
     case OpCode::ReloadScene:
     case OpCode::PushScript:
     case OpCode::PushAsset:
+    case OpCode::Step:
+    case OpCode::Pause:
+    case OpCode::Inspect:
       return true;
     default:
       return false;
