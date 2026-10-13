@@ -1,16 +1,10 @@
-#include "MagnetSystem.h"
+#include "Systems/MagnetSystem.h"
 
 #include <cmath>
 #include <sol/sol.hpp>
 
 #include "Components/BoxColliderComponent.h"
 #include "Components/ScriptComponent.h"
-
-struct Attractor {
-  glm::vec2 center;
-  uint32_t attracts_mask;
-  float attraction_radius;
-};
 
 static glm::vec2 GetCenter(const PositionComponent& pos, const BoxColliderComponent* box) {
   if (box != nullptr) {
@@ -43,7 +37,7 @@ static float GetAttractionRadius(Registry* registry, Entity e, const MagnetCompo
 }
 
 static void ApplyAttraction(PositionComponent& pos, const BoxColliderComponent* box, const MagnetComponent& mag,
-                            const std::vector<Attractor>& attractors, float dt) {
+                            const std::vector<MagnetSystem::Attractor>& attractors, float dt) {
   if (mag.layer == 0) {
     return;
   }
@@ -94,18 +88,18 @@ void MagnetSystem::operator()(const ContextFacade& context) {
   }
   query_->Update();
 
-  std::vector<Attractor> attractors;
+  attractors_.clear();
   query_->ForEach([&](Entity e, PositionComponent& pos, MagnetComponent& mag, const BoxColliderComponent* box) {
     if (mag.attracts_mask != 0) {
-      attractors.push_back({GetCenter(pos, box), mag.attracts_mask, GetAttractionRadius(registry, e, mag)});
+      attractors_.push_back({GetCenter(pos, box), mag.attracts_mask, GetAttractionRadius(registry, e, mag)});
     }
   });
 
-  if (attractors.empty()) {
+  if (attractors_.empty()) {
     return;
   }
 
   query_->ForEach([&](Entity /*e*/, PositionComponent& pos, MagnetComponent& mag, const BoxColliderComponent* box) {
-    ApplyAttraction(pos, box, mag, attractors, dt);
+    ApplyAttraction(pos, box, mag, attractors_, dt);
   });
 }

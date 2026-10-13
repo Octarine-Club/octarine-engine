@@ -1,4 +1,4 @@
-#include "SeparationSystem.h"
+#include "Systems/SeparationSystem.h"
 
 #include <algorithm>
 #include <atomic>
@@ -87,10 +87,11 @@ void SeparationSystem::ResolveNeighbors(int cellIdx, int cx, int begin1, int end
   for (int noff : neighborOffsets) {
     if (!IsValidNeighbor(cellIdx, cx, noff)) continue;
 
-    int nIdx = cellIdx + noff;
-    int begin2 = cell_offsets_[static_cast<size_t>(nIdx)];
-    int end2 = begin2 + cell_counts_[static_cast<size_t>(nIdx)];
-    if (begin2 == end2) continue;
+    const auto nIdx = static_cast<size_t>(cellIdx + noff);
+    const int count2 = cell_counts_[nIdx];
+    if (count2 == 0) continue;
+    const int begin2 = cell_offsets_[nIdx];
+    const int end2 = begin2 + count2;
 
     for (int i = begin1; i < end1; ++i) {
       for (int j = begin2; j < end2; ++j) {
@@ -193,17 +194,19 @@ void SeparationSystem::operator()(const ContextFacade& ctx) {
   }
 
   cell_offsets_.resize(kGridCellCount);
+  current_offsets_.resize(kGridCellCount);
   {
     PROFILE_NAMED_SCOPE("Prefix Sum");
     int total = 0;
-    for (size_t i = 0; i < kGridCellCount; ++i) {
-      cell_offsets_[i] = total;
-      total += cell_counts_[i];
+    for (const int cellIdx : active_cells_) {
+      const auto idx = static_cast<size_t>(cellIdx);
+      cell_offsets_[idx] = total;
+      current_offsets_[idx] = total;
+      total += cell_counts_[idx];
     }
   }
 
   grid_entities_.resize(count);
-  current_offsets_ = cell_offsets_;
   {
     PROFILE_NAMED_SCOPE("Fill Grid");
     for (const auto& e : entities_) {

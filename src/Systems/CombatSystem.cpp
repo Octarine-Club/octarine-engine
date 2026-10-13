@@ -22,9 +22,12 @@ inline void CombatSystem::InvokeDamagePlayer(Entity target, ContactDamageCompone
 
 inline void CombatSystem::RemoveWeaponContact(HealthComponent& health, Entity weaponA) {
   for (uint8_t i = 0; i < health.active_contacts_count; ++i) {
-    if (health.active_contacts[i].weapon_entity == weaponA) {
-      health.active_contacts[i] = health.active_contacts[health.active_contacts_count - 1];
-      health.active_contacts[health.active_contacts_count - 1] = WeaponContact{};
+    if (health.contact_weapons[i] == weaponA) {
+      const uint8_t last = health.active_contacts_count - 1;
+      health.contact_weapons[i] = health.contact_weapons[last];
+      health.contact_timers[i] = health.contact_timers[last];
+      health.contact_weapons[last] = Entity{};
+      health.contact_timers[last] = 0.0f;
       health.active_contacts_count--;
       break;
     }
@@ -73,13 +76,14 @@ inline void CombatSystem::TryAddWeaponContact(Entity weapon, Entity target) {
   auto& health = registry_->GetComponent<HealthComponent>(target);
 
   for (uint8_t i = 0; i < health.active_contacts_count; ++i) {
-    if (health.active_contacts[i].weapon_entity == weapon) {
+    if (health.contact_weapons[i] == weapon) {
       return;
     }
   }
-  if (health.active_contacts_count < health.active_contacts.size()) {
-    health.active_contacts[health.active_contacts_count++] = {weapon,
-                                                              0.0f};  // Trigger damage immediately on next update
+  if (health.active_contacts_count < health.contact_weapons.size()) {
+    const uint8_t idx = health.active_contacts_count++;
+    health.contact_weapons[idx] = weapon;
+    health.contact_timers[idx] = 0.0f;  // Trigger damage immediately on next update
   }
 }
 
@@ -98,7 +102,6 @@ inline void CombatSystem::TryAddContactDamage(Entity attacker, Entity player) {
   }
 
   if (contact.current_cooldown <= 0.0f) {
-    // Find world.damage_player in Lua
     InvokeDamagePlayer(player, contact);
   }
 }
@@ -167,33 +170,39 @@ void CombatSystem::UpdateHitFlash(Registry* registry, Entity entity, HealthCompo
 
 void CombatSystem::ProcessWeaponContacts(Registry* registry, Entity entity, HealthComponent& health, float dt) {
   for (uint8_t i = 0; i < health.active_contacts_count;) {
-    health.active_contacts[i].timer -= dt;
-    if (health.active_contacts[i].timer > 0.0f) {
+    health.contact_timers[i] -= dt;
+    if (health.contact_timers[i] > 0.0f) {
       ++i;
       continue;
     }
 
-    if (!registry->IsAlive(health.active_contacts[i].weapon_entity) ||
-        !registry->HasComponent<WeaponZoneComponent>(health.active_contacts[i].weapon_entity)) {
-      health.active_contacts[i] = health.active_contacts[health.active_contacts_count - 1];
-      health.active_contacts[health.active_contacts_count - 1] = WeaponContact{};
+    const Entity weaponEntity = health.contact_weapons[i];
+    if (!registry->IsAlive(weaponEntity) || !registry->HasComponent<WeaponZoneComponent>(weaponEntity)) {
+      const uint8_t last = health.active_contacts_count - 1;
+      health.contact_weapons[i] = health.contact_weapons[last];
+      health.contact_timers[i] = health.contact_timers[last];
+      health.contact_weapons[last] = Entity{};
+      health.contact_timers[last] = 0.0f;
       health.active_contacts_count--;
       continue;
     }
 
-    auto& weapon = registry->GetComponent<WeaponZoneComponent>(health.active_contacts[i].weapon_entity);
+    auto& weapon = registry->GetComponent<WeaponZoneComponent>(weaponEntity);
     if (weapon.consumed) {
-      health.active_contacts[i] = health.active_contacts[health.active_contacts_count - 1];
-      health.active_contacts[health.active_contacts_count - 1] = WeaponContact{};
+      const uint8_t last = health.active_contacts_count - 1;
+      health.contact_weapons[i] = health.contact_weapons[last];
+      health.contact_timers[i] = health.contact_timers[last];
+      health.contact_weapons[last] = Entity{};
+      health.contact_timers[last] = 0.0f;
       health.active_contacts_count--;
       continue;
     }
 
-    if (TryApplyHit(registry, entity, health, weapon, health.active_contacts[i].weapon_entity)) {
+    if (TryApplyHit(registry, entity, health, weapon, weaponEntity)) {
       break;
     }
 
-    health.active_contacts[i].timer = weapon.rehit_cooldown;
+    health.contact_timers[i] = weapon.rehit_cooldown;
     ++i;
   }
 }

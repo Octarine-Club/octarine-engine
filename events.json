@@ -44,7 +44,7 @@
       "subscribe_sites": [
         {
           "file": "src/Systems/CombatSystem.cpp",
-          "line": 51,
+          "line": 54,
           "owner": "CombatSystem"
         },
         {
@@ -78,7 +78,7 @@
       "subscribe_sites": [
         {
           "file": "src/Systems/CombatSystem.cpp",
-          "line": 53,
+          "line": 56,
           "owner": "CombatSystem"
         },
         {
@@ -133,7 +133,7 @@
       "emit_sites": [
         {
           "file": "src/Systems/CombatSystem.cpp",
-          "line": 279
+          "line": 288
         },
         {
           "file": "src/Systems/DamageSystem.h",
@@ -165,7 +165,7 @@
       "emit_sites": [
         {
           "file": "src/Systems/CombatSystem.cpp",
-          "line": 273
+          "line": 282
         },
         {
           "file": "src/Systems/DamageSystem.h",

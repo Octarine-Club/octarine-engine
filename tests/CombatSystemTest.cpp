@@ -100,6 +100,7 @@ void TestPhantomContactDamageAndZeroing() {
   ContextFacade ctx2(registry.get(), 1.5f, nullptr, &Internal::BulkGetComponent);
   combatSystem(ctx2);
   CheckEq(tracker.hitCount, 1, "No phantom damage dealt after cooldown expires when count is 0");
+  registry->ValidateInvariants();
 }
 
 void TestSingleCooldownDecrement() {
@@ -132,6 +133,7 @@ void TestSingleCooldownDecrement() {
   const float expectedCooldown = 0.5f - dt;
   Check(std::fabs(enemyCd.current_cooldown - expectedCooldown) < 1e-4f,
         "Cooldown decremented exactly once by dt across contact_query_ and health_query_");
+  registry->ValidateInvariants();
 }
 
 void TestHomingRetargetIgnoresDeadEnemies() {
@@ -187,6 +189,7 @@ void TestHomingRetargetIgnoresDeadEnemies() {
   const auto& updatedHoming = registry->GetComponent<HomingComponent>(weapon);
   Check(updatedHoming.target != deadEnemy, "Homing retarget does NOT select dead enemy");
   Check(updatedHoming.target == aliveEnemy, "Homing retarget selects alive enemy");
+  registry->ValidateInvariants();
 }
 
 void TestWeaponZonePierceAndConsumption() {
@@ -222,6 +225,7 @@ void TestWeaponZonePierceAndConsumption() {
   Check(weaponZone.consumed, "WeaponZone consumed flag is set to true after pierce reaches 0");
   CheckEq(weaponZone.pierce, 0, "Pierce decremented to 0");
   CheckEq(registry->GetComponent<HealthComponent>(target).current_health, 90, "Target health reduced by 10");
+  registry->ValidateInvariants();
 }
 
 void TestDeadTargetRemovedFromContactDamage() {
@@ -256,6 +260,7 @@ void TestDeadTargetRemovedFromContactDamage() {
 
   CheckEq(enemyCd.active_contacts_count, static_cast<uint8_t>(0), "Dead player removed from active contacts");
   Check(enemyCd.active_contacts[0] == Entity{}, "Vacated contact slot zeroed");
+  registry->ValidateInvariants();
 }
 
 void TestHazardEntityAndCollisionMasks() {
@@ -324,6 +329,7 @@ void TestHazardEntityAndCollisionMasks() {
     }
   });
   CheckEq(hazardCount, 2, "Both retaliation and projectile hazards have mask 2 and collisionMask 1");
+  reg.ValidateInvariants();
 }
 
 void TestDamageSystemPlayerWithoutHealthAndTags() {
@@ -376,6 +382,7 @@ void TestDamageSystemPlayerWithoutHealthAndTags() {
   std::vector<std::pair<Entity, Entity>> pairs3 = {{playerProj2, enemy2}};
   bus->EmitEvent<CollisionBatchEvent>(pairs3);
   CheckEq(reg.GetComponent<HealthComponent>(enemy2).current_health, 60, "Enemy with 'enemies' tag damaged");
+  reg.ValidateInvariants();
 }
 
 void TestEnemySteeringSineFlyerFlyThroughAndCharge() {
@@ -450,6 +457,7 @@ void TestEnemySteeringSineFlyerFlyThroughAndCharge() {
   const auto& restoredSq = reg.GetComponent<SquarePrimitiveComponent>(charger);
   CheckEq(restoredSq.color.r, static_cast<unsigned char>(100), "Base color r restored on charge launch");
   CheckEq(restoredSq.color.b, static_cast<unsigned char>(200), "Base color b restored on charge launch");
+  reg.ValidateInvariants();
 }
 
 }  // namespace

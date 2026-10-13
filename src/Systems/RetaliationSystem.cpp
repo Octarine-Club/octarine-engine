@@ -1,4 +1,4 @@
-#include "RetaliationSystem.h"
+#include "Systems/RetaliationSystem.h"
 
 #include "Components/BoxColliderComponent.h"
 #include "Components/ContactDamageComponent.h"
@@ -9,20 +9,13 @@
 #include "Components/RetaliationComponent.h"
 #include "Components/SquarePrimitiveComponent.h"
 #include "Components/WeaponZoneComponent.h"
-#include "EntityPoolSystem.h"
+#include "Systems/EntityPoolSystem.h"
+#include "Systems/ProjectileEmitSystem.h"
 
 void RetaliationSystem::Init(Registry& registry, EventBus* event_bus) {
   registry_ = &registry;
   subscription_ = event_bus->SubscribeEvent(this, &RetaliationSystem::OnCombatHit);
-
-  hazard_pool_id_ = registry.Get<EntityPoolManager>().RegisterPool<ContactDamageComponent>(registry, [](Registry& reg) {
-    reg.Tag<PoolableTag>();
-    return reg.CreateEntityWithBundle(
-        PositionComponent(),
-        SquarePrimitiveComponent(glm::vec2(0, 0), 44, 44, 0.0f, octarine::Color{80, 200, 40, 160}, false),
-        BoxColliderComponent(44, 44, glm::vec2(0, 0), false, EntityMask{1}), EntityMaskComponent{2},
-        ContactDamageComponent{{}, {}, 6.0f, 0.5f, 0.0f, 0}, LifetimeComponent{6.0f}, PoolableTag{});
-  });
+  hazard_pool_id_ = ProjectileEmitSystem::RegisterHazardPool(registry);
 }
 
 void RetaliationSystem::OnCombatHit(CombatHitEvent& event) {

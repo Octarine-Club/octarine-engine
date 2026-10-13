@@ -5,13 +5,11 @@
 
 #include "ECS/Entity.h"
 
-struct WeaponContact {
-  Entity weapon_entity{};
-  float timer = 0.0f;
-};
-
 struct HealthComponent {
-  std::array<WeaponContact, 8> active_contacts{};
+  static constexpr size_t kMaxWeaponContacts = 8;
+
+  std::array<Entity, kMaxWeaponContacts> contact_weapons{};
+  std::array<float, kMaxWeaponContacts> contact_timers{};
   int current_health;
   int max_health;
 

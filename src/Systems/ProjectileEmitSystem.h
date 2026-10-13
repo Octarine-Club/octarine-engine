@@ -20,21 +20,24 @@
 #include "ECS/ECS.h"
 #include "ECS/Query.h"
 #include "ECS/Registry.h"
-#include "EntityPoolSystem.h"
 #include "General/Color.h"
+#include "Systems/EntityPoolSystem.h"
 
 class ProjectileEmitSystem {
  public:
+  static ArchetypeID RegisterHazardPool(Registry& registry) {
+    return registry.Get<EntityPoolManager>().RegisterPool<ContactDamageComponent>(registry, [](Registry& reg) {
+      reg.Tag<PoolableTag>();
+      return reg.CreateEntityWithBundle(
+          PositionComponent(),
+          SquarePrimitiveComponent(glm::vec2(0, 0), 44, 44, 0.0f, octarine::Color{80, 200, 40, 160}, false),
+          BoxColliderComponent(44, 44, glm::vec2(0, 0), false, EntityMask{1}), EntityMaskComponent{2},
+          ContactDamageComponent{{}, {}, 6.0f, 0.5f, 0.0f, 0}, LifetimeComponent{6.0f}, PoolableTag{});
+    });
+  }
+
   void Init(Registry& registry) {
-    hazard_pool_id_ =
-        registry.Get<EntityPoolManager>().RegisterPool<ContactDamageComponent>(registry, [](Registry& reg) {
-          reg.Tag<PoolableTag>();
-          return reg.CreateEntityWithBundle(
-              PositionComponent(),
-              SquarePrimitiveComponent(glm::vec2(0, 0), 44, 44, 0.0f, octarine::Color{80, 200, 40, 160}, false),
-              BoxColliderComponent(44, 44, glm::vec2(0, 0), false, EntityMask{1}), EntityMaskComponent{2},
-              ContactDamageComponent{{}, {}, 6.0f, 0.5f, 0.0f, 0}, LifetimeComponent{6.0f}, PoolableTag{});
-        });
+    hazard_pool_id_ = RegisterHazardPool(registry);
     projectile_pool_id_ =
         registry.Get<EntityPoolManager>().RegisterPool<ProjectileComponent>(registry, [](Registry& reg) {
           reg.Tag<PoolableTag>();
