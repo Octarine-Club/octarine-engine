@@ -16,7 +16,9 @@ struct LuaBinding<LifetimeComponent> {
     }
     if (data.is<sol::table>()) {
       const auto t = data.as<sol::table>();
-      const auto lifetimeDuration = LuaComponentHelpers::SafeGetOptionalValue<float>(t, "duration", 1.0f);
+      const auto lifetimeDuration = t["duration"].valid()
+                                        ? LuaComponentHelpers::SafeGetOptionalValue<float>(t, "duration", 1.0f)
+                                        : LuaComponentHelpers::SafeGetOptionalValue<float>(t, "value", 1.0f);
       return LifetimeComponent(lifetimeDuration);
     }
     return LifetimeComponent(1.0f);

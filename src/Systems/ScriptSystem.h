@@ -30,7 +30,7 @@ class ScriptSystem {
       return;
     }
 
-    if (auto result = script.updateFunction(script.scriptTable, context.GetEntity(), context.GetDeltaTime());
+    if (auto result = script.updateFunction(script.script_table, context.GetEntity(), context.GetDeltaTime());
         !result.valid()) {
       const sol::error err = result;
       Logger::ErrorLua(std::string(err.what()));

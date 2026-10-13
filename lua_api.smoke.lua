@@ -1584,6 +1584,14 @@ color = {}
 color_grid_component = {}
 
 
+---@class contact_damage_component
+contact_damage_component = {}
+
+
+---@class enemy_steering_component
+enemy_steering_component = {}
+
+
 ---@class entity
 entity = {}
 
@@ -1602,8 +1610,14 @@ function get_name(...) end
 
 function get_position(...) end
 
+function get_position_xy(...) end
+
 ---@class health_component
 health_component = {}
+
+
+---@class homing_component
+homing_component = {}
 
 
 ---@class input
@@ -1682,6 +1696,10 @@ function log_table(...) end
 
 function log_w(...) end
 
+---@class magnet_component
+magnet_component = {}
+
+
 ---@class name_component
 name_component = {}
 
@@ -1719,9 +1737,17 @@ function registry.get_camera_follow(...) end
 
 function registry.get_color_grid(...) end
 
+function registry.get_contact_damage(...) end
+
+function registry.get_enemy_steering(...) end
+
 function registry.get_health(...) end
 
+function registry.get_homing(...) end
+
 function registry.get_lifetime(...) end
+
+function registry.get_magnet(...) end
 
 function registry.get_name(...) end
 
@@ -1733,6 +1759,8 @@ function registry.get_position(...) end
 
 function registry.get_projectile_emitter(...) end
 
+function registry.get_retaliation(...) end
+
 function registry.get_rigidbody(...) end
 
 function registry.get_rotation(...) end
@@ -1740,6 +1768,10 @@ function registry.get_rotation(...) end
 function registry.get_scale(...) end
 
 function registry.get_script(...) end
+
+function registry.get_script_callbacks(...) end
+
+function registry.get_separation(...) end
 
 function registry.get_sprite(...) end
 
@@ -1757,6 +1789,8 @@ function registry.get_ui_rect(...) end
 
 function registry.get_ui_z_index(...) end
 
+function registry.get_weapon_zone(...) end
+
 function registry.has_animation(...) end
 
 function registry.has_audio_listener(...) end
@@ -1769,9 +1803,17 @@ function registry.has_camera_follow(...) end
 
 function registry.has_color_grid(...) end
 
+function registry.has_contact_damage(...) end
+
+function registry.has_enemy_steering(...) end
+
 function registry.has_health(...) end
 
+function registry.has_homing(...) end
+
 function registry.has_lifetime(...) end
+
+function registry.has_magnet(...) end
 
 function registry.has_name(...) end
 
@@ -1781,6 +1823,8 @@ function registry.has_position(...) end
 
 function registry.has_projectile_emitter(...) end
 
+function registry.has_retaliation(...) end
+
 function registry.has_rigidbody(...) end
 
 function registry.has_rotation(...) end
@@ -1788,6 +1832,10 @@ function registry.has_rotation(...) end
 function registry.has_scale(...) end
 
 function registry.has_script(...) end
+
+function registry.has_script_callbacks(...) end
+
+function registry.has_separation(...) end
 
 function registry.has_sprite(...) end
 
@@ -1805,10 +1853,22 @@ function registry.has_ui_rect(...) end
 
 function registry.has_ui_z_index(...) end
 
+function registry.has_weapon_zone(...) end
+
+function registry.is_alive(...) end
+
+function registry.is_paused(...) end
+
 function registry.set_parent(...) end
+
+function registry.set_paused(...) end
 
 
 function reload_scene(...) end
+
+---@class retaliation_component
+retaliation_component = {}
+
 
 ---@class rigidbody_component
 rigidbody_component = {}
@@ -1822,8 +1882,16 @@ rotation_component = {}
 scale_component = {}
 
 
+---@class script_callback_component
+script_callback_component = {}
+
+
 ---@class script_component
 script_component = {}
+
+
+---@class separation_component
+separation_component = {}
 
 
 function set_game_map_dimensions(...) end
@@ -1906,5 +1974,9 @@ ui_z_index_component = {}
 
 ---@class vec2
 vec2 = {}
+
+
+---@class weapon_zone_component
+weapon_zone_component = {}
 
 

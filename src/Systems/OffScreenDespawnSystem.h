@@ -2,6 +2,7 @@
 
 #include <glm/glm.hpp>
 
+#include "Components/CameraFollowComponent.h"
 #include "Components/GlobalTransformComponent.h"
 #include "Components/PositionComponent.h"
 #include "Components/ScaleComponent.h"
@@ -15,11 +16,10 @@ class OffScreenDespawnSystem {
  public:
   CommandBuffer& GetCommandBuffer() { return cmd_buffer_; }
 
-  void Prepare(Registry* registry) {
+  bool Prepare(Registry* registry) {
+    if (registry->IsPaused()) return false;
     registry_ = registry;
     const auto& gameConfig = registry_->Get<GameConfig>();
-
-    player_ = registry_->TagId("player");
 
     const auto windowWidth = static_cast<float>(gameConfig.windowWidth);
     const auto windowHeight = static_cast<float>(gameConfig.windowHeight);
@@ -27,10 +27,11 @@ class OffScreenDespawnSystem {
     playableAreaHeight_ = static_cast<float>(gameConfig.playableAreaHeight);
     if (playableAreaWidth_ <= 0) playableAreaWidth_ = windowWidth;
     if (playableAreaHeight_ <= 0) playableAreaHeight_ = windowHeight;
+    return true;
   }
 
   void operator()(const Entity entity, const PositionComponent& position, const SpriteComponent& sprite) const {
-    if (registry_->HasTag(entity, player_)) return;
+    if (registry_->HasComponent<CameraFollowComponent>(entity)) return;
 
     const glm::vec2 globalPos = registry_->HasComponent<GlobalTransformComponent>(entity)
                                     ? registry_->GetComponent<GlobalTransformComponent>(entity).position
@@ -51,7 +52,6 @@ class OffScreenDespawnSystem {
  private:
   Registry* registry_ = nullptr;
   CommandBuffer cmd_buffer_;
-  Entity player_{};
   float playableAreaWidth_ = 0.0f;
   float playableAreaHeight_ = 0.0f;
 };

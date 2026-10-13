@@ -64,11 +64,11 @@ mode="${OCT_BENCH_MODE:-stress}"
 
 set +e
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
-  timeout "$duration" "$binary" "$game_path" --startup-mode "$mode"
+  perl -e 'alarm shift; exec @ARGV' "$duration" "$binary" "$game_path" --startup-mode "$mode"
 status=$?
 set -e
 
-if [[ $status -eq 124 || $status -eq 0 ]]; then
+if [[ $status -eq 124 || $status -eq 142 || $status -eq 0 ]]; then
   exit 0
 fi
 exit "$status"

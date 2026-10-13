@@ -43,8 +43,13 @@
       ],
       "subscribe_sites": [
         {
+          "file": "src/Systems/CombatSystem.cpp",
+          "line": 51,
+          "owner": "CombatSystem"
+        },
+        {
           "file": "src/Systems/DamageSystem.h",
-          "line": 20,
+          "line": 28,
           "owner": "DamageSystem"
         },
         {
@@ -72,9 +77,106 @@
       ],
       "subscribe_sites": [
         {
+          "file": "src/Systems/CombatSystem.cpp",
+          "line": 53,
+          "owner": "CombatSystem"
+        },
+        {
           "file": "src/Systems/ScriptCollisionSystem.h",
           "line": 18,
           "owner": "ScriptCollisionSystem"
+        }
+      ]
+    },
+    {
+      "name": "CombatDamagePlayerEvent",
+      "kind": "struct",
+      "source": "src/Events/CombatDamagePlayerEvent.h",
+      "fields": [
+        {
+          "type": "Entity",
+          "name": "player"
+        },
+        {
+          "type": "int",
+          "name": "damage"
+        }
+      ],
+      "emit_sites": [
+        {
+          "file": "src/Systems/CombatSystem.cpp",
+          "line": 18
+        },
+        {
+          "file": "src/Systems/DamageSystem.h",
+          "line": 69
+        }
+      ],
+      "subscribe_sites": [
+        {
+          "file": "src/Systems/ScriptCombatCallbackSystem.h",
+          "line": 26,
+          "owner": "ScriptCombatCallbackSystem"
+        }
+      ]
+    },
+    {
+      "name": "CombatDeathEvent",
+      "kind": "struct",
+      "source": "src/Events/CombatDeathEvent.h",
+      "fields": [
+        {
+          "type": "Entity",
+          "name": "entity"
+        }
+      ],
+      "emit_sites": [
+        {
+          "file": "src/Systems/CombatSystem.cpp",
+          "line": 279
+        },
+        {
+          "file": "src/Systems/DamageSystem.h",
+          "line": 85
+        }
+      ],
+      "subscribe_sites": [
+        {
+          "file": "src/Systems/ScriptCombatCallbackSystem.h",
+          "line": 24,
+          "owner": "ScriptCombatCallbackSystem"
+        }
+      ]
+    },
+    {
+      "name": "CombatHitEvent",
+      "kind": "struct",
+      "source": "src/Events/CombatHitEvent.h",
+      "fields": [
+        {
+          "type": "Entity",
+          "name": "weapon"
+        },
+        {
+          "type": "Entity",
+          "name": "target"
+        }
+      ],
+      "emit_sites": [
+        {
+          "file": "src/Systems/CombatSystem.cpp",
+          "line": 273
+        },
+        {
+          "file": "src/Systems/DamageSystem.h",
+          "line": 90
+        }
+      ],
+      "subscribe_sites": [
+        {
+          "file": "src/Systems/ScriptCombatCallbackSystem.h",
+          "line": 23,
+          "owner": "ScriptCombatCallbackSystem"
         }
       ]
     },
@@ -103,7 +205,7 @@
       "emit_sites": [
         {
           "file": "src/Engine/FrameLoop.cpp",
-          "line": 140
+          "line": 141
         }
       ],
       "subscribe_sites": [
@@ -140,13 +242,13 @@
       "emit_sites": [
         {
           "file": "src/Engine/FrameLoop.cpp",
-          "line": 111
+          "line": 112
         }
       ],
       "subscribe_sites": [
         {
           "file": "src/Engine/FrameLoop.cpp",
-          "line": 74,
+          "line": 75,
           "owner": "FrameLoop"
         },
         {
@@ -174,7 +276,7 @@
       "emit_sites": [
         {
           "file": "src/Engine/FrameLoop.cpp",
-          "line": 117
+          "line": 118
         }
       ],
       "subscribe_sites": [
@@ -207,7 +309,7 @@
       "emit_sites": [
         {
           "file": "src/Engine/FrameLoop.cpp",
-          "line": 121
+          "line": 122
         }
       ],
       "subscribe_sites": [

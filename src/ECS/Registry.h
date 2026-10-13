@@ -118,6 +118,9 @@ class Registry {
 
   [[nodiscard]] std::uint64_t GetUserEntityCount() const { return user_entity_count_; }
 
+  [[nodiscard]] bool IsPaused() const { return is_paused_; }
+  void SetPaused(const bool paused) { is_paused_ = paused; }
+
   // Defers destruction until the end of Update; safe to call during system iteration.
   void QueueBlamEntity(const Entity entity) {
     if (pending_blam_ids_.insert(entity.id).second) {
@@ -327,7 +330,11 @@ class Registry {
       const float dt = registry.DeltaTime();
       auto* regPtr = const_cast<Registry*>(&registry);
 
-      if constexpr (requires { state->func.Prepare(regPtr); }) {
+      if constexpr (requires {
+                      { state->func.Prepare(regPtr) } -> std::same_as<bool>;
+                    }) {
+        if (!state->func.Prepare(regPtr)) return;
+      } else if constexpr (requires { state->func.Prepare(regPtr); }) {
         state->func.Prepare(regPtr);
       }
 
@@ -623,6 +630,7 @@ class Registry {
   std::vector<std::pair<SystemId, SystemId>> system_order_edges_;
   std::vector<SystemId> system_execution_order_;
   bool system_order_dirty_ = false;
+  bool is_paused_ = false;
   std::vector<std::any> singleton_components_;
   std::vector<Entity> family_to_entity_;
   std::unordered_map<std::string, Entity> tag_to_entity_;
@@ -649,3 +657,5 @@ inline T& ContextFacade::Component() const {
   void* ptr = get_component_ptr_(ctx_data_, componentEntity.GetId());
   return *static_cast<T*>(ptr);
 }
+
+inline bool ContextFacade::IsPaused() const { return registry_ != nullptr && registry_->IsPaused(); }

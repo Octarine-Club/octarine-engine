@@ -119,7 +119,6 @@ target_link_libraries(octarine_renderer PUBLIC
 octarine_library(octarine_lua
         Lua/LuaApiManifest.cpp
         Lua/LuaTableSerializer.cpp
-        Lua/Bindings/InputSystemLuaBinding.cpp
         Lua/Bindings/RegisterAllBindings.cpp
         Lua/HotReload/ScriptHotReload.cpp
         Lua/Modules/AssetsModuleLuaBinding.cpp
@@ -145,9 +144,17 @@ target_link_libraries(octarine_lua PUBLIC
 # RenderDebugGUISystem (editor/IMGUI-only) lives in octarine_editor instead.
 # -----------------------------------------------------------------------------
 octarine_library(octarine_systems
+        Lua/Bindings/InputSystemLuaBinding.cpp
+        Systems/CombatSystem.cpp
         Systems/AudioSystem.cpp
+        Systems/CullDistanceSystem.cpp
+        Systems/EnemySteeringSystem.cpp
+        Systems/HomingSystem.cpp
         Systems/InputSystem.cpp
+        Systems/RetaliationSystem.cpp
+        Systems/MagnetSystem.cpp
         Systems/PerfOverlaySystem.cpp
+        Systems/SeparationSystem.cpp
 )
 target_link_libraries(octarine_systems PUBLIC
         octarine_core
@@ -214,7 +221,7 @@ if (OCTARINE_WITH_IMGUI OR OCTARINE_WITH_EDITOR)
             octarine_systems
     )
     if (OCTARINE_WITH_IMGUI)
-        target_link_libraries(octarine_editor PUBLIC imgui::imgui sol2_ImGui_Bindings::sol2_ImGui_Bindings)
+        target_link_libraries(octarine_editor PUBLIC imgui::imgui sol2_ImGui_Bindings::sol2_ImGui_Bindings ${LUA_LIBRARIES})
     endif ()
     # SecretStore backend libs. Crypt32 ships DPAPI's CryptProtectData/CryptUnprotectData on
     # Windows; Security.framework ships SecItem* on macOS. Linux backend is a stub and needs no

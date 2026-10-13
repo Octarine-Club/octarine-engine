@@ -1,6 +1,7 @@
 #include "Engine/FrameLoop.h"
 
 #include <SDL3/SDL.h>
+#include <SDL3/SDL_atomic.h>
 #include <SDL3_mixer/SDL_mixer.h>
 
 #include <algorithm>
@@ -335,7 +336,16 @@ float FrameLoop::WaitTime() {
     const Uint64 nsPerFrame = SDL_NS_PER_SECOND / static_cast<Uint64>(fpsTarget);
     const Uint64 elapsedTime = SDL_GetTicksNS() - nanoseconds_previous_frame_;
     if (elapsedTime < nsPerFrame) {
-      SDL_DelayNS(nsPerFrame - elapsedTime);
+      const Uint64 remaining = nsPerFrame - elapsedTime;
+      // OS sleep for the bulk of the wait, reserving ~1.5ms for spin-wait to avoid
+      // OS timer interrupt jitter/oversleeping on macOS and Windows schedulers.
+      constexpr Uint64 kSleepMarginNs = 1'500'000;
+      if (remaining > kSleepMarginNs) {
+        SDL_DelayNS(remaining - kSleepMarginNs);
+      }
+      while (SDL_GetTicksNS() - nanoseconds_previous_frame_ < nsPerFrame) {
+        SDL_CPUPauseInstruction();
+      }
     }
   }
 

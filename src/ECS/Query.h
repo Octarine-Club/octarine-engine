@@ -142,10 +142,12 @@ class ComponentQuery final {
     }
   }
 
+  static constexpr size_t kDefaultSerialBelowEntities = 512;
+
   // Parallel ForEach distributing chunks across thread pool.
   // serialBelowEntities: threshold below which execution runs serially on calling thread.
   template <typename Func>
-  void ParallelForEach(Func&& func, const size_t serialBelowEntities = 0) {
+  void ParallelForEach(Func&& func, const size_t serialBelowEntities = kDefaultSerialBelowEntities) {
     archetype_query_.ParallelForEach(std::forward<Func>(func), serialBelowEntities);
   }
 

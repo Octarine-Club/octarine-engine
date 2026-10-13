@@ -165,6 +165,8 @@ test_targets=(
   OctarineAdbTest
   OctarineEcsTest OctarineEcsHierarchyTest OctarineSystemLogicTest OctarineEventBusTest
   OctarineKDTreeCollisionSystemTest OctarineCollisionResponseTest OctarineProjectileEmitSystemTest
+  OctarineCombatSystemTest
+  OctarineStateInspectorTest OctarineGoldenPathIntegrationTest OctarineSimulationFuzzTest OctarineScenarioRunnerTest
   OctarineAssetRefcounterTest OctarineDevListenServerTest OctarineLuaBehaviorTest
   OctarineFileWatcherTest OctarineGameBakeTest OctarineFileSandboxTest
   OctarineRenderQueueTest OctarineAssetStoreTest

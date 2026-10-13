@@ -153,6 +153,9 @@ int main() {
   Check(lua["vec2"].valid(), "vec2 usertype bound");
   Check(lua["entity"].valid(), "entity usertype bound");
   Check(lua["registry"].valid() && lua["registry"].get_type() == sol::type::table, "registry table present");
+  Check(TableHasFunction(lua, "registry", "is_alive"), "registry.is_alive");
+  Check(TableHasFunction(lua, "registry", "is_paused"), "registry.is_paused");
+  Check(TableHasFunction(lua, "registry", "set_paused"), "registry.set_paused");
   Check(TableHasFunction(lua, "input", "is_key_down"), "input.is_key_down (InputSystem surface)");
 
   std::cout << "[file write surface] storage.* (all builds) + project.* (editor sessions)\n";
@@ -222,8 +225,8 @@ int main() {
     // Drive v1 once so 'kind' is set to "v1".
     {
       auto& live = reg->GetComponent<ScriptComponent>(ent);
-      live.updateFunction(live.scriptTable, ent, 0.016F);
-      sol::optional<std::string> kindOpt = live.scriptTable["data"]["kind"];
+      live.updateFunction(live.script_table, ent, 0.016F);
+      sol::optional<std::string> kindOpt = live.script_table["data"]["kind"];
       Check(kindOpt.value_or("<missing>") == "v1", "v1 on_update fires (kind == 'v1')");
     }
 
@@ -236,12 +239,12 @@ int main() {
     hotReload.ForceReloadAll(*reg, lua);
     {
       auto& live = reg->GetComponent<ScriptComponent>(ent);
-      live.updateFunction(live.scriptTable, ent, 0.016F);
-      sol::optional<sol::table> dataOpt = live.scriptTable["data"];
+      live.updateFunction(live.script_table, ent, 0.016F);
+      sol::optional<sol::table> dataOpt = live.script_table["data"];
       sol::optional<std::string> kindOpt = dataOpt ? dataOpt->get<sol::optional<std::string>>("kind") : sol::nullopt;
       Check(kindOpt.value_or("<missing>") == "v2", "v2 on_update fires after reload (kind == 'v2')");
       sol::optional<int> persistedOpt = dataOpt ? dataOpt->get<sol::optional<int>>("persisted") : sol::nullopt;
-      Check(persistedOpt.value_or(-1) == 99, "scriptTable.data preserved across reload (persisted == 99)");
+      Check(persistedOpt.value_or(-1) == 99, "script_table.data preserved across reload (persisted == 99)");
       Check(hotReload.LastReload().error.empty(), "successful reload leaves no last-error");
     }
 
@@ -250,8 +253,8 @@ int main() {
     hotReload.ForceReloadAll(*reg, lua);
     {
       auto& live = reg->GetComponent<ScriptComponent>(ent);
-      live.updateFunction(live.scriptTable, ent, 0.016F);
-      sol::optional<std::string> kindOpt = live.scriptTable["data"]["kind"];
+      live.updateFunction(live.script_table, ent, 0.016F);
+      sol::optional<std::string> kindOpt = live.script_table["data"]["kind"];
       Check(kindOpt.value_or("<missing>") == "v2", "syntax-error reload preserves prior callback (kind still 'v2')");
       Check(!hotReload.LastReload().error.empty(), "failed reload records error");
     }

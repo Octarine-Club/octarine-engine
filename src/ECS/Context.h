@@ -63,6 +63,7 @@ class ContextFacade {
   [[nodiscard]] Entity GetEntity() const { return entity_; }
   [[nodiscard]] Registry* GetRegistry() const { return registry_; }
   [[nodiscard]] float GetDeltaTime() const { return dt_; }
+  [[nodiscard]] bool IsPaused() const;
 
   // Used internally to update the entity being processed.
   void SetEntity(const Entity entity) { entity_ = entity; }

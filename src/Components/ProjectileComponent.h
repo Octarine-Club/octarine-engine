@@ -1,12 +1,15 @@
 #pragma once
 
+#include "ECS/Entity.h"
+
 struct ProjectileComponent {
+  Entity target_entity{};
   int damage;
   float timer;
   float duration;
 
-  explicit ProjectileComponent(const int t_damage = 0, const float t_duration = 0.0f)
-      : damage(t_damage), timer(0.0f), duration(t_duration) {}
+  explicit ProjectileComponent(const int t_damage = 0, const float t_duration = 0.0f, const Entity t_target = Entity{})
+      : target_entity(t_target), damage(t_damage), timer(0.0f), duration(t_duration) {}
 };
 
 struct ProjectileTag {};

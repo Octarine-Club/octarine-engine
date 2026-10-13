@@ -121,7 +121,7 @@ void AppendHealthJson(const Registry& registry, Entity entity, std::vector<std::
   if (!registry.HasComponent<HealthComponent>(entity)) return;
   const auto& h = registry.GetComponent<HealthComponent>(entity);
   std::ostringstream ss;
-  ss << R"("HealthComponent": {"currentHealth": )" << h.currentHealth << R"(, "maxHealth": )" << h.maxHealth << "}";
+  ss << R"("HealthComponent": {"currentHealth": )" << h.current_health << R"(, "maxHealth": )" << h.max_health << "}";
   comps.push_back(ss.str());
 }
 
@@ -288,8 +288,8 @@ uint64_t StateInspector::ComputeStateHash(const Registry& registry, float floatS
     }
     if (registry.HasComponent<HealthComponent>(e)) {
       const auto& h = registry.GetComponent<HealthComponent>(e);
-      hash = FnvHashInt64(hash, h.currentHealth);
-      hash = FnvHashInt64(hash, h.maxHealth);
+      hash = FnvHashInt64(hash, h.current_health);
+      hash = FnvHashInt64(hash, h.max_health);
     }
   }
 

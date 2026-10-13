@@ -18,7 +18,7 @@ struct EditorInspector<ProjectileEmitterComponent> {
     ImGui::DragFloat("Frequency (s)", &pe.frequency, 0.1F);
     ImGui::DragFloat("Duration (s)", &pe.duration, 0.1F);
     ImGui::DragInt("Damage", &pe.damage);
-    octarine::editor::inspectors::InputTextString("Projectile Name", pe.projectileName);
+    octarine::editor::inspectors::InputTextString("Projectile Name", pe.projectile_name);
   }
   static std::optional<ProjectileEmitterComponent> makeDefault() { return ProjectileEmitterComponent{}; }
 };
