@@ -246,6 +246,7 @@ endif ()
 set(OCTARINE_ENGINE_SOURCES
         Engine/EditorBootstrap.cpp
         Engine/EngineBootstrap.cpp
+        Engine/SimulationSystems.cpp
         Engine/EngineRuntime.cpp
         Engine/FrameLoop.cpp
         Engine/Platform/PlatformPaths.cpp

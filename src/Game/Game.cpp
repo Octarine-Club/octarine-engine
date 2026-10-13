@@ -43,6 +43,7 @@
 #include "Engine/LuaProtect.h"
 #include "Engine/Platform/PlatformPaths.h"
 #include "Engine/SdlFileReader.h"
+#include "Engine/SimulationSystems.h"
 #include "Events/KeyInputEvent.h"
 #include "Events/MouseInputEvent.h"
 #include "Events/MouseWheelEvent.h"
@@ -728,54 +729,11 @@ void Game::Setup() {
     LoadGame(lua, assetManager, gameConfig);
   }
 
-  registry_->RegisterParallelSystem<SpriteComponent, AnimationComponent>(AnimationSystem());
-  registry_->RegisterParallelSystem<ProjectileComponent>(ProjectileLifecycleSystem());
-
-  // Engine-side auto-fire: tick emitters whose frequency > 0 and spawn a projectile on expiry.
-  // This re-introduces the fixed-interval emit that auto_fire.lua had moved into per-entity Lua;
-  // running it in C++ removes one sol2 call per shooter per frame (ScriptSystem was ~56% of Update
-  // at stress scale). fire_projectile(...) from Lua still works for scripted/aimed firing — those
-  // emitters keep frequency 0 and are skipped here, so the two paths never double-fire one emitter.
-  //
-  // Registered as a serial BulkSystem: the tick spawns into the registry (pool spawn). The system
-  // manages its own emitter and target queries internally, updating each exactly once per frame.
-  auto projectileEmit = registry_->RegisterBulkSystem(registry_->Get<ProjectileEmitSystem>());
-
-  auto steering = registry_->RegisterBulkSystem(EnemySteeringSystem());
-  auto homing = registry_->RegisterBulkSystem(HomingSystem());
-  registry_->RegisterBulkSystem(CullDistanceSystem());
-  auto separation = registry_->RegisterBulkSystem(SeparationSystem());
-  registry_->RegisterBulkSystem(MagnetSystem());
-  auto& combatSystem = registry_->Set<CombatSystem>(CombatSystem());
-  combatSystem.Init(registry_.get(), event_bus_);
-  auto combatHandle = registry_->RegisterBulkSystem(std::ref(combatSystem));
-
-  auto& scriptCombatCallbackSystem = registry_->Set<ScriptCombatCallbackSystem>(ScriptCombatCallbackSystem());
-  scriptCombatCallbackSystem.Init(registry_.get(), event_bus_);
-  auto scriptCbHandle = registry_->RegisterBulkSystem(std::ref(scriptCombatCallbackSystem));
-  registry_->Order(scriptCbHandle).After(combatHandle);
-
-  auto& retaliationSystem = registry_->Set<RetaliationSystem>(RetaliationSystem());
-  retaliationSystem.Init(*registry_, event_bus_.get());
-
-  // Integrate velocity into local position.
-  auto velocityIntegration =
-      registry_->RegisterParallelSystem<PositionComponent, RigidBodyComponent>(VelocityIntegrationSystem());
-
-  // Despawn entities (except the player) once they leave the playable area.
-  registry_->RegisterParallelSystem<PositionComponent, SpriteComponent>(OffScreenDespawnSystem());
-
-  // Resolve the transform hierarchy into global positions/scales.
-  auto transform = registry_->RegisterBulkSystem<GlobalTransformComponent>(TransformSystem());
-
-  auto collision = registry_->RegisterBulkSystem(KDTreeCollisionSystem());
-  // Store a pointer so the Lua are_colliding() query can reach IsOverlapping() without coupling
-  // the module binding to the BulkSystem registration mechanism. The pointer is stable for the
-  // registry's lifetime (the wrapper is owned by registry_->systems_).
-  registry_->Set<KDTreeCollisionSystem*>(&collision.Func());
-
-  // Lifetime system for expiring and despawning entities.
-  registry_->RegisterBulkSystem<LifetimeComponent>(LifetimeSystem());
+  // Gameplay simulation tier (projectiles, steering, separation, combat, integration, transforms,
+  // collision, lifetime) and its internal ordering edges. Shared with the headless benchmark
+  // harness so the benchmarked frame is the shipped frame.
+  const auto simulation = engine_bootstrap::RegisterSimulationSystems(*registry_, event_bus_);
+  const auto& transform = simulation.transform;
 
   // Spatial audio: snapshot the listener entity (UpdateListenerTransformSystem) then mutate
   // gain + stereo pan on live spatial tracks (SpatialAudioSystem). AudioSystem (above) is the
@@ -813,16 +771,7 @@ void Game::Setup() {
   registry_->RegisterParallelSystem<ColorGridComponent, GlobalTransformComponent>(RenderColorGridSystem());
 
   // Execution-order edges (topo-sorted in Registry::Update; registration order breaks ties).
-  // Emit before integration so freshly-spawned projectiles integrate/transform/collide the same
-  // frame — matching the spawn-timing the old ScriptSystem-driven Lua path had.
-  registry_->Order(steering).After(projectileEmit);
-  registry_->Order(homing).After(steering);
-  registry_->Order(separation).After(homing);
-  registry_->Order(velocityIntegration).After(separation);
-  // Transforms resolve after velocity integration mutates local positions; collision reads
-  // transform.globalPosition / globalScale, so it runs after both.
-  registry_->Order(transform).After(velocityIntegration);
-  registry_->Order(collision).After(transform).After(velocityIntegration);
+  // Simulation-internal edges live in RegisterSimulationSystems.
   // Listener snapshot + spatial gain/pan need this-frame globals; spatial reads the listener
   // snapshot and is gated by culling (culled emitters lose their sink); both resolve tracks the
   // AudioSystem update cached.

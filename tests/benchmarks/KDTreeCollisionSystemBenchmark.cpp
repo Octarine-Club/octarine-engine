@@ -14,14 +14,10 @@
 #include "Events/CollisionBatchEvent.h"
 #include "Systems/KDTreeCollisionSystem.h"
 
-// Micro-bench for the KDTreeCollisionSystem async-dispatch path. The system hands each detection cycle
-// to a worker and polls the returned future on later ticks; the change under test swapped a
-// per-cycle std::async(launch::async) (a fresh OS thread spun up and joined every cycle) for a
-// submit to the persistent ThreadPool. This drives complete dispatch->collect cycles so the
-// per-cycle dispatch overhead is what's timed. At small box counts that overhead dominates the
-// (trivial) detection work; at large counts the detection work dominates and any delta shrinks
-// toward the noise floor. Compare against the std::async baseline by re-running with the change
-// reverted (the build is identical; only KDTreeCollisionSystem.h differs).
+// Fixed per-cycle overhead of KDTreeCollisionSystem's async path: each timed iteration drives one
+// complete dispatch (ThreadPool submit) -> poll -> collect cycle on a trivially small box set, so
+// what remains is scheduling latency rather than detection work. Detection at gameplay scale
+// (thousands of moving boxes, several layouts) lives in Sys/Collision/Sync and Sys/Collision/Async.
 
 namespace {
 
@@ -78,7 +74,7 @@ static void BM_CollisionDispatch(benchmark::State& state) {
   }
   state.SetItemsProcessed(static_cast<int64_t>(state.iterations()));
 }
-BENCHMARK(BM_CollisionDispatch)->Range(8, 512)->UseRealTime();
+BENCHMARK(BM_CollisionDispatch)->Name("Sys/Collision/DispatchOverhead")->Range(8, 512)->UseRealTime();
 
 namespace {
 // Dense cluster: every box overlaps every other (all within a 16px span, boxes are 32px), so the
@@ -123,4 +119,4 @@ static void BM_CollisionDispatchDense(benchmark::State& state) {
   }
   state.SetItemsProcessed(static_cast<int64_t>(state.iterations()));
 }
-BENCHMARK(BM_CollisionDispatchDense)->Range(16, 256)->UseRealTime();
+BENCHMARK(BM_CollisionDispatchDense)->Name("Sys/Collision/DenseSustainedPairs")->Range(16, 512)->UseRealTime();

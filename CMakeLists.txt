@@ -301,10 +301,14 @@ if (OCTARINE_ENABLE_BENCHMARKS)
     find_package(benchmark CONFIG REQUIRED)
 
     add_executable(OctarineBenchmarks
+            tests/benchmarks/BenchMain.cpp
+            tests/benchmarks/BenchWorld.cpp
             tests/benchmarks/EcsCoreBenchmark.cpp
             tests/benchmarks/EntityPoolBenchmark.cpp
-            tests/benchmarks/SpatialAudioBenchmark.cpp
             tests/benchmarks/KDTreeCollisionSystemBenchmark.cpp
+            tests/benchmarks/PipelineFrameBenchmarks.cpp
+            tests/benchmarks/SpatialAudioBenchmark.cpp
+            tests/benchmarks/SystemBenchmarks.cpp
             tests/benchmarks/TextCacheBenchmark.cpp
     )
     set_target_properties(OctarineBenchmarks PROPERTIES
@@ -313,12 +317,15 @@ if (OCTARINE_ENABLE_BENCHMARKS)
             CXX_EXTENSIONS OFF
     )
 
+    # octarine_engine (not just core) so the Sys/Pipeline/Frame tiers can drive the real gameplay
+    # systems and engine_bootstrap::RegisterSimulationSystems headlessly.
     target_link_libraries(OctarineBenchmarks PRIVATE
-            octarine_core
+            octarine_engine
             benchmark::benchmark
-            benchmark::benchmark_main
             $<IF:$<TARGET_EXISTS:SDL3_mixer::SDL3_mixer>,SDL3_mixer::SDL3_mixer,SDL3_mixer::SDL3_mixer-static>
     )
+    target_compile_definitions(OctarineBenchmarks PRIVATE
+            OCTARINE_BENCH_BUILD_TYPE="$<IF:$<CONFIG:>,${CMAKE_BUILD_TYPE},$<CONFIG>>")
 
     if (MSVC)
         target_compile_options(OctarineBenchmarks PRIVATE /W4 /permissive- /MP /bigobj)

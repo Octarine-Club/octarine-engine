@@ -8,12 +8,16 @@
 # TIMER lines. The stress scene reaches steady state in ~2s. The default 8s run
 # combined with the parser's --warmup 2 flag gives ~6s of pure plateau data.
 #
+# This is the macro (whole-game, Lua + renderer, wall-clock) benchmark. For deterministic,
+# headless C++ benchmarks of the ECS and systems use scripts/bench-micro.sh instead.
+#
 # Env:
 #   OCT_BENCH_GAME   Path to a game dir containing config.ini.
-#                    Default: <repo>/../Octarine-Engine-Example
+#                    Default: ~/workspace/gh/dash-vs if present, else
+#                    <repo>/../Octarine-Engine-Example (auto-cloned when missing).
 #   OCT_BENCH_MODE   Startup mode passed to the game's Lua (selects which scene
-#                    to auto-load). Default: stress. The example game also
-#                    accepts main, map_editor, overlap.
+#                    to auto-load). Default: benchmark_10k for dash-vs, stress for
+#                    the example game (which also accepts main, map_editor, overlap).
 #
 # Exits 0 on the expected `timeout` kill (124) or a clean exit (0). Anything
 # else (build failure, missing config, segfault) propagates.
@@ -33,7 +37,13 @@ if [[ ! -x "$binary" && -x "$build_dir/bin/$config_dir/OctarineEngine-player" ]]
   binary="$build_dir/bin/$config_dir/OctarineEngine-player"
 fi
 
-game_path="${OCT_BENCH_GAME:-$repo_root/../Octarine-Engine-Example}"
+default_game="$repo_root/../Octarine-Engine-Example"
+default_mode="stress"
+if [[ -d "$HOME/workspace/gh/dash-vs" ]]; then
+  default_game="$HOME/workspace/gh/dash-vs"
+  default_mode="benchmark_10k"
+fi
+game_path="${OCT_BENCH_GAME:-$default_game}"
 if [[ ! -d "$game_path" ]]; then
   echo "Notice: Example game not found at $game_path." >&2
   echo "Auto-cloning Octarine-Engine-Example for benchmarking..." >&2
@@ -60,7 +70,7 @@ if [[ ! -x "$binary" ]]; then
   cmake --build "$build_dir" --target OctarineEngine -- -k 0 >&2
 fi
 
-mode="${OCT_BENCH_MODE:-stress}"
+mode="${OCT_BENCH_MODE:-$default_mode}"
 
 set +e
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \

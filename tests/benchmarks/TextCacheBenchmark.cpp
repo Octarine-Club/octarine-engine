@@ -70,7 +70,7 @@ static void BM_TextCache_ContentKeyed(benchmark::State& state) {
   }
   state.SetItemsProcessed(static_cast<int64_t>(state.iterations()) * n);
 }
-BENCHMARK(BM_TextCache_ContentKeyed)->Range(8, 1024);
+BENCHMARK(BM_TextCache_ContentKeyed)->Name("Misc/TextCache/ContentKeyed")->Range(8, 1024);
 
 // New strategy: look up by entity id, then confirm the cached (fontId, text, color) still match.
 static void BM_TextCache_EntityKeyed(benchmark::State& state) {
@@ -93,4 +93,4 @@ static void BM_TextCache_EntityKeyed(benchmark::State& state) {
   }
   state.SetItemsProcessed(static_cast<int64_t>(state.iterations()) * n);
 }
-BENCHMARK(BM_TextCache_EntityKeyed)->Range(8, 1024);
+BENCHMARK(BM_TextCache_EntityKeyed)->Name("Misc/TextCache/EntityKeyed")->Range(8, 1024);
