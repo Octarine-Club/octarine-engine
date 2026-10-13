@@ -44,6 +44,7 @@ class Game : public LuaBindingContext {
 
   void SetPaused(bool paused);
   [[nodiscard]] bool IsPaused() const;
+  [[nodiscard]] uint64_t CurrentTick() const { return current_tick_; }
 
   // Headless asset bake (startup mode "bake"): scan the project at `assetPath` for assets, run its
   // startup script to derive every referenced asset id (validating each against the catalog), and
@@ -142,6 +143,7 @@ class Game : public LuaBindingContext {
   EngineRuntime runtime_;
   static inline bool s_is_running_{false};
   bool is_setup_ = false;
+  uint64_t current_tick_ = 0;
   bool bake_mode_ = false;
   bool use_manifest_ = false;
 #ifndef OCTARINE_SHIPPED

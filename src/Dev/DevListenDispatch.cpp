@@ -168,17 +168,23 @@ void HandlePause(Game* game, const std::vector<char>& body, std::string& reply_b
   reply_body = OkReply(game->IsPaused() ? "true" : "false");
 }
 
-void HandleInspect(Registry& registry, const std::vector<char>& body, std::string& reply_body) {
+void HandleInspect(Game* game, Registry& registry, const std::vector<char>& body, std::string& reply_body) {
   std::string cmd(body.data(), body.size());
   while (!cmd.empty() && (cmd.back() == '\n' || cmd.back() == '\r' || cmd.back() == ' ')) {
     cmd.pop_back();
   }
+  const uint64_t currentTick = (game != nullptr) ? game->CurrentTick() : 0;
   if (cmd.empty() || cmd == "summary") {
-    reply_body = OkReply(inspect::StateInspector::DumpSummary(registry));
+    reply_body = OkReply(inspect::StateInspector::DumpSummary(registry, currentTick));
   } else if (cmd == "entities") {
     reply_body = OkReply(inspect::StateInspector::DumpEntities(registry));
-  } else if (cmd == "hash") {
-    uint64_t hash = inspect::StateInspector::ComputeStateHash(registry);
+  } else if (cmd == "hash" || cmd.rfind("hash:", 0) == 0) {
+    float scale = inspect::kDefaultFloatPrecision;
+    if (cmd.rfind("hash:", 0) == 0) {
+      scale = std::strtof(cmd.c_str() + 5, nullptr);
+      if (scale <= 0.0f) scale = inspect::kDefaultFloatPrecision;
+    }
+    const uint64_t hash = inspect::StateInspector::ComputeStateHash(registry, scale);
     reply_body = OkReply(std::to_string(hash));
   } else if (cmd.rfind("entity:", 0) == 0) {
     std::string idStr = cmd.substr(7);
@@ -227,7 +233,7 @@ CommandHandler MakeEngineCommandHandler(Registry& registry, sol::state& lua, Gam
         HandlePause(game_ptr, body, reply_body);
         return;
       case OpCode::Inspect:
-        HandleInspect(*reg, body, reply_body);
+        HandleInspect(game_ptr, *reg, body, reply_body);
         return;
       default:
         reply_op = kErrorReplyOp;

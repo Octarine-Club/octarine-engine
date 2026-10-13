@@ -573,6 +573,9 @@ void Game::Run() {
   while (s_is_running_) {
     frame_loop_->ProcessInput();
     const float deltaTime = frame_loop_->WaitTime();
+    if (!IsPaused()) {
+      current_tick_++;
+    }
     frame_loop_->Update(deltaTime);
     frame_loop_->Render(deltaTime);
   }
@@ -585,6 +588,7 @@ void Game::Step(const float deltaTime) {
     is_setup_ = true;
   }
 
+  current_tick_++;
   frame_loop_->ProcessInput();
   if (registry_ && registry_->TryGet<GameConfig>()) {
     registry_->Get<GameConfig>().GetEngineOptions().stepFrame = true;
