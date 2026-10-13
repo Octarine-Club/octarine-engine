@@ -152,6 +152,20 @@ class Registry {
 
   [[nodiscard]] std::uint64_t GetEntityCount() const { return entity_locations_.size(); }
 
+  [[nodiscard]] std::size_t GetArchetypeCount() const { return archetypes_.size(); }
+
+  // Opt-in wall-clock timing of each system inside Update(). Exists in every build type (unlike
+  // the PROFILE_* macros, which compile out outside player-profile) so headless benchmarks and
+  // agent tooling can attribute frame time per system. Off by default: one branch per system.
+  void SetSystemTimingEnabled(bool enabled);
+  [[nodiscard]] bool IsSystemTimingEnabled() const { return system_timing_enabled_; }
+  // Last Update()'s duration per system, indexed by SystemId. Empty until timing is enabled.
+  [[nodiscard]] const std::vector<std::uint64_t>& GetLastSystemTimingsNs() const { return system_timings_ns_; }
+  // Last Update()'s duration of the end-of-frame blam/despawn flush.
+  [[nodiscard]] std::uint64_t GetLastFlushTimingNs() const { return flush_timing_ns_; }
+  [[nodiscard]] std::size_t GetSystemCount() const { return systems_.size(); }
+  [[nodiscard]] const std::string& GetSystemName(const SystemId id) const { return systems_[id].GetName(); }
+
   [[nodiscard]] std::vector<Entity> GetUserEntities() const;
 
   // Returns the entity's current archetype ID, including active tags.
@@ -612,6 +626,7 @@ class Registry {
   void AddOrderEdge(SystemId before, SystemId after);
   void RebuildExecutionOrder();
 
+  void UpdateTimed();
   void FlushPendingDestruction();
   void FlushDespawns(const std::vector<Entity>& despawns);
 
@@ -631,6 +646,9 @@ class Registry {
   std::vector<SystemId> system_execution_order_;
   bool system_order_dirty_ = false;
   bool is_paused_ = false;
+  bool system_timing_enabled_ = false;
+  std::vector<std::uint64_t> system_timings_ns_;
+  std::uint64_t flush_timing_ns_{0};
   std::vector<std::any> singleton_components_;
   std::vector<Entity> family_to_entity_;
   std::unordered_map<std::string, Entity> tag_to_entity_;

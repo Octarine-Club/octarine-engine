@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <set>
 #include <stdexcept>
 
@@ -72,11 +73,23 @@ void Registry::RebuildExecutionOrder() {
   system_order_dirty_ = false;
 }
 
+void Registry::SetSystemTimingEnabled(const bool enabled) {
+  system_timing_enabled_ = enabled;
+  if (!enabled) {
+    system_timings_ns_.clear();
+    flush_timing_ns_ = 0;
+  }
+}
+
 void Registry::Update(const float deltaTime) {
   PROFILE_NAMED_SCOPE("Registry::Update (total)");
   delta_time_ = deltaTime;
   if (system_order_dirty_ || system_execution_order_.size() != systems_.size()) {
     RebuildExecutionOrder();
+  }
+  if (system_timing_enabled_) {
+    UpdateTimed();
+    return;
   }
   for (const SystemId id : system_execution_order_) {
 #ifdef OCTARINE_PROFILING
@@ -86,6 +99,21 @@ void Registry::Update(const float deltaTime) {
     systems_[id].Update(*this);
   }
   FlushPendingDestruction();
+}
+
+void Registry::UpdateTimed() {
+  using Clock = std::chrono::steady_clock;
+  system_timings_ns_.assign(systems_.size(), 0);
+  for (const SystemId id : system_execution_order_) {
+    const auto start = Clock::now();
+    systems_[id].Update(*this);
+    system_timings_ns_[id] =
+        static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - start).count());
+  }
+  const auto flushStart = Clock::now();
+  FlushPendingDestruction();
+  flush_timing_ns_ = static_cast<std::uint64_t>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - flushStart).count());
 }
 
 void Registry::FlushPendingDestruction() {

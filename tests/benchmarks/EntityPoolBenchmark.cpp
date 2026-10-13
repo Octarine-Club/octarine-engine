@@ -1,7 +1,17 @@
 #include <benchmark/benchmark.h>
 
+#include <vector>
+
+#include "BenchCommon.h"
 #include "ECS/Registry.h"
 #include "Systems/EntityPoolSystem.h"
+
+// Misc/Pool: entity lifecycle costs — raw create+blam, blam with relationship pairs (reverse-index
+// cleanup), and pooled spawn/park recycling. Setup that must not be timed lives outside the
+// timing loop or behind PauseTiming on large batches (PauseTiming itself costs ~hundreds of ns,
+// so tiny batches would mostly measure the timer).
+
+namespace {
 
 struct Position {
   float x = 0.0f;
@@ -13,87 +23,62 @@ struct Velocity {
   float dy = 0.0f;
 };
 
-// Benchmark standard Create/Blam without pooling
-static void BM_EntityCreateAndBlam(benchmark::State& state) {
-  for (auto _ : state) {
-    state.PauseTiming();
-    Registry registry;
-    state.ResumeTiming();
+}  // namespace
 
-    for (int i = 0; i < state.range(0); ++i) {
-      Entity e = registry.CreateEntity();
-      registry.AddComponent(e, Position{1.0f, 1.0f});
-      registry.AddComponent(e, Velocity{1.0f, 1.0f});
+static void BM_EntityCreateAndBlam(benchmark::State& state) {
+  const auto n = static_cast<int>(state.range(0));
+  Registry registry;
+  for (auto _ : state) {
+    for (int i = 0; i < n; ++i) {
+      const Entity e = registry.CreateEntityWithBundle(Position{1.0f, 1.0f}, Velocity{1.0f, 1.0f});
       registry.QueueBlamEntity(e);
     }
-
-    registry.Update(1.0f / 60.0f);  // Process blams
+    registry.Update(bench::kDt);
   }
+  bench::ReportPerEntity(state, n);
 }
-BENCHMARK(BM_EntityCreateAndBlam)->Range(8, 8192);
+BENCHMARK(BM_EntityCreateAndBlam)->Name("Misc/Pool/CreateAndBlam")->RangeMultiplier(8)->Range(512, 32768);
 
-// Benchmark Blam with many relationship pairs to verify reverse-index optimization
 static void BM_EntityCreateAndBlamWithPairs(benchmark::State& state) {
+  const auto n = static_cast<int>(state.range(0));
   for (auto _ : state) {
     state.PauseTiming();
     Registry registry;
     std::vector<Entity> targets;
-    targets.reserve(state.range(0));
-    for (int i = 0; i < state.range(0); ++i) {
-      targets.push_back(registry.CreateEntity());
-    }
-    // Create many pairs targeting these entities
-    Entity relationship = registry.TagId("test_rel");
-    for (int i = 0; i < state.range(0); ++i) {
-      Entity author = registry.CreateEntity();
-      registry.AddPair(author, relationship, targets[i]);
-    }
+    targets.reserve(static_cast<size_t>(n));
+    for (int i = 0; i < n; ++i) targets.push_back(registry.CreateEntity());
+    const Entity relationship = registry.TagId("test_rel");
+    for (int i = 0; i < n; ++i)
+      registry.AddPair(registry.CreateEntity(), relationship, targets[static_cast<size_t>(i)]);
     state.ResumeTiming();
 
-    for (Entity e : targets) {
-      registry.QueueBlamEntity(e);
-    }
-
-    registry.Update(1.0f / 60.0f);  // Process blams
+    for (const Entity e : targets) registry.QueueBlamEntity(e);
+    registry.Update(bench::kDt);
   }
+  bench::ReportPerEntity(state, n);
 }
-BENCHMARK(BM_EntityCreateAndBlamWithPairs)->Range(8, 2048);
+BENCHMARK(BM_EntityCreateAndBlamWithPairs)->Name("Misc/Pool/BlamWithPairs")->RangeMultiplier(8)->Range(512, 32768);
 
-// Benchmark pooling system
 static void BM_EntityPoolSpawnAndPark(benchmark::State& state) {
+  const auto n = static_cast<int>(state.range(0));
+  Registry registry;
+  EntityPoolManager pool;
+  const ArchetypeID poolId = pool.RegisterPool<Position, Velocity>(registry, [](Registry& reg) {
+    const Entity e = reg.CreateEntityWithBundle(Position{0.0f, 0.0f}, Velocity{0.0f, 0.0f});
+    reg.AddTag<PoolableTag>(e);
+    return e;
+  });
+  std::vector<Entity> entities;
+  entities.reserve(static_cast<size_t>(n));
+  // Pre-warm so the timed loop is pure activation/deactivation, never fresh allocation.
+  for (int i = 0; i < n; ++i) entities.push_back(pool.Spawn(registry, poolId));
+  for (const Entity e : entities) pool.Park(registry, e);
+
   for (auto _ : state) {
-    state.PauseTiming();
-    Registry registry;
-    EntityPoolManager pool;
-
-    // Register the pool and get its ID
-    ArchetypeID pool_id = pool.RegisterPool<Position, Velocity>(registry, [](Registry& reg) {
-      Entity e = reg.CreateEntity();
-      reg.AddComponent(e, Position{0.0f, 0.0f});
-      reg.AddComponent(e, Velocity{0.0f, 0.0f});
-      reg.AddTag<PoolableTag>(e);
-      return e;
-    });
-
-    // Pre-warm the pool so we are only benchmarking the activation/deactivation cost
-    std::vector<Entity> entities;
-    entities.reserve(state.range(0));
-    for (int i = 0; i < state.range(0); ++i) {
-      entities.push_back(pool.Spawn(registry, pool_id));
-    }
-    for (Entity e : entities) {
-      pool.Park(registry, e);
-    }
     entities.clear();
-    state.ResumeTiming();
-
-    // The actual benchmark: Spawn (recycle) and Park
-    for (int i = 0; i < state.range(0); ++i) {
-      entities.push_back(pool.Spawn(registry, pool_id));
-    }
-    for (Entity e : entities) {
-      pool.Park(registry, e);
-    }
+    for (int i = 0; i < n; ++i) entities.push_back(pool.Spawn(registry, poolId));
+    for (const Entity e : entities) pool.Park(registry, e);
   }
+  bench::ReportPerEntity(state, n * 2.0);
 }
-BENCHMARK(BM_EntityPoolSpawnAndPark)->Range(8, 8192);
+BENCHMARK(BM_EntityPoolSpawnAndPark)->Name("Misc/Pool/SpawnAndPark")->RangeMultiplier(8)->Range(512, 32768);

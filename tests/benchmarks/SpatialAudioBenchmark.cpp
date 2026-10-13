@@ -29,18 +29,6 @@
 // internal state machine more than our systems.
 
 namespace {
-class StubContext final : public AnyContext {
- public:
-  explicit StubContext(Registry* r) : registry_(r) {}
-  [[nodiscard]] Entity GetEntity() const override { return Entity{}; }
-  [[nodiscard]] Registry* GetRegistry() const override { return registry_; }
-  [[nodiscard]] float GetDeltaTime() const override { return 0.016f; }
-  void* GetComponentPtr(EntityID) override { return nullptr; }
-
- private:
-  Registry* registry_;
-};
-
 // RAII helper: initializes SDL audio with the "dummy" driver + SDL_mixer once for the
 // bench process. Skip the benchmark when init fails (CI containers without an audio
 // device should still produce a clean skip rather than a crash).
@@ -147,8 +135,7 @@ static void BM_SpatialAudio_SteadyState(benchmark::State& state) {
   BenchScene scene;
   BuildSceneCommon(scene, env, static_cast<int>(state.range(0)), /*withRigidBody=*/false);
   SpatialAudioSystem system;
-  StubContext impl(&scene.registry);
-  const ContextFacade ctx(&impl);
+  const ContextFacade ctx(&scene.registry, 0.016f, nullptr, nullptr);
 
   // Warm-up frame populates sink.lastGain / lastPan / stereoApplied so the timed iters
   // exercise the dedup short-circuit (the realistic steady-state path).
@@ -162,7 +149,7 @@ static void BM_SpatialAudio_SteadyState(benchmark::State& state) {
   state.SetItemsProcessed(static_cast<int64_t>(state.iterations()) * state.range(0));
 }
 
-BENCHMARK(BM_SpatialAudio_SteadyState)->Range(8, 1024);
+BENCHMARK(BM_SpatialAudio_SteadyState)->Name("Misc/Audio/SpatialSteadyState")->Range(8, 1024);
 
 static void BM_Doppler_SteadyState(benchmark::State& state) {
   AudioBenchEnv env;
@@ -174,8 +161,7 @@ static void BM_Doppler_SteadyState(benchmark::State& state) {
   BenchScene scene;
   BuildSceneCommon(scene, env, static_cast<int>(state.range(0)), /*withRigidBody=*/true);
   DopplerSystem system;
-  StubContext impl(&scene.registry);
-  const ContextFacade ctx(&impl);
+  const ContextFacade ctx(&scene.registry, 0.016f, nullptr, nullptr);
 
   scene.dopplerQuery->ForEach([&](const Entity e, const GlobalTransformComponent& tf, const RigidBodyComponent& rb,
                                   AudioSourceComponent& src,
@@ -189,4 +175,4 @@ static void BM_Doppler_SteadyState(benchmark::State& state) {
   state.SetItemsProcessed(static_cast<int64_t>(state.iterations()) * state.range(0));
 }
 
-BENCHMARK(BM_Doppler_SteadyState)->Range(8, 1024);
+BENCHMARK(BM_Doppler_SteadyState)->Name("Misc/Audio/DopplerSteadyState")->Range(8, 1024);

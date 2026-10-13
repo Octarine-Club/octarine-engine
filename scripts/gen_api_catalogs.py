@@ -35,7 +35,7 @@ SRC = REPO / "src"
 # <...> holds the queried components (no nested templates in practice), and the
 # constructor or getter call names the system. \s* spans the multi-line DopplerSystem case.
 REG_RE = re.compile(
-    r"Register(Parallel|Bulk)?System\s*(?:<([^>]*)>)?\s*\(\s*(?:std::ref\s*\(\s*)?(?:[A-Za-z_]\w*->(?:Get|TryGet)<\s*([A-Za-z_]\w+)\s*>\(\)|([A-Za-z_]\w+)\s*\()"
+    r"Register(Parallel|Bulk)?System\s*(?:<([^>]*)>)?\s*\(\s*(?:std::ref\s*\(\s*)?(?:[A-Za-z_]\w*(?:->|\.)(?:Get|TryGet)<\s*([A-Za-z_]\w+)\s*>\(\)|([A-Za-z_]\w+)\s*\()"
 )
 CREATE_QUERY_RE = re.compile(r"CreateQuery<((?:[^<>]|<[^<>]*>)+)>")
 EMIT_RE = re.compile(r"EmitEvent\s*<\s*([A-Za-z_]\w*)\s*>")
@@ -86,10 +86,14 @@ def parse_registrations():
     pipeline_dir = SRC / "Engine" / "Pipelines"
     if pipeline_dir.is_dir():
         files.extend(sorted(pipeline_dir.glob("*.cpp")))
+    sim_systems_file = SRC / "Engine" / "SimulationSystems.cpp"
+    sim_systems_text = sim_systems_file.read_text(encoding="utf-8") if sim_systems_file.is_file() else ""
     out = {}
     order = 0
     for f in files:
         text = f.read_text(encoding="utf-8")
+        if f.name == "Game.cpp" and sim_systems_text:
+            text = text.replace("engine_bootstrap::RegisterSimulationSystems(", sim_systems_text + "\n//")
         for m in REG_RE.finditer(text):
             kind, comps, name1, name2 = m.group(1) or "", m.group(2), m.group(3), m.group(4)
             name = name1 or name2
