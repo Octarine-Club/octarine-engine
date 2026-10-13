@@ -54,12 +54,13 @@ class UIButtonSystem {
 
     const auto* cameraComp = registry_->TryGet<CameraComponent>();
     const octarine::Rect camera = cameraComp ? cameraComp->viewport : octarine::Rect{};
+    const float zoom = (cameraComp && cameraComp->zoom > 0.001f) ? cameraComp->zoom : 1.0f;
     auto handler = [&](Entity entity, UIButtonComponent& button, const GlobalTransformComponent* transform,
                        const BoxColliderComponent* collider) {
       if (!button.isActive) {
         return;
       }
-      if (!HitTest(entity, button, transform, collider, camera, mousePos->x, mousePos->y)) {
+      if (!HitTest(entity, button, transform, collider, camera, zoom, mousePos->x, mousePos->y)) {
         return;
       }
       TriggerButton(entity, button);
@@ -239,7 +240,8 @@ class UIButtonSystem {
 
   [[nodiscard]] bool HitTest(const Entity entity, const UIButtonComponent& button,
                              const GlobalTransformComponent* transform, const BoxColliderComponent* collider,
-                             const octarine::Rect& camera, const float mouseX, const float mouseY) const {
+                             const octarine::Rect& camera, const float zoom, const float mouseX,
+                             const float mouseY) const {
     // Layout-driven UI button: the resolved rect already accounts for anchoring, so no collider or
     // transform is needed — this is the preferred path for `ui_button` + `ui_anchor` entities.
     if (registry_->HasComponent<UIRectComponent>(entity)) {
@@ -250,12 +252,14 @@ class UIButtonSystem {
     if (collider && transform) {
       float x = transform->position.x + collider->offset.x * transform->scale.x;
       float y = transform->position.y + collider->offset.y * transform->scale.y;
+      float w = static_cast<float>(collider->width) * transform->scale.x;
+      float h = static_cast<float>(collider->height) * transform->scale.y;
       if (!button.isFixed) {
-        x -= camera.x;
-        y -= camera.y;
+        x = (x - camera.x) * zoom;
+        y = (y - camera.y) * zoom;
+        w *= zoom;
+        h *= zoom;
       }
-      const float w = static_cast<float>(collider->width) * transform->scale.x;
-      const float h = static_cast<float>(collider->height) * transform->scale.y;
       return mouseX >= x && mouseX <= x + w && mouseY >= y && mouseY <= y + h;
     }
     return false;

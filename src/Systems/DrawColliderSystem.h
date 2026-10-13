@@ -17,12 +17,14 @@ class DrawColliderSystem {
   void operator()(const ContextFacade& context, const GlobalTransformComponent& transform,
                   const BoxColliderComponent& collider) const {
     auto* renderer = context.GetRegistry()->Get<EngineContext>().sdlRenderer;
-    const auto& camera = context.GetRegistry()->Get<CameraComponent>().viewport;
+    const auto& cameraComp = context.GetRegistry()->Get<CameraComponent>();
+    const auto& camera = cameraComp.viewport;
+    const float zoom = cameraComp.zoom > 0.001f ? cameraComp.zoom : 1.0f;
 
-    const float w = static_cast<float>(collider.width) * transform.scale.x;
-    const float h = static_cast<float>(collider.height) * transform.scale.y;
-    const float hx = w * 0.5f;
-    const float hy = h * 0.5f;
+    float w = static_cast<float>(collider.width) * transform.scale.x;
+    float h = static_cast<float>(collider.height) * transform.scale.y;
+    float hx = w * 0.5f;
+    float hy = h * 0.5f;
 
     // transform.position is top-left. apply collider offset (scaled).
     glm::vec2 centre = {transform.position.x + collider.offset.x * transform.scale.x + hx,
@@ -31,8 +33,12 @@ class DrawColliderSystem {
 
     if (!collider.isFixed) {
       const glm::vec2 cameraOffset = {camera.x, camera.y};
-      centre -= cameraOffset;
-      origin -= cameraOffset;
+      centre = (centre - cameraOffset) * zoom;
+      origin = (origin - cameraOffset) * zoom;
+      hx *= zoom;
+      hy *= zoom;
+      w *= zoom;
+      h *= zoom;
     }
 
     SDL_SetRenderDrawColor(renderer, Constants::kUint8Max, 0, 0, Constants::kUint8Max);

@@ -23,7 +23,9 @@ class RenderColorGridSystem {
 
   void Prepare(Registry* registry) {
     const auto& gameConfig = registry->Get<GameConfig>();
-    camera_ = registry->Get<CameraComponent>().viewport;
+    const auto& cameraComp = registry->Get<CameraComponent>();
+    camera_ = cameraComp.viewport;
+    zoom_ = cameraComp.zoom > 0.001f ? cameraComp.zoom : 1.0f;
     renderQueue_ = &registry->Get<RenderQueue>();
     windowWidth_ = static_cast<float>(gameConfig.windowWidth);
     windowHeight_ = static_cast<float>(gameConfig.windowHeight);
@@ -148,9 +150,11 @@ class RenderColorGridSystem {
         return {{}, false};
       }
     }
-    const float destX = isFixed ? x : (x - camera_.x);
-    const float destY = isFixed ? y : (y - camera_.y);
-    return {{destX, destY, w, h}, true};
+    const float destX = isFixed ? x : ((x - camera_.x) * zoom_);
+    const float destY = isFixed ? y : ((y - camera_.y) * zoom_);
+    const float destW = isFixed ? w : (w * zoom_);
+    const float destH = isFixed ? h : (h * zoom_);
+    return {{destX, destY, destW, destH}, true};
   }
 
   void EmplaceOpaqueGrid(const ColorGridComponent& grid, const GlobalTransformComponent& transform,
@@ -160,10 +164,10 @@ class RenderColorGridSystem {
     const float depth = transform.position.y;
     const SDL_BlendMode sdlBlend = octarine::ToSdlBlendMode(grid.blendMode);
 
-    const float bgX = grid.isFixed ? reg.viewL : (reg.viewL - camera_.x);
-    const float bgY = grid.isFixed ? reg.viewT : (reg.viewT - camera_.y);
-    const float bgW = reg.viewR - reg.viewL;
-    const float bgH = reg.viewB - reg.viewT;
+    const float bgX = grid.isFixed ? reg.viewL : ((reg.viewL - camera_.x) * zoom_);
+    const float bgY = grid.isFixed ? reg.viewT : ((reg.viewT - camera_.y) * zoom_);
+    const float bgW = grid.isFixed ? (reg.viewR - reg.viewL) : ((reg.viewR - reg.viewL) * zoom_);
+    const float bgH = grid.isFixed ? (reg.viewB - reg.viewT) : ((reg.viewB - reg.viewT) * zoom_);
 
     auto& bgCmd =
         renderQueue_->EmplaceSquare(layer, depth, reinterpret_cast<const void*>(kBatchKeyColor1), grid.blendMode);
@@ -229,6 +233,7 @@ class RenderColorGridSystem {
   float windowWidth_ = 0.0f;
   float windowHeight_ = 0.0f;
   octarine::Rect camera_{};
+  float zoom_ = 1.0f;
 #ifdef OCTARINE_PROFILING
   std::atomic<long long>* culledCounter_ = nullptr;
   std::atomic<long long>* emplacedCounter_ = nullptr;

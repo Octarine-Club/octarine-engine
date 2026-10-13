@@ -52,7 +52,9 @@ class RenderTextSystem {
     const auto& assetManager = registry->Get<AssetManager>();
     auto* sdlRenderer = registry->Get<EngineContext>().sdlRenderer;
     auto& renderQueue = registry->Get<RenderQueue>();
-    const octarine::Rect camera = registry->Get<CameraComponent>().viewport;
+    const auto& cameraComp = registry->Get<CameraComponent>();
+    const octarine::Rect camera = cameraComp.viewport;
+    const float zoom = cameraComp.zoom > 0.001f ? cameraComp.zoom : 1.0f;
 
     TTF_Font* font = assetManager.GetFont(text.fontId);
     if (!font) return;
@@ -97,11 +99,13 @@ class RenderTextSystem {
     }
     PROFILE_COUNTER_INC(emplacedCounter);
 
-    const float x = effectivelyFixed ? origin.x : origin.x - camera.x;
-    const float y = effectivelyFixed ? origin.y : origin.y - camera.y;
+    const float x = effectivelyFixed ? origin.x : (origin.x - camera.x) * zoom;
+    const float y = effectivelyFixed ? origin.y : (origin.y - camera.y) * zoom;
+    const float w = effectivelyFixed ? it->second.width : it->second.width * zoom;
+    const float h = effectivelyFixed ? it->second.height : it->second.height * zoom;
 
     auto& cmd = renderQueue.EmplaceText(static_cast<unsigned int>(renderLayer), text.position.y, it->second.texture);
-    cmd.destRect = {x, y, it->second.width, it->second.height};
+    cmd.destRect = {x, y, w, h};
     cmd.texture = it->second.texture;
   }
 

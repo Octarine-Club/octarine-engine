@@ -16,7 +16,9 @@ class RenderPrimitiveSystem {
  public:
   void Prepare(Registry* registry) {
     const auto& gameConfig = registry->Get<GameConfig>();
-    camera_ = registry->Get<CameraComponent>().viewport;
+    const auto& cameraComp = registry->Get<CameraComponent>();
+    camera_ = cameraComp.viewport;
+    zoom_ = cameraComp.zoom > 0.001f ? cameraComp.zoom : 1.0f;
     renderQueue_ = &registry->Get<RenderQueue>();
     windowWidth_ = static_cast<float>(gameConfig.windowWidth);
     windowHeight_ = static_cast<float>(gameConfig.windowHeight);
@@ -45,17 +47,21 @@ class RenderPrimitiveSystem {
 
     PROFILE_COUNTER_INC(emplacedCounter_);
 
-    const float x = square.isFixed ? origin.x : origin.x - camera_.x;
-    const float y = square.isFixed ? origin.y : origin.y - camera_.y;
+    const float x = square.isFixed ? origin.x : (origin.x - camera_.x) * zoom_;
+    const float y = square.isFixed ? origin.y : (origin.y - camera_.y) * zoom_;
+    const float destW = square.isFixed ? w : w * zoom_;
+    const float destH = square.isFixed ? h : h * zoom_;
 
     auto& cmd = renderQueue_->EmplaceSquare(static_cast<unsigned int>(square.layer), square.position.y, nullptr,
                                             square.blendMode);
-    cmd.destRect = {x, y, w, h};
+    cmd.destRect = {x, y, destW, destH};
     cmd.color = SDL_Color{square.color.r, square.color.g, square.color.b, square.color.a};
     cmd.rotation = transform.rotation;
     // The quad's top-left is `origin`, but pivot is an offset from transform.position, so rebase
     // it onto the destRect the renderer receives. Both are in scaled pixels.
-    cmd.pivot = {.x = transform.pivot.x - scaledOffset.x, .y = transform.pivot.y - scaledOffset.y};
+    const glm::vec2 localPivot = transform.pivot - scaledOffset;
+    cmd.pivot = square.isFixed ? SDL_FPoint{localPivot.x, localPivot.y}
+                               : SDL_FPoint{localPivot.x * zoom_, localPivot.y * zoom_};
     cmd.blendMode = octarine::ToSdlBlendMode(square.blendMode);
   }
 
@@ -64,6 +70,7 @@ class RenderPrimitiveSystem {
   float windowWidth_ = 0;
   float windowHeight_ = 0;
   octarine::Rect camera_{};
+  float zoom_ = 1.0f;
 #ifdef OCTARINE_PROFILING
   std::atomic<long long>* culledCounter_ = nullptr;
   std::atomic<long long>* emplacedCounter_ = nullptr;

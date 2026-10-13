@@ -95,6 +95,23 @@ void LuaModuleBinding<GameModule>::install(sol::state& lua, LuaBindingContext& c
     return glm::vec2(camera.viewport.x, camera.viewport.y);
   });
 
+  lua.set_function("set_camera_zoom", [&ctx](const double zoom) {
+    auto* registry = ctx.GetRegistry();
+    auto* camera = registry->TryGet<CameraComponent>();
+    if (!camera) return;
+    camera->zoom = std::clamp(static_cast<float>(zoom), 0.1f, 10.0f);
+    if (const auto* gameConfig = registry->TryGet<GameConfig>()) {
+      camera->viewport.w = static_cast<float>(gameConfig->windowWidth) / camera->zoom;
+      camera->viewport.h = static_cast<float>(gameConfig->windowHeight) / camera->zoom;
+    }
+  });
+
+  lua.set_function("get_camera_zoom", [&ctx]() {
+    const auto* camera = ctx.GetRegistry()->TryGet<CameraComponent>();
+    if (!camera) return 1.0;
+    return static_cast<double>(camera->zoom);
+  });
+
   // Manual fire from Lua. Player-tagged emitters skip auto-fire — gameplay code drives shots
   // via input callbacks. dx/dy is a non-normalized aim vector; 0,0 falls back to the
   // emitter's configured velocity.

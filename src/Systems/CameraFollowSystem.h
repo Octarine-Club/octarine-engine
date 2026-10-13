@@ -15,16 +15,16 @@ class CameraFollowSystem {
  public:
   void operator()(const ContextFacade& context, const PositionComponent& position,
                   const CameraFollowComponent& /*follow*/) const {
-    auto& [viewport] = context.GetRegistry()->Get<CameraComponent>();
+    auto& camera = context.GetRegistry()->Get<CameraComponent>();
+    auto& viewport = camera.viewport;
     const auto& gameConfig = context.GetRegistry()->Get<GameConfig>();
+    const float zoom = camera.zoom > 0.001f ? camera.zoom : 1.0f;
 
-    if (position.value.x + viewport.w / Constants::kTwo < gameConfig.playableAreaWidth) {
-      viewport.x = position.value.x - static_cast<float>(gameConfig.windowWidth) / Constants::kTwo;
-    }
+    viewport.w = static_cast<float>(gameConfig.windowWidth) / zoom;
+    viewport.h = static_cast<float>(gameConfig.windowHeight) / zoom;
 
-    if (position.value.y + viewport.h / Constants::kTwo < gameConfig.playableAreaHeight) {
-      viewport.y = position.value.y - static_cast<float>(gameConfig.windowHeight) / Constants::kTwo;
-    }
+    viewport.x = position.value.x - viewport.w / Constants::kTwo;
+    viewport.y = position.value.y - viewport.h / Constants::kTwo;
 
     const float maxX = std::max(0.0f, gameConfig.playableAreaWidth - viewport.w);
     const float maxY = std::max(0.0f, gameConfig.playableAreaHeight - viewport.h);

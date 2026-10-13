@@ -1604,6 +1604,8 @@ function get_asset_path(...) end
 
 function get_camera_position(...) end
 
+function get_camera_zoom(...) end
+
 function get_game_map_dimensions(...) end
 
 function get_name(...) end
@@ -1893,6 +1895,8 @@ script_component = {}
 ---@class separation_component
 separation_component = {}
 
+
+function set_camera_zoom(...) end
 
 function set_game_map_dimensions(...) end
 
