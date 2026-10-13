@@ -131,66 +131,70 @@ class KDTreeCollisionSystem {
   }
 
   void operator()(const ContextFacade& ctx) {
-    // No scope timer here: Registry::Update already times this span as "KDTreeCollisionSystem";
-    // a second name for the same span double-counts on the benchmark dashboard.
     auto* registry = ctx.GetRegistry();
     auto* eventBus = registry->Get<EngineContext>().eventBus;
 
-    if (!synchronous_) {
-      if (collisionResult_.valid() &&
-          collisionResult_.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
-        return;
-      }
-
-      if (collisionResult_.valid()) {
-        PROFILE_NAMED_SCOPE("Emit Events");
-        CollisionResult result = collisionResult_.get();
-        EmitCollisionEvents(eventBus, result.intersectingPairs);
-        cachedBoxes_ = std::move(result.boxes);
-        cachedBoxes_.clear();
-      }
-    }
-
     if (!query_) {
-      query_ = ctx.GetRegistry()->CreateQuery<GlobalTransformComponent, BoxColliderComponent, EntityMaskComponent>();
+      query_ = registry->CreateQuery<GlobalTransformComponent, BoxColliderComponent, EntityMaskComponent>();
     }
     query_->Update();
 
-    std::vector<Box> boxes;
     if (synchronous_) {
-      boxes.reserve(query_->GetCount());
-      query_->ForEach([&](Entity entity, const GlobalTransformComponent& transform,
-                          const BoxColliderComponent& collider, const EntityMaskComponent& entityMask) {
-        boxes.push_back(BuildBox(entity, transform, collider, entityMask));
-      });
-      std::sort(boxes.begin(), boxes.end(), [](const Box& a, const Box& b) { return a.entity.id < b.entity.id; });
+      UpdateSynchronous(eventBus);
     } else {
-      PROFILE_NAMED_SCOPE("Gather Boxes");
-      boxes = std::move(cachedBoxes_);
-      boxes.resize(query_->GetCount());
-      std::atomic<size_t> nextIndex{0};
-
-      query_->ParallelForEach([&](Entity entity, const GlobalTransformComponent& transform,
-                                  const BoxColliderComponent& collider, const EntityMaskComponent& entityMask) {
-        const size_t idx = nextIndex.fetch_add(1, std::memory_order_relaxed);
-        boxes[idx] = BuildBox(entity, transform, collider, entityMask);
-      });
+      UpdateAsynchronous(eventBus);
     }
+  }
+
+ private:
+  void UpdateSynchronous(EventBus* eventBus) {
+    std::vector<Box> boxes;
+    boxes.reserve(query_->GetCount());
+    query_->ForEach([&](Entity entity, const GlobalTransformComponent& transform, const BoxColliderComponent& collider,
+                        const EntityMaskComponent& entityMask) {
+      boxes.push_back(BuildBox(entity, transform, collider, entityMask));
+    });
+    std::sort(boxes.begin(), boxes.end(), [](const Box& a, const Box& b) { return a.entity.id < b.entity.id; });
 
     PROFILE_COUNTER_SET("Collision: Box count", static_cast<long long>(boxes.size()));
 
-    if (synchronous_) {
-      std::vector<std::pair<Entity, Entity>> intersectingPairs;
-      if (!boxes.empty()) {
-        ComputeAsyncCollisions(boxes, intersectingPairs);
-        std::sort(intersectingPairs.begin(), intersectingPairs.end(), [](const auto& a, const auto& b) {
-          if (a.first.id != b.first.id) return a.first.id < b.first.id;
-          return a.second.id < b.second.id;
-        });
-      }
-      EmitCollisionEvents(eventBus, intersectingPairs);
+    std::vector<std::pair<Entity, Entity>> intersectingPairs;
+    if (!boxes.empty()) {
+      ComputeAsyncCollisions(boxes, intersectingPairs);
+      std::sort(intersectingPairs.begin(), intersectingPairs.end(), [](const auto& a, const auto& b) {
+        if (a.first.id != b.first.id) return a.first.id < b.first.id;
+        return a.second.id < b.second.id;
+      });
+    }
+    EmitCollisionEvents(eventBus, intersectingPairs);
+  }
+
+  void UpdateAsynchronous(EventBus* eventBus) {
+    if (collisionResult_.valid() &&
+        collisionResult_.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
       return;
     }
+
+    if (collisionResult_.valid()) {
+      PROFILE_NAMED_SCOPE("Emit Events");
+      CollisionResult result = collisionResult_.get();
+      EmitCollisionEvents(eventBus, result.intersectingPairs);
+      cachedBoxes_ = std::move(result.boxes);
+      cachedBoxes_.clear();
+    }
+
+    PROFILE_NAMED_SCOPE("Gather Boxes");
+    std::vector<Box> boxes = std::move(cachedBoxes_);
+    boxes.resize(query_->GetCount());
+    std::atomic<size_t> nextIndex{0};
+
+    query_->ParallelForEach([&](Entity entity, const GlobalTransformComponent& transform,
+                                const BoxColliderComponent& collider, const EntityMaskComponent& entityMask) {
+      const size_t idx = nextIndex.fetch_add(1, std::memory_order_relaxed);
+      boxes[idx] = BuildBox(entity, transform, collider, entityMask);
+    });
+
+    PROFILE_COUNTER_SET("Collision: Box count", static_cast<long long>(boxes.size()));
 
     if (boxes.empty()) {
       return;
@@ -199,6 +203,7 @@ class KDTreeCollisionSystem {
     collisionResult_ = StartAsyncCollisionDetection(std::move(boxes));
   }
 
+ public:
   // Returns true if entity a and entity b are currently overlapping (sustained OR just-entered).
   // Reflects the result of the most recently completed async detection pass (one frame of lag
   // on the very first frame, stable thereafter). Safe to call from on_update or on_collision.

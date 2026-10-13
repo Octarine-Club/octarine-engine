@@ -51,10 +51,13 @@ std::string EscapeJsonString(const std::string& str) {
       ss << "\\r";
     } else if (c == '\t') {
       ss << "\\t";
-    } else if (static_cast<unsigned char>(c) < 0x20) {
-      ss << "\\u" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(c);
     } else {
-      ss << c;
+      constexpr unsigned char kAsciiPrintableStart = 0x20;
+      if (static_cast<unsigned char>(c) < kAsciiPrintableStart) {
+        ss << "\\u" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(c);
+      } else {
+        ss << c;
+      }
     }
   }
   return ss.str();
@@ -77,8 +80,8 @@ void AppendPositionJson(const Registry& registry, Entity entity, const InspectOp
   if (!registry.HasComponent<PositionComponent>(entity)) return;
   const auto& pos = registry.GetComponent<PositionComponent>(entity);
   std::ostringstream ss;
-  ss << "\"PositionComponent\": {\"x\": " << FormatFloat(pos.value.x, opts)
-     << ", \"y\": " << FormatFloat(pos.value.y, opts) << "}";
+  ss << R"("PositionComponent": {"x": )" << FormatFloat(pos.value.x, opts) << R"(, "y": )"
+     << FormatFloat(pos.value.y, opts) << "}";
   comps.push_back(ss.str());
 }
 
@@ -87,8 +90,8 @@ void AppendRigidBodyJson(const Registry& registry, Entity entity, const InspectO
   if (!registry.HasComponent<RigidBodyComponent>(entity)) return;
   const auto& rb = registry.GetComponent<RigidBodyComponent>(entity);
   std::ostringstream ss;
-  ss << "\"RigidBodyComponent\": {\"vx\": " << FormatFloat(rb.velocity.x, opts)
-     << ", \"vy\": " << FormatFloat(rb.velocity.y, opts) << "}";
+  ss << R"("RigidBodyComponent": {"vx": )" << FormatFloat(rb.velocity.x, opts) << R"(, "vy": )"
+     << FormatFloat(rb.velocity.y, opts) << "}";
   comps.push_back(ss.str());
 }
 
@@ -97,10 +100,9 @@ void AppendGlobalTransformJson(const Registry& registry, Entity entity, const In
   if (!registry.HasComponent<GlobalTransformComponent>(entity)) return;
   const auto& gt = registry.GetComponent<GlobalTransformComponent>(entity);
   std::ostringstream ss;
-  ss << "\"GlobalTransformComponent\": {\"x\": " << FormatFloat(gt.position.x, opts)
-     << ", \"y\": " << FormatFloat(gt.position.y, opts) << ", \"scaleX\": " << FormatFloat(gt.scale.x, opts)
-     << ", \"scaleY\": " << FormatFloat(gt.scale.y, opts) << ", \"rotation\": " << FormatFloat(gt.rotation, opts)
-     << "}";
+  ss << R"("GlobalTransformComponent": {"x": )" << FormatFloat(gt.position.x, opts) << R"(, "y": )"
+     << FormatFloat(gt.position.y, opts) << R"(, "scaleX": )" << FormatFloat(gt.scale.x, opts) << R"(, "scaleY": )"
+     << FormatFloat(gt.scale.y, opts) << R"(, "rotation": )" << FormatFloat(gt.rotation, opts) << "}";
   comps.push_back(ss.str());
 }
 
@@ -109,9 +111,9 @@ void AppendBoxColliderJson(const Registry& registry, Entity entity, const Inspec
   if (!registry.HasComponent<BoxColliderComponent>(entity)) return;
   const auto& bc = registry.GetComponent<BoxColliderComponent>(entity);
   std::ostringstream ss;
-  ss << "\"BoxColliderComponent\": {\"width\": " << bc.width << ", \"height\": " << bc.height
-     << ", \"offsetX\": " << FormatFloat(bc.offset.x, opts) << ", \"offsetY\": " << FormatFloat(bc.offset.y, opts)
-     << ", \"isFixed\": " << (bc.isFixed ? "true" : "false") << "}";
+  ss << R"("BoxColliderComponent": {"width": )" << bc.width << R"(, "height": )" << bc.height << R"(, "offsetX": )"
+     << FormatFloat(bc.offset.x, opts) << R"(, "offsetY": )" << FormatFloat(bc.offset.y, opts) << R"(, "isFixed": )"
+     << (bc.isFixed ? "true" : "false") << "}";
   comps.push_back(ss.str());
 }
 
@@ -136,8 +138,8 @@ void AppendLifetimeJson(const Registry& registry, Entity entity, const InspectOp
   if (!registry.HasComponent<LifetimeComponent>(entity)) return;
   const auto& lt = registry.GetComponent<LifetimeComponent>(entity);
   std::ostringstream ss;
-  ss << "\"LifetimeComponent\": {\"remainingDuration\": " << FormatFloat(lt.remainingDuration, opts)
-     << ", \"lifetimeDuration\": " << FormatFloat(lt.lifetimeDuration, opts) << "}";
+  ss << R"("LifetimeComponent": {"remainingDuration": )" << FormatFloat(lt.remainingDuration, opts)
+     << R"(, "lifetimeDuration": )" << FormatFloat(lt.lifetimeDuration, opts) << "}";
   comps.push_back(ss.str());
 }
 
@@ -146,25 +148,27 @@ void AppendUIRectJson(const Registry& registry, Entity entity, const InspectOpti
   if (!registry.HasComponent<UIRectComponent>(entity)) return;
   const auto& rect = registry.GetComponent<UIRectComponent>(entity);
   std::ostringstream ss;
-  ss << "\"UIRectComponent\": {\"left\": " << FormatFloat(rect.left, opts)
-     << ", \"top\": " << FormatFloat(rect.top, opts) << ", \"right\": " << FormatFloat(rect.right, opts)
-     << ", \"bottom\": " << FormatFloat(rect.bottom, opts) << ", \"layer\": " << rect.layer << "}";
+  ss << R"("UIRectComponent": {"left": )" << FormatFloat(rect.left, opts) << R"(, "top": )"
+     << FormatFloat(rect.top, opts) << R"(, "right": )" << FormatFloat(rect.right, opts) << R"(, "bottom": )"
+     << FormatFloat(rect.bottom, opts) << R"(, "layer": )" << rect.layer << "}";
   comps.push_back(ss.str());
 }
 
-bool EntityMatchesFilter(const Registry& registry, Entity entity, const std::vector<std::string>& filter) {
-  for (const auto& compName : filter) {
-    if (compName == "PositionComponent" && !registry.HasComponent<PositionComponent>(entity)) return false;
-    if (compName == "RigidBodyComponent" && !registry.HasComponent<RigidBodyComponent>(entity)) return false;
-    if (compName == "GlobalTransformComponent" && !registry.HasComponent<GlobalTransformComponent>(entity))
-      return false;
-    if (compName == "BoxColliderComponent" && !registry.HasComponent<BoxColliderComponent>(entity)) return false;
-    if (compName == "HealthComponent" && !registry.HasComponent<HealthComponent>(entity)) return false;
-    if (compName == "NameComponent" && !registry.HasComponent<NameComponent>(entity)) return false;
-    if (compName == "LifetimeComponent" && !registry.HasComponent<LifetimeComponent>(entity)) return false;
-    if (compName == "UIRectComponent" && !registry.HasComponent<UIRectComponent>(entity)) return false;
-  }
+bool HasNamedComponent(const Registry& registry, Entity entity, std::string_view compName) {
+  if (compName == "PositionComponent") return registry.HasComponent<PositionComponent>(entity);
+  if (compName == "RigidBodyComponent") return registry.HasComponent<RigidBodyComponent>(entity);
+  if (compName == "GlobalTransformComponent") return registry.HasComponent<GlobalTransformComponent>(entity);
+  if (compName == "BoxColliderComponent") return registry.HasComponent<BoxColliderComponent>(entity);
+  if (compName == "HealthComponent") return registry.HasComponent<HealthComponent>(entity);
+  if (compName == "NameComponent") return registry.HasComponent<NameComponent>(entity);
+  if (compName == "LifetimeComponent") return registry.HasComponent<LifetimeComponent>(entity);
+  if (compName == "UIRectComponent") return registry.HasComponent<UIRectComponent>(entity);
   return true;
+}
+
+bool EntityMatchesFilter(const Registry& registry, Entity entity, const std::vector<std::string>& filter) {
+  return std::ranges::all_of(filter,
+                             [&](const auto& compName) { return HasNamedComponent(registry, entity, compName); });
 }
 
 }  // namespace
@@ -292,26 +296,38 @@ uint64_t StateInspector::ComputeStateHash(const Registry& registry, float floatS
   return hash;
 }
 
+namespace {
+
+std::vector<std::string> SplitLines(const std::string& str) {
+  std::vector<std::string> lines;
+  std::istringstream iss(str);
+  std::string line;
+  while (std::getline(iss, line)) lines.push_back(line);
+  return lines;
+}
+
+void AppendDiffLine(std::ostringstream& ss, size_t i, const std::vector<std::string>& expected,
+                    const std::vector<std::string>& actual) {
+  const std::string& e = (i < expected.size()) ? expected[i] : "";
+  const std::string& a = (i < actual.size()) ? actual[i] : "";
+  if (e != a) {
+    if (i < expected.size()) ss << "- " << e << "\n";
+    if (i < actual.size()) ss << "+ " << a << "\n";
+  }
+}
+
+}  // namespace
+
 std::string StateInspector::DiffSnapshots(const std::string& expectedJson, const std::string& actualJson) {
   if (expectedJson == actualJson) return "";
-  std::vector<std::string> expectedLines;
-  std::vector<std::string> actualLines;
-  std::istringstream issExp(expectedJson);
-  std::istringstream issAct(actualJson);
-  std::string line;
-  while (std::getline(issExp, line)) expectedLines.push_back(line);
-  while (std::getline(issAct, line)) actualLines.push_back(line);
+  const auto expectedLines = SplitLines(expectedJson);
+  const auto actualLines = SplitLines(actualJson);
 
   std::ostringstream ss;
   ss << "State Divergence Detected:\n";
   const size_t maxLines = std::max(expectedLines.size(), actualLines.size());
   for (size_t i = 0; i < maxLines; ++i) {
-    const std::string& e = (i < expectedLines.size()) ? expectedLines[i] : "";
-    const std::string& a = (i < actualLines.size()) ? actualLines[i] : "";
-    if (e != a) {
-      if (i < expectedLines.size()) ss << "- " << e << "\n";
-      if (i < actualLines.size()) ss << "+ " << a << "\n";
-    }
+    AppendDiffLine(ss, i, expectedLines, actualLines);
   }
   return ss.str();
 }

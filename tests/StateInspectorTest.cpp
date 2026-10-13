@@ -39,7 +39,7 @@ int main() {
     Check(entityJson.find("\"PositionComponent\"") != std::string::npos, "DumpEntity includes PositionComponent");
     Check(entityJson.find("\"HealthComponent\"") != std::string::npos, "DumpEntity includes HealthComponent");
     Check(entityJson.find("\"NameComponent\"") != std::string::npos, "DumpEntity includes NameComponent");
-    Check(entityJson.find("\"name\": \"Player\"") != std::string::npos, "DumpEntity preserves string property");
+    Check(entityJson.find(R"("name": "Player")") != std::string::npos, "DumpEntity preserves string property");
 
     const std::string allEntitiesJson = octarine::inspect::StateInspector::DumpEntities(registry);
     Check(allEntitiesJson.find("\"entities\": [") != std::string::npos, "DumpEntities lists entity array");

@@ -37,10 +37,12 @@ class Game : public LuaBindingContext {
   void Destroy();
   void Run();
 
+  static constexpr float kDefaultStepDeltaTime = 1.0f / 60.0f;
+
   // Advances the game simulation by one tick with explicit deltaTime (defaults to 1/60s).
   // Enables headless simulation testing, deterministic replays, and step-debugging.
-  void Step(float deltaTime = 1.0f / 60.0f);
-  void StepTicks(uint32_t count, float deltaTime = 1.0f / 60.0f);
+  void Step(float deltaTime = kDefaultStepDeltaTime);
+  void StepTicks(uint32_t count, float deltaTime = kDefaultStepDeltaTime);
 
   void SetPaused(bool paused);
   [[nodiscard]] bool IsPaused() const;

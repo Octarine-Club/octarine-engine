@@ -132,13 +132,18 @@ void HandlePushAsset(Registry& registry, const std::vector<char>& body, std::str
   reply_body = OkReply(path);
 }
 
+constexpr std::string_view kHashPrefix = "hash:";
+constexpr std::string_view kEntityPrefix = "entity:";
+constexpr std::string_view kQueryPrefix = "query:";
+constexpr int kDecimalRadix = 10;
+
 void HandleStep(Game* game, const std::vector<char>& body, std::string& reply_body) {
   if (game == nullptr) {
     reply_body = ErrReply("no game instance");
     return;
   }
   uint32_t ticks = 1;
-  float dt = 1.0f / 60.0f;
+  float dt = Game::kDefaultStepDeltaTime;
   if (!body.empty()) {
     if (body.size() >= sizeof(uint32_t) && !(body[0] >= '0' && body[0] <= '9')) {
       std::memcpy(&ticks, body.data(), sizeof(ticks));
@@ -149,7 +154,7 @@ void HandleStep(Game* game, const std::vector<char>& body, std::string& reply_bo
       std::string str(body.data(), body.size());
       std::istringstream iss(str);
       if (!(iss >> ticks)) ticks = 1;
-      if (!(iss >> dt)) dt = 1.0f / 60.0f;
+      if (!(iss >> dt)) dt = Game::kDefaultStepDeltaTime;
     }
   }
   game->StepTicks(ticks, dt);
@@ -168,6 +173,34 @@ void HandlePause(Game* game, const std::vector<char>& body, std::string& reply_b
   reply_body = OkReply(game->IsPaused() ? "true" : "false");
 }
 
+std::string HandleInspectHash(const Registry& registry, std::string_view cmd) {
+  float scale = inspect::kDefaultFloatPrecision;
+  if (cmd.starts_with(kHashPrefix)) {
+    const std::string scaleStr(cmd.substr(kHashPrefix.size()));
+    scale = std::strtof(scaleStr.c_str(), nullptr);
+    if (scale <= 0.0f) scale = inspect::kDefaultFloatPrecision;
+  }
+  const uint64_t hash = inspect::StateInspector::ComputeStateHash(registry, scale);
+  return OkReply(std::to_string(hash));
+}
+
+std::string HandleInspectEntity(const Registry& registry, std::string_view cmd) {
+  const std::string idStr(cmd.substr(kEntityPrefix.size()));
+  const auto id = static_cast<Entity>(std::strtoull(idStr.c_str(), nullptr, kDecimalRadix));
+  return OkReply(inspect::StateInspector::DumpEntity(registry, id));
+}
+
+std::string HandleInspectQuery(const Registry& registry, std::string_view cmd) {
+  const std::string q(cmd.substr(kQueryPrefix.size()));
+  std::vector<std::string> names;
+  std::istringstream iss(q);
+  std::string item;
+  while (std::getline(iss, item, ',')) {
+    if (!item.empty()) names.push_back(item);
+  }
+  return OkReply(inspect::StateInspector::QueryComponents(registry, names));
+}
+
 void HandleInspect(Game* game, Registry& registry, const std::vector<char>& body, std::string& reply_body) {
   std::string cmd(body.data(), body.size());
   while (!cmd.empty() && (cmd.back() == '\n' || cmd.back() == '\r' || cmd.back() == ' ')) {
@@ -178,27 +211,12 @@ void HandleInspect(Game* game, Registry& registry, const std::vector<char>& body
     reply_body = OkReply(inspect::StateInspector::DumpSummary(registry, currentTick));
   } else if (cmd == "entities") {
     reply_body = OkReply(inspect::StateInspector::DumpEntities(registry));
-  } else if (cmd == "hash" || cmd.rfind("hash:", 0) == 0) {
-    float scale = inspect::kDefaultFloatPrecision;
-    if (cmd.rfind("hash:", 0) == 0) {
-      scale = std::strtof(cmd.c_str() + 5, nullptr);
-      if (scale <= 0.0f) scale = inspect::kDefaultFloatPrecision;
-    }
-    const uint64_t hash = inspect::StateInspector::ComputeStateHash(registry, scale);
-    reply_body = OkReply(std::to_string(hash));
-  } else if (cmd.rfind("entity:", 0) == 0) {
-    std::string idStr = cmd.substr(7);
-    Entity id = static_cast<Entity>(std::strtoull(idStr.c_str(), nullptr, 10));
-    reply_body = OkReply(inspect::StateInspector::DumpEntity(registry, id));
-  } else if (cmd.rfind("query:", 0) == 0) {
-    std::string q = cmd.substr(6);
-    std::vector<std::string> names;
-    std::istringstream iss(q);
-    std::string item;
-    while (std::getline(iss, item, ',')) {
-      if (!item.empty()) names.push_back(item);
-    }
-    reply_body = OkReply(inspect::StateInspector::QueryComponents(registry, names));
+  } else if (cmd == "hash" || cmd.rfind(kHashPrefix, 0) == 0) {
+    reply_body = HandleInspectHash(registry, cmd);
+  } else if (cmd.rfind(kEntityPrefix, 0) == 0) {
+    reply_body = HandleInspectEntity(registry, cmd);
+  } else if (cmd.rfind(kQueryPrefix, 0) == 0) {
+    reply_body = HandleInspectQuery(registry, cmd);
   } else {
     reply_body = ErrReply("unknown inspect mode: " + cmd);
   }
