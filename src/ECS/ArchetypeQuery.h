@@ -25,12 +25,21 @@ class ArchetypeQuery {
     assert(sizeof...(TComponents) == type_.size());
     arch_component_offsets_.reserve(matching_archetypes_.size());
     for (const auto* arch : matching_archetypes_) {
-      std::array<size_t, sizeof...(TComponents)> offsets;
+      std::array<size_t, sizeof...(TComponents)> offsets{};
       for (size_t i = 0; i < type_.size(); ++i) {
-        offsets[i] = arch->GetComponentIndex(type_[i]);
+        offsets[i] = arch->GetComponentByteOffset(type_[i]);
       }
       arch_component_offsets_.push_back(offsets);
     }
+  }
+
+  void AddMatchingArchetype(Archetype* arch) {
+    matching_archetypes_.push_back(arch);
+    std::array<size_t, sizeof...(TComponents)> offsets{};
+    for (size_t i = 0; i < type_.size(); ++i) {
+      offsets[i] = arch->GetComponentByteOffset(type_[i]);
+    }
+    arch_component_offsets_.push_back(offsets);
   }
 
   [[nodiscard]] size_t GetTotalEntityCount() const {
@@ -58,27 +67,30 @@ class ArchetypeQuery {
   }
 
   static constexpr size_t kDefaultSerialBelowEntities = 512;
+  static constexpr size_t kMaxParallelBatches = 64;
 
   // Process matching entities in parallel across chunks.
   // serialBelowEntities: threshold below which execution runs serially on the calling thread.
   template <typename Func>
   void ParallelForEach(Func&& func, const size_t serialBelowEntities = kDefaultSerialBelowEntities) const {
-    const auto work = CollectChunkWork();
+    const size_t totalEntities = CollectChunkWork(chunk_work_scratch_);
+    const auto& work = chunk_work_scratch_;
     if (work.empty()) return;
 
-    if (serialBelowEntities > 0) {
-      size_t totalEntities = 0;
-      for (const auto& w : work) {
-        totalEntities += w.entityCount;
-      }
-      if (totalEntities < serialBelowEntities) {
-        PROFILE_COUNTER_ADD("ParallelForEach: SerialGated", 1);
-        ProcessChunks(work, 0, work.size(), func);
-        return;
-      }
+    if (serialBelowEntities > 0 && totalEntities < serialBelowEntities) {
+      PROFILE_COUNTER_ADD("ParallelForEach: SerialGated", 1);
+      ProcessChunks(work, 0, work.size(), func);
+      return;
     }
 
-    const size_t num_batches = std::min(work.size(), ThreadPool::Instance().Size());
+    const size_t maxBatches = std::min({work.size(), ThreadPool::Instance().Size(), kMaxParallelBatches});
+    if (maxBatches <= 1) {
+      ProcessChunks(work, 0, work.size(), func);
+      return;
+    }
+
+    std::array<BatchRange, kMaxParallelBatches> batches{};
+    const size_t num_batches = BuildEntityWeightedBatches(work, totalEntities, maxBatches, batches);
     PROFILE_COUNTER_ADD("ParallelForEach: Batches", static_cast<long long>(num_batches));
     PROFILE_COUNTER_ADD("ParallelForEach: Chunks", static_cast<long long>(work.size()));
     if (num_batches <= 1) {
@@ -86,17 +98,13 @@ class ArchetypeQuery {
       return;
     }
 
-    const size_t items_per_batch = (work.size() + num_batches - 1) / num_batches;
-    // Dispatch batches to pool; caller runs the remaining batch inline.
+    // Dispatch batches to pool; caller runs the final batch inline.
     BatchBarrier barrier(num_batches - 1);
     for (size_t t = 0; t < num_batches - 1; ++t) {
-      const size_t begin = t * items_per_batch;
-      const size_t end = std::min(begin + items_per_batch, work.size());
-      DispatchBatch(work, begin, end, barrier, func);
+      DispatchBatch(work, batches[t].begin, batches[t].end, barrier, func);
     }
 
-    const size_t inline_begin = (num_batches - 1) * items_per_batch;
-    const size_t inline_end = std::min(inline_begin + items_per_batch, work.size());
+    const auto [inline_begin, inline_end] = batches[num_batches - 1];
     std::exception_ptr inline_exception = nullptr;
     if (inline_begin < inline_end) {
       try {
@@ -121,6 +129,11 @@ class ArchetypeQuery {
     size_t entityCount;
   };
 
+  struct BatchRange {
+    size_t begin = 0;
+    size_t end = 0;
+  };
+
   // Synchronizes batch completion before unwinding stack.
   struct BatchBarrier {
     size_t remaining;
@@ -143,7 +156,7 @@ class ArchetypeQuery {
   };
   using ArrayTuple = std::tuple<Internal::resolve_pointer_t<TComponents>...>;
 
-  // Resolves typed component arrays for a single chunk.
+  // Resolves typed component arrays for a single chunk using precomputed byte offsets.
   auto ResolveChunkArrays(const Archetype* arch, const std::array<size_t, sizeof...(TComponents)>& offsets,
                           const size_t chunkIdx) const {
     return [&]<std::size_t... Is>(std::index_sequence<Is...>) {
@@ -153,7 +166,7 @@ class ArchetypeQuery {
         if constexpr (Internal::is_optional_v<Comp>) {
           if (offsets[Is] == Archetype::kInvalidComponentIndex) return nullptr;
         }
-        return arch->template GetComponentArrayByIndex<RawT>(chunkIdx, offsets[Is]);
+        return arch->template GetComponentArrayByOffset<RawT>(chunkIdx, offsets[Is]);
       }()...};
     }(std::index_sequence_for<TComponents...>{});
   }
@@ -171,14 +184,18 @@ class ArchetypeQuery {
     }
   }
 
-  // Dispatches a single entity to the callback with resolved component arguments.
   template <typename Func, std::size_t... Is>
-  static void InvokePerEntity(Func& func, Entity entity, const ArrayTuple& arrays, size_t e,
+  static void InvokeChunkLoop(Archetype* arch, size_t chunkIdx, size_t count, const ArrayTuple& arrays, Func& func,
                               std::index_sequence<Is...>) {
     if constexpr (std::is_invocable_v<Func, Entity, Internal::resolve_yield_t<TComponents>...>) {
-      func(entity, ResolveComponent<Is>(arrays, e)...);
+      const Entity* entities = arch->chunks_[chunkIdx].GetEntityArray();
+      for (size_t e = 0; e < count; ++e) {
+        func(entities[e], ResolveComponent<Is>(arrays, e)...);
+      }
     } else if constexpr (std::is_invocable_v<Func, Internal::resolve_yield_t<TComponents>...>) {
-      func(ResolveComponent<Is>(arrays, e)...);
+      for (size_t e = 0; e < count; ++e) {
+        func(ResolveComponent<Is>(arrays, e)...);
+      }
     } else {
       static_assert(!std::is_same_v<Func, Func>,
                     "The function passed to ForEach does not match the required signatures. "
@@ -191,14 +208,12 @@ class ArchetypeQuery {
   void ProcessChunk(Archetype* arch, const std::array<size_t, sizeof...(TComponents)>& offsets, size_t chunkIdx,
                     size_t count, Func& func) const {
     const auto arrays = ResolveChunkArrays(arch, offsets, chunkIdx);
-    const Entity* entities = arch->chunks_[chunkIdx].GetEntityArray();
-    for (size_t e = 0; e < count; ++e) {
-      InvokePerEntity(func, entities[e], arrays, e, std::index_sequence_for<TComponents...>{});
-    }
+    InvokeChunkLoop(arch, chunkIdx, count, arrays, func, std::index_sequence_for<TComponents...>{});
   }
 
-  std::vector<ChunkWork> CollectChunkWork() const {
-    std::vector<ChunkWork> work;
+  size_t CollectChunkWork(std::vector<ChunkWork>& work) const {
+    work.clear();
+    size_t totalEntities = 0;
     for (size_t a = 0; a < matching_archetypes_.size(); ++a) {
       auto* arch = matching_archetypes_[a];
       const auto& offsets = arch_component_offsets_[a];
@@ -206,10 +221,36 @@ class ArchetypeQuery {
         const size_t count = include_inactive_ ? arch->chunks_[c].GetEntityCount() : arch->chunks_[c].GetActiveCount();
         if (count > 0) {
           work.push_back({arch, &offsets, c, count});
+          totalEntities += count;
         }
       }
     }
-    return work;
+    return totalEntities;
+  }
+
+  static size_t BuildEntityWeightedBatches(const std::vector<ChunkWork>& work, const size_t totalEntities,
+                                           const size_t maxBatches, std::array<BatchRange, kMaxParallelBatches>& out) {
+    size_t chunkCursor = 0;
+    size_t actualBatches = 0;
+    size_t remainingEntities = totalEntities;
+    for (size_t b = 0; b < maxBatches && chunkCursor < work.size(); ++b) {
+      const size_t batchesLeft = maxBatches - b;
+      const size_t targetEntities = (remainingEntities + batchesLeft - 1) / batchesLeft;
+      const size_t begin = chunkCursor;
+      size_t batchEntities = 0;
+      while (chunkCursor < work.size() &&
+             (chunkCursor == begin || (work.size() - chunkCursor >= batchesLeft &&
+                                       batchEntities + work[chunkCursor].entityCount <= targetEntities))) {
+        batchEntities += work[chunkCursor].entityCount;
+        ++chunkCursor;
+      }
+      out[actualBatches++] = {begin, chunkCursor};
+      remainingEntities = remainingEntities > batchEntities ? remainingEntities - batchEntities : 0;
+    }
+    if (chunkCursor < work.size() && actualBatches > 0) {
+      out[actualBatches - 1].end = work.size();
+    }
+    return actualBatches;
   }
 
   template <typename Func>
@@ -236,5 +277,6 @@ class ArchetypeQuery {
   ArchetypeType type_;
   std::vector<Archetype*> matching_archetypes_;
   std::vector<std::array<size_t, sizeof...(TComponents)>> arch_component_offsets_;
+  mutable std::vector<ChunkWork> chunk_work_scratch_;
   bool include_inactive_ = false;
 };

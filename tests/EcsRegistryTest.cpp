@@ -404,5 +404,38 @@ int main() {
     Check(finalArch->GetChunkCount() == 0, "final archetype chunk pruned after blam");
   }
 
+  // Internal component/tag entities registered on recycled slots (generation > 0) are never
+  // misclassified as user entities by GetUserEntities / ClearUserEntities.
+  {
+    Registry registry;
+    const Entity user = registry.CreateEntity();
+    registry.BlamEntity(user);  // slot 0 now has generation == 1
+
+    struct LateRegisteredComponent {
+      int value = 7;
+    };
+    const Entity compEntity = registry.Component<LateRegisteredComponent>();
+    Check(compEntity.GetGeneration() > 0, "late component entity reuses recycled slot with generation > 0");
+    Check(registry.GetUserEntities().empty(), "internal component entity with gen > 0 is excluded from user entities");
+
+    const Entity liveUser = registry.CreateEntityWithBundle(LateRegisteredComponent{42});
+    Check(registry.GetUserEntities().size() == 1, "only actual user entity is listed in GetUserEntities");
+    registry.ClearUserEntities();
+    Check(!registry.IsAlive(liveUser), "ClearUserEntities destroys user entity");
+    Check(registry.TryComponent<LateRegisteredComponent>().has_value(),
+          "ClearUserEntities preserves internal component entity with gen > 0");
+
+    // Double-blamming a stale handle in EntityManager does not corrupt free list or bump generation twice.
+    EntityManager em;
+    const Entity m1 = em.CreateEntity();
+    em.BlamEntity(m1);
+    const EntityGeneration genAfterFirstBlam = em.GetGeneration(m1.GetId());
+    em.BlamEntity(m1);  // stale double-blam must be ignored
+    Check(em.GetGeneration(m1.GetId()) == genAfterFirstBlam, "stale BlamEntity does not increment generation again");
+    const Entity m2 = em.CreateEntity();
+    const Entity m3 = em.CreateEntity();
+    Check(m2.GetId() != m3.GetId(), "stale double-blam does not push duplicate baseId into free list");
+  }
+
   return octarine::test::Result();
 }

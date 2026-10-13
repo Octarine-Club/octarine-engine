@@ -29,6 +29,7 @@
 // internal state machine more than our systems.
 
 namespace {
+
 // RAII helper: initializes SDL audio with the "dummy" driver + SDL_mixer once for the
 // bench process. Skip the benchmark when init fails (CI containers without an audio
 // device should still produce a clean skip rather than a crash).

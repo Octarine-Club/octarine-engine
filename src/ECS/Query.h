@@ -81,6 +81,7 @@ class ComponentQuery final {
       if (!excluded_.empty()) {
         std::erase_if(matched_, [&](const Archetype* arch) { return IsExcluded(*arch); });
       }
+      archetype_query_ = ArchetypeQuery<TComponents...>(type_, matched_, include_inactive_);
     } else if (!sorted_type_.empty()) {
       // Incrementally test archetypes created since last update.
       const auto& log = registry_->ArchetypeLog();
@@ -88,12 +89,12 @@ class ComponentQuery final {
         Archetype* arch = log[gen];
         if (Registry::MatchesType(*arch, sorted_type_) && !IsExcluded(*arch)) {
           matched_.push_back(arch);
+          archetype_query_.AddMatchingArchetype(arch);
         }
       }
     }
 
     cached_generation_ = current_gen;
-    archetype_query_ = ArchetypeQuery<TComponents...>(type_, matched_, include_inactive_);
   }
 
   // Requires tag for archetype matching without yielding it to iteration.

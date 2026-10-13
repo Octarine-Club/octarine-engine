@@ -1,6 +1,6 @@
 #pragma once
 #include <bitset>
-#include <queue>
+#include <vector>
 
 #include "ECS.h"
 
@@ -41,9 +41,10 @@ struct Entity {
 // Manages entity slot allocation and generation tracking to invalidate stale handles.
 class EntityManager {
  public:
-  EntityManager() : living_entity_count_(kStartingEntityPoolSize) {
-    for (uint32_t i = 0; i < kStartingEntityPoolSize; ++i) {
-      available_entities_.push(i);
+  EntityManager() : next_base_id_(kStartingEntityPoolSize) {
+    available_entities_.reserve(kStartingEntityPoolSize);
+    for (uint32_t i = kStartingEntityPoolSize; i > 0; --i) {
+      available_entities_.push_back(i - 1);
     }
     generations_.resize(kStartingEntityPoolSize);
   }
@@ -51,10 +52,10 @@ class EntityManager {
   Entity CreateEntity() {
     std::uint32_t baseId;
     if (!available_entities_.empty()) {
-      baseId = available_entities_.front();
-      available_entities_.pop();
+      baseId = available_entities_.back();
+      available_entities_.pop_back();
     } else {
-      baseId = static_cast<std::uint32_t>(living_entity_count_++);
+      baseId = static_cast<std::uint32_t>(next_base_id_++);
       if (baseId >= generations_.size()) {
         generations_.resize(baseId + 1);
       }
@@ -65,10 +66,10 @@ class EntityManager {
   }
 
   void BlamEntity(const Entity entity) {
+    if (!IsValid(entity)) return;
     const std::uint32_t baseId = entity.GetId();
-    if (baseId >= generations_.size()) return;
     generations_[baseId]++;
-    available_entities_.push(baseId);
+    available_entities_.push_back(baseId);
   }
 
   [[nodiscard]] bool IsValid(const Entity entity) const {
@@ -83,7 +84,7 @@ class EntityManager {
   [[nodiscard]] size_t GetPoolCapacity() const { return generations_.size(); }
 
  private:
-  std::queue<std::uint32_t> available_entities_;
+  std::vector<std::uint32_t> available_entities_;
   std::vector<EntityGeneration> generations_;
-  EntityID living_entity_count_ = 0;
+  EntityID next_base_id_ = 0;
 };

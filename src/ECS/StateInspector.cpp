@@ -163,7 +163,11 @@ bool HasNamedComponent(const Registry& registry, Entity entity, std::string_view
   if (compName == "NameComponent") return registry.HasComponent<NameComponent>(entity);
   if (compName == "LifetimeComponent") return registry.HasComponent<LifetimeComponent>(entity);
   if (compName == "UIRectComponent") return registry.HasComponent<UIRectComponent>(entity);
-  return true;
+  const auto loc = registry.GetEntityLocation(entity);
+  if (!loc.archetype) return false;
+  return std::ranges::any_of(loc.archetype->component_infos(), [&](const ComponentInfo& info) {
+    return info.name == compName || PrettifyTypeName(info.name.c_str()) == compName;
+  });
 }
 
 bool EntityMatchesFilter(const Registry& registry, Entity entity, const std::vector<std::string>& filter) {
@@ -174,12 +178,11 @@ bool EntityMatchesFilter(const Registry& registry, Entity entity, const std::vec
 }  // namespace
 
 std::string StateInspector::DumpSummary(const Registry& registry, uint64_t currentTick) {
-  const auto userEntities = registry.GetUserEntities();
   std::ostringstream ss;
   ss << "{\n";
   ss << "  \"tick\": " << currentTick << ",\n";
   ss << "  \"entity_count\": " << registry.GetEntityCount() << ",\n";
-  ss << "  \"user_entity_count\": " << userEntities.size() << "\n";
+  ss << "  \"user_entity_count\": " << registry.GetUserEntityCount() << "\n";
   ss << "}";
   return ss.str();
 }

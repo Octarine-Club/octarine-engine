@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <cstring>
 #include <new>
@@ -54,8 +55,18 @@ struct ChunkRemoveSwap {
 
 // Tracks intra-chunk entity relocation indices during Chunk::RemoveEntity.
 struct ChunkLocalSwap {
-  Entity entity;
-  size_t indexInChunk;
+  Entity entity{};
+  size_t indexInChunk = 0;
+};
+
+struct ChunkLocalSwaps {
+  std::array<ChunkLocalSwap, 2> items{};
+  uint8_t count = 0;
+
+  void Push(const Entity entity, const size_t indexInChunk) {
+    assert(count < items.size());
+    items[count++] = {entity, indexInChunk};
+  }
 };
 
 struct ComponentInfo {
@@ -177,11 +188,11 @@ class Chunk {
     }
   }
 
-  // Removes entity and relocates boundary entities to preserve dense storage.
-  std::vector<ChunkLocalSwap> RemoveEntity(const size_t index, const std::vector<size_t>& componentOffsets,
-                                           const std::vector<ComponentInfo>& componentInfos) {
+  // Removes entity and relocates boundary entities to preserve dense storage without heap allocation.
+  ChunkLocalSwaps RemoveEntity(const size_t index, const std::vector<size_t>& componentOffsets,
+                               const std::vector<ComponentInfo>& componentInfos) {
     assert(componentOffsets.size() == componentInfos.size());
-    std::vector<ChunkLocalSwap> swaps;
+    ChunkLocalSwaps swaps;
     if (index >= header_.entity_count) return swaps;
 
     const auto* entityArray = reinterpret_cast<Entity*>(buffer_);
@@ -194,7 +205,7 @@ class Chunk {
     if (wasActive && index + 1 < header_.active_count) {
       const size_t srcIdx = header_.active_count - 1;
       MoveEntitySlot(index, srcIdx, componentOffsets, componentInfos);
-      swaps.push_back({entityArray[index], index});
+      swaps.Push(entityArray[index], index);
     }
 
     if (wasActive) --header_.active_count;
@@ -208,7 +219,7 @@ class Chunk {
     // freed slot. Skip when there's nothing to pull.
     if (freedSlot != lastSlot) {
       MoveEntitySlot(freedSlot, lastSlot, componentOffsets, componentInfos);
-      swaps.push_back({entityArray[freedSlot], freedSlot});
+      swaps.Push(entityArray[freedSlot], freedSlot);
     }
 
     --header_.entity_count;
@@ -223,8 +234,9 @@ class Chunk {
     assert(componentOffsets.size() == componentInfos.size());
     for (size_t c = 0; c < componentOffsets.size(); ++c) {
       const auto& info = componentInfos[c];
+      if (!info.destroy) continue;
       unsigned char* slot_ptr = buffer_ + componentOffsets[c] + slot * info.size;
-      if (info.destroy) info.destroy(slot_ptr);
+      info.destroy(slot_ptr);
     }
   }
 
@@ -237,9 +249,14 @@ class Chunk {
     auto* entityArray = reinterpret_cast<Entity*>(buffer_);
     for (size_t c = 0; c < componentOffsets.size(); ++c) {
       const auto& info = componentInfos[c];
+      if (info.size == 0) continue;
       unsigned char* dest_ptr = buffer_ + componentOffsets[c] + destSlot * info.size;
       unsigned char* source_ptr = buffer_ + componentOffsets[c] + srcSlot * info.size;
-      if (info.move_construct) info.move_construct(dest_ptr, source_ptr);
+      if (info.move_construct) {
+        info.move_construct(dest_ptr, source_ptr);
+      } else {
+        std::memcpy(dest_ptr, source_ptr, info.size);
+      }
       if (info.destroy) info.destroy(source_ptr);
     }
     entityArray[destSlot] = entityArray[srcSlot];
@@ -254,8 +271,11 @@ class Archetype {
   template <typename... TComponents>
   friend class ArchetypeQuery;
 
-  explicit Archetype(const std::vector<ComponentInfo>& componentsInfo)
-      : archetype_id_(Internal::GetNextArchetypeID()), component_infos_(componentsInfo), chunk_capacity_(0) {
+  explicit Archetype(const std::vector<ComponentInfo>& componentsInfo, const bool retainFirstChunk = false)
+      : archetype_id_(Internal::GetNextArchetypeID()),
+        component_infos_(componentsInfo),
+        chunk_capacity_(0),
+        retain_first_chunk_(retainFirstChunk) {
     archetype_type_.reserve(component_infos_.size());
 
     // Sort component_infos_ by id so component ordering matches archetype_type_ ordering.
@@ -327,27 +347,34 @@ class Archetype {
     return {this, chunks_.size() - 1, 0};
   }
 
-  // Returns relocations from removal (boundary collapse, swap-with-end, and chunk pruning).
-  std::vector<ChunkRemoveSwap> RemoveEntity(const EntityLocation& location) {
+  // Allocation-free entity removal invoking onRelocate(Entity, chunkIndex, indexInChunk) for displaced entities.
+  template <typename RelocateFn>
+  void RemoveEntity(const EntityLocation& location, RelocateFn&& onRelocate) {
     AssertLocation(location);
     const size_t targetChunk = location.chunkIndex;
     const auto localSwaps =
         chunks_[targetChunk].RemoveEntity(location.indexInChunk, component_offsets_, component_infos_);
 
-    std::vector<ChunkRemoveSwap> swaps;
-    swaps.reserve(localSwaps.size());
-    for (const auto& swap : localSwaps) {
+    for (uint8_t i = 0; i < localSwaps.count; ++i) {
+      const auto& swap = localSwaps.items[i];
       assert(swap.indexInChunk < chunks_[targetChunk].GetEntityCount());
-      swaps.push_back({swap.entity, targetChunk, swap.indexInChunk});
+      onRelocate(swap.entity, targetChunk, swap.indexInChunk);
     }
 
     if (chunks_[targetChunk].GetEntityCount() == 0) {
-      PruneEmptyChunkAt(targetChunk, swaps);
+      PruneEmptyChunkAt(targetChunk, std::forward<RelocateFn>(onRelocate));
     } else if (targetChunk < first_non_full_chunk_) {
       first_non_full_chunk_ = targetChunk;
     }
-    assert(targetChunk >= chunks_.size() || chunks_[targetChunk].GetEntityCount() > 0);
+    assert(retain_first_chunk_ || targetChunk >= chunks_.size() || chunks_[targetChunk].GetEntityCount() > 0);
+  }
 
+  // Returns relocations from removal (boundary collapse, swap-with-end, and chunk pruning).
+  std::vector<ChunkRemoveSwap> RemoveEntity(const EntityLocation& location) {
+    std::vector<ChunkRemoveSwap> swaps;
+    RemoveEntity(location, [&](const Entity entity, const size_t chunkIdx, const size_t idxInChunk) {
+      swaps.push_back({entity, chunkIdx, idxInChunk});
+    });
     return swaps;
   }
 
@@ -397,6 +424,11 @@ class Archetype {
     return kInvalidComponentIndex;
   }
 
+  [[nodiscard]] size_t GetComponentByteOffset(const ComponentID id) const {
+    const size_t idx = GetComponentIndex(id);
+    return idx != kInvalidComponentIndex ? component_offsets_[idx] : kInvalidComponentIndex;
+  }
+
   [[nodiscard]] bool HasComponent(const ComponentID id) const {
     return GetComponentIndex(id) != kInvalidComponentIndex;
   }
@@ -418,6 +450,12 @@ class Archetype {
   }
 
   template <typename T>
+  T* GetComponentArrayByOffset(const size_t chunkIndex, const size_t byteOffset) const {
+    assert(chunkIndex < chunks_.size());
+    return static_cast<T*>(chunks_[chunkIndex].GetComponentArray(byteOffset));
+  }
+
+  template <typename T>
   T* GetComponentArray(const size_t chunkIndex, const ComponentID componentId) const {
     assert(chunkIndex < chunks_.size());
     const auto index = GetComponentIndex(componentId);
@@ -425,35 +463,24 @@ class Archetype {
     return static_cast<T*>(chunks_[chunkIndex].GetComponentArray(component_offsets_[index]));
   }
 
-  // Move-constructs shared components between source and destination archetype slots.
+  // Move-constructs shared components between source and destination archetype slots using a
+  // linear two-pointer walk over the sorted component ID arrays.
   void CopyComponents(const EntityLocation& sourceLocation, const EntityLocation& destinationLocation) const {
     assert(sourceLocation.archetype != this);
     assert(destinationLocation.archetype == this);
     const auto& sourceType = sourceLocation.archetype->type();
 
-    const auto& sourceChunk = sourceLocation.archetype->chunks_[sourceLocation.chunkIndex];
-    auto& destChunk = chunks_[destinationLocation.chunkIndex];
-
-    for (const ComponentID id : sourceType) {
-      const auto destTypeIndex = GetComponentIndex(id);
-      if (destTypeIndex == kInvalidComponentIndex) continue;
-      const auto sourceTypeIndex = sourceLocation.archetype->GetComponentIndex(id);
-      assert(sourceTypeIndex != kInvalidComponentIndex);
-      const auto& info = this->component_infos_[destTypeIndex];
-      if (info.size == 0) continue;  // tag — nothing to copy
-
-      void* sourceArray = sourceChunk.GetComponentArray(sourceLocation.archetype->component_offsets_[sourceTypeIndex]);
-      void* destArray = destChunk.GetComponentArray(this->component_offsets_[destTypeIndex]);
-
-      unsigned char* source_component_ptr =
-          static_cast<unsigned char*>(sourceArray) + sourceLocation.indexInChunk * info.size;
-      unsigned char* dest_component_ptr =
-          static_cast<unsigned char*>(destArray) + destinationLocation.indexInChunk * info.size;
-
-      if (info.move_construct) {
-        info.move_construct(dest_component_ptr, source_component_ptr);
+    size_t srcIdx = 0;
+    size_t dstIdx = 0;
+    while (srcIdx < sourceType.size() && dstIdx < archetype_type_.size()) {
+      if (sourceType[srcIdx] < archetype_type_[dstIdx]) {
+        ++srcIdx;
+      } else if (archetype_type_[dstIdx] < sourceType[srcIdx]) {
+        ++dstIdx;
       } else {
-        memcpy(dest_component_ptr, source_component_ptr, info.size);
+        CopyComponentSlot(sourceLocation, destinationLocation, srcIdx, dstIdx);
+        ++srcIdx;
+        ++dstIdx;
       }
     }
   }
@@ -461,9 +488,48 @@ class Archetype {
   std::unordered_map<EntityID, ArchetypeEdge> edges;
 
  private:
-  void CalculateLayout() {
-    constexpr size_t kCacheLineAlignment = 64;
+  void CopyComponentSlot(const EntityLocation& sourceLocation, const EntityLocation& destinationLocation,
+                         const size_t sourceTypeIndex, const size_t destTypeIndex) const {
+    const auto& info = component_infos_[destTypeIndex];
+    if (info.size == 0) return;
 
+    const auto& sourceChunk = sourceLocation.archetype->chunks_[sourceLocation.chunkIndex];
+    auto& destChunk = chunks_[destinationLocation.chunkIndex];
+
+    void* sourceArray = sourceChunk.GetComponentArray(sourceLocation.archetype->component_offsets_[sourceTypeIndex]);
+    void* destArray = destChunk.GetComponentArray(component_offsets_[destTypeIndex]);
+
+    unsigned char* source_component_ptr =
+        static_cast<unsigned char*>(sourceArray) + sourceLocation.indexInChunk * info.size;
+    unsigned char* dest_component_ptr =
+        static_cast<unsigned char*>(destArray) + destinationLocation.indexInChunk * info.size;
+
+    if (info.move_construct) {
+      info.move_construct(dest_component_ptr, source_component_ptr);
+    } else {
+      std::memcpy(dest_component_ptr, source_component_ptr, info.size);
+    }
+  }
+
+  size_t ComputeLayoutForCapacity(const size_t capacity) {
+    constexpr size_t kCacheLineAlignment = 64;
+    size_t current_offset = capacity * sizeof(Entity);
+    for (size_t i = 0; i < component_infos_.size(); ++i) {
+      const auto& info = component_infos_[i];
+      if (info.size == 0) {
+        component_offsets_[i] = current_offset;
+        continue;
+      }
+      const size_t align = std::max(info.alignment, kCacheLineAlignment);
+      const size_t padding = (align - (current_offset % align)) % align;
+      current_offset += padding;
+      component_offsets_[i] = current_offset;
+      current_offset += capacity * info.size;
+    }
+    return current_offset;
+  }
+
+  void CalculateLayout() {
     size_t entityComponentSize = sizeof(Entity);
     for (const auto& info : component_infos_) {
       entityComponentSize += info.size;
@@ -474,43 +540,15 @@ class Archetype {
       return;
     }
 
-    // Header lives outside the buffer, so layout starts at offset 0 with the entity array.
     chunk_capacity_ = kUsableSpace / entityComponentSize;
-
-    size_t current_offset = chunk_capacity_ * sizeof(Entity);
-
     component_offsets_.resize(component_infos_.size());
-    for (size_t i = 0; i < component_infos_.size(); ++i) {
-      const auto& info = component_infos_[i];
-      if (info.size == 0) {
-        component_offsets_[i] = current_offset;
-        continue;
-      }
+    size_t current_offset = ComputeLayoutForCapacity(chunk_capacity_);
 
-      const size_t align = std::max(info.alignment, kCacheLineAlignment);
-      const size_t padding = (align - (current_offset % align)) % align;
-      current_offset += padding;
-      component_offsets_[i] = current_offset;
-      current_offset += chunk_capacity_ * info.size;
-    }
-
-    // Padding may push the last component array past kUsableSpace; shrink capacity until it fits.
     while (chunk_capacity_ > 0 && current_offset > kUsableSpace) {
-      --chunk_capacity_;
-      current_offset = chunk_capacity_ * sizeof(Entity);
-      for (size_t i = 0; i < component_infos_.size(); ++i) {
-        const auto& info = component_infos_[i];
-        if (info.size == 0) {
-          component_offsets_[i] = current_offset;
-          continue;
-        }
-
-        const size_t align = std::max(info.alignment, kCacheLineAlignment);
-        const size_t padding = (align - (current_offset % align)) % align;
-        current_offset += padding;
-        component_offsets_[i] = current_offset;
-        current_offset += chunk_capacity_ * info.size;
-      }
+      const size_t overflow = current_offset - kUsableSpace;
+      const size_t step = std::max<size_t>(1, overflow / entityComponentSize);
+      chunk_capacity_ = chunk_capacity_ > step ? chunk_capacity_ - step : 0;
+      current_offset = ComputeLayoutForCapacity(chunk_capacity_);
     }
     assert(chunk_capacity_ > 0);
   }
@@ -521,10 +559,15 @@ class Archetype {
     assert(location.indexInChunk < chunks_[location.chunkIndex].GetEntityCount());
   }
 
-  void PruneEmptyChunkAt(const size_t targetChunk, std::vector<ChunkRemoveSwap>& swaps) {
+  template <typename RelocateFn>
+  void PruneEmptyChunkAt(const size_t targetChunk, RelocateFn&& onRelocate) {
     assert(!chunks_.empty());
     assert(targetChunk < chunks_.size());
     assert(chunks_[targetChunk].GetEntityCount() == 0);
+    if (retain_first_chunk_ && chunks_.size() == 1) {
+      first_non_full_chunk_ = 0;
+      return;
+    }
     const size_t lastChunkIdx = chunks_.size() - 1;
     if (targetChunk == lastChunkIdx) {
       chunks_.pop_back();
@@ -534,9 +577,8 @@ class Archetype {
       assert(chunks_[targetChunk].GetEntityCount() > 0);
       const auto* entityArray = chunks_[targetChunk].GetEntityArray();
       const size_t count = chunks_[targetChunk].GetEntityCount();
-      swaps.reserve(swaps.size() + count);
       for (size_t i = 0; i < count; ++i) {
-        swaps.push_back({entityArray[i], targetChunk, i});
+        onRelocate(entityArray[i], targetChunk, i);
       }
     }
 
@@ -555,4 +597,5 @@ class Archetype {
   std::vector<Chunk> chunks_;
   size_t chunk_capacity_;
   size_t first_non_full_chunk_ = 0;
+  bool retain_first_chunk_ = false;
 };

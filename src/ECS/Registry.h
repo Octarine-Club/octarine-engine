@@ -31,12 +31,16 @@ class ComponentRegistry {
   void RegisterComponent(const Entity& componentEntity) {
     const ComponentID id = componentEntity.GetId();
     ComponentInfo info{id, typeid(T).name(), sizeof(T), alignof(T)};
-    if constexpr (std::is_move_constructible_v<T>) {
-      info.move_construct = [](void* dst, void* src) { ::new (dst) T(std::move(*static_cast<T*>(src))); };
-    } else {
-      info.move_construct = [](void* dst, const void* src) { std::memcpy(dst, src, sizeof(T)); };
+    if constexpr (!std::is_trivially_copyable_v<T>) {
+      if constexpr (std::is_move_constructible_v<T>) {
+        info.move_construct = [](void* dst, void* src) { ::new (dst) T(std::move(*static_cast<T*>(src))); };
+      } else {
+        info.move_construct = [](void* dst, void* src) { std::memcpy(dst, src, sizeof(T)); };
+      }
     }
-    info.destroy = [](void* ptr) { static_cast<T*>(ptr)->~T(); };
+    if constexpr (!std::is_trivially_destructible_v<T>) {
+      info.destroy = [](void* ptr) { static_cast<T*>(ptr)->~T(); };
+    }
     if constexpr (std::is_swappable_v<T>) {
       info.swap = [](void* a, void* b) {
         using std::swap;
@@ -52,9 +56,6 @@ class ComponentRegistry {
   // Registers a zero-sized tag component.
   void RegisterTag(const ComponentID id, const std::string& name) {
     ComponentInfo info{id, name, 0, 1};
-    info.move_construct = [](void*, void*) {};
-    info.destroy = [](void*) {};
-    info.swap = [](void*, void*) {};
     auto [it, inserted] = component_infos_.try_emplace(id, std::move(info));
     if (!inserted && it->second.name != name) {
       throw std::runtime_error("Tag ID collision: " + it->second.name + " and " + name);
@@ -74,7 +75,7 @@ class Registry {
 
   using ArchetypeList = std::vector<ArchetypeID>;
 
-  Registry() : root_archetype_(std::make_unique<Archetype>(std::vector<ComponentInfo>{})) {
+  Registry() : root_archetype_(std::make_unique<Archetype>(std::vector<ComponentInfo>{}, true)) {
     entity_manager_ = std::make_unique<EntityManager>();
     component_registry_ = std::make_unique<ComponentRegistry>();
   }
@@ -556,6 +557,7 @@ class Registry {
 
   // Relationships
   void AddPair(Entity entity, Entity relationship, Entity target);
+  void RemovePair(Entity entity, Entity relationship, Entity target);
 
   bool HasPair(Entity entity, Entity relationship, Entity target);
 
@@ -613,6 +615,12 @@ class Registry {
 
  private:
   Entity CreateInternalEntity();
+  [[nodiscard]] bool WouldCreateHierarchyCycle(Entity child, Entity parent) const;
+  bool DetachFromParent(Entity entity);
+  bool CollectCascadeSubtree(Entity root, std::vector<Entity>& outOrder);
+  void CleanupAuthoredPairs(Entity entity);
+  void CleanupTargetedPairs(Entity entity);
+  void BlamSingleEntity(Entity entity);
 
   EntityLocation TransitionAddComponent(Entity entity, ComponentID componentId);
   EntityLocation TransitionRemoveComponent(Entity entity, ComponentID componentId);
@@ -656,7 +664,7 @@ class Registry {
   std::vector<Archetype*> archetype_log_;
   std::unordered_map<EntityID, std::unordered_set<EcsId>> pairs_;
   std::unordered_map<std::uint32_t, std::unordered_set<EntityID>> target_to_pair_authors_;
-  std::unordered_map<EntityID, std::unordered_set<EntityID>> parent_to_children_;
+  std::unordered_map<EntityID, std::vector<EntityID>> parent_to_children_;
   std::unordered_map<EntityID, Entity> child_to_parent_;
   std::vector<Entity> pending_blams_;
   std::unordered_set<EcsId> pending_blam_ids_;
@@ -666,7 +674,7 @@ class Registry {
   uint64_t archetype_generation_{0};
   uint64_t hierarchy_generation_{0};
   std::uint64_t user_entity_count_{0};
-  std::unordered_set<EcsId> internal_entity_ids_;
+  std::unordered_set<std::uint32_t> internal_entity_ids_;
 };
 
 template <typename T>

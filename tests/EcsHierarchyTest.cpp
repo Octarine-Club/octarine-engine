@@ -47,17 +47,20 @@ int main() {
           "SetParent maintains the ChildOf pair for HasPair queries");
   }
 
-  // Reparenting detaches from the previous parent.
+  // Reparenting detaches from the previous parent and removes the stale ChildOf pair.
   {
     Registry registry;
     const Entity a = registry.CreateEntity();
     const Entity b = registry.CreateEntity();
     const Entity child = registry.CreateEntity();
     registry.SetParent(child, a);
+    Check(registry.HasPair(child, registry.ChildOfEntity(), a), "ChildOf pair exists for initial parent");
     registry.SetParent(child, b);  // reparent
     Check(registry.GetParent(child)->GetId() == b.GetId(), "reparent updates GetParent");
     Check(!ChildrenContain(registry.GetChildren(a), child), "old parent no longer lists the child");
     Check(ChildrenContain(registry.GetChildren(b), child), "new parent lists the child");
+    Check(!registry.HasPair(child, registry.ChildOfEntity(), a), "reparent removes stale ChildOf pair for old parent");
+    Check(registry.HasPair(child, registry.ChildOfEntity(), b), "reparent adds ChildOf pair for new parent");
   }
 
   // Generic pairs: add / has round-trip via the reverse index.

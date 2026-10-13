@@ -59,6 +59,11 @@ int main() {
     const std::string queryNone =
         octarine::inspect::StateInspector::QueryComponents(registry, {"PositionComponent", "HealthComponent"});
     Check(queryNone.find("\"matches\": 0") != std::string::npos, "QueryComponents handles non-overlapping query");
+
+    const std::string queryUnknown =
+        octarine::inspect::StateInspector::QueryComponents(registry, {"NonExistentComponent"});
+    Check(queryUnknown.find("\"matches\": 0") != std::string::npos,
+          "QueryComponents returns 0 matches for unknown component name");
   }
 
   // Test 4: ComputeStateHash determinism and sensitivity
