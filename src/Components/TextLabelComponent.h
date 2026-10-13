@@ -13,10 +13,10 @@
 enum class TextAlign : std::uint8_t { Start, Center, End };
 
 struct TextLabelComponent {
-  glm::vec2 position;
-  int layer;
   std::string text;
   std::string fontId;
+  glm::vec2 position;
+  int layer;
   octarine::Color color;
   bool isFixed;
   TextAlign hAlign = TextAlign::Start;
@@ -28,10 +28,10 @@ struct TextLabelComponent {
                                                                Constants::kUint8Max, Constants::kUint8Max},
                               const bool t_isFixed = true, const TextAlign t_hAlign = TextAlign::Start,
                               const TextAlign t_vAlign = TextAlign::Start)
-      : position(t_position),
-        layer(t_layer),
-        text(std::move(t_text)),
+      : text(std::move(t_text)),
         fontId(std::move(t_fontId)),
+        position(t_position),
+        layer(t_layer),
         color(t_color),
         isFixed(t_isFixed),
         hAlign(t_hAlign),

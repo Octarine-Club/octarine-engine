@@ -68,12 +68,17 @@
 #include "Systems/AudioCullingSystem.h"
 #include "Systems/AudioSystem.h"
 #include "Systems/CameraFollowSystem.h"
+#include "Systems/CombatSystem.h"
+#include "Systems/CullDistanceSystem.h"
 #include "Systems/DamageSystem.h"
 #include "Systems/DopplerSystem.h"
 #include "Systems/DrawColliderSystem.h"
+#include "Systems/EnemySteeringSystem.h"
+#include "Systems/HomingSystem.h"
 #include "Systems/InputSystem.h"
 #include "Systems/KDTreeCollisionSystem.h"
 #include "Systems/LifetimeSystem.h"
+#include "Systems/MagnetSystem.h"
 #include "Systems/ObstacleBounceSystem.h"
 #include "Systems/OffScreenDespawnSystem.h"
 #include "Systems/ProjectileEmitSystem.h"
@@ -84,8 +89,11 @@
 #include "Systems/RenderTextSystem.h"
 #include "Systems/RenderUIPrimitiveSystem.h"
 #include "Systems/RenderUISpriteSystem.h"
+#include "Systems/RetaliationSystem.h"
 #include "Systems/ScriptCollisionSystem.h"
+#include "Systems/ScriptCombatCallbackSystem.h"
 #include "Systems/ScriptSystem.h"
+#include "Systems/SeparationSystem.h"
 #include "Systems/SpatialAudioSystem.h"
 #include "Systems/TransformSystem.h"
 #include "Systems/UIButtonSystem.h"
@@ -729,11 +737,26 @@ void Game::Setup() {
   // at stress scale). fire_projectile(...) from Lua still works for scripted/aimed firing — those
   // emitters keep frequency 0 and are skipped here, so the two paths never double-fire one emitter.
   //
-  // Serial (RegisterSystem, not parallel): the tick spawns into the registry. It is registered
-  // here, after InstallPoolAndProjectile Set + Init'd the canonical ProjectileEmitSystem, so the
-  // copy stored by the system list carries the initialized pool id.
-  auto projectileEmit =
-      registry_->RegisterSystem<ProjectileEmitterComponent, PositionComponent>(registry_->Get<ProjectileEmitSystem>());
+  // Registered as a serial BulkSystem: the tick spawns into the registry (pool spawn). The system
+  // manages its own emitter and target queries internally, updating each exactly once per frame.
+  auto projectileEmit = registry_->RegisterBulkSystem(registry_->Get<ProjectileEmitSystem>());
+
+  auto steering = registry_->RegisterBulkSystem(EnemySteeringSystem());
+  auto homing = registry_->RegisterBulkSystem(HomingSystem());
+  registry_->RegisterBulkSystem(CullDistanceSystem());
+  auto separation = registry_->RegisterBulkSystem(SeparationSystem());
+  registry_->RegisterBulkSystem(MagnetSystem());
+  auto& combatSystem = registry_->Set<CombatSystem>(CombatSystem());
+  combatSystem.Init(registry_.get(), event_bus_);
+  auto combatHandle = registry_->RegisterBulkSystem(std::ref(combatSystem));
+
+  auto& scriptCombatCallbackSystem = registry_->Set<ScriptCombatCallbackSystem>(ScriptCombatCallbackSystem());
+  scriptCombatCallbackSystem.Init(registry_.get(), event_bus_);
+  auto scriptCbHandle = registry_->RegisterBulkSystem(std::ref(scriptCombatCallbackSystem));
+  registry_->Order(scriptCbHandle).After(combatHandle);
+
+  auto& retaliationSystem = registry_->Set<RetaliationSystem>(RetaliationSystem());
+  retaliationSystem.Init(*registry_, event_bus_.get());
 
   // Integrate velocity into local position.
   auto velocityIntegration =
@@ -792,7 +815,10 @@ void Game::Setup() {
   // Execution-order edges (topo-sorted in Registry::Update; registration order breaks ties).
   // Emit before integration so freshly-spawned projectiles integrate/transform/collide the same
   // frame — matching the spawn-timing the old ScriptSystem-driven Lua path had.
-  registry_->Order(velocityIntegration).After(projectileEmit);
+  registry_->Order(steering).After(projectileEmit);
+  registry_->Order(homing).After(steering);
+  registry_->Order(separation).After(homing);
+  registry_->Order(velocityIntegration).After(separation);
   // Transforms resolve after velocity integration mutates local positions; collision reads
   // transform.globalPosition / globalScale, so it runs after both.
   registry_->Order(transform).After(velocityIntegration);

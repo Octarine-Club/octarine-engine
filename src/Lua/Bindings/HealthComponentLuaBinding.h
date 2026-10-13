@@ -14,21 +14,31 @@ struct LuaBinding<HealthComponent> {
   static HealthComponent fromLua(const sol::object& data) {
     const auto t = data.as<sol::table>();
     using namespace LuaComponentHelpers;
-    const int maxHealth = SafeGetOptionalValue<int>(t, "max_health", 100);
-    return HealthComponent(maxHealth);
+    const int max_health = SafeGetOptionalValue<int>(t, "max_hp", SafeGetOptionalValue<int>(t, "max_health", 100));
+    const int curHealth = SafeGetOptionalValue<int>(t, "hp", max_health);
+    HealthComponent comp(max_health, curHealth);
+    comp.dash_only = t.get_or("dash_only", false);
+    sol::optional<sol::table> baseColor = t["base_color"];
+    if (baseColor) {
+      comp.base_color_r = baseColor.value().get_or("r", static_cast<unsigned char>(255));
+      comp.base_color_g = baseColor.value().get_or("g", static_cast<unsigned char>(255));
+      comp.base_color_b = baseColor.value().get_or("b", static_cast<unsigned char>(255));
+      comp.base_color_a = baseColor.value().get_or("a", static_cast<unsigned char>(255));
+    }
+    return comp;
   }
 
   static void bindUsertype(sol::state& lua) {
     // current_health is a clamping property — direct writes from Lua are clamped to
-    // [0, maxHealth] so scripts can't bypass damage()/heal() invariants by assigning the
+    // [0, max_health] so scripts can't bypass damage()/heal() invariants by assigning the
     // field. Reads stay zero-overhead.
     lua.new_usertype<HealthComponent>(
         kUsertypeName, "current_health",
-        sol::property([](const HealthComponent& h) { return h.currentHealth; },
-                      [](HealthComponent& h, const int v) { h.currentHealth = std::clamp(v, 0, h.maxHealth); }),
+        sol::property([](const HealthComponent& h) { return h.current_health; },
+                      [](HealthComponent& h, const int v) { h.current_health = std::clamp(v, 0, h.max_health); }),
         "max_health",
-        sol::property([](const HealthComponent& h) { return h.maxHealth; },
-                      [](HealthComponent& h, const int v) { h.maxHealth = v; }),
+        sol::property([](const HealthComponent& h) { return h.max_health; },
+                      [](HealthComponent& h, const int v) { h.max_health = v; }),
         "damage", &HealthComponent::Damage, "heal", &HealthComponent::Heal, "is_dead",
         sol::property(&HealthComponent::IsDead), "fraction", sol::property(&HealthComponent::Fraction));
   }

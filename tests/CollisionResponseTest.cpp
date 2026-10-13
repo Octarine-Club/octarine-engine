@@ -33,7 +33,7 @@ namespace {
 using Pairs = std::vector<std::pair<Entity, Entity>>;
 
 struct DamageOutcome {
-  int health = 0;  // target's currentHealth after the run (0 if it was despawned)
+  int health = 0;  // target's current_health after the run (0 if it was despawned)
   bool targetAlive = false;
   int projectilesAlive = 0;
 };
@@ -87,11 +87,11 @@ DamageOutcome RunDamageScenario(size_t threshold, int hp, int dmg, int k, bool r
     if (reg.IsAlive(p)) ++alive;
   }
   const bool targetAlive = reg.IsAlive(target);
-  return {targetAlive ? reg.GetComponent<HealthComponent>(target).currentHealth : 0, targetAlive, alive};
+  return {targetAlive ? reg.GetComponent<HealthComponent>(target).current_health : 0, targetAlive, alive};
 }
 
 // Real DamageSystem end-to-end: k projectiles vs one (effectively invulnerable) target; returns the
-// target's currentHealth after OnCollisionBatch. Picks serial/parallel by k vs the fixed threshold.
+// target's current_health after OnCollisionBatch. Picks serial/parallel by k vs the fixed threshold.
 int RealDamageHealth(int k) {
   Registry reg;
   auto bus = std::make_unique<EventBus>();
@@ -111,7 +111,7 @@ int RealDamageHealth(int k) {
     pairs.emplace_back(p, target);
   }
   damage.OnCollisionBatch(CollisionBatchEvent{pairs});
-  return reg.GetComponent<HealthComponent>(target).currentHealth;
+  return reg.GetComponent<HealthComponent>(target).current_health;
 }
 
 // Real ObstacleBounceSystem end-to-end: one enemy paired with k distinct obstacles; returns the
@@ -200,7 +200,7 @@ int main() {
       }
     }
     damage.OnCollisionBatch(CollisionBatchEvent{pairs});
-    CheckEq(reg.GetComponent<HealthComponent>(target).currentHealth, 1'000'000 - realHits,
+    CheckEq(reg.GetComponent<HealthComponent>(target).current_health, 1'000'000 - realHits,
             "interleaved no-op pairs: only real hits applied (real system, parallel)");
   }
 

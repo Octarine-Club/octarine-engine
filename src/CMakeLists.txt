@@ -145,9 +145,16 @@ target_link_libraries(octarine_lua PUBLIC
 # RenderDebugGUISystem (editor/IMGUI-only) lives in octarine_editor instead.
 # -----------------------------------------------------------------------------
 octarine_library(octarine_systems
+        Systems/CombatSystem.cpp
         Systems/AudioSystem.cpp
+        Systems/CullDistanceSystem.cpp
+        Systems/EnemySteeringSystem.cpp
+        Systems/HomingSystem.cpp
         Systems/InputSystem.cpp
+        Systems/RetaliationSystem.cpp
+        Systems/MagnetSystem.cpp
         Systems/PerfOverlaySystem.cpp
+        Systems/SeparationSystem.cpp
 )
 target_link_libraries(octarine_systems PUBLIC
         octarine_core

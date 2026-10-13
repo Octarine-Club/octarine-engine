@@ -6,7 +6,7 @@
 // and the decrement-only path (timer still positive) never touch the Registry.
 //
 // Part 2 needs the pool infrastructure (EntityPoolManager + Init) and uses a real
-// Registry to verify spawn-and-reset: when countDownTimer expires, a projectile is
+// Registry to verify spawn-and-reset: when count_down_timer expires, a projectile is
 // spawned from the pool and the timer is hard-reset to frequency.
 //
 // gtest-free; exit code = failed-check count. Links the ECS core only.
@@ -31,48 +31,53 @@ int main() {
   {
     ProjectileEmitSystem system;
 
-    ProjectileEmitterComponent emitter{};  // frequency=0, countDownTimer=0 by default
+    ProjectileEmitterComponent emitter{};  // frequency=0, count_down_timer=0 by default
     const PositionComponent pos{};
 
     Registry reg;
     ContextFacade ctx(&reg, 1.0f / 60.0f, nullptr, &Internal::BulkGetComponent);
 
-    system(ctx, emitter, pos);
+    system(ctx);
 
-    Check(emitter.countDownTimer == 0.0f, "frequency=0: timer unchanged (no-op)");
+    Check(emitter.count_down_timer == 0.0f, "frequency=0: timer unchanged (no-op)");
   }
 
   // Timer decrements by dt when frequency > 0 and expiry not yet reached.
   {
     ProjectileEmitSystem system;
-
-    // frequency=1.0 → countDownTimer initialises to 1.0; dt=0.5 → timer becomes 0.5 (no fire).
-    ProjectileEmitterComponent emitter{{}, 1.0f, 1.0f, 10};
-    const PositionComponent pos{};
-
     Registry reg;
+
+    ProjectileEmitterComponent emitter{{}, 1.0f, 1.0f, 10};
+    const Entity emitterEntity = reg.CreateEntity();
+    reg.AddComponent(emitterEntity, PositionComponent{});
+    reg.AddComponent(emitterEntity, emitter);
+
     ContextFacade ctx(&reg, 0.5f, nullptr, &Internal::BulkGetComponent);
 
-    system(ctx, emitter, pos);
+    system(ctx);
 
-    Check(emitter.countDownTimer == 0.5f, "timer decrements by dt when frequency > 0");
-    Check(emitter.countDownTimer > 0.0f, "timer not expired: no spawn triggered");
+    auto& comp = reg.GetComponent<ProjectileEmitterComponent>(emitterEntity);
+    Check(comp.count_down_timer == 0.5f, "timer decrements by dt when frequency > 0");
+    Check(comp.count_down_timer > 0.0f, "timer not expired: no spawn triggered");
   }
 
   // Negative frequency is also treated as disabled (≤ 0 guard).
   {
     ProjectileEmitSystem system;
+    Registry reg;
 
     ProjectileEmitterComponent emitter{{}, 1.0f, -1.0f, 10};
-    emitter.countDownTimer = -1.0f;
-    const PositionComponent pos{};
+    emitter.count_down_timer = -1.0f;
+    const Entity emitterEntity = reg.CreateEntity();
+    reg.AddComponent(emitterEntity, PositionComponent{});
+    reg.AddComponent(emitterEntity, emitter);
 
-    Registry reg;
     ContextFacade ctx(&reg, 1.0f / 60.0f, nullptr, &Internal::BulkGetComponent);
 
-    system(ctx, emitter, pos);
+    system(ctx);
 
-    Check(emitter.countDownTimer == -1.0f, "negative frequency: timer unchanged (no-op)");
+    Check(reg.GetComponent<ProjectileEmitterComponent>(emitterEntity).count_down_timer == -1.0f,
+          "negative frequency: timer unchanged (no-op)");
   }
 
   // --- Part 2: spawn path — requires pool infrastructure.
@@ -89,19 +94,20 @@ int main() {
     const Entity emitterEntity = reg.CreateEntity();
     reg.AddComponent(emitterEntity, PositionComponent{glm::vec2(100.0f, 200.0f)});
 
-    // frequency=0.5s, countDownTimer just about to expire.
+    // frequency=0.5s, count_down_timer just about to expire.
     const glm::vec2 velocity{300.0f, 0.0f};
     ProjectileEmitterComponent emitter{velocity, 1.0f, 0.5f, 15};
-    emitter.countDownTimer = 0.001f;
-    const PositionComponent pos{glm::vec2(100.0f, 200.0f)};
+    emitter.count_down_timer = 0.001f;
+    reg.AddComponent(emitterEntity, emitter);
 
     // dt=0.05 → timer = 0.001 - 0.05 = −0.049 → fires.
     ContextFacade ctx(&reg, 0.05f, nullptr, &Internal::BulkGetComponent);
     ctx.SetEntity(emitterEntity);
 
-    system(ctx, emitter, pos);
+    system(ctx);
 
-    Check(emitter.countDownTimer == 0.5f, "timer hard-reset to frequency after firing");
+    Check(reg.GetComponent<ProjectileEmitterComponent>(emitterEntity).count_down_timer == 0.5f,
+          "timer hard-reset to frequency after firing");
   }
 
   // Timer counts down across partial ticks and fires only once on expiry.
@@ -118,19 +124,22 @@ int main() {
     reg.AddComponent(emitterEntity, PositionComponent{});
 
     ProjectileEmitterComponent emitter{{100.0f, 0.0f}, 1.0f, 1.0f, 10};  // frequency=1.0
-    const PositionComponent pos{};
+    reg.AddComponent(emitterEntity, emitter);
 
     ContextFacade ctx(&reg, 0.5f, nullptr, &Internal::BulkGetComponent);
     ctx.SetEntity(emitterEntity);
 
-    system(ctx, emitter, pos);  // timer 1.0 → 0.5, no fire
-    Check(emitter.countDownTimer > 0.0f, "tick 1: timer at 0.5, no fire yet");
+    system(ctx);  // timer 1.0 → 0.5, no fire
+    Check(reg.GetComponent<ProjectileEmitterComponent>(emitterEntity).count_down_timer > 0.0f,
+          "tick 1: timer at 0.5, no fire yet");
 
-    system(ctx, emitter, pos);  // timer 0.5 → 0.0 → fires, reset to 1.0
-    Check(emitter.countDownTimer == 1.0f, "tick 2: timer expired, reset to frequency (fired)");
+    system(ctx);  // timer 0.5 → 0.0 → fires, reset to 1.0
+    Check(reg.GetComponent<ProjectileEmitterComponent>(emitterEntity).count_down_timer == 1.0f,
+          "tick 2: timer expired, reset to frequency (fired)");
 
-    system(ctx, emitter, pos);  // timer 1.0 → 0.5, no second fire
-    Check(emitter.countDownTimer > 0.0f, "tick 3: timer counting down again after reset");
+    system(ctx);  // timer 1.0 → 0.5, no second fire
+    Check(reg.GetComponent<ProjectileEmitterComponent>(emitterEntity).count_down_timer > 0.0f,
+          "tick 3: timer counting down again after reset");
   }
 
   return octarine::test::Result();

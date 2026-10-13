@@ -4,10 +4,17 @@
 
 #include "Components/AnimationComponent.h"
 #include "Components/SpriteComponent.h"
+#include "ECS/Registry.h"
 
 class AnimationSystem {
  public:
+  bool Prepare(Registry* registry) {
+    paused_ = registry->IsPaused();
+    return !paused_;
+  }
+
   void operator()(const float deltaTime, SpriteComponent& sprite, AnimationComponent& animation) const {
+    if (paused_) return;
     if (animation.numFrames <= 0 || animation.frameRateSpeed <= 0 || animation.isFinished) {
       return;
     }
@@ -42,4 +49,6 @@ class AnimationSystem {
       }
     }
   }
+
+  bool paused_ = false;
 };

@@ -46,7 +46,7 @@ function(octarine_add_core_test EXE_NAME CTEST_NAME SOURCE)
     target_include_directories(${EXE_NAME} PRIVATE
             "${CMAKE_SOURCE_DIR}/src"
             "${CMAKE_SOURCE_DIR}/libs")
-    target_link_libraries(${EXE_NAME} PRIVATE glm::glm spdlog::spdlog Threads::Threads)
+    target_link_libraries(${EXE_NAME} PRIVATE glm::glm spdlog::spdlog Threads::Threads octarine_lua)
     add_test(NAME ${CTEST_NAME} COMMAND ${EXE_NAME})
 endfunction()
 
@@ -60,6 +60,7 @@ octarine_add_core_test(OctarineSystemLogicTest SystemLogicTest SystemLogicTest.c
 octarine_add_core_test(OctarineCollisionResponseTest CollisionResponseTest CollisionResponseTest.cpp)
 octarine_add_core_test(OctarineKDTreeCollisionSystemTest KDTreeCollisionSystemTest KDTreeCollisionSystemTest.cpp)
 octarine_add_core_test(OctarineProjectileEmitSystemTest ProjectileEmitSystemTest ProjectileEmitSystemTest.cpp)
+octarine_add_engine_test(OctarineCombatSystemTest CombatSystemTest CombatSystemTest.cpp)
 octarine_add_test(OctarineStateInspectorTest StateInspectorTest
         SOURCES StateInspectorTest.cpp
         INCLUDES "${CMAKE_SOURCE_DIR}/src" "${CMAKE_SOURCE_DIR}/libs"

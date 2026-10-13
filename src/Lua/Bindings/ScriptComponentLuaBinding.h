@@ -34,7 +34,7 @@ struct LuaBinding<ScriptComponent> {
   }
 
   static void bindUsertype(sol::state& lua) {
-    lua.new_usertype<ScriptComponent>(kUsertypeName, "data", &ScriptComponent::scriptTable);
+    lua.new_usertype<ScriptComponent>(kUsertypeName, "data", &ScriptComponent::script_table);
   }
 
  private:

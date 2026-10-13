@@ -5,7 +5,7 @@
 #include <utility>
 
 struct ScriptComponent {
-  sol::table scriptTable;
+  sol::table script_table;
   sol::protected_function updateFunction;
   sol::protected_function onDebugGUIFunction;
   sol::protected_function onCollisionFunction;
@@ -21,7 +21,7 @@ struct ScriptComponent {
                            sol::protected_function t_onCollisionFunction = sol::lua_nil,
                            sol::protected_function t_onCollisionExitFunction = sol::lua_nil,
                            std::string t_sourcePath = {})
-      : scriptTable(std::move(t_scriptTable)),
+      : script_table(std::move(t_scriptTable)),
         updateFunction(std::move(t_updateFunction)),
         onDebugGUIFunction(std::move(t_onDebugGUIFunction)),
         onCollisionFunction(std::move(t_onCollisionFunction)),

@@ -1,22 +1,41 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
+
+#include "ECS/Entity.h"
+
+struct WeaponContact {
+  Entity weapon_entity{};
+  float timer = 0.0f;
+};
 
 struct HealthComponent {
-  int currentHealth;
-  int maxHealth;
+  std::array<WeaponContact, 8> active_contacts{};
+  int current_health;
+  int max_health;
+
+  // For hit-flash logic
+  float hit_flash_timer = 0.0f;
+  unsigned char base_color_r = 255;
+  unsigned char base_color_g = 255;
+  unsigned char base_color_b = 255;
+  unsigned char base_color_a = 255;
+
+  uint8_t active_contacts_count = 0;
+  bool dash_only = false;
 
   HealthComponent() = delete;
 
-  explicit HealthComponent(const int t_maxHealth) : currentHealth(t_maxHealth), maxHealth(t_maxHealth) {}
+  explicit HealthComponent(const int t_maxHealth) : current_health(t_maxHealth), max_health(t_maxHealth) {}
 
   HealthComponent(const int t_maxHealth, const int t_currentHealth)
-      : currentHealth(t_currentHealth), maxHealth(t_maxHealth) {}
+      : current_health(t_currentHealth), max_health(t_maxHealth) {}
 
-  void Damage(const int amount) { currentHealth = std::max(0, currentHealth - amount); }
-  void Heal(const int amount) { currentHealth = std::min(maxHealth, currentHealth + amount); }
-  [[nodiscard]] bool IsDead() const { return currentHealth <= 0; }
+  void Damage(const int amount) { current_health = std::max(0, current_health - amount); }
+  void Heal(const int amount) { current_health = std::min(max_health, current_health + amount); }
+  [[nodiscard]] bool IsDead() const { return current_health <= 0; }
   [[nodiscard]] float Fraction() const {
-    return maxHealth > 0 ? static_cast<float>(currentHealth) / static_cast<float>(maxHealth) : 0.0F;
+    return max_health > 0 ? static_cast<float>(current_health) / static_cast<float>(max_health) : 0.0F;
   }
 };

@@ -7,6 +7,7 @@
 class LifetimeSystem {
  public:
   void operator()(const ContextFacade& ctx) {
+    if (ctx.IsPaused()) return;
     auto* registry = ctx.GetRegistry();
     const auto deltaTime = ctx.GetDeltaTime();
     EnsureInitialized(registry);
