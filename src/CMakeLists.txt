@@ -119,7 +119,6 @@ target_link_libraries(octarine_renderer PUBLIC
 octarine_library(octarine_lua
         Lua/LuaApiManifest.cpp
         Lua/LuaTableSerializer.cpp
-        Lua/Bindings/InputSystemLuaBinding.cpp
         Lua/Bindings/RegisterAllBindings.cpp
         Lua/HotReload/ScriptHotReload.cpp
         Lua/Modules/AssetsModuleLuaBinding.cpp
@@ -145,6 +144,7 @@ target_link_libraries(octarine_lua PUBLIC
 # RenderDebugGUISystem (editor/IMGUI-only) lives in octarine_editor instead.
 # -----------------------------------------------------------------------------
 octarine_library(octarine_systems
+        Lua/Bindings/InputSystemLuaBinding.cpp
         Systems/CombatSystem.cpp
         Systems/AudioSystem.cpp
         Systems/CullDistanceSystem.cpp

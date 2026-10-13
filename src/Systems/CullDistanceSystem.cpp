@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstdlib>
+#include <numbers>
 #include <sol/sol.hpp>
 
 #include "Components/ScriptComponent.h"
@@ -108,7 +109,7 @@ void CullDistanceSystem::PickPerimeterPosition(glm::vec2& out_pos, glm::vec2 pla
     }
   }
 
-  const float ang = (static_cast<float>(rand()) / static_cast<float>(RAND_MAX)) * 2.0f * static_cast<float>(M_PI);
+  const float ang = (static_cast<float>(rand()) / static_cast<float>(RAND_MAX)) * 2.0f * std::numbers::pi_v<float>;
   const float dist = std::max(hw, hh) + margin;
   float sx = std::max(0.0f, std::min(map_w - 48.0f, player_pos.x + std::cos(ang) * dist));
   float sy = std::max(0.0f, std::min(map_h - 48.0f, player_pos.y + std::sin(ang) * dist));

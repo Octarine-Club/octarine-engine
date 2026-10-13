@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstring>
 #include <glm/glm.hpp>
 #include <utility>
@@ -39,6 +40,10 @@ struct ProjectileEmitterComponent {
         damage(t_damage),
         count_down_timer(t_frequency),
         aim_at_target(t_aimAtTarget) {
-    std::strncpy(projectile_name, t_projectileName, sizeof(projectile_name) - 1);
+    if (t_projectileName != nullptr) {
+      const auto len = std::min(std::strlen(t_projectileName), sizeof(projectile_name) - 1);
+      std::memcpy(projectile_name, t_projectileName, len);
+      projectile_name[len] = '\0';
+    }
   }
 };
