@@ -302,12 +302,13 @@ void FrameLoop::Render(const float deltaTime) {
   const bool editorSession = gameConfig.IsEditorMode() || !gameConfig.HasLoadedConfig();
   UpdateViewportInfo(editorSession, gameConfig.GetEngineOptions().showDebugGUI);
 
+  // Only draw the game texture to the full window if we are NOT in an editor session.
+  // In editor mode, the Scene window handles drawing this texture.
+  if (!editorSession) {
+    renderer_->CompositeSceneToWindow(runtime_->SdlRenderer());
+  }
+
   if (!game_->IsBenchMode()) {
-    // Only draw the game texture to the full window if we are NOT in an editor session.
-    // In editor mode, the Scene window handles drawing this texture.
-    if (!editorSession) {
-      renderer_->CompositeSceneToWindow(runtime_->SdlRenderer());
-    }
 #ifdef OCTARINE_WITH_IMGUI
     RenderDebugGUISystem::Render(game_, runtime_->SdlRenderer(), renderer_->GetSceneTexture(), deltaTime);
 #endif

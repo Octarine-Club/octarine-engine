@@ -70,10 +70,13 @@ class Game : public LuaBindingContext {
 
   // Optional startup-mode hint exposed to Lua as `oct_startup_mode`. Empty string means
   // "no override" — the startup script can show its normal menu. Set by Main from the
-  // --startup-mode flag; consumed by the game's bootstrap script. A non-empty mode also
-  // suppresses debug UI rendering so benchmarks don't pay that overhead.
+  // --startup-mode flag; consumed by the game's bootstrap script. Benchmark startup modes
+  // ("bench", "stress", or "*benchmark*") suppress debug UI rendering to avoid per-frame overhead.
   void SetStartupMode(const std::string& mode) { startup_mode_ = mode; }
-  [[nodiscard]] bool IsBenchMode() const { return !startup_mode_.empty() && startup_mode_ != "editor"; }
+  [[nodiscard]] bool IsBenchMode() const {
+    return startup_mode_ == "bench" || startup_mode_ == "stress" ||
+           startup_mode_.find("benchmark") != std::string::npos;
+  }
 
   // Dev override (--use-manifest) letting a non-shipped binary load asset_manifest.lua instead of
   // scanning — the only way to exercise the manifest-load branch without producing a full package.
