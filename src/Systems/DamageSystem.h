@@ -28,6 +28,20 @@ class DamageSystem {
     subscription_ = eventBus->SubscribeEvent<DamageSystem, CollisionBatchEvent>(this, &DamageSystem::OnCollisionBatch);
   }
 
+  [[nodiscard]] bool IsProjectileTargetHit(const Entity projEntity, const Entity targetEntity) const {
+    if (!registry_->HasTag(projEntity, projectiles_)) {
+      return false;
+    }
+    const auto& proj = registry_->GetComponent<ProjectileComponent>(projEntity);
+    if (proj.target_entity == targetEntity && targetEntity != Entity{}) {
+      return true;
+    }
+    if (proj.target_entity == Entity{} && registry_->HasComponent<HealthComponent>(targetEntity)) {
+      return registry_->HasTag(targetEntity, enemies_) || registry_->HasTag(targetEntity, enemies_alt_);
+    }
+    return false;
+  }
+
   // Process the whole frame's collision pairs (W2.3), parallelising the per-pair tag classification
   // above a density threshold (parallel collision response). The classify step does registry reads
   // only (safe to run across worker threads — the registry is structurally stable during the
@@ -37,25 +51,11 @@ class DamageSystem {
     RunCollisionResponse<Hit>(
         event.pairs, Constants::kCollisionResponseParallelThreshold,
         [this](const Entity a, const Entity b, std::vector<Hit>& sink) {
-          if (registry_->HasTag(a, projectiles_)) {
-            const auto& proj = registry_->GetComponent<ProjectileComponent>(a);
-            bool is_target = (proj.target_entity == b && b != Entity{});
-            bool is_player_proj_hitting_enemy =
-                (proj.target_entity == Entity{} && registry_->HasComponent<HealthComponent>(b) &&
-                 (registry_->HasTag(b, enemies_) || registry_->HasTag(b, enemies_alt_)));
-            if (is_target || is_player_proj_hitting_enemy) {
-              sink.emplace_back(a, b);
-            }
+          if (IsProjectileTargetHit(a, b)) {
+            sink.emplace_back(a, b);
           }
-          if (registry_->HasTag(b, projectiles_)) {
-            const auto& proj = registry_->GetComponent<ProjectileComponent>(b);
-            bool is_target = (proj.target_entity == a && a != Entity{});
-            bool is_player_proj_hitting_enemy =
-                (proj.target_entity == Entity{} && registry_->HasComponent<HealthComponent>(a) &&
-                 (registry_->HasTag(a, enemies_) || registry_->HasTag(a, enemies_alt_)));
-            if (is_target || is_player_proj_hitting_enemy) {
-              sink.emplace_back(b, a);
-            }
+          if (IsProjectileTargetHit(b, a)) {
+            sink.emplace_back(b, a);
           }
         },
         [this](const Hit& hit) { OnProjectileHit(hit.first, hit.second); });
