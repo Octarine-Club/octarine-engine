@@ -162,6 +162,9 @@ find_package(Threads REQUIRED)
 if (OCTARINE_WITH_IMGUI)
     find_package(imgui CONFIG REQUIRED)
     find_package(sol2_ImGui_Bindings CONFIG REQUIRED)
+    if (TARGET sol2-imgui-bindings::sol2-imgui-bindings)
+        target_link_libraries(sol2-imgui-bindings::sol2-imgui-bindings INTERFACE ${LUA_LIBRARIES})
+    endif ()
 endif ()
 
 # Standard compiler flags and warning configurations
