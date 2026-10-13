@@ -35,6 +35,7 @@ class CombatSystem {
 
   bool TryApplyHit(Registry* registry, Entity entity, HealthComponent& health, WeaponZoneComponent& weapon,
                    Entity weaponEntity);
+  void RetargetHomingWeapon(Registry* registry, Entity weaponEntity, Entity currentTarget);
   void InvokeHitCallbacks(Registry* registry, Entity weaponEntity, Entity entity);
   void HandleEntityDeath(Registry* registry, Entity entity);
 

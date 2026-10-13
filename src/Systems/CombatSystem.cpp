@@ -224,33 +224,8 @@ bool CombatSystem::TryApplyHit(Registry* registry, Entity entity, HealthComponen
     }
   }
 
-  if (!weapon.consumed && registry->HasComponent<HomingComponent>(weaponEntity)) {
-    auto& homing = registry->GetComponent<HomingComponent>(weaponEntity);
-    if (homing.retarget_on_hit) {
-      Entity best_target{};
-      float best_dist = std::numeric_limits<float>::max();
-      if (registry->HasComponent<PositionComponent>(weaponEntity)) {
-        const auto& wpos = registry->GetComponent<PositionComponent>(weaponEntity);
-        health_query_->ForEach([&](Entity e, HealthComponent& h) {
-          if (e == entity) return;
-          if (h.IsDead()) return;
-          if (!registry->HasTag(e, enemy_tag_) && !registry->HasTag(e, enemy_alt_tag_)) return;
-          if (!registry->HasComponent<PositionComponent>(e)) return;
-
-          const auto& epos = registry->GetComponent<PositionComponent>(e);
-          float dx = epos.value.x - wpos.value.x;
-          float dy = epos.value.y - wpos.value.y;
-          float dist = dx * dx + dy * dy;
-          if (dist < best_dist) {
-            best_dist = dist;
-            best_target = e;
-          }
-        });
-      }
-      if (registry->IsAlive(best_target)) {
-        homing.target = best_target;
-      }
-    }
+  if (!weapon.consumed) {
+    RetargetHomingWeapon(registry, weaponEntity, entity);
   }
 
   InvokeHitCallbacks(registry, weaponEntity, entity);
@@ -260,6 +235,36 @@ bool CombatSystem::TryApplyHit(Registry* registry, Entity entity, HealthComponen
     return true;
   }
   return false;
+}
+
+void CombatSystem::RetargetHomingWeapon(Registry* registry, Entity weaponEntity, Entity currentTarget) {
+  if (!registry->HasComponent<HomingComponent>(weaponEntity)) return;
+  auto& homing = registry->GetComponent<HomingComponent>(weaponEntity);
+  if (!homing.retarget_on_hit) return;
+  if (!registry->HasComponent<PositionComponent>(weaponEntity)) return;
+
+  const auto& wpos = registry->GetComponent<PositionComponent>(weaponEntity);
+  Entity best_target{};
+  float best_dist = std::numeric_limits<float>::max();
+
+  health_query_->ForEach([&](Entity e, HealthComponent& h) {
+    if (e == currentTarget || h.IsDead()) return;
+    if (!registry->HasTag(e, enemy_tag_) && !registry->HasTag(e, enemy_alt_tag_)) return;
+    if (!registry->HasComponent<PositionComponent>(e)) return;
+
+    const auto& epos = registry->GetComponent<PositionComponent>(e);
+    const float dx = epos.value.x - wpos.value.x;
+    const float dy = epos.value.y - wpos.value.y;
+    const float dist = dx * dx + dy * dy;
+    if (dist < best_dist) {
+      best_dist = dist;
+      best_target = e;
+    }
+  });
+
+  if (registry->IsAlive(best_target)) {
+    homing.target = best_target;
+  }
 }
 
 void CombatSystem::InvokeHitCallbacks(Registry* registry, Entity weaponEntity, Entity entity) {

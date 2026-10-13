@@ -35,6 +35,13 @@ class ScriptCombatCallbackSystem {
 
   void operator()(const ContextFacade& /*ctx*/) {
     if (registry_ != nullptr && registry_->IsPaused()) return;
+    ProcessDamageEvents();
+    ProcessHitEvents();
+    ProcessDeathEvents();
+  }
+
+ private:
+  void ProcessDamageEvents() {
     for (const auto& event : damage_events_) {
       if (!registry_->IsAlive(event.player) || !registry_->HasComponent<ScriptComponent>(event.player)) continue;
       auto& script = registry_->GetComponent<ScriptComponent>(event.player);
@@ -49,32 +56,27 @@ class ScriptCombatCallbackSystem {
       }
     }
     damage_events_.clear();
+  }
 
-    for (const auto& event : hit_events_) {
-      if (registry_->HasComponent<ScriptCallbackComponent>(event.weapon)) {
-        auto& weaponCb = registry_->GetComponent<ScriptCallbackComponent>(event.weapon);
-        if (weaponCb.on_hit_function != sol::lua_nil && weaponCb.script_table != sol::lua_nil) {
-          if (auto result =
-                  weaponCb.on_hit_function.as<sol::function>()(weaponCb.script_table, event.weapon, event.target);
-              !result.valid()) {
-            Logger::ErrorLua(std::string(result.get<sol::error>().what()));
-          }
-        }
-      }
-
-      if (registry_->HasComponent<ScriptCallbackComponent>(event.target)) {
-        auto& healthCb = registry_->GetComponent<ScriptCallbackComponent>(event.target);
-        if (healthCb.on_hit_function != sol::lua_nil && healthCb.script_table != sol::lua_nil) {
-          if (auto result =
-                  healthCb.on_hit_function.as<sol::function>()(healthCb.script_table, event.target, event.weapon);
-              !result.valid()) {
-            Logger::ErrorLua(std::string(result.get<sol::error>().what()));
-          }
-        }
+  void InvokeOnHitCallback(Entity callbackEntity, Entity self, Entity other) {
+    if (!registry_->HasComponent<ScriptCallbackComponent>(callbackEntity)) return;
+    auto& cb = registry_->GetComponent<ScriptCallbackComponent>(callbackEntity);
+    if (cb.on_hit_function != sol::lua_nil && cb.script_table != sol::lua_nil) {
+      if (auto result = cb.on_hit_function.as<sol::function>()(cb.script_table, self, other); !result.valid()) {
+        Logger::ErrorLua(std::string(result.get<sol::error>().what()));
       }
     }
-    hit_events_.clear();
+  }
 
+  void ProcessHitEvents() {
+    for (const auto& event : hit_events_) {
+      InvokeOnHitCallback(event.weapon, event.weapon, event.target);
+      InvokeOnHitCallback(event.target, event.target, event.weapon);
+    }
+    hit_events_.clear();
+  }
+
+  void ProcessDeathEvents() {
     for (const auto& event : death_events_) {
       if (registry_->HasComponent<ScriptCallbackComponent>(event.entity)) {
         auto& healthCb = registry_->GetComponent<ScriptCallbackComponent>(event.entity);

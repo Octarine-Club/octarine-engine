@@ -10,10 +10,9 @@
 class CullDistanceSystem {
  public:
   void operator()(const ContextFacade& context);
+  void PickPerimeterPosition(glm::vec2& out_pos, glm::vec2 player_pos, float map_w, float map_h) const;
 
  private:
   std::shared_ptr<ComponentQuery<PositionComponent, EnemySteeringComponent>> query_ = nullptr;
   float cull_t_ = 0.5f;
-
-  void PickPerimeterPosition(glm::vec2& out_pos, glm::vec2 player_pos, float map_w, float map_h) const;
 };

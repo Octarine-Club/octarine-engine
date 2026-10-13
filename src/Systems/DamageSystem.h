@@ -7,6 +7,7 @@
 #include "Components/HealthComponent.h"
 #include "Components/ProjectileComponent.h"
 #include "Components/ScriptComponent.h"
+#include "ECS/Registry.h"
 #include "Engine/EngineContext.h"
 #include "EventBus/EventBus.h"
 #include "Events/CollisionBatchEvent.h"

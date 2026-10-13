@@ -49,7 +49,7 @@
         },
         {
           "file": "src/Systems/DamageSystem.h",
-          "line": 27,
+          "line": 28,
           "owner": "DamageSystem"
         },
         {
@@ -109,7 +109,7 @@
         },
         {
           "file": "src/Systems/DamageSystem.h",
-          "line": 68
+          "line": 69
         }
       ],
       "subscribe_sites": [
@@ -133,11 +133,11 @@
       "emit_sites": [
         {
           "file": "src/Systems/CombatSystem.cpp",
-          "line": 274
+          "line": 279
         },
         {
           "file": "src/Systems/DamageSystem.h",
-          "line": 84
+          "line": 85
         }
       ],
       "subscribe_sites": [
@@ -165,11 +165,11 @@
       "emit_sites": [
         {
           "file": "src/Systems/CombatSystem.cpp",
-          "line": 268
+          "line": 273
         },
         {
           "file": "src/Systems/DamageSystem.h",
-          "line": 89
+          "line": 90
         }
       ],
       "subscribe_sites": [
