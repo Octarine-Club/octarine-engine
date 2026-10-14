@@ -1606,6 +1606,10 @@ function get_camera_position(...) end
 
 function get_camera_zoom(...) end
 
+function get_env(...) end
+
+function get_fixed_dt(...) end
+
 function get_game_map_dimensions(...) end
 
 function get_name(...) end
@@ -1613,6 +1617,8 @@ function get_name(...) end
 function get_position(...) end
 
 function get_position_xy(...) end
+
+function get_sim_substeps(...) end
 
 ---@class health_component
 health_component = {}
@@ -1898,6 +1904,8 @@ separation_component = {}
 
 function set_camera_zoom(...) end
 
+function set_fixed_dt(...) end
+
 function set_game_map_dimensions(...) end
 
 function set_name(...) end
@@ -1907,6 +1915,8 @@ function set_perf_overlay(...) end
 function set_position(...) end
 
 function set_rotation(...) end
+
+function set_sim_substeps(...) end
 
 function set_sprite_src_rect(...) end
 
@@ -1983,4 +1993,6 @@ vec2 = {}
 ---@class weapon_zone_component
 weapon_zone_component = {}
 
+
+function write_project_file(...) end
 

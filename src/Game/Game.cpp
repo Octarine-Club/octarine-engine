@@ -583,32 +583,38 @@ void Game::Run() {
     frame_loop_->ProcessInput();
     const float deltaTime = frame_loop_->WaitTime();
     if (!IsPaused()) {
-      current_tick_++;
+      const int subSteps = (registry_ && registry_->TryGet<GameConfig>())
+                               ? std::max(1, registry_->Get<GameConfig>().GetEngineOptions().simSubSteps)
+                               : 1;
+      current_tick_ += static_cast<uint64_t>(subSteps);
     }
     frame_loop_->Update(deltaTime);
     frame_loop_->Render(deltaTime);
   }
 }
 
-void Game::Step(const float deltaTime) {
+void Game::Step(const float deltaTime) { StepTicks(1, deltaTime); }
+
+void Game::StepTicks(const uint32_t count, const float deltaTime) {
   if (!is_setup_) {
     Setup();
     frame_loop_->Begin();
     is_setup_ = true;
   }
-
-  current_tick_++;
-  frame_loop_->ProcessInput();
-  if (registry_ && registry_->TryGet<GameConfig>()) {
-    registry_->Get<GameConfig>().GetEngineOptions().stepFrame = true;
+  if (count == 0) {
+    return;
   }
-  frame_loop_->Update(deltaTime);
-  frame_loop_->Render(deltaTime);
-}
 
-void Game::StepTicks(const uint32_t count, const float deltaTime) {
   for (uint32_t i = 0; i < count && s_is_running_; ++i) {
-    Step(deltaTime);
+    current_tick_++;
+    frame_loop_->ProcessInput();
+    if (registry_ && registry_->TryGet<GameConfig>()) {
+      registry_->Get<GameConfig>().GetEngineOptions().stepFrame = true;
+    }
+    frame_loop_->Update(deltaTime);
+    if (i + 1 == count || !s_is_running_) {
+      frame_loop_->Render(deltaTime);
+    }
   }
 }
 

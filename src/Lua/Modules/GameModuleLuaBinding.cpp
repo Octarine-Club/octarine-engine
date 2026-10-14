@@ -1,5 +1,7 @@
 #include "Lua/Modules/GameModuleLuaBinding.h"
 
+#include <algorithm>
+#include <cstdlib>
 #include <glm/glm.hpp>
 #include <sstream>
 #include <string>
@@ -7,12 +9,27 @@
 #include "Components/CameraComponents.h"
 #include "ECS/Registry.h"
 #include "Game/GameConfig.h"
+#include "General/FileSandbox.h"
 #include "General/Logger.h"
 #include "Lua/LuaBindingContext.h"
 #include "Systems/ProjectileEmitSystem.h"
 
 namespace {
 constexpr size_t kDefaultMaxDepth = 5;
+
+std::string ReadEnvVar(const std::string& name) {
+#ifdef _MSC_VER
+  char* value = nullptr;
+  size_t len = 0;
+  const bool ok = _dupenv_s(&value, &len, name.c_str()) == 0 && value != nullptr;
+  const std::string result = ok ? std::string(value) : std::string();
+  free(value);
+  return result;
+#else
+  const char* value = std::getenv(name.c_str());
+  return value ? std::string(value) : std::string();
+#endif
+}
 
 // NOLINTNEXTLINE(misc-no-recursion)
 std::string FormatLuaTable(const sol::table& table, size_t indent_level = 0, size_t max_depth = kDefaultMaxDepth) {
@@ -77,6 +94,44 @@ void LuaModuleBinding<GameModule>::install(sol::state& lua, LuaBindingContext& c
     auto& options = ctx.GetRegistry()->Get<GameConfig>().GetEngineOptions();
     options.showPerfOverlay = !options.showPerfOverlay;
     return options.showPerfOverlay;
+  });
+
+  lua.set_function("set_sim_substeps", [&ctx](const int substeps) {
+    auto* gameConfig = ctx.GetRegistry()->TryGet<GameConfig>();
+    if (!gameConfig) return;
+    gameConfig->GetEngineOptions().simSubSteps = std::clamp(substeps, 1, 64);
+  });
+
+  lua.set_function("get_sim_substeps", [&ctx]() -> int {
+    const auto* gameConfig = ctx.GetRegistry()->TryGet<GameConfig>();
+    if (!gameConfig) return 1;
+    return gameConfig->GetEngineOptions().simSubSteps;
+  });
+
+  lua.set_function("set_fixed_dt", [&ctx](const double dt) {
+    auto* gameConfig = ctx.GetRegistry()->TryGet<GameConfig>();
+    if (!gameConfig) return;
+    gameConfig->GetEngineOptions().fixedStepDt = std::max(0.0F, static_cast<float>(dt));
+  });
+
+  lua.set_function("get_fixed_dt", [&ctx]() -> double {
+    const auto* gameConfig = ctx.GetRegistry()->TryGet<GameConfig>();
+    if (!gameConfig) return 0.0;
+    return static_cast<double>(gameConfig->GetEngineOptions().fixedStepDt);
+  });
+
+  lua.set_function("get_env", [](const std::string& name) -> sol::optional<std::string> {
+    const std::string val = ReadEnvVar(name);
+    if (val.empty()) return sol::nullopt;
+    return val;
+  });
+
+  lua.set_function("write_project_file", [&ctx](const std::string& relativePath, const std::string& contents) -> bool {
+    const std::string root = ctx.GetProjectPath();
+    if (root.empty()) return false;
+    const std::string fullPath = file_sandbox::Resolve(root, relativePath);
+    if (fullPath.empty()) return false;
+    return file_sandbox::WriteFileAtomic(fullPath, contents);
   });
 
   lua.set_function("set_game_map_dimensions", [&ctx](const double width, const double height) {

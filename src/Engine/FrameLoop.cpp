@@ -206,7 +206,21 @@ void FrameLoop::Update(const float deltaTime) {
 #endif
 
   if (!options.isPaused || options.stepFrame) {
-    registry_->Update(deltaTime * options.timeScale);
+    const int subSteps = std::max(1, options.simSubSteps);
+    const float stepDt = (options.fixedStepDt > 0.0F)
+                             ? options.fixedStepDt
+                             : ((subSteps > 1) ? (1.0F / 60.0F) : (deltaTime * options.timeScale));
+    auto& renderQueue = registry_->Get<RenderQueue>();
+    for (int step = 0; step < subSteps; ++step) {
+      if (step > 0) {
+        game_->FlushPendingSceneLoad();
+        if (options.isPaused && !options.stepFrame) {
+          break;
+        }
+      }
+      renderQueue.Clear();
+      registry_->Update(stepDt);
+    }
     options.stepFrame = false;
   }
 
