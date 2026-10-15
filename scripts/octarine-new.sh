@@ -23,7 +23,7 @@ Required:
 Optional:
   --version-name   semver string (default: 0.1.0)
   --version-code   integer build code (default: 1)
-  --engine-version engine version targeted (default: 0.1.0)
+  --engine-version engine version targeted (default: 0.1.1)
   -h, --help       show this message
 EOF
 }
@@ -33,7 +33,7 @@ package_id=""
 dir=""
 version_name="0.1.0"
 version_code="1"
-engine_version="0.1.0"
+engine_version="0.1.1"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
