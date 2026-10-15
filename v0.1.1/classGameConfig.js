@@ -1,0 +1,26 @@
+var classGameConfig =
+[
+    [ "GameConfig", "classGameConfig.html#a6e18f7e67c2987459bf3209c9848ce70", null ],
+    [ "~GameConfig", "classGameConfig.html#a11a733bd3ea6c6e7121254cef2263664", null ],
+    [ "GameConfig", "classGameConfig.html#ab25b6b746828c2ad36507f4b0f60d9df", null ],
+    [ "GameConfig", "classGameConfig.html#a113d6624c8831ee7ce7a5696c3642a18", null ],
+    [ "GetAssetPath", "classGameConfig.html#a638a26e6faff52075e84c1f3e1f17412", null ],
+    [ "GetDefaultHeight", "classGameConfig.html#afa56e9eff305c2d15eedb65f0c0eb944", null ],
+    [ "GetDefaultScaleMode", "classGameConfig.html#a9ecfc3d82a9a553b06cc48a874243538", null ],
+    [ "GetDefaultWidth", "classGameConfig.html#a956a4795a9cc5eff2f4db06b14bbfe08", null ],
+    [ "GetEngineOptions", "classGameConfig.html#ae1fd8419403b4810e6a04de03b0577e7", null ],
+    [ "GetEngineOptions", "classGameConfig.html#abba9470a60523d9d23eade0b35a65cd5", null ],
+    [ "GetGameTitle", "classGameConfig.html#abc79555d0def630e769d6ce1f5f100bf", null ],
+    [ "GetStartupScript", "classGameConfig.html#aee2b4235d4292892104f52b52e3494af", null ],
+    [ "HasLoadedConfig", "classGameConfig.html#abd435650d0dbbb6fef0fc7b19071eaa3", null ],
+    [ "IsEditorMode", "classGameConfig.html#adbb3f7700cc176ef32b7e06e6a54c14d", null ],
+    [ "LoadConfig", "classGameConfig.html#abf7e6fa10edf900fdd9fdbd6a98ac081", null ],
+    [ "LoadConfigFromFile", "classGameConfig.html#ad599a84f871e122dcc077344ded4e33f", null ],
+    [ "operator=", "classGameConfig.html#af523756d273e94b6d2402f8746f9541e", null ],
+    [ "operator=", "classGameConfig.html#a773584a329b40fb4015fe09f28dac43a", null ],
+    [ "SetIsEditorMode", "classGameConfig.html#a30d2666d83481509580e2cab370bac7c", null ],
+    [ "playableAreaHeight", "classGameConfig.html#ab6c077b1100491ea58393b75827e4851", null ],
+    [ "playableAreaWidth", "classGameConfig.html#ac284df28856ce829eea9650b4e2a8505", null ],
+    [ "windowHeight", "classGameConfig.html#a6eb86fe1450b1d440dda19a7b6e75020", null ],
+    [ "windowWidth", "classGameConfig.html#a2637790ea4ccec4388dbe6d083025604", null ]
+];

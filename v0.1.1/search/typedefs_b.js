@@ -1,0 +1,4 @@
+var searchData=
+[
+  ['type_0',['type',['../structInternal_1_1unwrap__opt.html#ab289d18e60bdde3272e0f6c1ba180b89',1,'Internal::unwrap_opt::type'],['../structInternal_1_1unwrap__opt_3_01Opt_3_01T_01_4_01_4.html#a1c1f9d5243c2f34ccc36f56976639dbc',1,'Internal::unwrap_opt&lt; Opt&lt; T &gt; &gt;::type'],['../structInternal_1_1resolve__yield.html#a41f1da3d35e2081d079d0e62b6c5330b',1,'Internal::resolve_yield::type'],['../structInternal_1_1resolve__yield_3_01Opt_3_01T_01_4_01_4.html#ac761f45979464feca1a96e1e7f664372',1,'Internal::resolve_yield&lt; Opt&lt; T &gt; &gt;::type'],['../structInternal_1_1resolve__pointer.html#a5293df50758cf94fc29df1df72bdedf4',1,'Internal::resolve_pointer::type'],['../structInternal_1_1resolve__pointer_3_01Opt_3_01T_01_4_01_4.html#ae1caf971bda92648401b1cdb22097667',1,'Internal::resolve_pointer&lt; Opt&lt; T &gt; &gt;::type']]]
+];
