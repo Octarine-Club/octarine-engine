@@ -588,5 +588,19 @@ function(octarine_package TARGET)
             EXTRA_EXCLUDES ${_extra_excludes}
             EXTRA_INCLUDES ${_extra_includes})
     _octarine_bundle_runtime_libs(${TARGET} "${_runtime_dest}" "${_framework_dest}")
+    if (APPLE)
+        find_program(CODESIGN_EXECUTABLE codesign)
+        if (CODESIGN_EXECUTABLE)
+            install(CODE "
+                message(STATUS \"Octarine: ad-hoc signing application bundle...\")
+                execute_process(
+                    COMMAND \"${CODESIGN_EXECUTABLE}\" --force --deep --sign - \"\${CMAKE_INSTALL_PREFIX}/${_pkg_name}.app\"
+                    RESULT_VARIABLE _cs_rc)
+                if (NOT _cs_rc EQUAL 0)
+                    message(FATAL_ERROR \"Octarine: codesign failed on ${_pkg_name}.app (rc=\${_cs_rc})\")
+                endif ()
+            ")
+        endif ()
+    endif ()
     _octarine_setup_cpack("${_pkg_name}" "${_pkg_version}" "${_pkg_description}" "${_pkg_vendor}" "${_desktop_ico}")
 endfunction()
