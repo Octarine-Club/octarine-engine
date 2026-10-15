@@ -156,6 +156,72 @@ void FrameLoop::ProcessInput() {
   }
 }
 
+void FrameLoop::SyncAudioGain(const EngineOptions& options) {
+  // Master volume + mute live at the mixer level so they apply to every track (including loops
+  // already playing). Synced every frame — and outside the pause gate — so toggling mute reacts
+  // immediately even while execution is paused.
+  if (auto* mixer = registry_->Get<EngineContext>().mixer) {
+    const float masterGain = options.audioEnabled ? std::max(0.0F, options.masterVolume) : 0.0F;
+    MIX_SetMixerGain(mixer, masterGain);
+  }
+}
+
+void FrameLoop::PollHotReload([[maybe_unused]] const EngineOptions& options, [[maybe_unused]] const float deltaTime) {
+#ifndef OCTARINE_SHIPPED
+  // Run hot reload even when paused — authors iterate code with the editor paused all the time,
+  // and the swap is cheap. Uses real deltaTime (not time-scaled) so the poll cadence is stable.
+  if (options.hotReloadEnabled) {
+    if (auto* hotReload = registry_->TryGet<ScriptHotReload>()) {
+      hotReload->Tick(*registry_, lua_, deltaTime, options.hotReloadPollSeconds);
+    }
+    if (auto* assetReload = registry_->TryGet<AssetHotReload>()) {
+      auto& ctx = registry_->Get<EngineContext>();
+      assetReload->Tick(registry_->Get<AssetManager>(), ctx.sdlRenderer, ctx.mixer, deltaTime,
+                        options.hotReloadPollSeconds);
+    }
+  }
+#endif
+}
+
+int FrameLoop::ExecuteSimulationSteps(const float deltaTime, EngineOptions& options, InputSystem* inputSystem) {
+  if (options.isPaused && !options.stepFrame) {
+    return 0;
+  }
+
+  // dt precedence: an explicit fixedStepDt wins; otherwise sub-stepping implies the default
+  // 1/60s fixed step; otherwise variable frame dt scaled by timeScale. timeScale is ignored
+  // whenever a fixed step is in effect — fast-forward is expressed through simSubSteps instead.
+  constexpr float kDefaultFixedStepDt = 1.0F / 60.0F;
+  const int subSteps = std::max(1, options.simSubSteps);
+  float stepDt = deltaTime * options.timeScale;
+  if (options.fixedStepDt > 0.0F) {
+    stepDt = options.fixedStepDt;
+  } else if (subSteps > 1) {
+    stepDt = kDefaultFixedStepDt;
+  }
+
+  auto& renderQueue = registry_->Get<RenderQueue>();
+  int stepsExecuted = 0;
+  for (int step = 0; step < subSteps; ++step) {
+    if (step > 0) {
+      game_->FlushPendingSceneLoad();
+      if (options.isPaused && !options.stepFrame) {
+        break;
+      }
+    }
+    renderQueue.Clear();
+    registry_->Update(stepDt);
+    ++stepsExecuted;
+    // Edge-triggered input (pressed/released, wheel) must be observed by exactly one sim step,
+    // otherwise a single key press would re-fire on every sub-step of a fast-forwarded frame.
+    if (step == 0 && subSteps > 1 && inputSystem) {
+      inputSystem->ClearPerFrameInput();
+    }
+  }
+  options.stepFrame = false;
+  return stepsExecuted;
+}
+
 int FrameLoop::Update(const float deltaTime) {
 #ifdef OCTARINE_PROFILING
   PerfUtils::ProfilingAccumulator::Clear();
@@ -176,67 +242,16 @@ int FrameLoop::Update(const float deltaTime) {
 #endif
 
   auto& options = registry_->Get<GameConfig>().GetEngineOptions();
-
-  // Master volume + mute live at the mixer level so they apply to every track (including loops
-  // already playing). Synced every frame — and outside the pause gate — so toggling mute reacts
-  // immediately even while execution is paused.
-  if (auto* mixer = registry_->Get<EngineContext>().mixer) {
-    const float masterGain = options.audioEnabled ? std::max(0.0F, options.masterVolume) : 0.0F;
-    MIX_SetMixerGain(mixer, masterGain);
-  }
+  SyncAudioGain(options);
 
   auto* inputSystem = registry_->TryGet<InputSystem>();
   if (inputSystem) {
     inputSystem->BeginFrame();
   }
 
-#ifndef OCTARINE_SHIPPED
-  // Run hot reload even when paused — authors iterate code with the editor paused all the time,
-  // and the swap is cheap. Uses real deltaTime (not time-scaled) so the poll cadence is stable.
-  if (options.hotReloadEnabled) {
-    if (auto* hotReload = registry_->TryGet<ScriptHotReload>()) {
-      hotReload->Tick(*registry_, lua_, deltaTime, options.hotReloadPollSeconds);
-    }
-    if (auto* assetReload = registry_->TryGet<AssetHotReload>()) {
-      auto& ctx = registry_->Get<EngineContext>();
-      assetReload->Tick(registry_->Get<AssetManager>(), ctx.sdlRenderer, ctx.mixer, deltaTime,
-                        options.hotReloadPollSeconds);
-    }
-  }
-#endif
+  PollHotReload(options, deltaTime);
 
-  int stepsExecuted = 0;
-  if (!options.isPaused || options.stepFrame) {
-    // dt precedence: an explicit fixedStepDt wins; otherwise sub-stepping implies the default
-    // 1/60s fixed step; otherwise variable frame dt scaled by timeScale. timeScale is ignored
-    // whenever a fixed step is in effect — fast-forward is expressed through simSubSteps instead.
-    constexpr float kDefaultFixedStepDt = 1.0F / 60.0F;
-    const int subSteps = std::max(1, options.simSubSteps);
-    float stepDt = deltaTime * options.timeScale;
-    if (options.fixedStepDt > 0.0F) {
-      stepDt = options.fixedStepDt;
-    } else if (subSteps > 1) {
-      stepDt = kDefaultFixedStepDt;
-    }
-    auto& renderQueue = registry_->Get<RenderQueue>();
-    for (int step = 0; step < subSteps; ++step) {
-      if (step > 0) {
-        game_->FlushPendingSceneLoad();
-        if (options.isPaused && !options.stepFrame) {
-          break;
-        }
-      }
-      renderQueue.Clear();
-      registry_->Update(stepDt);
-      ++stepsExecuted;
-      // Edge-triggered input (pressed/released, wheel) must be observed by exactly one sim step,
-      // otherwise a single key press would re-fire on every sub-step of a fast-forwarded frame.
-      if (step == 0 && subSteps > 1 && inputSystem) {
-        inputSystem->ClearPerFrameInput();
-      }
-    }
-    options.stepFrame = false;
-  }
+  const int stepsExecuted = ExecuteSimulationSteps(deltaTime, options, inputSystem);
 
   // Pressed/released keys and wheel deltas are per-frame edge signals — clear after every
   // system in this frame has observed them.

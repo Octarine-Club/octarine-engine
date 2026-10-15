@@ -148,22 +148,39 @@ Game::Game() {
 
 Game::~Game() { Logger::Info("Game Destructor called."); }
 
+namespace {
+bool CheckHeadlessEnv() {
+#ifdef _MSC_VER
+  char* envVal = nullptr;
+  size_t envLen = 0;
+  if (_dupenv_s(&envVal, &envLen, "OCTARINE_HEADLESS") == 0 && envVal != nullptr) {
+    const std::string s(envVal);
+    free(envVal);
+    return s == "1" || s == "true";
+  }
+  return false;
+#else
+  if (const char* envVal = std::getenv("OCTARINE_HEADLESS")) {
+    const std::string s(envVal);
+    return s == "1" || s == "true";
+  }
+  return false;
+#endif
+}
+
+void ApplyHeadlessOptions(EngineOptions& opts) {
+  opts.headless = true;
+  opts.fpsTarget = 0;
+  opts.audioEnabled = false;
+  opts.showDebugGUI = false;
+  opts.showPerfOverlay = false;
+  opts.hotReloadEnabled = false;
+}
+}  // namespace
+
 bool Game::Initialize(const std::string& assetPath) {
   if (!headless_) {
-#ifdef _MSC_VER
-    char* envVal = nullptr;
-    size_t envLen = 0;
-    if (_dupenv_s(&envVal, &envLen, "OCTARINE_HEADLESS") == 0 && envVal != nullptr) {
-      const std::string s(envVal);
-      free(envVal);
-      headless_ = (s == "1" || s == "true");
-    }
-#else
-    if (const char* envVal = std::getenv("OCTARINE_HEADLESS")) {
-      const std::string s(envVal);
-      headless_ = (s == "1" || s == "true");
-    }
-#endif
+    headless_ = CheckHeadlessEnv();
   }
 
   if (!runtime_.InitSubsystems(headless_)) {
@@ -199,13 +216,7 @@ bool Game::Initialize(const std::string& assetPath) {
   engine_bootstrap::editor::ApplyAudioPrefs(*registry_);
 
   if (headless_) {
-    auto& opts = gameConfig.GetEngineOptions();
-    opts.headless = true;
-    opts.fpsTarget = 0;
-    opts.audioEnabled = false;
-    opts.showDebugGUI = false;
-    opts.showPerfOverlay = false;
-    opts.hotReloadEnabled = false;
+    ApplyHeadlessOptions(gameConfig.GetEngineOptions());
   }
 
   // Editor builds default into editor mode (unless a non-editor mode was requested); player builds

@@ -83,9 +83,8 @@ std::string FormatLuaTable(const sol::table& table, size_t indent_level = 0, siz
   result << indent << "}";
   return result.str();
 }
-}  // namespace
 
-void LuaModuleBinding<GameModule>::install(sol::state& lua, LuaBindingContext& ctx) {
+void BindDiagnostics(sol::state& lua, LuaBindingContext& ctx) {
   lua.set_function("log_table", [](const sol::table& table, const sol::optional<std::string>& message) {
     std::string prefix = message.has_value() ? (message.value() + ": ") : "";
     Logger::InfoLua(prefix + FormatLuaTable(table));
@@ -107,7 +106,9 @@ void LuaModuleBinding<GameModule>::install(sol::state& lua, LuaBindingContext& c
     options.showPerfOverlay = !options.showPerfOverlay;
     return options.showPerfOverlay;
   });
+}
 
+void BindSimulationControl(sol::state& lua, LuaBindingContext& ctx) {
   lua.set_function("set_sim_substeps", [&ctx](const int substeps) {
     auto* gameConfig = ctx.GetRegistry()->TryGet<GameConfig>();
     if (!gameConfig) return;
@@ -177,7 +178,9 @@ void LuaModuleBinding<GameModule>::install(sol::state& lua, LuaBindingContext& c
   // Lua's math.randomseed covers script randomness; this covers C++ systems.
   lua.set_function("set_sim_seed",
                    [](const double seed) { sim_random::Seed(static_cast<uint32_t>(static_cast<int64_t>(seed))); });
+}
 
+void BindStateInspection(sol::state& lua, LuaBindingContext& ctx) {
   // Canonical FNV-1a hash of all alive entities' component state (floats quantized). Returned as a
   // 16-char hex string because Lua integers cannot represent the full unsigned 64-bit range.
   lua.set_function("get_state_hash", [&ctx]() -> std::string {
@@ -205,7 +208,7 @@ void LuaModuleBinding<GameModule>::install(sol::state& lua, LuaBindingContext& c
       Logger::Warn("get_env: '" + name + "' rejected (allowed prefixes: OCT_, OCTARINE_, GAME_, BOT_)");
       return sol::nullopt;
     }
-    const std::string val = ReadEnvVar(name);
+    std::string val = ReadEnvVar(name);
     if (val.empty()) return sol::nullopt;
     return val;
   });
@@ -217,7 +220,9 @@ void LuaModuleBinding<GameModule>::install(sol::state& lua, LuaBindingContext& c
     if (fullPath.empty()) return false;
     return file_sandbox::WriteFileAtomic(fullPath, contents);
   });
+}
 
+void BindWorldAndCamera(sol::state& lua, LuaBindingContext& ctx) {
   lua.set_function("set_game_map_dimensions", [&ctx](const double width, const double height) {
     auto& gameConfig = ctx.GetRegistry()->Get<GameConfig>();
     gameConfig.playableAreaHeight = static_cast<float>(height);
@@ -250,4 +255,12 @@ void LuaModuleBinding<GameModule>::install(sol::state& lua, LuaBindingContext& c
     if (!camera) return 1.0;
     return static_cast<double>(camera->zoom);
   });
+}
+}  // namespace
+
+void LuaModuleBinding<GameModule>::install(sol::state& lua, LuaBindingContext& ctx) {
+  BindDiagnostics(lua, ctx);
+  BindSimulationControl(lua, ctx);
+  BindStateInspection(lua, ctx);
+  BindWorldAndCamera(lua, ctx);
 }

@@ -436,10 +436,10 @@ class Registry {
 
   template <typename T>
   OrderBuilder Order(const SystemHandle<T>& handle) {
-    return OrderBuilder(this, handle.Id());
+    return {this, handle.Id()};
   }
 
-  OrderBuilder Order(const SystemId id) { return OrderBuilder(this, id); }
+  OrderBuilder Order(const SystemId id) { return {this, id}; }
 
   // Stores singleton service wrapped in shared_ptr to support move-only types.
   template <typename T>

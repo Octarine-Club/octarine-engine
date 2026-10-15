@@ -16,6 +16,8 @@ class Game;
 class Registry;
 class Renderer;
 class EngineRuntime;
+struct EngineOptions;
+class InputSystem;
 // Defined in Events/KeyInputEvent.h. Forward-declared (not included) because that header is not
 // self-contained — it derives from EventBus's Event without including it, so pulling it here
 // would force a fragile include order on every consumer of FrameLoop.h.
@@ -63,6 +65,9 @@ class FrameLoop {
   static KeyInputEvent GetKeyInputEvent(SDL_KeyboardEvent* event);
   void UpdateViewportInfo(bool editorSession, bool showDebugGUI);
   void CheckHeadlessCapture();
+  void SyncAudioGain(const EngineOptions& options);
+  void PollHotReload(const EngineOptions& options, float deltaTime);
+  int ExecuteSimulationSteps(float deltaTime, EngineOptions& options, InputSystem* inputSystem);
 
   Game* game_;
   Registry* registry_;
