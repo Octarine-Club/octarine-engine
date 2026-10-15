@@ -18,7 +18,7 @@ class CombatSystem {
   void operator()(const ContextFacade& ctx);
 
  private:
-  inline void InvokeDamagePlayer(Entity target, ContactDamageComponent& contact);
+  inline void InvokeDamagePlayer(Entity attacker, Entity target, ContactDamageComponent& contact);
   inline void RemoveWeaponContact(HealthComponent& health, Entity weaponA);
   inline void RemoveContactDamage(ContactDamageComponent& contact, Entity b);
   void OnCollisionBatch(const CollisionBatchEvent& event);

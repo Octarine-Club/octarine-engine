@@ -15,6 +15,8 @@
 #include "ECS/StateInspector.h"
 #include "Engine/EngineContext.h"
 #include "EventBus/EventBus.h"
+#include "General/SimRandom.h"
+#include "General/ThreadPool.h"
 #include "Systems/KDTreeCollisionSystem.h"
 #include "Systems/TransformSystem.h"
 #include "Systems/VelocityIntegrationSystem.h"
@@ -24,7 +26,7 @@ using octarine::test::Check;
 
 namespace {
 
-uint64_t RunFuzzSimulation(uint32_t seed, int entityCount, int tickCount) {
+uint64_t RunFuzzSimulation(uint32_t seed, int entityCount, int tickCount, bool synchronousCollision = true) {
   Registry registry;
   auto bus = std::make_unique<EventBus>();
   EngineContext ctx;
@@ -33,7 +35,7 @@ uint64_t RunFuzzSimulation(uint32_t seed, int entityCount, int tickCount) {
 
   auto vel = registry.RegisterParallelSystem<PositionComponent, RigidBodyComponent>(VelocityIntegrationSystem{});
   auto trans = registry.RegisterBulkSystem<GlobalTransformComponent>(TransformSystem{});
-  auto coll = registry.RegisterBulkSystem(KDTreeCollisionSystem(true));
+  auto coll = registry.RegisterBulkSystem(KDTreeCollisionSystem(synchronousCollision));
 
   registry.Order(trans).After(vel);
   registry.Order(coll).After(trans);
@@ -102,6 +104,39 @@ int main() {
     // Test 3: Sensitivity to Seed Mutation
     const uint64_t hashDiffSeed = RunFuzzSimulation(9999, 20, 30);
     Check(hash1 != hashDiffSeed, "different seed produces different simulation state hash");
+  }
+
+  // Test 4: Deterministic simulation mode (ThreadPool force-serial)
+  {
+    ThreadPool::SetForceSerial(true);
+    Check(ThreadPool::IsForceSerial(), "force-serial flag reads back true");
+
+    size_t batches = 0;
+    size_t covered = 0;
+    ThreadPool::ParallelChunks(10000, [&](size_t /*batch*/, size_t begin, size_t end) {
+      ++batches;
+      covered += end - begin;
+    });
+    Check(batches == 1 && covered == 10000, "ParallelChunks runs as a single serial batch in force-serial mode");
+
+    // > kDefaultSerialBelowEntities so ParallelForEach would otherwise fan out, and the async
+    // collision path (which depends on worker timing) is requested but must be forced synchronous.
+    const uint64_t a = RunFuzzSimulation(4242, 800, 40, /*synchronousCollision=*/false);
+    const uint64_t b = RunFuzzSimulation(4242, 800, 40, /*synchronousCollision=*/false);
+    Check(a == b, "force-serial mode replays a large async-collision simulation bit-identically");
+    ThreadPool::SetForceSerial(false);
+    Check(!ThreadPool::IsForceSerial(), "force-serial flag reads back false");
+  }
+
+  // Test 5: Seedable engine simulation RNG
+  {
+    sim_random::Seed(101);
+    const float r1 = sim_random::Float01();
+    const float r2 = sim_random::Float01();
+    sim_random::Seed(101);
+    Check(sim_random::Float01() == r1 && sim_random::Float01() == r2,
+          "sim_random replays the same stream after reseeding");
+    Check(r1 >= 0.0F && r1 <= 1.0F, "sim_random::Float01 stays in [0, 1]");
   }
 
   return octarine::test::ReportSummary("SimulationFuzzTest");

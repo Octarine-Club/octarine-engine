@@ -66,7 +66,9 @@ class DamageSystem {
 
     if (projectileComponent.target_entity == target) {
       if (event_bus_) {
-        event_bus_->EmitEvent<CombatDamagePlayerEvent>(target, static_cast<int>(projectileComponent.damage));
+        // Attribute to the shooter while it lives; fall back to the projectile entity itself.
+        const Entity source = registry_->IsAlive(projectileComponent.owner) ? projectileComponent.owner : projectile;
+        event_bus_->EmitEvent<CombatDamagePlayerEvent>(target, static_cast<int>(projectileComponent.damage), source);
       }
       registry_->QueueDespawnEntity(projectile);
       return;

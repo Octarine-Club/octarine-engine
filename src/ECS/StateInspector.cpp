@@ -299,6 +299,35 @@ uint64_t StateInspector::ComputeStateHash(const Registry& registry, float floatS
   return hash;
 }
 
+std::string StateInspector::DumpCanonicalState(const Registry& registry, float floatScale) {
+  // Mirrors ComputeStateHash field-for-field as one text line per entity, so two dumps from
+  // supposedly identical runs can be diffed to find the first diverging entity/field.
+  std::ostringstream out;
+  for (const Entity e : registry.GetUserEntities()) {
+    out << e.GetId() << ':' << e.GetGeneration() << (registry.IsActive(e) ? " A" : " I");
+    if (registry.HasComponent<PositionComponent>(e)) {
+      const auto& pos = registry.GetComponent<PositionComponent>(e);
+      out << " pos=" << Quantize(pos.value.x, floatScale) << ',' << Quantize(pos.value.y, floatScale);
+    }
+    if (registry.HasComponent<RigidBodyComponent>(e)) {
+      const auto& rb = registry.GetComponent<RigidBodyComponent>(e);
+      out << " vel=" << Quantize(rb.velocity.x, floatScale) << ',' << Quantize(rb.velocity.y, floatScale);
+    }
+    if (registry.HasComponent<GlobalTransformComponent>(e)) {
+      const auto& gt = registry.GetComponent<GlobalTransformComponent>(e);
+      out << " gt=" << Quantize(gt.position.x, floatScale) << ',' << Quantize(gt.position.y, floatScale) << ','
+          << Quantize(gt.scale.x, floatScale) << ',' << Quantize(gt.scale.y, floatScale) << ','
+          << Quantize(gt.rotation, floatScale);
+    }
+    if (registry.HasComponent<HealthComponent>(e)) {
+      const auto& h = registry.GetComponent<HealthComponent>(e);
+      out << " hp=" << h.current_health << '/' << h.max_health;
+    }
+    out << '\n';
+  }
+  return out.str();
+}
+
 namespace {
 
 std::vector<std::string> SplitLines(const std::string& str) {

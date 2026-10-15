@@ -77,7 +77,7 @@ class ArchetypeQuery {
     const auto& work = chunk_work_scratch_;
     if (work.empty()) return;
 
-    if (serialBelowEntities > 0 && totalEntities < serialBelowEntities) {
+    if (ThreadPool::IsForceSerial() || (serialBelowEntities > 0 && totalEntities < serialBelowEntities)) {
       PROFILE_COUNTER_ADD("ParallelForEach: SerialGated", 1);
       ProcessChunks(work, 0, work.size(), func);
       return;

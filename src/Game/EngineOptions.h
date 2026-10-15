@@ -53,8 +53,14 @@ struct EngineOptions {
   bool isPaused = false;
   float timeScale = 1.0F;
   bool stepFrame = false;
+  // Fast-forward: number of fixed simulation steps executed per rendered frame (1 = real time).
   int simSubSteps = 1;
+  // Explicit fixed step in seconds (0 = variable dt * timeScale, or 1/60 when simSubSteps > 1).
+  // When a fixed step is in effect, timeScale is ignored.
   float fixedStepDt = 0.0F;
+  // Mirrors ThreadPool::IsForceSerial(): serial ECS iteration + synchronous collision for
+  // bit-reproducible seeded runs (see set_deterministic in GameModuleLuaBinding).
+  bool deterministic = false;
   // When true, a scene whose asset references fail validation aborts the load (dev gate). Off by
   // default so players never hard-fail; the bake step is the CI enforcement point.
   bool assetValidationFatal = false;

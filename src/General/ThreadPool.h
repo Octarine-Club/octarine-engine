@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <condition_variable>
 #include <cstddef>
 #include <functional>
@@ -20,13 +21,19 @@ class ThreadPool {
 
   [[nodiscard]] size_t Size() const { return workers_.size(); }
 
+  // Deterministic simulation switch. When enabled, ParallelChunks and ECS ParallelForEach run
+  // serially on the calling thread so work-stealing order and floating-point accumulation order
+  // are identical across runs (required for seeded bot replays / paired A/B experiments).
+  static void SetForceSerial(const bool serial) { ForceSerialFlag().store(serial, std::memory_order_relaxed); }
+  [[nodiscard]] static bool IsForceSerial() { return ForceSerialFlag().load(std::memory_order_relaxed); }
+
   // Runs fn(batchIndex, begin, end) over contiguous sub-ranges in parallel across the pool.
   // fn must be thread-safe for disjoint writes and must not be called from a worker thread.
   template <typename Fn>
   static void ParallelChunks(size_t count, Fn&& fn) {
     if (count == 0) return;
 
-    const size_t numBatches = std::min(count, Instance().Size());
+    const size_t numBatches = IsForceSerial() ? 1 : std::min(count, Instance().Size());
     if (numBatches <= 1) {
       fn(static_cast<size_t>(0), static_cast<size_t>(0), count);
       return;
@@ -93,6 +100,11 @@ class ThreadPool {
   }
 
  private:
+  static std::atomic<bool>& ForceSerialFlag() {
+    static std::atomic<bool> flag{false};
+    return flag;
+  }
+
   explicit ThreadPool(size_t numThreads) {
     workers_.reserve(numThreads);
     for (size_t i = 0; i < numThreads; ++i) {

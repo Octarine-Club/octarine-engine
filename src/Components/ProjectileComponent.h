@@ -4,6 +4,9 @@
 
 struct ProjectileComponent {
   Entity target_entity{};
+  // Emitter that fired this projectile (Entity{} if spawned without one). Used for damage
+  // attribution in CombatDamagePlayerEvent so scripts can name the shooter, not just "projectile".
+  Entity owner{};
   int damage;
   float timer;
   float duration;

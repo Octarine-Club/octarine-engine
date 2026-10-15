@@ -172,6 +172,7 @@ class ProjectileEmitSystem {
 
     auto& projectileComponent = registry.GetComponent<ProjectileComponent>(projectile);
     projectileComponent.target_entity = emitter.target_entity;
+    projectileComponent.owner = entity;
     projectileComponent.damage = emitter.damage;
     projectileComponent.duration = emitter.duration;
     registry.GetComponent<NameComponent>(projectile).name = emitter.projectile_name;

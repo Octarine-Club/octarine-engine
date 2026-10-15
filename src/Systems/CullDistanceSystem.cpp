@@ -8,14 +8,11 @@
 
 #include "Components/ScriptComponent.h"
 #include "Game/GameConfig.h"
+#include "General/SimRandom.h"
 
 namespace {
 
-float RandomFloat01() {
-  thread_local std::minstd_rand rng(std::random_device{}());
-  std::uniform_real_distribution<float> dist(0.0f, 1.0f);
-  return dist(rng);
-}
+float RandomFloat01() { return sim_random::Float01(); }
 
 void UnregisterScriptEnemy(Registry* registry, Entity entity) {
   if (!registry->HasComponent<ScriptComponent>(entity)) {

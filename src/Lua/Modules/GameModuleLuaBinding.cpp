@@ -1,21 +1,34 @@
 #include "Lua/Modules/GameModuleLuaBinding.h"
 
 #include <algorithm>
+#include <array>
+#include <cstdint>
 #include <cstdlib>
 #include <glm/glm.hpp>
+#include <iomanip>
 #include <sstream>
 #include <string>
+#include <string_view>
 
 #include "Components/CameraComponents.h"
 #include "ECS/Registry.h"
+#include "ECS/StateInspector.h"
 #include "Game/GameConfig.h"
 #include "General/FileSandbox.h"
 #include "General/Logger.h"
+#include "General/SimRandom.h"
+#include "General/ThreadPool.h"
 #include "Lua/LuaBindingContext.h"
 #include "Systems/ProjectileEmitSystem.h"
 
 namespace {
 constexpr size_t kDefaultMaxDepth = 5;
+
+bool IsAllowedEnvVar(const std::string_view name) {
+  constexpr std::array<std::string_view, 4> kAllowedPrefixes = {"OCT_", "OCTARINE_", "GAME_", "BOT_"};
+  return std::any_of(kAllowedPrefixes.begin(), kAllowedPrefixes.end(),
+                     [name](const std::string_view prefix) { return name.starts_with(prefix); });
+}
 
 std::string ReadEnvVar(const std::string& name) {
 #ifdef _MSC_VER
@@ -120,7 +133,50 @@ void LuaModuleBinding<GameModule>::install(sol::state& lua, LuaBindingContext& c
     return static_cast<double>(gameConfig->GetEngineOptions().fixedStepDt);
   });
 
+  // Deterministic simulation mode: forces ECS ParallelForEach / ThreadPool::ParallelChunks to run
+  // serially and KDTreeCollisionSystem to run synchronously, so a seeded run replays bit-identically.
+  // Costs multi-core throughput; intended for bot simulations, replays and A/B experiments.
+  lua.set_function("set_deterministic", [&ctx](const bool enabled) {
+    ThreadPool::SetForceSerial(enabled);
+    if (auto* gameConfig = ctx.GetRegistry()->TryGet<GameConfig>()) {
+      gameConfig->GetEngineOptions().deterministic = enabled;
+    }
+  });
+
+  lua.set_function("is_deterministic", []() -> bool { return ThreadPool::IsForceSerial(); });
+
+  // Seeds the engine-side simulation RNG (e.g. CullDistanceSystem perimeter repositioning).
+  // Lua's math.randomseed covers script randomness; this covers C++ systems.
+  lua.set_function("set_sim_seed",
+                   [](const double seed) { sim_random::Seed(static_cast<uint32_t>(static_cast<int64_t>(seed))); });
+
+  // Canonical FNV-1a hash of all alive entities' component state (floats quantized). Returned as a
+  // 16-char hex string because Lua integers cannot represent the full unsigned 64-bit range.
+  lua.set_function("get_state_hash", [&ctx]() -> std::string {
+    const uint64_t hash = octarine::inspect::StateInspector::ComputeStateHash(*ctx.GetRegistry());
+    std::ostringstream out;
+    out << std::hex << std::setw(16) << std::setfill('0') << hash;
+    return out.str();
+  });
+
+  // Writes the canonical per-entity state (fields covered by get_state_hash) to a project-relative
+  // file so two diverging runs can be diffed entity-by-entity.
+  lua.set_function("write_state_dump", [&ctx](const std::string& relativePath) -> bool {
+    const std::string root = ctx.GetProjectPath();
+    if (root.empty()) return false;
+    const std::string fullPath = file_sandbox::Resolve(root, relativePath);
+    if (fullPath.empty()) return false;
+    return file_sandbox::WriteFileAtomic(fullPath,
+                                         octarine::inspect::StateInspector::DumpCanonicalState(*ctx.GetRegistry()));
+  });
+
+  // Environment access is restricted to allowlisted prefixes so game/mod scripts cannot exfiltrate
+  // arbitrary process secrets (API tokens, credentials). Harnesses should use these prefixes.
   lua.set_function("get_env", [](const std::string& name) -> sol::optional<std::string> {
+    if (!IsAllowedEnvVar(name)) {
+      Logger::Warn("get_env: '" + name + "' rejected (allowed prefixes: OCT_, OCTARINE_, GAME_, BOT_)");
+      return sol::nullopt;
+    }
     const std::string val = ReadEnvVar(name);
     if (val.empty()) return sol::nullopt;
     return val;

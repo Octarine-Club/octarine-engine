@@ -582,13 +582,9 @@ void Game::Run() {
   while (s_is_running_) {
     frame_loop_->ProcessInput();
     const float deltaTime = frame_loop_->WaitTime();
-    if (!IsPaused()) {
-      const int subSteps = (registry_ && registry_->TryGet<GameConfig>())
-                               ? std::max(1, registry_->Get<GameConfig>().GetEngineOptions().simSubSteps)
-                               : 1;
-      current_tick_ += static_cast<uint64_t>(subSteps);
-    }
-    frame_loop_->Update(deltaTime);
+    // current_tick_ counts simulation steps (not rendered frames), so sub-stepped fast-forward
+    // and paused frames are accounted exactly.
+    current_tick_ += static_cast<uint64_t>(frame_loop_->Update(deltaTime));
     frame_loop_->Render(deltaTime);
   }
 }
@@ -605,13 +601,13 @@ void Game::StepTicks(const uint32_t count, const float deltaTime) {
     return;
   }
 
+  // Each requested tick runs one FrameLoop::Update, which itself may execute simSubSteps steps.
   for (uint32_t i = 0; i < count && s_is_running_; ++i) {
-    current_tick_++;
     frame_loop_->ProcessInput();
     if (registry_ && registry_->TryGet<GameConfig>()) {
       registry_->Get<GameConfig>().GetEngineOptions().stepFrame = true;
     }
-    frame_loop_->Update(deltaTime);
+    current_tick_ += static_cast<uint64_t>(frame_loop_->Update(deltaTime));
     if (i + 1 == count || !s_is_running_) {
       frame_loop_->Render(deltaTime);
     }

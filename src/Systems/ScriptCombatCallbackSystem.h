@@ -51,7 +51,13 @@ class ScriptCombatCallbackSystem {
       if (!world.valid()) continue;
       sol::function dmgFn = world["damage_player"];
       if (!dmgFn.valid()) continue;
-      if (auto result = dmgFn(event.damage); !result.valid()) {
+      // Signature: damage_player(amount, source_name?, source_entity?). The C++ side only knows the
+      // attacking entity; scripts resolve it to a gameplay name for telemetry.
+      sol::object sourceEntity = sol::lua_nil;
+      if (event.source != Entity{} && registry_->IsAlive(event.source)) {
+        sourceEntity = sol::make_object(lua, event.source);
+      }
+      if (auto result = dmgFn(event.damage, sol::lua_nil, sourceEntity); !result.valid()) {
         Logger::ErrorLua(std::string(result.get<sol::error>().what()));
       }
     }

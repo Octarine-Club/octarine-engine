@@ -34,7 +34,7 @@
     {
       "name": "Game",
       "binding_header": "src/Lua/Modules/GameModuleLuaBinding.h",
-      "globals": ["fire_projectile", "get_camera_position", "get_camera_zoom", "get_env", "get_fixed_dt", "get_game_map_dimensions", "get_sim_substeps", "log_table", "quit_game", "set_camera_zoom", "set_fixed_dt", "set_game_map_dimensions", "set_perf_overlay", "set_sim_substeps", "toggle_perf_overlay", "write_project_file"]
+      "globals": ["fire_projectile", "get_camera_position", "get_camera_zoom", "get_env", "get_fixed_dt", "get_game_map_dimensions", "get_sim_substeps", "get_state_hash", "is_deterministic", "log_table", "quit_game", "set_camera_zoom", "set_deterministic", "set_fixed_dt", "set_game_map_dimensions", "set_perf_overlay", "set_sim_seed", "set_sim_substeps", "toggle_perf_overlay", "write_project_file", "write_state_dump"]
     },
     {
       "name": "UI",

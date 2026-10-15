@@ -156,7 +156,7 @@ void FrameLoop::ProcessInput() {
   }
 }
 
-void FrameLoop::Update(const float deltaTime) {
+int FrameLoop::Update(const float deltaTime) {
 #ifdef OCTARINE_PROFILING
   PerfUtils::ProfilingAccumulator::Clear();
   PerfUtils::PerfCounters::ResetValues();
@@ -205,11 +205,19 @@ void FrameLoop::Update(const float deltaTime) {
   }
 #endif
 
+  int stepsExecuted = 0;
   if (!options.isPaused || options.stepFrame) {
+    // dt precedence: an explicit fixedStepDt wins; otherwise sub-stepping implies the default
+    // 1/60s fixed step; otherwise variable frame dt scaled by timeScale. timeScale is ignored
+    // whenever a fixed step is in effect — fast-forward is expressed through simSubSteps instead.
+    constexpr float kDefaultFixedStepDt = 1.0F / 60.0F;
     const int subSteps = std::max(1, options.simSubSteps);
-    const float stepDt = (options.fixedStepDt > 0.0F)
-                             ? options.fixedStepDt
-                             : ((subSteps > 1) ? (1.0F / 60.0F) : (deltaTime * options.timeScale));
+    float stepDt = deltaTime * options.timeScale;
+    if (options.fixedStepDt > 0.0F) {
+      stepDt = options.fixedStepDt;
+    } else if (subSteps > 1) {
+      stepDt = kDefaultFixedStepDt;
+    }
     auto& renderQueue = registry_->Get<RenderQueue>();
     for (int step = 0; step < subSteps; ++step) {
       if (step > 0) {
@@ -220,6 +228,12 @@ void FrameLoop::Update(const float deltaTime) {
       }
       renderQueue.Clear();
       registry_->Update(stepDt);
+      ++stepsExecuted;
+      // Edge-triggered input (pressed/released, wheel) must be observed by exactly one sim step,
+      // otherwise a single key press would re-fire on every sub-step of a fast-forwarded frame.
+      if (step == 0 && subSteps > 1 && inputSystem) {
+        inputSystem->ClearPerFrameInput();
+      }
     }
     options.stepFrame = false;
   }
@@ -229,6 +243,7 @@ void FrameLoop::Update(const float deltaTime) {
   if (inputSystem) {
     inputSystem->ClearPerFrameInput();
   }
+  return stepsExecuted;
 }
 
 void FrameLoop::UpdateViewportInfo([[maybe_unused]] const bool editorSession,

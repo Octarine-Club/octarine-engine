@@ -45,7 +45,9 @@ class FrameLoop {
   void Begin();
 
   void ProcessInput();
-  void Update(float deltaTime);
+  // Runs one rendered frame worth of simulation (simSubSteps fixed steps when fast-forwarding).
+  // Returns the number of simulation steps actually executed (0 when paused).
+  int Update(float deltaTime);
   void Render(float deltaTime);
   [[nodiscard]] float WaitTime();
 

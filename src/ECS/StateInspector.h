@@ -36,6 +36,10 @@ class StateInspector {
   // Computes a deterministic 64-bit canonical FNV-1a state hash with float quantization.
   static uint64_t ComputeStateHash(const Registry& registry, float floatScale = kDefaultFloatPrecision);
 
+  // Human-readable, line-per-entity rendering of exactly the fields ComputeStateHash covers.
+  // Used to diff two runs when their state hashes diverge.
+  static std::string DumpCanonicalState(const Registry& registry, float floatScale = kDefaultFloatPrecision);
+
   // Compares two JSON state snapshots line-by-line and formats a human-readable diff.
   static std::string DiffSnapshots(const std::string& expectedJson, const std::string& actualJson);
 };

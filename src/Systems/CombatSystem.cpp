@@ -9,13 +9,13 @@
 #include "Events/CombatHitEvent.h"
 #include "General/PerfUtils.h"
 
-inline void CombatSystem::InvokeDamagePlayer(Entity target, ContactDamageComponent& contact) {
+inline void CombatSystem::InvokeDamagePlayer(Entity attacker, Entity target, ContactDamageComponent& contact) {
   if (!registry_->IsAlive(target)) {
     RemoveContactDamage(contact, target);
     return;
   }
   if (event_bus_) {
-    event_bus_->EmitEvent<CombatDamagePlayerEvent>(target, static_cast<int>(contact.damage));
+    event_bus_->EmitEvent<CombatDamagePlayerEvent>(target, static_cast<int>(contact.damage), attacker);
   }
   contact.current_cooldown = contact.cooldown;
 }
@@ -102,7 +102,7 @@ inline void CombatSystem::TryAddContactDamage(Entity attacker, Entity player) {
   }
 
   if (contact.current_cooldown <= 0.0f) {
-    InvokeDamagePlayer(player, contact);
+    InvokeDamagePlayer(attacker, player, contact);
   }
 }
 
@@ -138,14 +138,14 @@ void CombatSystem::operator()(const ContextFacade& ctx) {
   }
 
   contact_query_->Update();
-  contact_query_->ForEach([&](Entity /*entity*/, ContactDamageComponent& contact) {
+  contact_query_->ForEach([&](Entity entity, ContactDamageComponent& contact) {
     if (contact.current_cooldown > 0.0f) {
       contact.current_cooldown -= dt;
     }
 
     if (contact.current_cooldown <= 0.0f && contact.active_contacts_count > 0) {
       Entity target = contact.active_contacts.front();
-      InvokeDamagePlayer(target, contact);
+      InvokeDamagePlayer(entity, target, contact);
     }
   });
 
