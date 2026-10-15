@@ -59,6 +59,8 @@ bool Remove(LuaBindingContext& ctx, const std::string& relativePath) {
   return std::filesystem::remove(fullPath, ec);
 }
 
+// TODO(production-save): Add automatic rolling backup (.bak) support in Write / WriteTable
+// before atomic rename to guarantee power-loss / crash corruption recovery with clean Steam Cloud sync.
 bool WriteTable(LuaBindingContext& ctx, const std::string& relativePath, const sol::table& value) {
   const std::string fullPath = ResolveStoragePath(ctx, relativePath, "write_table");
   if (fullPath.empty()) return false;

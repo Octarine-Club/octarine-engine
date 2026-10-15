@@ -331,6 +331,18 @@ std::string Game::GetSaveDataPath() {
     return save_data_path_;
   }
 
+  // Environment override: allows development runs, CI, or portable builds to isolate save data.
+  if (const char* envPath = std::getenv("OCTARINE_SAVE_PATH")) {
+    if (*envPath != '\0') {
+      std::string path = envPath;
+      if (path.back() != '/' && path.back() != '\\') {
+        path += '/';
+      }
+      save_data_path_ = path;
+      return save_data_path_;
+    }
+  }
+
   // Identity precedence: project.ini vendor/name > config.ini GameTitle > engine defaults.
   // project.ini is read via SDL so it resolves inside an APK or .app bundle the same way
   // config.ini does.
