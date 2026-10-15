@@ -32,9 +32,8 @@ jobs:
             echo "Tag is not on main branch. Skipping release."
           fi
 
-  # Build standalone SDK binaries (no game project bundled) for both editor-release (full editor
-  # UI, for game development) and player-release (no editor/ImGui, for game packaging CI).
-  # Only runs on v* tag pushes.
+  # Build standalone SDK binaries (no game project bundled) for player-release (dev runtime)
+  # and ship-release (shippable desktop artifact). Only runs on v* tag pushes.
   sdk:
     name: SDK ${{ matrix.flavor }} — ${{ matrix.platform }}
     needs: check-branch
@@ -46,10 +45,6 @@ jobs:
         include:
           - os: ubuntu-latest
             platform: linux
-            preset: editor-release
-            flavor: editor
-          - os: ubuntu-latest
-            platform: linux
             preset: player-release
             flavor: player
           - os: ubuntu-latest
@@ -58,20 +53,12 @@ jobs:
             flavor: ship
           - os: windows-latest
             platform: windows
-            preset: editor-release
-            flavor: editor
-          - os: windows-latest
-            platform: windows
             preset: player-release
             flavor: player
           - os: windows-latest
             platform: windows
             preset: ship-release
             flavor: ship
-          - os: macos-latest
-            platform: macos
-            preset: editor-release
-            flavor: editor
           - os: macos-latest
             platform: macos
             preset: player-release
