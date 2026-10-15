@@ -135,7 +135,6 @@ portability-simd-intrinsics,
 readability-avoid-const-params-in-decls,
 readability-function-cognitive-complexity,
 readability-function-size,
-readability-magic-numbers, # If not too noisy for your literals
 readability-simplify-boolean-expr,
 readability-const-return-type,
 readability-container-size-empty,

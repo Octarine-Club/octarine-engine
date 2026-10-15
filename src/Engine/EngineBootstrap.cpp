@@ -11,6 +11,7 @@
 #include "Components/ViewportInfo.h"
 #include "ECS/Registry.h"
 #include "Engine/EngineContext.h"
+#include "Engine/GameModuleHooks.h"
 #include "Engine/LuaProtect.h"
 #include "EventBus/EventBus.h"
 #include "Game/Game.h"
@@ -23,7 +24,6 @@
 #include "Renderer/SpriteRenderCache.h"
 #include "Systems/EntityPoolSystem.h"
 #include "Systems/InputSystem.h"
-#include "Systems/ProjectileEmitSystem.h"
 
 #ifdef OCTARINE_WITH_EDITOR
 #include "Editor/Inspectors/RegisterAllInspectors.h"
@@ -100,17 +100,9 @@ void InstallCoreSingletons(Registry& registry, EngineContext& context, const int
   }
 }
 
-ProjectileEmitSystem& InstallPoolAndProjectile(Registry& registry) {
-  // EntityPoolManager before ProjectileEmitSystem::Init — Init calls
-  // Get<EntityPoolManager>().RegisterPool<...>.
+void InstallPoolAndSingletons(Registry& registry) {
   registry.Set<EntityPoolManager>(EntityPoolManager());
-
-  // ProjectileEmitSystem Set + Init so GameModule's fire_projectile binding can capture it
-  // from the Registry during the modules-install phase below. Init only does
-  // RegisterPool<...> calls — safe before scene/system registration.
-  auto& projectileEmitSystem = registry.Set<ProjectileEmitSystem>(ProjectileEmitSystem());
-  projectileEmitSystem.Init(registry);
-  return projectileEmitSystem;
+  game_module::InstallSingletons(registry);
 }
 
 InputSystem& InstallInputSystem(Registry& registry, const std::unique_ptr<EventBus>& eventBus) {
@@ -134,7 +126,10 @@ void RegisterAllComponentBindings() {
 #endif
 }
 
-void InstallLuaModules(sol::state& lua, Game& game) { RegisterAllLuaModules(lua, game); }
+void InstallLuaModules(sol::state& lua, Game& game) {
+  RegisterAllLuaModules(lua, game);
+  game_module::InstallLuaFunctions(lua, game);
+}
 
 void SetCommonLuaGlobals(sol::state& lua, const GameConfig& config, const std::string& startupMode) {
   lua["game_window_width"] = config.windowWidth;

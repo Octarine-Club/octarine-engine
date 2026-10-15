@@ -23,11 +23,8 @@
 #include "Components/CameraComponents.h"
 #include "Components/EntityMaskComponent.h"
 #include "Components/GlobalTransformComponent.h"
-#include "Components/HealthComponent.h"
 #include "Components/PivotComponent.h"
 #include "Components/PositionComponent.h"
-#include "Components/ProjectileComponent.h"
-#include "Components/ProjectileEmitterComponent.h"
 #include "Components/RigidBodyComponent.h"
 #include "Components/RotationComponent.h"
 #include "Components/ScaleComponent.h"
@@ -43,6 +40,7 @@
 #include "Engine/LuaProtect.h"
 #include "Engine/Platform/PlatformPaths.h"
 #include "Engine/SdlFileReader.h"
+#include "Engine/SimulationSystems.h"
 #include "Events/KeyInputEvent.h"
 #include "Events/MouseInputEvent.h"
 #include "Events/MouseWheelEvent.h"
@@ -59,6 +57,7 @@
 #include "Components/AudioActiveTag.h"
 #include "Components/AudioListenerComponent.h"
 #include "Components/LifetimeComponent.h"
+#include "Engine/GameModuleHooks.h"
 #include "Lua/Bindings/InputSystemLuaBinding.h"
 #include "Lua/Bindings/LuaSystemRegistry.h"
 #include "Lua/HotReload/ScriptHotReload.h"
@@ -68,16 +67,12 @@
 #include "Systems/AudioCullingSystem.h"
 #include "Systems/AudioSystem.h"
 #include "Systems/CameraFollowSystem.h"
-#include "Systems/DamageSystem.h"
 #include "Systems/DopplerSystem.h"
 #include "Systems/DrawColliderSystem.h"
 #include "Systems/InputSystem.h"
 #include "Systems/KDTreeCollisionSystem.h"
 #include "Systems/LifetimeSystem.h"
-#include "Systems/ObstacleBounceSystem.h"
 #include "Systems/OffScreenDespawnSystem.h"
-#include "Systems/ProjectileEmitSystem.h"
-#include "Systems/ProjectileLifecycleSystem.h"
 #include "Systems/RenderColorGridSystem.h"
 #include "Systems/RenderPrimitiveSystem.h"
 #include "Systems/RenderSpriteSystem.h"
@@ -153,8 +148,42 @@ Game::Game() {
 
 Game::~Game() { Logger::Info("Game Destructor called."); }
 
+namespace {
+bool CheckHeadlessEnv() {
+#ifdef _MSC_VER
+  char* envVal = nullptr;
+  size_t envLen = 0;
+  if (_dupenv_s(&envVal, &envLen, "OCTARINE_HEADLESS") == 0 && envVal != nullptr) {
+    const std::string s(envVal);
+    free(envVal);
+    return s == "1" || s == "true";
+  }
+  return false;
+#else
+  if (const char* envVal = std::getenv("OCTARINE_HEADLESS")) {
+    const std::string s(envVal);
+    return s == "1" || s == "true";
+  }
+  return false;
+#endif
+}
+
+void ApplyHeadlessOptions(EngineOptions& opts) {
+  opts.headless = true;
+  opts.fpsTarget = 0;
+  opts.audioEnabled = false;
+  opts.showDebugGUI = false;
+  opts.showPerfOverlay = false;
+  opts.hotReloadEnabled = false;
+}
+}  // namespace
+
 bool Game::Initialize(const std::string& assetPath) {
-  if (!runtime_.InitSubsystems()) {
+  if (!headless_) {
+    headless_ = CheckHeadlessEnv();
+  }
+
+  if (!runtime_.InitSubsystems(headless_)) {
     return false;
   }
 
@@ -185,6 +214,10 @@ bool Game::Initialize(const std::string& assetPath) {
 
   // Editor-global audio prefs (mute + master volume) layered over the per-project preferences.
   engine_bootstrap::editor::ApplyAudioPrefs(*registry_);
+
+  if (headless_) {
+    ApplyHeadlessOptions(gameConfig.GetEngineOptions());
+  }
 
   // Editor builds default into editor mode (unless a non-editor mode was requested); player builds
   // never do and reject `--startup-mode editor` (ok=false → abort).
@@ -277,7 +310,7 @@ bool Game::CreateWindowAndScene(bool projectLoaded) {
                                 ? gameConfig.GetGameTitle()
                                 : (gameConfig.IsEditorMode() ? "Octarine Engine - Editor" : "Octarine Engine");
 
-  if (!runtime_.CreateWindow(title, gameConfig.windowWidth, gameConfig.windowHeight)) {
+  if (!runtime_.CreateWindow(title, gameConfig.windowWidth, gameConfig.windowHeight, headless_)) {
     return false;
   }
   return renderer_->CreateScene(runtime_.SdlRenderer(), gameConfig.windowWidth, gameConfig.windowHeight);
@@ -408,7 +441,7 @@ bool Game::RunBakeValidation(const std::string& assetPath, const std::string& sc
   // so the SpriteRenderCache / AudioTrackCache slots are unused.
   engine_bootstrap::InstallCoreSingletons(*registry_, registry_->Get<EngineContext>(), gameConfig.windowWidth,
                                           gameConfig.windowHeight, /*withFramePathCaches=*/false, &lua);
-  engine_bootstrap::InstallPoolAndProjectile(*registry_);
+  engine_bootstrap::InstallPoolAndSingletons(*registry_);
   auto& inputSystem = engine_bootstrap::InstallInputSystem(*registry_, event_bus_);
   engine_bootstrap::RegisterAllComponentBindings();
   LuaSystemRegistry::clear();
@@ -573,33 +606,35 @@ void Game::Run() {
   while (s_is_running_) {
     frame_loop_->ProcessInput();
     const float deltaTime = frame_loop_->WaitTime();
-    if (!IsPaused()) {
-      current_tick_++;
-    }
-    frame_loop_->Update(deltaTime);
+    // current_tick_ counts simulation steps (not rendered frames), so sub-stepped fast-forward
+    // and paused frames are accounted exactly.
+    current_tick_ += static_cast<uint64_t>(frame_loop_->Update(deltaTime));
     frame_loop_->Render(deltaTime);
   }
 }
 
-void Game::Step(const float deltaTime) {
+void Game::Step(const float deltaTime) { StepTicks(1, deltaTime); }
+
+void Game::StepTicks(const uint32_t count, const float deltaTime) {
   if (!is_setup_) {
     Setup();
     frame_loop_->Begin();
     is_setup_ = true;
   }
-
-  current_tick_++;
-  frame_loop_->ProcessInput();
-  if (registry_ && registry_->TryGet<GameConfig>()) {
-    registry_->Get<GameConfig>().GetEngineOptions().stepFrame = true;
+  if (count == 0) {
+    return;
   }
-  frame_loop_->Update(deltaTime);
-  frame_loop_->Render(deltaTime);
-}
 
-void Game::StepTicks(const uint32_t count, const float deltaTime) {
+  // Each requested tick runs one FrameLoop::Update, which itself may execute simSubSteps steps.
   for (uint32_t i = 0; i < count && s_is_running_; ++i) {
-    Step(deltaTime);
+    frame_loop_->ProcessInput();
+    if (registry_ && registry_->TryGet<GameConfig>()) {
+      registry_->Get<GameConfig>().GetEngineOptions().stepFrame = true;
+    }
+    current_tick_ += static_cast<uint64_t>(frame_loop_->Update(deltaTime));
+    if (i + 1 == count || !s_is_running_) {
+      frame_loop_->Render(deltaTime);
+    }
   }
 }
 
@@ -637,7 +672,7 @@ void Game::Setup() {
   // Snapshot stdlib globals before binding so the API manifest can diff out everything the
   // engine adds. Cheap; the actual dump below only fires in editor mode or via env override.
   const auto preBindingGlobals = LuaApiManifest::SnapshotGlobals(lua);
-  engine_bootstrap::InstallPoolAndProjectile(*registry_);
+  engine_bootstrap::InstallPoolAndSingletons(*registry_);
   scriptSystem.Func().CreateLuaBindings(lua);
   engine_bootstrap::InstallLuaModules(lua, *this);
   LuaSystemRegistry::bindAll(lua);
@@ -720,39 +755,11 @@ void Game::Setup() {
     LoadGame(lua, assetManager, gameConfig);
   }
 
-  registry_->RegisterParallelSystem<SpriteComponent, AnimationComponent>(AnimationSystem());
-  registry_->RegisterParallelSystem<ProjectileComponent>(ProjectileLifecycleSystem());
-
-  // Engine-side auto-fire: tick emitters whose frequency > 0 and spawn a projectile on expiry.
-  // This re-introduces the fixed-interval emit that auto_fire.lua had moved into per-entity Lua;
-  // running it in C++ removes one sol2 call per shooter per frame (ScriptSystem was ~56% of Update
-  // at stress scale). fire_projectile(...) from Lua still works for scripted/aimed firing — those
-  // emitters keep frequency 0 and are skipped here, so the two paths never double-fire one emitter.
-  //
-  // Serial (RegisterSystem, not parallel): the tick spawns into the registry. It is registered
-  // here, after InstallPoolAndProjectile Set + Init'd the canonical ProjectileEmitSystem, so the
-  // copy stored by the system list carries the initialized pool id.
-  auto projectileEmit =
-      registry_->RegisterSystem<ProjectileEmitterComponent, PositionComponent>(registry_->Get<ProjectileEmitSystem>());
-
-  // Integrate velocity into local position.
-  auto velocityIntegration =
-      registry_->RegisterParallelSystem<PositionComponent, RigidBodyComponent>(VelocityIntegrationSystem());
-
-  // Despawn entities (except the player) once they leave the playable area.
-  registry_->RegisterParallelSystem<PositionComponent, SpriteComponent>(OffScreenDespawnSystem());
-
-  // Resolve the transform hierarchy into global positions/scales.
-  auto transform = registry_->RegisterBulkSystem<GlobalTransformComponent>(TransformSystem());
-
-  auto collision = registry_->RegisterBulkSystem(KDTreeCollisionSystem());
-  // Store a pointer so the Lua are_colliding() query can reach IsOverlapping() without coupling
-  // the module binding to the BulkSystem registration mechanism. The pointer is stable for the
-  // registry's lifetime (the wrapper is owned by registry_->systems_).
-  registry_->Set<KDTreeCollisionSystem*>(&collision.Func());
-
-  // Lifetime system for expiring and despawning entities.
-  registry_->RegisterBulkSystem<LifetimeComponent>(LifetimeSystem());
+  // Gameplay simulation tier (projectiles, steering, separation, combat, integration, transforms,
+  // collision, lifetime) and its internal ordering edges. Shared with the headless benchmark
+  // harness so the benchmarked frame is the shipped frame.
+  const auto simulation = engine_bootstrap::RegisterSimulationSystems(*registry_, event_bus_);
+  const auto& transform = simulation.transform;
 
   // Spatial audio: snapshot the listener entity (UpdateListenerTransformSystem) then mutate
   // gain + stereo pan on live spatial tracks (SpatialAudioSystem). AudioSystem (above) is the
@@ -790,13 +797,7 @@ void Game::Setup() {
   registry_->RegisterParallelSystem<ColorGridComponent, GlobalTransformComponent>(RenderColorGridSystem());
 
   // Execution-order edges (topo-sorted in Registry::Update; registration order breaks ties).
-  // Emit before integration so freshly-spawned projectiles integrate/transform/collide the same
-  // frame — matching the spawn-timing the old ScriptSystem-driven Lua path had.
-  registry_->Order(velocityIntegration).After(projectileEmit);
-  // Transforms resolve after velocity integration mutates local positions; collision reads
-  // transform.globalPosition / globalScale, so it runs after both.
-  registry_->Order(transform).After(velocityIntegration);
-  registry_->Order(collision).After(transform).After(velocityIntegration);
+  // Simulation-internal edges live in RegisterSimulationSystems.
   // Listener snapshot + spatial gain/pan need this-frame globals; spatial reads the listener
   // snapshot and is gated by culling (culled emitters lose their sink); both resolve tracks the
   // AudioSystem update cached.
@@ -814,13 +815,10 @@ void Game::Setup() {
   // Event-driven systems with no per-frame Update — owned by the Registry instead of
   // living as parallel members on Game. Keeps the registry as the single source of truth.
   auto& uiButtonSystem = registry_->Set<UIButtonSystem>(UIButtonSystem());
-  auto& damageSystem = registry_->Set<DamageSystem>(DamageSystem());
-  auto& obstacleBounceSystem = registry_->Set<ObstacleBounceSystem>(ObstacleBounceSystem());
   auto& scriptCollisionSystem = registry_->Set<ScriptCollisionSystem>(ScriptCollisionSystem());
   uiButtonSystem.Init(registry_.get(), event_bus_);
-  damageSystem.Init(registry_.get(), event_bus_);
-  obstacleBounceSystem.Init(registry_.get(), event_bus_);
   scriptCollisionSystem.Init(registry_.get(), event_bus_);
+  game_module::RegisterEventSystems(*registry_, event_bus_);
 
   // Hot reload owns its own FileWatcher + (path -> entities) discovery loop. Compiled out
   // under OCTARINE_SHIPPED; in dev/editor builds the runtime gate lives on EngineOptions.

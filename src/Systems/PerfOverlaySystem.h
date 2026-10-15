@@ -97,7 +97,7 @@ class PerfOverlaySystem {
   // Rasterize + activate the world-stats section rows (entity count, resident memory) for the
   // metrics enabled in `options`. Returns false if any raster fails.
   bool AppendWorldRows(TTF_Font* font, SDL_Renderer* sdlRenderer, Registry& registry, const EngineOptions& options,
-                       float deltaTime, std::array<ActiveRow, kRowCount>& active, std::size_t& count);
+                       std::array<ActiveRow, kRowCount>& active, std::size_t& count);
 
   // Push paired FPS / frame-ms samples into the fixed-size ring buffers backing the avg/percentile
   // readouts.
@@ -108,16 +108,34 @@ class PerfOverlaySystem {
   void DrawRows(SDL_Renderer* sdlRenderer, float originX, float originY, float blockW,
                 const std::array<ActiveRow, kRowCount>& active, std::size_t count);
 
+  // Re-rasterize and update all active rows and cached layout dimensions. Extracted to keep Draw's
+  // cognitive complexity within the project threshold.
+  void RefreshRows(TTF_Font* font, SDL_Renderer* sdlRenderer, Registry& registry, const EngineOptions& options,
+                   float fps, float frameMs);
+
+  // Recalculates cached_block_w_ and cached_block_h_ based on active_rows_ and active_count_.
+  void RecomputeBlockDimensions();
+
   std::array<Row, kRowCount> rows_{};
   // The embedded debug font is registered lazily on first Draw. Latched so a registration failure
   // isn't retried (and re-logged) every frame.
   bool font_init_attempted_ = false;
+
+  // Cadence timer for updating text and re-creating textures (10 Hz). Between refreshes, the
+  // system simply re-draws the already rasterized textures without GPU texture churn.
+  static constexpr float kOverlayRefreshSeconds = 0.1F;
+  float overlay_refresh_timer_ = 0.0F;
+  std::array<ActiveRow, kRowCount> active_rows_{};
+  std::size_t active_count_ = 0;
+  float cached_block_w_ = 0.0F;
+  float cached_block_h_ = 0.0F;
 
   // Ring buffers of recent per-frame samples backing the avg/percentile readouts. Both share
   // sample_index_ — they are pushed together each frame.
   static constexpr std::size_t kSampleBuffer = 1000;
   std::vector<float> fps_samples_;
   std::vector<float> ms_samples_;
+  std::vector<float> scratchpad_;
   std::size_t sample_index_ = 0;
 
   // Resident-memory readout is a syscall, so it's polled on a timer instead of every frame. The

@@ -31,12 +31,16 @@ class ComponentRegistry {
   void RegisterComponent(const Entity& componentEntity) {
     const ComponentID id = componentEntity.GetId();
     ComponentInfo info{id, typeid(T).name(), sizeof(T), alignof(T)};
-    if constexpr (std::is_move_constructible_v<T>) {
-      info.move_construct = [](void* dst, void* src) { ::new (dst) T(std::move(*static_cast<T*>(src))); };
-    } else {
-      info.move_construct = [](void* dst, const void* src) { std::memcpy(dst, src, sizeof(T)); };
+    if constexpr (!std::is_trivially_copyable_v<T>) {
+      if constexpr (std::is_move_constructible_v<T>) {
+        info.move_construct = [](void* dst, void* src) { ::new (dst) T(std::move(*static_cast<T*>(src))); };
+      } else {
+        info.move_construct = [](void* dst, void* src) { std::memcpy(dst, src, sizeof(T)); };
+      }
     }
-    info.destroy = [](void* ptr) { static_cast<T*>(ptr)->~T(); };
+    if constexpr (!std::is_trivially_destructible_v<T>) {
+      info.destroy = [](void* ptr) { static_cast<T*>(ptr)->~T(); };
+    }
     if constexpr (std::is_swappable_v<T>) {
       info.swap = [](void* a, void* b) {
         using std::swap;
@@ -52,9 +56,6 @@ class ComponentRegistry {
   // Registers a zero-sized tag component.
   void RegisterTag(const ComponentID id, const std::string& name) {
     ComponentInfo info{id, name, 0, 1};
-    info.move_construct = [](void*, void*) {};
-    info.destroy = [](void*) {};
-    info.swap = [](void*, void*) {};
     auto [it, inserted] = component_infos_.try_emplace(id, std::move(info));
     if (!inserted && it->second.name != name) {
       throw std::runtime_error("Tag ID collision: " + it->second.name + " and " + name);
@@ -74,7 +75,7 @@ class Registry {
 
   using ArchetypeList = std::vector<ArchetypeID>;
 
-  Registry() : root_archetype_(std::make_unique<Archetype>(std::vector<ComponentInfo>{})) {
+  Registry() : root_archetype_(std::make_unique<Archetype>(std::vector<ComponentInfo>{}, true)) {
     entity_manager_ = std::make_unique<EntityManager>();
     component_registry_ = std::make_unique<ComponentRegistry>();
   }
@@ -118,6 +119,9 @@ class Registry {
 
   [[nodiscard]] std::uint64_t GetUserEntityCount() const { return user_entity_count_; }
 
+  [[nodiscard]] bool IsPaused() const { return is_paused_; }
+  void SetPaused(const bool paused) { is_paused_ = paused; }
+
   // Defers destruction until the end of Update; safe to call during system iteration.
   void QueueBlamEntity(const Entity entity) {
     if (pending_blam_ids_.insert(entity.id).second) {
@@ -148,6 +152,20 @@ class Registry {
   void ClearUserEntities();
 
   [[nodiscard]] std::uint64_t GetEntityCount() const { return entity_locations_.size(); }
+
+  [[nodiscard]] std::size_t GetArchetypeCount() const { return archetypes_.size(); }
+
+  // Opt-in wall-clock timing of each system inside Update(). Exists in every build type (unlike
+  // the PROFILE_* macros, which compile out outside player-profile) so headless benchmarks and
+  // agent tooling can attribute frame time per system. Off by default: one branch per system.
+  void SetSystemTimingEnabled(bool enabled);
+  [[nodiscard]] bool IsSystemTimingEnabled() const { return system_timing_enabled_; }
+  // Last Update()'s duration per system, indexed by SystemId. Empty until timing is enabled.
+  [[nodiscard]] const std::vector<std::uint64_t>& GetLastSystemTimingsNs() const { return system_timings_ns_; }
+  // Last Update()'s duration of the end-of-frame blam/despawn flush.
+  [[nodiscard]] std::uint64_t GetLastFlushTimingNs() const { return flush_timing_ns_; }
+  [[nodiscard]] std::size_t GetSystemCount() const { return systems_.size(); }
+  [[nodiscard]] const std::string& GetSystemName(const SystemId id) const { return systems_[id].GetName(); }
 
   [[nodiscard]] std::vector<Entity> GetUserEntities() const;
 
@@ -327,7 +345,11 @@ class Registry {
       const float dt = registry.DeltaTime();
       auto* regPtr = const_cast<Registry*>(&registry);
 
-      if constexpr (requires { state->func.Prepare(regPtr); }) {
+      if constexpr (requires {
+                      { state->func.Prepare(regPtr) } -> std::same_as<bool>;
+                    }) {
+        if (!state->func.Prepare(regPtr)) return;
+      } else if constexpr (requires { state->func.Prepare(regPtr); }) {
         state->func.Prepare(regPtr);
       }
 
@@ -391,9 +413,19 @@ class Registry {
       return *this;
     }
 
+    OrderBuilder& After(const SystemId other) {
+      registry_->AddOrderEdge(other, id_);
+      return *this;
+    }
+
     template <typename T>
     OrderBuilder& Before(const SystemHandle<T>& other) {
       registry_->AddOrderEdge(id_, other.Id());
+      return *this;
+    }
+
+    OrderBuilder& Before(const SystemId other) {
+      registry_->AddOrderEdge(id_, other);
       return *this;
     }
 
@@ -404,8 +436,10 @@ class Registry {
 
   template <typename T>
   OrderBuilder Order(const SystemHandle<T>& handle) {
-    return OrderBuilder(this, handle.Id());
+    return {this, handle.Id()};
   }
+
+  OrderBuilder Order(const SystemId id) { return {this, id}; }
 
   // Stores singleton service wrapped in shared_ptr to support move-only types.
   template <typename T>
@@ -535,6 +569,7 @@ class Registry {
 
   // Relationships
   void AddPair(Entity entity, Entity relationship, Entity target);
+  void RemovePair(Entity entity, Entity relationship, Entity target);
 
   bool HasPair(Entity entity, Entity relationship, Entity target);
 
@@ -592,6 +627,12 @@ class Registry {
 
  private:
   Entity CreateInternalEntity();
+  [[nodiscard]] bool WouldCreateHierarchyCycle(Entity child, Entity parent) const;
+  bool DetachFromParent(Entity entity);
+  bool CollectCascadeSubtree(Entity root, std::vector<Entity>& outOrder);
+  void CleanupAuthoredPairs(Entity entity);
+  void CleanupTargetedPairs(Entity entity);
+  void BlamSingleEntity(Entity entity);
 
   EntityLocation TransitionAddComponent(Entity entity, ComponentID componentId);
   EntityLocation TransitionRemoveComponent(Entity entity, ComponentID componentId);
@@ -605,6 +646,7 @@ class Registry {
   void AddOrderEdge(SystemId before, SystemId after);
   void RebuildExecutionOrder();
 
+  void UpdateTimed();
   void FlushPendingDestruction();
   void FlushDespawns(const std::vector<Entity>& despawns);
 
@@ -623,6 +665,10 @@ class Registry {
   std::vector<std::pair<SystemId, SystemId>> system_order_edges_;
   std::vector<SystemId> system_execution_order_;
   bool system_order_dirty_ = false;
+  bool is_paused_ = false;
+  bool system_timing_enabled_ = false;
+  std::vector<std::uint64_t> system_timings_ns_;
+  std::uint64_t flush_timing_ns_{0};
   std::vector<std::any> singleton_components_;
   std::vector<Entity> family_to_entity_;
   std::unordered_map<std::string, Entity> tag_to_entity_;
@@ -630,7 +676,7 @@ class Registry {
   std::vector<Archetype*> archetype_log_;
   std::unordered_map<EntityID, std::unordered_set<EcsId>> pairs_;
   std::unordered_map<std::uint32_t, std::unordered_set<EntityID>> target_to_pair_authors_;
-  std::unordered_map<EntityID, std::unordered_set<EntityID>> parent_to_children_;
+  std::unordered_map<EntityID, std::vector<EntityID>> parent_to_children_;
   std::unordered_map<EntityID, Entity> child_to_parent_;
   std::vector<Entity> pending_blams_;
   std::unordered_set<EcsId> pending_blam_ids_;
@@ -640,7 +686,7 @@ class Registry {
   uint64_t archetype_generation_{0};
   uint64_t hierarchy_generation_{0};
   std::uint64_t user_entity_count_{0};
-  std::unordered_set<EcsId> internal_entity_ids_;
+  std::unordered_set<std::uint32_t> internal_entity_ids_;
 };
 
 template <typename T>
@@ -649,3 +695,5 @@ inline T& ContextFacade::Component() const {
   void* ptr = get_component_ptr_(ctx_data_, componentEntity.GetId());
   return *static_cast<T*>(ptr);
 }
+
+inline bool ContextFacade::IsPaused() const { return registry_ != nullptr && registry_->IsPaused(); }

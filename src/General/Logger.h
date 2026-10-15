@@ -4,6 +4,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -20,7 +21,7 @@ class Logger {
 
  private:
   static std::shared_ptr<spdlog::logger> lua_logger_;
-  static std::vector<std::string> history_;
+  static std::deque<std::string> history_;
   static std::mutex history_mutex_;
   static std::vector<ScriptError> script_errors_;
   static std::uint64_t script_error_sequence_;

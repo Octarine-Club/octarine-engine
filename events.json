@@ -38,20 +38,10 @@
       "emit_sites": [
         {
           "file": "src/Systems/KDTreeCollisionSystem.h",
-          "line": 264
+          "line": 269
         }
       ],
       "subscribe_sites": [
-        {
-          "file": "src/Systems/DamageSystem.h",
-          "line": 20,
-          "owner": "DamageSystem"
-        },
-        {
-          "file": "src/Systems/ObstacleBounceSystem.h",
-          "line": 22,
-          "owner": "ObstacleBounceSystem"
-        },
         {
           "file": "src/Systems/ScriptCollisionSystem.h",
           "line": 16,
@@ -67,7 +57,7 @@
       "emit_sites": [
         {
           "file": "src/Systems/KDTreeCollisionSystem.h",
-          "line": 265
+          "line": 270
         }
       ],
       "subscribe_sites": [
@@ -103,7 +93,7 @@
       "emit_sites": [
         {
           "file": "src/Engine/FrameLoop.cpp",
-          "line": 140
+          "line": 141
         }
       ],
       "subscribe_sites": [
@@ -140,13 +130,13 @@
       "emit_sites": [
         {
           "file": "src/Engine/FrameLoop.cpp",
-          "line": 111
+          "line": 112
         }
       ],
       "subscribe_sites": [
         {
           "file": "src/Engine/FrameLoop.cpp",
-          "line": 74,
+          "line": 75,
           "owner": "FrameLoop"
         },
         {
@@ -174,7 +164,7 @@
       "emit_sites": [
         {
           "file": "src/Engine/FrameLoop.cpp",
-          "line": 117
+          "line": 118
         }
       ],
       "subscribe_sites": [
@@ -207,7 +197,7 @@
       "emit_sites": [
         {
           "file": "src/Engine/FrameLoop.cpp",
-          "line": 121
+          "line": 122
         }
       ],
       "subscribe_sites": [

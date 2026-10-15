@@ -111,6 +111,10 @@ void LuaModuleBinding<EntityModule>::install(sol::state& lua, LuaBindingContext&
   });
   lua.set_function("get_position",
                    [&ctx](const Entity entity) { return GetEntityPosition(ctx.GetRegistry(), entity); });
+  lua.set_function("get_position_xy", [&ctx](const Entity entity) -> std::tuple<float, float> {
+    const auto pos = GetEntityPosition(ctx.GetRegistry(), entity);
+    return {pos.x, pos.y};
+  });
   lua.set_function("set_position", [&ctx](const Entity entity, const double x, const double y) {
     SetEntityPosition(ctx.GetRegistry(), entity, x, y);
   });
@@ -128,6 +132,16 @@ void LuaModuleBinding<EntityModule>::install(sol::state& lua, LuaBindingContext&
 
   lua["registry"] = lua.create_table();
   sol::table reg = lua["registry"];
+
+  reg.set_function("is_alive", sol::overload(
+                                   [&ctx](const sol::object& entity) -> bool {
+                                     if (!entity.is<Entity>()) return false;
+                                     return ctx.GetRegistry()->IsAlive(entity.as<Entity>());
+                                   },
+                                   []() -> bool { return false; }));
+
+  reg.set_function("is_paused", [&ctx]() -> bool { return ctx.GetRegistry()->IsPaused(); });
+  reg.set_function("set_paused", [&ctx](const bool paused) { ctx.GetRegistry()->SetPaused(paused); });
 
   reg.set_function("get_parent", [&ctx](sol::this_state state, const Entity entity) -> sol::object {
     const auto parent = ctx.GetRegistry()->GetParent(entity);

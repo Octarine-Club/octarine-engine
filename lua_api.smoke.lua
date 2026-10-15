@@ -1590,11 +1590,17 @@ entity = {}
 
 function find_entity_by_name(...) end
 
-function fire_projectile(...) end
-
 function get_asset_path(...) end
 
 function get_camera_position(...) end
+
+function get_camera_zoom(...) end
+
+function get_env(...) end
+
+function get_fixed_dt(...) end
+
+function get_fps_target(...) end
 
 function get_game_map_dimensions(...) end
 
@@ -1602,9 +1608,11 @@ function get_name(...) end
 
 function get_position(...) end
 
----@class health_component
-health_component = {}
+function get_position_xy(...) end
 
+function get_sim_substeps(...) end
+
+function get_state_hash(...) end
 
 ---@class input
 input = {}
@@ -1662,6 +1670,10 @@ function input.on_mouse_wheel(...) end
 function input.unbind(...) end
 
 
+function is_deterministic(...) end
+
+function is_headless(...) end
+
 ---@class lifetime_component
 lifetime_component = {}
 
@@ -1696,10 +1708,6 @@ function play_sound(...) end
 position_component = {}
 
 
----@class projectile_emitter_component
-projectile_emitter_component = {}
-
-
 function quit_game(...) end
 
 function read_file_lines(...) end
@@ -1719,8 +1727,6 @@ function registry.get_camera_follow(...) end
 
 function registry.get_color_grid(...) end
 
-function registry.get_health(...) end
-
 function registry.get_lifetime(...) end
 
 function registry.get_name(...) end
@@ -1731,8 +1737,6 @@ function registry.get_pivot(...) end
 
 function registry.get_position(...) end
 
-function registry.get_projectile_emitter(...) end
-
 function registry.get_rigidbody(...) end
 
 function registry.get_rotation(...) end
@@ -1740,6 +1744,8 @@ function registry.get_rotation(...) end
 function registry.get_scale(...) end
 
 function registry.get_script(...) end
+
+function registry.get_script_callbacks(...) end
 
 function registry.get_sprite(...) end
 
@@ -1769,8 +1775,6 @@ function registry.has_camera_follow(...) end
 
 function registry.has_color_grid(...) end
 
-function registry.has_health(...) end
-
 function registry.has_lifetime(...) end
 
 function registry.has_name(...) end
@@ -1779,8 +1783,6 @@ function registry.has_pivot(...) end
 
 function registry.has_position(...) end
 
-function registry.has_projectile_emitter(...) end
-
 function registry.has_rigidbody(...) end
 
 function registry.has_rotation(...) end
@@ -1788,6 +1790,8 @@ function registry.has_rotation(...) end
 function registry.has_scale(...) end
 
 function registry.has_script(...) end
+
+function registry.has_script_callbacks(...) end
 
 function registry.has_sprite(...) end
 
@@ -1805,7 +1809,13 @@ function registry.has_ui_rect(...) end
 
 function registry.has_ui_z_index(...) end
 
+function registry.is_alive(...) end
+
+function registry.is_paused(...) end
+
 function registry.set_parent(...) end
+
+function registry.set_paused(...) end
 
 
 function reload_scene(...) end
@@ -1822,11 +1832,25 @@ rotation_component = {}
 scale_component = {}
 
 
+---@class script_callback_component
+script_callback_component = {}
+
+
 ---@class script_component
 script_component = {}
 
 
+function set_camera_zoom(...) end
+
+function set_deterministic(...) end
+
+function set_fixed_dt(...) end
+
+function set_fps_target(...) end
+
 function set_game_map_dimensions(...) end
+
+function set_headless(...) end
 
 function set_name(...) end
 
@@ -1835,6 +1859,10 @@ function set_perf_overlay(...) end
 function set_position(...) end
 
 function set_rotation(...) end
+
+function set_sim_seed(...) end
+
+function set_sim_substeps(...) end
 
 function set_sprite_src_rect(...) end
 
@@ -1907,4 +1935,8 @@ ui_z_index_component = {}
 ---@class vec2
 vec2 = {}
 
+
+function write_project_file(...) end
+
+function write_state_dump(...) end
 

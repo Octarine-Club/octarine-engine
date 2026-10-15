@@ -11,11 +11,15 @@
 
 #include "Components/ColorGridComponent.h"
 #include "Components/GlobalTransformComponent.h"
+#ifdef OCTARINE_HAS_GAME_MODULE
 #include "Components/HealthComponent.h"
+#include "Lua/Bindings/HealthComponentLuaBinding.h"
+#endif
 #include "Components/LifetimeComponent.h"
 #include "Components/NameComponent.h"
 #include "Components/PivotComponent.h"
 #include "Components/PositionComponent.h"
+#include "Components/RigidBodyComponent.h"
 #include "Components/RotationComponent.h"
 #include "Components/ScaleComponent.h"
 #include "Components/UIButtonComponent.h"
@@ -26,10 +30,8 @@
 #include "Game/GameConfig.h"
 #include "General/AngleUnit.h"
 #include "General/Logger.h"
-#include "Lua/Bindings/HealthComponentLuaBinding.h"
 #include "Lua/Bindings/LuaBinding.h"
 #include "Lua/Bindings/LuaComponentRegistry.h"
-#include "Lua/Bindings/PositionComponentLuaBinding.h"
 #include "Lua/Bindings/RegisterAllBindings.h"
 #include "Lua/Bindings/RotationComponentLuaBinding.h"
 #include "Lua/Modules/RegisterAllModules.h"
@@ -38,6 +40,7 @@
 #include "Systems/ScriptSystem.h"
 #include "Systems/TransformSystem.h"
 #include "Systems/UIButtonSystem.h"
+#include "Systems/VelocityIntegrationSystem.h"
 #include "TestHarness.h"
 
 using octarine::test::Check;
@@ -75,6 +78,7 @@ int main() {
 
   Registry* reg = game.GetRegistry();
 
+#ifdef OCTARINE_HAS_GAME_MODULE
   std::cout << "[health: damage / heal round-trip via Lua]\n";
   {
     const Entity e = reg->CreateEntity();
@@ -82,17 +86,17 @@ int main() {
     lua["test_entity"] = e;
 
     Check(RunLua(lua, "registry.get_health(test_entity):damage(30)"), "Lua: damage(30) call succeeds");
-    CheckEq(reg->GetComponent<HealthComponent>(e).currentHealth, 70, "health.damage(30) reduced currentHealth to 70");
+    CheckEq(reg->GetComponent<HealthComponent>(e).current_health, 70, "health.damage(30) reduced current_health to 70");
 
     Check(RunLua(lua, "registry.get_health(test_entity):heal(10)"), "Lua: heal(10) call succeeds");
-    CheckEq(reg->GetComponent<HealthComponent>(e).currentHealth, 80, "health.heal(10) bumped currentHealth to 80");
+    CheckEq(reg->GetComponent<HealthComponent>(e).current_health, 80, "health.heal(10) bumped current_health to 80");
 
-    // damage() floors at 0; heal() caps at maxHealth — invariants enforced by bound methods.
+    // damage() floors at 0; heal() caps at max_health — invariants enforced by bound methods.
     Check(RunLua(lua, "registry.get_health(test_entity):damage(9999)"), "Lua: massive damage call succeeds");
-    CheckEq(reg->GetComponent<HealthComponent>(e).currentHealth, 0, "damage() floors at 0");
+    CheckEq(reg->GetComponent<HealthComponent>(e).current_health, 0, "damage() floors at 0");
 
     Check(RunLua(lua, "registry.get_health(test_entity):heal(9999)"), "Lua: massive heal call succeeds");
-    CheckEq(reg->GetComponent<HealthComponent>(e).currentHealth, 100, "heal() caps at maxHealth");
+    CheckEq(reg->GetComponent<HealthComponent>(e).current_health, 100, "heal() caps at max_health");
   }
 
   std::cout << "[health: clamping property setter from Lua]\n";
@@ -104,11 +108,12 @@ int main() {
     // current_health is a clamping property; writing a value above max_health must clamp,
     // writing a negative value must clamp to 0.
     Check(RunLua(lua, "registry.get_health(test_entity).current_health = 999"), "Lua write current_health=999");
-    CheckEq(reg->GetComponent<HealthComponent>(e).currentHealth, 50, "current_health setter clamps to maxHealth");
+    CheckEq(reg->GetComponent<HealthComponent>(e).current_health, 50, "current_health setter clamps to max_health");
 
     Check(RunLua(lua, "registry.get_health(test_entity).current_health = -42"), "Lua write current_health=-42");
-    CheckEq(reg->GetComponent<HealthComponent>(e).currentHealth, 0, "current_health setter clamps to 0");
+    CheckEq(reg->GetComponent<HealthComponent>(e).current_health, 0, "current_health setter clamps to 0");
   }
+#endif
 
   std::cout << "[position: write field through bound usertype]\n";
   {
@@ -123,14 +128,14 @@ int main() {
 
   std::cout << "[has_/get_ accessors]\n";
   {
-    const Entity hasHealth = reg->CreateEntity();
-    reg->AddComponent<HealthComponent>(hasHealth, HealthComponent(10));
-    const Entity noHealth = reg->CreateEntity();
+    const Entity hasPos = reg->CreateEntity();
+    reg->AddComponent<PositionComponent>(hasPos, PositionComponent(glm::vec2(1.0f, 2.0f)));
+    const Entity noPos = reg->CreateEntity();
 
-    lua["with_health"] = hasHealth;
-    lua["without_health"] = noHealth;
-    Check(RunLua(lua, "assert(registry.has_health(with_health))"), "registry.has_health true for owner");
-    Check(RunLua(lua, "assert(not registry.has_health(without_health))"), "registry.has_health false for non-owner");
+    lua["with_pos"] = hasPos;
+    lua["without_pos"] = noPos;
+    Check(RunLua(lua, "assert(registry.has_position(with_pos))"), "registry.has_position true for owner");
+    Check(RunLua(lua, "assert(not registry.has_position(without_pos))"), "registry.has_position false for non-owner");
   }
 
   std::cout << "[blam: single entity and table of entities]\n";
@@ -156,6 +161,25 @@ int main() {
 
     // Non-entity entries are skipped with an error log, not a Lua error.
     Check(RunLua(lua, "blam({ 42, 'nope' })"), "Lua: blam(table) tolerates non-entity entries");
+  }
+
+  std::cout << "[registry.is_alive reports entity liveness]\n";
+  {
+    const Entity aliveEnt = reg->CreateEntity();
+    lua["alive_ent"] = aliveEnt;
+    Check(RunLua(lua, "assert(registry.is_alive(alive_ent) == true)"),
+          "registry.is_alive returns true for live entity");
+
+    Check(RunLua(lua, "assert(registry.is_alive(nil) == false)"), "registry.is_alive returns false for nil");
+    Check(RunLua(lua, "assert(registry.is_alive() == false)"), "registry.is_alive returns false with no args");
+    Check(RunLua(lua, "assert(registry.is_alive(12345) == false)"), "registry.is_alive returns false for non-entity");
+    Check(RunLua(lua, "assert(registry.is_alive({}) == false)"), "registry.is_alive returns false for table");
+
+    lua["dead_ent"] = aliveEnt;
+    reg->BlamEntity(aliveEnt);
+    reg->Update(0.016F);
+    Check(RunLua(lua, "assert(registry.is_alive(dead_ent) == false)"),
+          "registry.is_alive returns false for destroyed entity");
   }
 
   std::cout << "[registry.set_parent / get_parent round-trip]\n";
@@ -202,20 +226,22 @@ int main() {
             "handle resolves to the entity built from the table");
   }
 
+#ifdef OCTARINE_HAS_GAME_MODULE
   std::cout << "[fromLua: defaults applied when fields omitted]\n";
   {
     // HealthComponent has no default-constructor (deleted); fromLua must synthesize one
     // from an empty table using its 100-max default.
     const auto t = lua.script("return {}");
     const HealthComponent defaulted = LuaBinding<HealthComponent>::fromLua(t);
-    CheckEq(defaulted.maxHealth, 100, "fromLua({}) gives default maxHealth=100");
-    CheckEq(defaulted.currentHealth, 100, "fromLua({}) starts at full health");
+    CheckEq(defaulted.max_health, 100, "fromLua({}) gives default max_health=100");
+    CheckEq(defaulted.current_health, 100, "fromLua({}) starts at full health");
 
     const auto t2 = lua.script("return { max_health = 25 }");
     const HealthComponent custom = LuaBinding<HealthComponent>::fromLua(t2);
-    CheckEq(custom.maxHealth, 25, "fromLua reads max_health");
-    CheckEq(custom.currentHealth, 25, "fromLua initializes current to max");
+    CheckEq(custom.max_health, 25, "fromLua reads max_health");
+    CheckEq(custom.current_health, 25, "fromLua initializes current to max");
   }
+#endif
 
   std::cout << "[module callable: log() runs]\n";
   {
@@ -684,6 +710,68 @@ int main() {
 
     Check(RunLua(lua, "alive = registry.get_lifetime(e_life):is_alive()"), "call is_alive()");
     Check(lua["alive"].get<bool>(), "is_alive reports true");
+  }
+
+  std::cout << "[registry pause controls]\n";
+  {
+    Check(!reg->IsPaused(), "registry initially unpaused");
+    Check(RunLua(lua, "paused = registry.is_paused()"), "registry.is_paused() callable");
+    Check(!lua["paused"].get<bool>(), "registry.is_paused reports false initially");
+
+    Check(RunLua(lua, "registry.set_paused(true)"), "registry.set_paused(true) callable");
+    Check(reg->IsPaused(), "C++ registry reflected pause");
+    Check(RunLua(lua, "paused_after = registry.is_paused()"), "registry.is_paused after set_paused(true)");
+    Check(lua["paused_after"].get<bool>(), "registry.is_paused reports true");
+
+    reg->SetPaused(false);
+    Check(!reg->IsPaused(), "C++ SetPaused(false) unpaused registry");
+    Check(RunLua(lua, "unpaused = registry.is_paused()"), "registry.is_paused after C++ unpause");
+    Check(!lua["unpaused"].get<bool>(), "registry.is_paused reports false");
+
+    // VelocityIntegrationSystem respects pause state
+    const Entity ent = reg->CreateEntityWithBundle(PositionComponent{glm::vec2(10.0F, 20.0F)},
+                                                   RigidBodyComponent{glm::vec2(100.0F, 50.0F)});
+    VelocityIntegrationSystem vis;
+    vis.Prepare(reg);
+    vis(1.0F, reg->GetComponent<PositionComponent>(ent), reg->GetComponent<RigidBodyComponent>(ent));
+    CheckEq(reg->GetComponent<PositionComponent>(ent).value.x, 110.0F, "integrated position X while unpaused");
+
+    reg->SetPaused(true);
+    const bool shouldRun = vis.Prepare(reg);
+    Check(!shouldRun, "vis.Prepare returns false when paused");
+    vis(1.0F, reg->GetComponent<PositionComponent>(ent), reg->GetComponent<RigidBodyComponent>(ent));
+    CheckEq(reg->GetComponent<PositionComponent>(ent).value.x, 110.0F, "position did not change while paused");
+    reg->SetPaused(false);
+
+    // Verify metatable synchronization pattern as used in world.lua
+    Check(RunLua(lua, R"LUA(
+      test_world = {}
+      local raw_p = false
+      function test_world.set_paused(p)
+        raw_p = (p == true)
+        if registry and registry.set_paused then registry.set_paused(raw_p) end
+      end
+      function test_world.is_paused()
+        if registry and registry.is_paused then return registry.is_paused() end
+        return raw_p
+      end
+      setmetatable(test_world, {
+        __index = function(t, k)
+          if k == "paused" then return test_world.is_paused() end
+        end,
+        __newindex = function(t, k, v)
+          if k == "paused" then test_world.set_paused(v) else rawset(t, k, v) end
+        end
+      })
+      test_world.paused = true
+    )LUA"),
+          "test_world.paused = true script execution");
+    Check(reg->IsPaused(), "test_world.paused = true synchronized to C++ registry");
+    Check(RunLua(lua, "read_back_paused = (test_world.paused == true)"), "read test_world.paused");
+    Check(lua["read_back_paused"].get<bool>(), "test_world.paused reads true");
+
+    Check(RunLua(lua, "test_world.paused = false"), "test_world.paused = false script execution");
+    Check(!reg->IsPaused(), "test_world.paused = false synchronized to C++ registry");
   }
 
   return octarine::test::ReportSummary("Lua behavior test");

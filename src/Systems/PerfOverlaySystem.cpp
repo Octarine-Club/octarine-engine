@@ -98,6 +98,7 @@ Vec2 BlockOrigin(const PerfOverlayCorner corner, SDL_Renderer* sdlRenderer, cons
 PerfOverlaySystem::PerfOverlaySystem() {
   fps_samples_.reserve(kSampleBuffer);
   ms_samples_.reserve(kSampleBuffer);
+  scratchpad_.reserve(kSampleBuffer);
 }
 
 PerfOverlaySystem::~PerfOverlaySystem() {
@@ -149,11 +150,13 @@ bool PerfOverlaySystem::AppendFpsRows(TTF_Font* font, SDL_Renderer* sdlRenderer,
                                       std::array<ActiveRow, kRowCount>& active, std::size_t& count) {
   // Percentile lows: "P95" is the FPS exceeded 95% of the time (5th percentile of the samples),
   // matching the 1%/5% low convention of game perf overlays.
-  const std::array<std::pair<const char*, float>, 5> entries{{{"FPS", fps},
-                                                              {"AVG", GetAverage(fps_samples_)},
-                                                              {"P50", PerfUtils::GetPercentile(fps_samples_, 0.5F)},
-                                                              {"P95", PerfUtils::GetPercentile(fps_samples_, 0.05F)},
-                                                              {"P99", PerfUtils::GetPercentile(fps_samples_, 0.01F)}}};
+  scratchpad_ = fps_samples_;
+  const std::array<std::pair<const char*, float>, 5> entries{
+      {{"FPS", fps},
+       {"AVG", GetAverage(fps_samples_)},
+       {"P50", PerfUtils::GetPercentileInPlace(scratchpad_, 0.5F)},
+       {"P95", PerfUtils::GetPercentileInPlace(scratchpad_, 0.05F)},
+       {"P99", PerfUtils::GetPercentileInPlace(scratchpad_, 0.01F)}}};
   char buf[kTextBufSize];
   for (std::size_t i = 0; i < entries.size(); ++i) {
     std::snprintf(buf, sizeof(buf), "%.1f", static_cast<double>(entries[i].second));
@@ -166,8 +169,11 @@ bool PerfOverlaySystem::AppendFpsRows(TTF_Font* font, SDL_Renderer* sdlRenderer,
 bool PerfOverlaySystem::AppendFrameRows(TTF_Font* font, SDL_Renderer* sdlRenderer, const float frameMs,
                                         std::array<ActiveRow, kRowCount>& active, std::size_t& count) {
   // Percentile high: "P95" is the frame time 95% of frames stay under.
+  scratchpad_ = ms_samples_;
   const std::array<std::pair<const char*, float>, 3> entries{
-      {{"FRAME", frameMs}, {"AVG", GetAverage(ms_samples_)}, {"P95", PerfUtils::GetPercentile(ms_samples_, 0.95F)}}};
+      {{"FRAME", frameMs},
+       {"AVG", GetAverage(ms_samples_)},
+       {"P95", PerfUtils::GetPercentileInPlace(scratchpad_, 0.95F)}}};
   char buf[kTextBufSize];
   for (std::size_t i = 0; i < entries.size(); ++i) {
     std::snprintf(buf, sizeof(buf), "%.2f ms", static_cast<double>(entries[i].second));
@@ -178,8 +184,8 @@ bool PerfOverlaySystem::AppendFrameRows(TTF_Font* font, SDL_Renderer* sdlRendere
 }
 
 bool PerfOverlaySystem::AppendWorldRows(TTF_Font* font, SDL_Renderer* sdlRenderer, Registry& registry,
-                                        const EngineOptions& options, const float deltaTime,
-                                        std::array<ActiveRow, kRowCount>& active, std::size_t& count) {
+                                        const EngineOptions& options, std::array<ActiveRow, kRowCount>& active,
+                                        std::size_t& count) {
   char buf[kTextBufSize];
   if (HasFlag(options.perfOverlayMetrics, PerfOverlayMetrics::Entities)) {
     std::snprintf(buf, sizeof(buf), "%llu", static_cast<unsigned long long>(registry.GetUserEntityCount()));
@@ -187,7 +193,7 @@ bool PerfOverlaySystem::AppendWorldRows(TTF_Font* font, SDL_Renderer* sdlRendere
     active[count++] = {kSlotEntities, kSectionWorld, kNeutral};
   }
   if (HasFlag(options.perfOverlayMetrics, PerfOverlayMetrics::Memory)) {
-    memory_refresh_timer_ -= deltaTime;
+    memory_refresh_timer_ -= kOverlayRefreshSeconds;
     if (memory_refresh_timer_ <= 0.0F) {
       resident_bytes_ = SystemMemory::GetResidentBytes();
       memory_refresh_timer_ = kMemoryRefreshSeconds;
@@ -211,6 +217,41 @@ void PerfOverlaySystem::RecordSample(const float fps, const float frameMs) {
   }
 }
 
+void PerfOverlaySystem::RefreshRows(TTF_Font* font, SDL_Renderer* sdlRenderer, Registry& registry,
+                                    const EngineOptions& options, const float fps, const float frameMs) {
+  active_count_ = 0;
+  if (HasFlag(options.perfOverlayMetrics, PerfOverlayMetrics::Fps) &&
+      !AppendFpsRows(font, sdlRenderer, fps, active_rows_, active_count_)) {
+    return;
+  }
+  if (HasFlag(options.perfOverlayMetrics, PerfOverlayMetrics::FrameTime) &&
+      !AppendFrameRows(font, sdlRenderer, frameMs, active_rows_, active_count_)) {
+    return;
+  }
+  if (!AppendWorldRows(font, sdlRenderer, registry, options, active_rows_, active_count_)) {
+    return;
+  }
+  if (active_count_ == 0) return;
+
+  RecomputeBlockDimensions();
+}
+
+void PerfOverlaySystem::RecomputeBlockDimensions() {
+  float labelW = 0.0F;
+  float valueW = 0.0F;
+  float blockH = 0.0F;
+  for (std::size_t i = 0; i < active_count_; ++i) {
+    const Row& row = rows_[active_rows_[i].slot];
+    labelW = std::max(labelW, row.label.width);
+    valueW = std::max(valueW, row.value.width);
+    blockH += std::max(row.label.height, row.value.height) + kLineGap;
+    if (i > 0 && active_rows_[i].section != active_rows_[i - 1].section) blockH += kSepBlockH;
+  }
+  blockH -= kLineGap;  // no trailing gap after the last row
+  cached_block_w_ = labelW + kColGap + valueW;
+  cached_block_h_ = blockH;
+}
+
 void PerfOverlaySystem::Draw(Registry& registry, SDL_Renderer* sdlRenderer, const float deltaTime) {
   if (sdlRenderer == nullptr) return;
   auto& assetManager = registry.Get<AssetManager>();
@@ -222,47 +263,26 @@ void PerfOverlaySystem::Draw(Registry& registry, SDL_Renderer* sdlRenderer, cons
   const float frameMs = deltaTime * 1000.0F;
   RecordSample(fps, frameMs);
 
-  // Gather the active rows in draw order. Inactive metrics keep their cached textures but aren't
-  // rastered/drawn this frame. Bail (draw nothing) if any raster fails.
-  std::array<ActiveRow, kRowCount> active{};
-  std::size_t count = 0;
-  if (HasFlag(options.perfOverlayMetrics, PerfOverlayMetrics::Fps) &&
-      !AppendFpsRows(font, sdlRenderer, fps, active, count))
-    return;
-  if (HasFlag(options.perfOverlayMetrics, PerfOverlayMetrics::FrameTime) &&
-      !AppendFrameRows(font, sdlRenderer, frameMs, active, count))
-    return;
-  if (!AppendWorldRows(font, sdlRenderer, registry, options, deltaTime, active, count)) return;
-  if (count == 0) return;
-
-  // Measure: the block is two columns (widest label + widest value), rows stacked with a hairline
-  // between sections. Right-aligning the value textures gives exact column alignment regardless of
-  // glyph widths.
-  float labelW = 0.0F;
-  float valueW = 0.0F;
-  float blockH = 0.0F;
-  for (std::size_t i = 0; i < count; ++i) {
-    const Row& row = rows_[active[i].slot];
-    labelW = std::max(labelW, row.label.width);
-    valueW = std::max(valueW, row.value.width);
-    blockH += std::max(row.label.height, row.value.height) + kLineGap;
-    if (i > 0 && active[i].section != active[i - 1].section) blockH += kSepBlockH;
+  overlay_refresh_timer_ -= deltaTime;
+  if (overlay_refresh_timer_ <= 0.0F) {
+    overlay_refresh_timer_ = kOverlayRefreshSeconds;
+    RefreshRows(font, sdlRenderer, registry, options, fps, frameMs);
   }
-  blockH -= kLineGap;  // no trailing gap after the last row
-  const float blockW = labelW + kColGap + valueW;
+  if (active_count_ == 0) return;
 
   // Anchor the block to the configured corner of the current render target (the scene texture).
-  const Vec2 origin = BlockOrigin(options.perfOverlayCorner, sdlRenderer, blockW, blockH);
+  const Vec2 origin = BlockOrigin(options.perfOverlayCorner, sdlRenderer, cached_block_w_, cached_block_h_);
 
   // Translucent background panel + subtle border behind the text for legibility over any scene.
   SDL_SetRenderDrawBlendMode(sdlRenderer, SDL_BLENDMODE_BLEND);
-  const SDL_FRect bg{origin.x - kPadding, origin.y - kPadding, blockW + (2.0F * kPadding), blockH + (2.0F * kPadding)};
+  const SDL_FRect bg{origin.x - kPadding, origin.y - kPadding, cached_block_w_ + (2.0F * kPadding),
+                     cached_block_h_ + (2.0F * kPadding)};
   SDL_SetRenderDrawColor(sdlRenderer, 0, 0, 0, kBgAlpha);
   SDL_RenderFillRect(sdlRenderer, &bg);
   SDL_SetRenderDrawColor(sdlRenderer, kWhite, kWhite, kWhite, kBorderAlpha);
   SDL_RenderRect(sdlRenderer, &bg);
 
-  DrawRows(sdlRenderer, origin.x, origin.y, blockW, active, count);
+  DrawRows(sdlRenderer, origin.x, origin.y, cached_block_w_, active_rows_, active_count_);
 }
 
 void PerfOverlaySystem::DrawRows(SDL_Renderer* sdlRenderer, const float originX, const float originY,

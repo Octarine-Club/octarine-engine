@@ -81,6 +81,7 @@ class ComponentQuery final {
       if (!excluded_.empty()) {
         std::erase_if(matched_, [&](const Archetype* arch) { return IsExcluded(*arch); });
       }
+      archetype_query_ = ArchetypeQuery<TComponents...>(type_, matched_, include_inactive_);
     } else if (!sorted_type_.empty()) {
       // Incrementally test archetypes created since last update.
       const auto& log = registry_->ArchetypeLog();
@@ -88,12 +89,12 @@ class ComponentQuery final {
         Archetype* arch = log[gen];
         if (Registry::MatchesType(*arch, sorted_type_) && !IsExcluded(*arch)) {
           matched_.push_back(arch);
+          archetype_query_.AddMatchingArchetype(arch);
         }
       }
     }
 
     cached_generation_ = current_gen;
-    archetype_query_ = ArchetypeQuery<TComponents...>(type_, matched_, include_inactive_);
   }
 
   // Requires tag for archetype matching without yielding it to iteration.
@@ -142,10 +143,12 @@ class ComponentQuery final {
     }
   }
 
+  static constexpr size_t kDefaultSerialBelowEntities = 512;
+
   // Parallel ForEach distributing chunks across thread pool.
   // serialBelowEntities: threshold below which execution runs serially on calling thread.
   template <typename Func>
-  void ParallelForEach(Func&& func, const size_t serialBelowEntities = 0) {
+  void ParallelForEach(Func&& func, const size_t serialBelowEntities = kDefaultSerialBelowEntities) {
     archetype_query_.ParallelForEach(std::forward<Func>(func), serialBelowEntities);
   }
 

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <set>
 #include <stdexcept>
 
@@ -72,11 +73,23 @@ void Registry::RebuildExecutionOrder() {
   system_order_dirty_ = false;
 }
 
+void Registry::SetSystemTimingEnabled(const bool enabled) {
+  system_timing_enabled_ = enabled;
+  if (!enabled) {
+    system_timings_ns_.clear();
+    flush_timing_ns_ = 0;
+  }
+}
+
 void Registry::Update(const float deltaTime) {
   PROFILE_NAMED_SCOPE("Registry::Update (total)");
   delta_time_ = deltaTime;
   if (system_order_dirty_ || system_execution_order_.size() != systems_.size()) {
     RebuildExecutionOrder();
+  }
+  if (system_timing_enabled_) {
+    UpdateTimed();
+    return;
   }
   for (const SystemId id : system_execution_order_) {
 #ifdef OCTARINE_PROFILING
@@ -86,6 +99,21 @@ void Registry::Update(const float deltaTime) {
     systems_[id].Update(*this);
   }
   FlushPendingDestruction();
+}
+
+void Registry::UpdateTimed() {
+  using Clock = std::chrono::steady_clock;
+  system_timings_ns_.assign(systems_.size(), 0);
+  for (const SystemId id : system_execution_order_) {
+    const auto start = Clock::now();
+    systems_[id].Update(*this);
+    system_timings_ns_[id] =
+        static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - start).count());
+  }
+  const auto flushStart = Clock::now();
+  FlushPendingDestruction();
+  flush_timing_ns_ = static_cast<std::uint64_t>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - flushStart).count());
 }
 
 void Registry::FlushPendingDestruction() {
@@ -138,15 +166,90 @@ Entity Registry::CreateEntity() {
 
 Entity Registry::CreateInternalEntity() {
   const Entity entity = entity_manager_->CreateEntity();
-  const auto entityLocation = root_archetype_->AddEntity(entity);
-  const std::uint32_t id = entity.GetId();
-  if (id >= entity_locations_.size()) {
-    entity_locations_.resize(id + 1, EntityLocation{nullptr, 0, 0});
-  }
-  entity_locations_[id] = entityLocation;
-  internal_entity_ids_.insert(entity.id);
-  PromoteToActive(entity_locations_[id]);
+  internal_entity_ids_.insert(entity.GetId());
   return entity;
+}
+
+bool Registry::DetachFromParent(const Entity entity) {
+  if (child_to_parent_.empty()) return false;
+  const auto parentIt = child_to_parent_.find(entity.id);
+  if (parentIt == child_to_parent_.end()) return false;
+  if (const auto p = parent_to_children_.find(parentIt->second.id); p != parent_to_children_.end()) {
+    std::erase(p->second, entity.id);
+    if (p->second.empty()) parent_to_children_.erase(p);
+  }
+  child_to_parent_.erase(parentIt);
+  return true;
+}
+
+bool Registry::CollectCascadeSubtree(const Entity root, std::vector<Entity>& outOrder) {
+  if (parent_to_children_.empty() || !parent_to_children_.contains(root.id)) return false;
+  std::vector<Entity> stack{root};
+  while (!stack.empty()) {
+    const Entity current = stack.back();
+    stack.pop_back();
+    outOrder.push_back(current);
+    const auto childIt = parent_to_children_.find(current.id);
+    if (childIt == parent_to_children_.end()) continue;
+    for (const EntityID childId : childIt->second) {
+      child_to_parent_.erase(childId);
+      stack.emplace_back(childId);
+    }
+    parent_to_children_.erase(childIt);
+  }
+  return true;
+}
+
+void Registry::CleanupAuthoredPairs(const Entity entity) {
+  if (pairs_.empty()) return;
+  const auto it = pairs_.find(entity.id);
+  if (it == pairs_.end()) return;
+  for (const EcsId pairId : it->second) {
+    const std::uint32_t tid = Pair(pairId).GetTarget();
+    const auto revIt = target_to_pair_authors_.find(tid);
+    if (revIt == target_to_pair_authors_.end()) continue;
+    revIt->second.erase(entity.id);
+    if (revIt->second.empty()) target_to_pair_authors_.erase(revIt);
+  }
+  pairs_.erase(it);
+}
+
+void Registry::CleanupTargetedPairs(const Entity entity) {
+  if (target_to_pair_authors_.empty()) return;
+  const auto targetId = entity.GetId();
+  const auto revIt = target_to_pair_authors_.find(targetId);
+  if (revIt == target_to_pair_authors_.end()) return;
+  const auto authors = std::move(revIt->second);
+  target_to_pair_authors_.erase(revIt);
+  for (const EntityID authorId : authors) {
+    const auto pIt = pairs_.find(authorId);
+    if (pIt == pairs_.end()) continue;
+    std::erase_if(pIt->second, [targetId](const EcsId p) { return Pair(p).GetTarget() == targetId; });
+    if (pIt->second.empty()) pairs_.erase(pIt);
+  }
+}
+
+void Registry::BlamSingleEntity(const Entity entity) {
+  const std::uint32_t id = entity.GetId();
+  if (id >= entity_locations_.size() || !entity_locations_[id].archetype || !entity_manager_->IsValid(entity)) {
+    return;
+  }
+
+  const EntityLocation removedLocation = entity_locations_[id];
+  removedLocation.archetype->RemoveEntity(
+      removedLocation, [&](const Entity swapped, const size_t chunkIdx, const size_t idxInChunk) {
+        assert(entity_manager_->IsValid(swapped));
+        assert(chunkIdx < removedLocation.archetype->GetChunkCount());
+        entity_locations_[swapped.GetId()] = EntityLocation{removedLocation.archetype, chunkIdx, idxInChunk};
+      });
+  entity_manager_->BlamEntity(entity);
+  entity_locations_[id] = EntityLocation{nullptr, 0, 0};
+  if (internal_entity_ids_.erase(id) == 0 && user_entity_count_ > 0) {
+    --user_entity_count_;
+  }
+
+  CleanupAuthoredPairs(entity);
+  CleanupTargetedPairs(entity);
 }
 
 void Registry::BlamEntity(const Entity entity) {
@@ -156,74 +259,19 @@ void Registry::BlamEntity(const Entity entity) {
     return;
   }
 
-  bool hierarchyMutated = false;
+  const bool detached = DetachFromParent(entity);
+  std::vector<Entity> subtree;
+  const bool hasSubtree = CollectCascadeSubtree(entity, subtree);
+  if (detached || hasSubtree) {
+    ++hierarchy_generation_;
+  }
 
-  // Cascade-destroy children first.
-  if (const auto childIt = parent_to_children_.find(entity.id); childIt != parent_to_children_.end()) {
-    const auto childIds = childIt->second;
-    parent_to_children_.erase(childIt);
-    for (const EntityID childId : childIds) {
-      child_to_parent_.erase(childId);
-      BlamEntity(Entity(childId));
+  if (hasSubtree) {
+    for (const Entity node : subtree | std::views::reverse) {
+      BlamSingleEntity(node);
     }
-    hierarchyMutated = true;
-  }
-
-  // Detach from own parent.
-  if (const auto parentIt = child_to_parent_.find(entity.id); parentIt != child_to_parent_.end()) {
-    if (const auto p = parent_to_children_.find(parentIt->second.id); p != parent_to_children_.end()) {
-      p->second.erase(entity.id);
-      if (p->second.empty()) parent_to_children_.erase(p);
-    }
-    child_to_parent_.erase(parentIt);
-    hierarchyMutated = true;
-  }
-
-  if (hierarchyMutated) ++hierarchy_generation_;
-
-  const EntityLocation removedLocation = entity_locations_[id];
-  const auto swaps = removedLocation.archetype->RemoveEntity(removedLocation);
-  entity_manager_->BlamEntity(entity);
-  entity_locations_[id] = EntityLocation{nullptr, 0, 0};
-  for (const auto& swap : swaps) {
-    assert(entity_manager_->IsValid(swap.entity));
-    assert(swap.chunkIndex < removedLocation.archetype->GetChunkCount());
-    entity_locations_[swap.entity.GetId()] =
-        EntityLocation{removedLocation.archetype, swap.chunkIndex, swap.indexInChunk};
-  }
-  if (internal_entity_ids_.erase(entity.id) == 0 && user_entity_count_ > 0) {
-    --user_entity_count_;
-  }
-
-  // Drop relationship entries authored by this entity, and any pair targeting it.
-  if (const auto it = pairs_.find(entity.id); it != pairs_.end()) {
-    for (const EcsId pairId : it->second) {
-      const std::uint32_t tid = Pair(pairId).GetTarget();
-      if (const auto revIt = target_to_pair_authors_.find(tid); revIt != target_to_pair_authors_.end()) {
-        revIt->second.erase(entity.id);
-        if (revIt->second.empty()) target_to_pair_authors_.erase(revIt);
-      }
-    }
-    pairs_.erase(it);
-  }
-
-  const auto targetId = entity.GetId();
-  if (const auto revIt = target_to_pair_authors_.find(targetId); revIt != target_to_pair_authors_.end()) {
-    const auto authors = revIt->second;
-    for (const EntityID authorId : authors) {
-      if (const auto pIt = pairs_.find(authorId); pIt != pairs_.end()) {
-        auto& pairSet = pIt->second;
-        for (auto setIt = pairSet.begin(); setIt != pairSet.end();) {
-          if (Pair(*setIt).GetTarget() == targetId) {
-            setIt = pairSet.erase(setIt);
-          } else {
-            ++setIt;
-          }
-        }
-        if (pairSet.empty()) pairs_.erase(pIt);
-      }
-    }
-    target_to_pair_authors_.erase(revIt);
+  } else {
+    BlamSingleEntity(entity);
   }
 }
 
@@ -330,13 +378,13 @@ EntityLocation Registry::TransitionAddComponent(const Entity entity, const Compo
   const EntityLocation newLocation = newArchetype->AddEntity(entity);
   newArchetype->CopyComponents(oldLocation, newLocation);
 
-  const auto swaps = oldLocation.archetype->RemoveEntity(oldLocation);
+  oldLocation.archetype->RemoveEntity(
+      oldLocation, [&](const Entity swapped, const size_t chunkIdx, const size_t idxInChunk) {
+        assert(entity_manager_->IsValid(swapped));
+        assert(chunkIdx < oldLocation.archetype->GetChunkCount());
+        entity_locations_[swapped.GetId()] = EntityLocation{oldLocation.archetype, chunkIdx, idxInChunk};
+      });
   entity_locations_[id] = newLocation;
-  for (const auto& swap : swaps) {
-    assert(entity_manager_->IsValid(swap.entity));
-    assert(swap.chunkIndex < oldLocation.archetype->GetChunkCount());
-    entity_locations_[swap.entity.GetId()] = EntityLocation{oldLocation.archetype, swap.chunkIndex, swap.indexInChunk};
-  }
   PromoteToActive(entity_locations_[id]);
   return entity_locations_[id];
 }
@@ -371,13 +419,13 @@ EntityLocation Registry::TransitionRemoveComponent(const Entity entity, const Co
   const EntityLocation newLocation = newArchetype->AddEntity(entity);
   newArchetype->CopyComponents(oldLocation, newLocation);
 
-  const auto swaps = oldLocation.archetype->RemoveEntity(oldLocation);
+  oldLocation.archetype->RemoveEntity(
+      oldLocation, [&](const Entity swapped, const size_t chunkIdx, const size_t idxInChunk) {
+        assert(entity_manager_->IsValid(swapped));
+        assert(chunkIdx < oldLocation.archetype->GetChunkCount());
+        entity_locations_[swapped.GetId()] = EntityLocation{oldLocation.archetype, chunkIdx, idxInChunk};
+      });
   entity_locations_[id] = newLocation;
-  for (const auto& swap : swaps) {
-    assert(entity_manager_->IsValid(swap.entity));
-    assert(swap.chunkIndex < oldLocation.archetype->GetChunkCount());
-    entity_locations_[swap.entity.GetId()] = EntityLocation{oldLocation.archetype, swap.chunkIndex, swap.indexInChunk};
-  }
   PromoteToActive(entity_locations_[id]);
   return entity_locations_[id];
 }
@@ -532,6 +580,27 @@ void Registry::AddPair(const Entity entity, const Entity relationship, const Ent
   }
 }
 
+void Registry::RemovePair(const Entity entity, const Entity relationship, const Entity target) {
+  const auto it = pairs_.find(entity.id);
+  if (it == pairs_.end()) return;
+  const std::uint32_t targetId = target.GetId();
+  const EcsId pairId =
+      (static_cast<EcsId>(relationship.GetId()) << kPairRelationshipOffset) | static_cast<EcsId>(targetId);
+  if (it->second.erase(pairId) == 0) return;
+
+  const bool stillTargetsId =
+      std::ranges::any_of(it->second, [targetId](const EcsId p) { return Pair(p).GetTarget() == targetId; });
+  if (it->second.empty()) {
+    pairs_.erase(it);
+  }
+  if (!stillTargetsId) {
+    if (const auto revIt = target_to_pair_authors_.find(targetId); revIt != target_to_pair_authors_.end()) {
+      revIt->second.erase(entity.id);
+      if (revIt->second.empty()) target_to_pair_authors_.erase(revIt);
+    }
+  }
+}
+
 bool Registry::HasPair(const Entity entity, const Entity relationship, const Entity target) {
   const auto it = pairs_.find(entity.id);
   if (it == pairs_.end()) return false;
@@ -540,20 +609,44 @@ bool Registry::HasPair(const Entity entity, const Entity relationship, const Ent
   return it->second.contains(pairId);
 }
 
+bool Registry::WouldCreateHierarchyCycle(const Entity child, const Entity parent) const {
+  if (child == parent) return true;
+  Entity current = parent;
+  size_t steps = 0;
+  const size_t maxSteps = child_to_parent_.size() + 1;
+  while (steps++ <= maxSteps) {
+    const auto it = child_to_parent_.find(current.id);
+    if (it == child_to_parent_.end()) return false;
+    if (it->second == child) return true;
+    current = it->second;
+  }
+  return true;
+}
+
 void Registry::SetParent(const Entity child, const Entity parent) {
+  if (WouldCreateHierarchyCycle(child, parent)) {
+    Logger::Warn("Registry::SetParent: cycle detected between child " + std::to_string(child.id) + " and parent " +
+                 std::to_string(parent.id));
+    return;
+  }
+  const Entity childOf = ChildOfEntity();
   // Detach previous parent, if any.
   if (const auto it = child_to_parent_.find(child.id); it != child_to_parent_.end()) {
-    if (const auto p = parent_to_children_.find(it->second.id); p != parent_to_children_.end()) {
-      p->second.erase(child.id);
+    const Entity oldParent = it->second;
+    if (const auto p = parent_to_children_.find(oldParent.id); p != parent_to_children_.end()) {
+      std::erase(p->second, child.id);
       if (p->second.empty()) parent_to_children_.erase(p);
     }
+    RemovePair(child, childOf, oldParent);
   }
   child_to_parent_[child.id] = parent;
-  parent_to_children_[parent.id].insert(child.id);
+  auto& children = parent_to_children_[parent.id];
+  if (std::ranges::find(children, child.id) == children.end()) {
+    children.push_back(child.id);
+  }
   ++hierarchy_generation_;
 
   // Also insert relationship pair for generic pair queries.
-  const Entity childOf = ChildOfEntity();
   AddPair(child, childOf, parent);
 }
 

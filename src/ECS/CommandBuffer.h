@@ -22,14 +22,14 @@ struct Channel {
   explicit Channel(const size_t capacity) { buffer.resize(capacity); }
 
   template <typename... Args>
-  T& Emplace(Args&&... args) {
+  void Emplace(Args&&... args) {
     const size_t index = count.fetch_add(1, std::memory_order_relaxed);
     if (index < buffer.size()) {
       buffer[index] = T{std::forward<Args>(args)...};
-      return buffer[index];
+      return;
     }
     std::lock_guard<std::mutex> lock(overflow_mutex);
-    return overflow_buffer.emplace_back(std::forward<Args>(args)...);
+    overflow_buffer.emplace_back(std::forward<Args>(args)...);
   }
 
   void Clear() {

@@ -1,6 +1,7 @@
 #include "Engine/FrameLoop.h"
 
 #include <SDL3/SDL.h>
+#include <SDL3/SDL_atomic.h>
 #include <SDL3_mixer/SDL_mixer.h>
 
 #include <algorithm>
@@ -155,7 +156,73 @@ void FrameLoop::ProcessInput() {
   }
 }
 
-void FrameLoop::Update(const float deltaTime) {
+void FrameLoop::SyncAudioGain(const EngineOptions& options) {
+  // Master volume + mute live at the mixer level so they apply to every track (including loops
+  // already playing). Synced every frame — and outside the pause gate — so toggling mute reacts
+  // immediately even while execution is paused.
+  if (auto* mixer = registry_->Get<EngineContext>().mixer) {
+    const float masterGain = options.audioEnabled ? std::max(0.0F, options.masterVolume) : 0.0F;
+    MIX_SetMixerGain(mixer, masterGain);
+  }
+}
+
+void FrameLoop::PollHotReload([[maybe_unused]] const EngineOptions& options, [[maybe_unused]] const float deltaTime) {
+#ifndef OCTARINE_SHIPPED
+  // Run hot reload even when paused — authors iterate code with the editor paused all the time,
+  // and the swap is cheap. Uses real deltaTime (not time-scaled) so the poll cadence is stable.
+  if (options.hotReloadEnabled) {
+    if (auto* hotReload = registry_->TryGet<ScriptHotReload>()) {
+      hotReload->Tick(*registry_, lua_, deltaTime, options.hotReloadPollSeconds);
+    }
+    if (auto* assetReload = registry_->TryGet<AssetHotReload>()) {
+      auto& ctx = registry_->Get<EngineContext>();
+      assetReload->Tick(registry_->Get<AssetManager>(), ctx.sdlRenderer, ctx.mixer, deltaTime,
+                        options.hotReloadPollSeconds);
+    }
+  }
+#endif
+}
+
+int FrameLoop::ExecuteSimulationSteps(const float deltaTime, EngineOptions& options, InputSystem* inputSystem) {
+  if (options.isPaused && !options.stepFrame) {
+    return 0;
+  }
+
+  // dt precedence: an explicit fixedStepDt wins; otherwise sub-stepping implies the default
+  // 1/60s fixed step; otherwise variable frame dt scaled by timeScale. timeScale is ignored
+  // whenever a fixed step is in effect — fast-forward is expressed through simSubSteps instead.
+  constexpr float kDefaultFixedStepDt = 1.0F / 60.0F;
+  const int subSteps = std::max(1, options.simSubSteps);
+  float stepDt = deltaTime * options.timeScale;
+  if (options.fixedStepDt > 0.0F) {
+    stepDt = options.fixedStepDt;
+  } else if (subSteps > 1) {
+    stepDt = kDefaultFixedStepDt;
+  }
+
+  auto& renderQueue = registry_->Get<RenderQueue>();
+  int stepsExecuted = 0;
+  for (int step = 0; step < subSteps; ++step) {
+    if (step > 0) {
+      game_->FlushPendingSceneLoad();
+      if (options.isPaused && !options.stepFrame) {
+        break;
+      }
+    }
+    renderQueue.Clear();
+    registry_->Update(stepDt);
+    ++stepsExecuted;
+    // Edge-triggered input (pressed/released, wheel) must be observed by exactly one sim step,
+    // otherwise a single key press would re-fire on every sub-step of a fast-forwarded frame.
+    if (step == 0 && subSteps > 1 && inputSystem) {
+      inputSystem->ClearPerFrameInput();
+    }
+  }
+  options.stepFrame = false;
+  return stepsExecuted;
+}
+
+int FrameLoop::Update(const float deltaTime) {
 #ifdef OCTARINE_PROFILING
   PerfUtils::ProfilingAccumulator::Clear();
   PerfUtils::PerfCounters::ResetValues();
@@ -175,45 +242,23 @@ void FrameLoop::Update(const float deltaTime) {
 #endif
 
   auto& options = registry_->Get<GameConfig>().GetEngineOptions();
-
-  // Master volume + mute live at the mixer level so they apply to every track (including loops
-  // already playing). Synced every frame — and outside the pause gate — so toggling mute reacts
-  // immediately even while execution is paused.
-  if (auto* mixer = registry_->Get<EngineContext>().mixer) {
-    const float masterGain = options.audioEnabled ? std::max(0.0F, options.masterVolume) : 0.0F;
-    MIX_SetMixerGain(mixer, masterGain);
-  }
+  SyncAudioGain(options);
 
   auto* inputSystem = registry_->TryGet<InputSystem>();
   if (inputSystem) {
     inputSystem->BeginFrame();
   }
 
-#ifndef OCTARINE_SHIPPED
-  // Run hot reload even when paused — authors iterate code with the editor paused all the time,
-  // and the swap is cheap. Uses real deltaTime (not time-scaled) so the poll cadence is stable.
-  if (options.hotReloadEnabled) {
-    if (auto* hotReload = registry_->TryGet<ScriptHotReload>()) {
-      hotReload->Tick(*registry_, lua_, deltaTime, options.hotReloadPollSeconds);
-    }
-    if (auto* assetReload = registry_->TryGet<AssetHotReload>()) {
-      auto& ctx = registry_->Get<EngineContext>();
-      assetReload->Tick(registry_->Get<AssetManager>(), ctx.sdlRenderer, ctx.mixer, deltaTime,
-                        options.hotReloadPollSeconds);
-    }
-  }
-#endif
+  PollHotReload(options, deltaTime);
 
-  if (!options.isPaused || options.stepFrame) {
-    registry_->Update(deltaTime * options.timeScale);
-    options.stepFrame = false;
-  }
+  const int stepsExecuted = ExecuteSimulationSteps(deltaTime, options, inputSystem);
 
   // Pressed/released keys and wheel deltas are per-frame edge signals — clear after every
   // system in this frame has observed them.
   if (inputSystem) {
     inputSystem->ClearPerFrameInput();
   }
+  return stepsExecuted;
 }
 
 void FrameLoop::UpdateViewportInfo([[maybe_unused]] const bool editorSession,
@@ -268,6 +313,12 @@ void FrameLoop::Render(const float deltaTime) {
   PROFILE_COUNTER_SET("RenderQueue: Size", static_cast<long long>(renderQueue.Size()));
   PROFILE_COUNTER_SET("Entities: User", static_cast<long long>(registry_->GetUserEntityCount()));
 
+  if ((game_->IsHeadless() || gameConfig.GetEngineOptions().headless) && capture_path_.empty()) {
+    PROFILE_COUNTERS_REPORT();
+    renderQueue.Clear();
+    return;
+  }
+
   renderer_->BeginScene(runtime_->SdlRenderer());
 
 #ifdef OCTARINE_PROFILING
@@ -301,12 +352,13 @@ void FrameLoop::Render(const float deltaTime) {
   const bool editorSession = gameConfig.IsEditorMode() || !gameConfig.HasLoadedConfig();
   UpdateViewportInfo(editorSession, gameConfig.GetEngineOptions().showDebugGUI);
 
+  // Only draw the game texture to the full window if we are NOT in an editor session.
+  // In editor mode, the Scene window handles drawing this texture.
+  if (!editorSession) {
+    renderer_->CompositeSceneToWindow(runtime_->SdlRenderer());
+  }
+
   if (!game_->IsBenchMode()) {
-    // Only draw the game texture to the full window if we are NOT in an editor session.
-    // In editor mode, the Scene window handles drawing this texture.
-    if (!editorSession) {
-      renderer_->CompositeSceneToWindow(runtime_->SdlRenderer());
-    }
 #ifdef OCTARINE_WITH_IMGUI
     RenderDebugGUISystem::Render(game_, runtime_->SdlRenderer(), renderer_->GetSceneTexture(), deltaTime);
 #endif
@@ -335,7 +387,16 @@ float FrameLoop::WaitTime() {
     const Uint64 nsPerFrame = SDL_NS_PER_SECOND / static_cast<Uint64>(fpsTarget);
     const Uint64 elapsedTime = SDL_GetTicksNS() - nanoseconds_previous_frame_;
     if (elapsedTime < nsPerFrame) {
-      SDL_DelayNS(nsPerFrame - elapsedTime);
+      const Uint64 remaining = nsPerFrame - elapsedTime;
+      // OS sleep for the bulk of the wait, reserving ~1.5ms for spin-wait to avoid
+      // OS timer interrupt jitter/oversleeping on macOS and Windows schedulers.
+      constexpr Uint64 kSleepMarginNs = 1'500'000;
+      if (remaining > kSleepMarginNs) {
+        SDL_DelayNS(remaining - kSleepMarginNs);
+      }
+      while (SDL_GetTicksNS() - nanoseconds_previous_frame_ < nsPerFrame) {
+        SDL_CPUPauseInstruction();
+      }
     }
   }
 

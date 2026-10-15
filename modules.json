@@ -24,7 +24,7 @@
     {
       "name": "Entity",
       "binding_header": "src/Lua/Modules/EntityModuleLuaBinding.h",
-      "globals": ["are_colliding", "blam", "find_entity_by_name", "get_name", "get_position", "registry", "set_name", "set_position", "set_rotation", "set_sprite_src_rect"]
+      "globals": ["are_colliding", "blam", "find_entity_by_name", "get_name", "get_position", "get_position_xy", "registry", "set_name", "set_position", "set_rotation", "set_sprite_src_rect"]
     },
     {
       "name": "Scene",
@@ -34,7 +34,7 @@
     {
       "name": "Game",
       "binding_header": "src/Lua/Modules/GameModuleLuaBinding.h",
-      "globals": ["fire_projectile", "get_camera_position", "get_game_map_dimensions", "log_table", "quit_game", "set_game_map_dimensions", "set_perf_overlay", "toggle_perf_overlay"]
+      "globals": ["get_camera_position", "get_camera_zoom", "get_env", "get_fixed_dt", "get_fps_target", "get_game_map_dimensions", "get_sim_substeps", "get_state_hash", "is_deterministic", "is_headless", "log_table", "quit_game", "set_camera_zoom", "set_deterministic", "set_fixed_dt", "set_fps_target", "set_game_map_dimensions", "set_headless", "set_perf_overlay", "set_sim_seed", "set_sim_substeps", "toggle_perf_overlay", "write_project_file", "write_state_dump"]
     },
     {
       "name": "UI",

@@ -139,7 +139,12 @@ class KDTreeCollisionSystem {
     }
     query_->Update();
 
-    if (synchronous_) {
+    // Deterministic simulation mode (ThreadPool force-serial) also forces synchronous detection:
+    // the async path emits whichever pass has finished by wall-clock time, which varies per run.
+    if (synchronous_ || ThreadPool::IsForceSerial()) {
+      if (collisionResult_.valid()) {
+        static_cast<void>(collisionResult_.get());  // drain any in-flight async pass from before the mode switch
+      }
       UpdateSynchronous(eventBus);
     } else {
       UpdateAsynchronous(eventBus);

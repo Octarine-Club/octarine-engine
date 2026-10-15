@@ -21,17 +21,25 @@ inline std::string DurationToMs(std::chrono::time_point<std::chrono::high_resolu
   return std::to_string(ms);
 }
 
-// Returns the value at the given percentile (0..1) of `samples`, or 0 if empty.
-inline float GetPercentile(const std::vector<float>& samples, const float percentile) {
+// Returns the value at the given percentile (0..1) of `samples`, partitioning in-place.
+inline float GetPercentileInPlace(std::vector<float>& samples, const float percentile) {
   assert(percentile >= 0 && percentile <= 1);
   if (samples.empty()) {
     return 0.0f;
   }
-  std::vector<float> scratchpad(samples);
   const auto elementNum =
-      std::min(static_cast<size_t>(static_cast<float>(scratchpad.size()) * percentile), scratchpad.size() - 1);
-  std::ranges::nth_element(scratchpad, scratchpad.begin() + static_cast<std::ptrdiff_t>(elementNum));
-  return scratchpad[elementNum];
+      std::min(static_cast<size_t>(static_cast<float>(samples.size()) * percentile), samples.size() - 1);
+  std::ranges::nth_element(samples, samples.begin() + static_cast<std::ptrdiff_t>(elementNum));
+  return samples[elementNum];
+}
+
+// Returns the value at the given percentile (0..1) of `samples`, or 0 if empty.
+inline float GetPercentile(const std::vector<float>& samples, const float percentile) {
+  if (samples.empty()) {
+    return 0.0f;
+  }
+  std::vector<float> scratchpad(samples);
+  return GetPercentileInPlace(scratchpad, percentile);
 }
 
 class ScopedTimer {
@@ -233,9 +241,9 @@ auto LogTime(const std::string& name, Func&& func) -> std::invoke_result_t<Func>
 #define PROFILE_COUNTER_ADD(name, delta) PerfUtils::PerfCounters::Add((name), (delta))
 #define PROFILE_COUNTER_SET(name, value) PerfUtils::PerfCounters::Set((name), (value))
 #define PROFILE_COUNTER_HANDLE(name) PerfUtils::PerfCounters::GetOrCreate(name)
-#define PROFILE_COUNTER_INC(handle)                                     \
-  do {                                                                  \
-    if (auto* h = (handle)) h->fetch_add(1, std::memory_order_relaxed); \
+#define PROFILE_COUNTER_INC(handle)                                                             \
+  do {                                                                                          \
+    if (auto* counterHandle = (handle)) counterHandle->fetch_add(1, std::memory_order_relaxed); \
   } while (0)
 #define PROFILE_COUNTERS_REPORT() PerfUtils::PerfCounters::Report()
 #else

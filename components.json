@@ -38,12 +38,6 @@
       "get_accessor": "registry.get_color_grid"
     },
     {
-      "lua_key": "health",
-      "usertype": "health_component",
-      "has_accessor": "registry.has_health",
-      "get_accessor": "registry.get_health"
-    },
-    {
       "lua_key": "lifetime",
       "usertype": "lifetime_component",
       "has_accessor": "registry.has_lifetime",
@@ -68,12 +62,6 @@
       "get_accessor": "registry.get_position"
     },
     {
-      "lua_key": "projectile_emitter",
-      "usertype": "projectile_emitter_component",
-      "has_accessor": "registry.has_projectile_emitter",
-      "get_accessor": "registry.get_projectile_emitter"
-    },
-    {
       "lua_key": "rigidbody",
       "usertype": "rigidbody_component",
       "has_accessor": "registry.has_rigidbody",
@@ -96,6 +84,12 @@
       "usertype": "script_component",
       "has_accessor": "registry.has_script",
       "get_accessor": "registry.get_script"
+    },
+    {
+      "lua_key": "script_callbacks",
+      "usertype": "script_callback_component",
+      "has_accessor": "registry.has_script_callbacks",
+      "get_accessor": "registry.get_script_callbacks"
     },
     {
       "lua_key": "sprite",

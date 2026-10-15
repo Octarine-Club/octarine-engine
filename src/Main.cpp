@@ -15,6 +15,7 @@ int main(const int argc, char* argv[]) {
   std::string startupMode;
   std::string scriptsDir;
   bool useManifest = false;
+  bool headless = false;
   int devListenPort = 0;  // 0 = disabled; >0 = bind on that TCP port
 
   // Parse command-line arguments
@@ -29,6 +30,17 @@ int main(const int argc, char* argv[]) {
         Logger::Error("Error: " + currentArg + " flag requires a mode argument.");
         return 1;
       }
+    } else if (currentArg == "--project-root") {
+      if (i + 1 < argc) {
+        gamePath = argv[++i];
+        Logger::Info("Game path set to: " + gamePath);
+      } else {
+        Logger::Error("Error: --project-root flag requires a path argument.");
+        return 1;
+      }
+    } else if (currentArg == "--headless") {
+      headless = true;
+      Logger::Info("Headless mode enabled (--headless).");
     } else if (currentArg == "--scripts-dir") {
       if (i + 1 < argc) {
         scriptsDir = argv[++i];
@@ -81,6 +93,7 @@ int main(const int argc, char* argv[]) {
   Game game{};
   game.SetStartupMode(startupMode);
   game.SetUseManifest(useManifest);
+  game.SetHeadless(headless);
 #ifndef OCTARINE_SHIPPED
   game.SetDevListen(devListenPort);
 #else

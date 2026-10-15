@@ -7,7 +7,6 @@
 
 #include "Components/BoxColliderComponent.h"
 #include "Components/GlobalTransformComponent.h"
-#include "Components/HealthComponent.h"
 #include "Components/LifetimeComponent.h"
 #include "Components/NameComponent.h"
 #include "Components/PositionComponent.h"
@@ -117,14 +116,6 @@ void AppendBoxColliderJson(const Registry& registry, Entity entity, const Inspec
   comps.push_back(ss.str());
 }
 
-void AppendHealthJson(const Registry& registry, Entity entity, std::vector<std::string>& comps) {
-  if (!registry.HasComponent<HealthComponent>(entity)) return;
-  const auto& h = registry.GetComponent<HealthComponent>(entity);
-  std::ostringstream ss;
-  ss << R"("HealthComponent": {"currentHealth": )" << h.currentHealth << R"(, "maxHealth": )" << h.maxHealth << "}";
-  comps.push_back(ss.str());
-}
-
 void AppendNameJson(const Registry& registry, Entity entity, std::vector<std::string>& comps) {
   if (!registry.HasComponent<NameComponent>(entity)) return;
   const auto& n = registry.GetComponent<NameComponent>(entity);
@@ -159,11 +150,14 @@ bool HasNamedComponent(const Registry& registry, Entity entity, std::string_view
   if (compName == "RigidBodyComponent") return registry.HasComponent<RigidBodyComponent>(entity);
   if (compName == "GlobalTransformComponent") return registry.HasComponent<GlobalTransformComponent>(entity);
   if (compName == "BoxColliderComponent") return registry.HasComponent<BoxColliderComponent>(entity);
-  if (compName == "HealthComponent") return registry.HasComponent<HealthComponent>(entity);
   if (compName == "NameComponent") return registry.HasComponent<NameComponent>(entity);
   if (compName == "LifetimeComponent") return registry.HasComponent<LifetimeComponent>(entity);
   if (compName == "UIRectComponent") return registry.HasComponent<UIRectComponent>(entity);
-  return true;
+  const auto loc = registry.GetEntityLocation(entity);
+  if (!loc.archetype) return false;
+  return std::ranges::any_of(loc.archetype->component_infos(), [&](const ComponentInfo& info) {
+    return info.name == compName || PrettifyTypeName(info.name.c_str()) == compName;
+  });
 }
 
 bool EntityMatchesFilter(const Registry& registry, Entity entity, const std::vector<std::string>& filter) {
@@ -174,12 +168,11 @@ bool EntityMatchesFilter(const Registry& registry, Entity entity, const std::vec
 }  // namespace
 
 std::string StateInspector::DumpSummary(const Registry& registry, uint64_t currentTick) {
-  const auto userEntities = registry.GetUserEntities();
   std::ostringstream ss;
   ss << "{\n";
   ss << "  \"tick\": " << currentTick << ",\n";
   ss << "  \"entity_count\": " << registry.GetEntityCount() << ",\n";
-  ss << "  \"user_entity_count\": " << userEntities.size() << "\n";
+  ss << "  \"user_entity_count\": " << registry.GetUserEntityCount() << "\n";
   ss << "}";
   return ss.str();
 }
@@ -212,8 +205,8 @@ std::string StateInspector::DumpEntity(const Registry& registry, Entity entity, 
   AppendRigidBodyJson(registry, entity, opts, comps);
   AppendGlobalTransformJson(registry, entity, opts, comps);
   AppendBoxColliderJson(registry, entity, opts, comps);
-  AppendHealthJson(registry, entity, comps);
   AppendNameJson(registry, entity, comps);
+
   AppendLifetimeJson(registry, entity, opts, comps);
   AppendUIRectJson(registry, entity, opts, comps);
 
@@ -286,14 +279,35 @@ uint64_t StateInspector::ComputeStateHash(const Registry& registry, float floatS
       hash = FnvHashInt64(hash, Quantize(gt.scale.y, floatScale));
       hash = FnvHashInt64(hash, Quantize(gt.rotation, floatScale));
     }
-    if (registry.HasComponent<HealthComponent>(e)) {
-      const auto& h = registry.GetComponent<HealthComponent>(e);
-      hash = FnvHashInt64(hash, h.currentHealth);
-      hash = FnvHashInt64(hash, h.maxHealth);
-    }
   }
 
   return hash;
+}
+
+std::string StateInspector::DumpCanonicalState(const Registry& registry, float floatScale) {
+  // Mirrors ComputeStateHash field-for-field as one text line per entity, so two dumps from
+  // supposedly identical runs can be diffed to find the first diverging entity/field.
+  std::ostringstream out;
+  for (const Entity e : registry.GetUserEntities()) {
+    out << e.GetId() << ':' << e.GetGeneration() << (registry.IsActive(e) ? " A" : " I");
+    if (registry.HasComponent<PositionComponent>(e)) {
+      const auto& pos = registry.GetComponent<PositionComponent>(e);
+      out << " pos=" << Quantize(pos.value.x, floatScale) << ',' << Quantize(pos.value.y, floatScale);
+    }
+    if (registry.HasComponent<RigidBodyComponent>(e)) {
+      const auto& rb = registry.GetComponent<RigidBodyComponent>(e);
+      out << " vel=" << Quantize(rb.velocity.x, floatScale) << ',' << Quantize(rb.velocity.y, floatScale);
+    }
+    if (registry.HasComponent<GlobalTransformComponent>(e)) {
+      const auto& gt = registry.GetComponent<GlobalTransformComponent>(e);
+      out << " gt=" << Quantize(gt.position.x, floatScale) << ',' << Quantize(gt.position.y, floatScale) << ','
+          << Quantize(gt.scale.x, floatScale) << ',' << Quantize(gt.scale.y, floatScale) << ','
+          << Quantize(gt.rotation, floatScale);
+    }
+    out << '\n';
+  }
+
+  return out.str();
 }
 
 namespace {

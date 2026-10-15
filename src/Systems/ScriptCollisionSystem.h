@@ -42,7 +42,7 @@ class ScriptCollisionSystem {
     if (script.onCollisionFunction == sol::lua_nil) {
       return;
     }
-    if (auto result = script.onCollisionFunction(script.scriptTable, self, other); !result.valid()) {
+    if (auto result = script.onCollisionFunction(script.script_table, self, other); !result.valid()) {
       const sol::error err = result;
       Logger::ErrorLua(std::string(err.what()));
     }
@@ -56,7 +56,7 @@ class ScriptCollisionSystem {
     if (script.onCollisionExitFunction == sol::lua_nil) {
       return;
     }
-    if (auto result = script.onCollisionExitFunction(script.scriptTable, self, other); !result.valid()) {
+    if (auto result = script.onCollisionExitFunction(script.script_table, self, other); !result.valid()) {
       const sol::error err = result;
       Logger::ErrorLua(std::string(err.what()));
     }

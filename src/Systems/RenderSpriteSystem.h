@@ -24,7 +24,9 @@ class RenderSpriteSystem {
  public:
   void Prepare(Registry* registry) {
     const auto& gameConfig = registry->Get<GameConfig>();
-    camera_ = registry->Get<CameraComponent>().viewport;
+    const auto& cameraComp = registry->Get<CameraComponent>();
+    camera_ = cameraComp.viewport;
+    zoom_ = cameraComp.zoom > 0.001f ? cameraComp.zoom : 1.0f;
     assetManager_ = &registry->Get<AssetManager>();
     renderQueue_ = &registry->Get<RenderQueue>();
     spriteCache_ = &registry->Get<SpriteRenderCache>();
@@ -71,15 +73,17 @@ class RenderSpriteSystem {
     SDL_Texture* texture = entry ? entry->texture : nullptr;
     const SDL_FRect atlasOffset = entry ? entry->atlasOffset : SDL_FRect{0, 0, 0, 0};
 
-    const float x = sprite.isFixed ? transform.position.x : transform.position.x - camera_.x;
-    const float y = sprite.isFixed ? transform.position.y : transform.position.y - camera_.y;
+    const float x = sprite.isFixed ? transform.position.x : (transform.position.x - camera_.x) * zoom_;
+    const float y = sprite.isFixed ? transform.position.y : (transform.position.y - camera_.y) * zoom_;
+    const float destW = sprite.isFixed ? sprite.width * transform.scale.x : sprite.width * transform.scale.x * zoom_;
+    const float destH = sprite.isFixed ? sprite.height * transform.scale.y : sprite.height * transform.scale.y * zoom_;
 
     auto& cmd = renderQueue_->EmplaceSprite(static_cast<unsigned int>(sprite.layer), transform.position.y, texture,
                                             sprite.blendMode);
     cmd.destX = x;
     cmd.destY = y;
-    cmd.destW = sprite.width * transform.scale.x;
-    cmd.destH = sprite.height * transform.scale.y;
+    cmd.destW = destW;
+    cmd.destH = destH;
     // Atlas-aware src_rect compose: a loose texture leaves atlasOffset at zero (no-op add); an
     // atlas member adds the slice origin so the sprite's logical (sx, sy) selects inside the
     // packed atlas instead of the standalone source PNG.
@@ -90,7 +94,8 @@ class RenderSpriteSystem {
     cmd.rotation = transform.rotation;
     // transform.pivot is already the scaled offset from the sprite's top-left, which is exactly
     // the origin SDL_RenderTextureRotated rotates about.
-    cmd.pivot = {.x = transform.pivot.x, .y = transform.pivot.y};
+    cmd.pivot = sprite.isFixed ? SDL_FPoint{transform.pivot.x, transform.pivot.y}
+                               : SDL_FPoint{transform.pivot.x * zoom_, transform.pivot.y * zoom_};
     cmd.flip = static_cast<SDL_FlipMode>(sprite.flip);
     cmd.texture = texture;
     cmd.colorMod = SDL_Color{sprite.colorMod.r, sprite.colorMod.g, sprite.colorMod.b, sprite.colorMod.a};
@@ -105,6 +110,7 @@ class RenderSpriteSystem {
   float windowWidth_ = 0;
   float windowHeight_ = 0;
   octarine::Rect camera_{};
+  float zoom_ = 1.0f;
 #ifdef OCTARINE_PROFILING
   std::atomic<long long>* culledCounter_ = nullptr;
   std::atomic<long long>* emplacedCounter_ = nullptr;

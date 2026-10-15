@@ -14,7 +14,7 @@
 // iOS os_log sink is parked on the defer/ios branch pending an Apple Developer account.
 
 std::shared_ptr<spdlog::logger> Logger::lua_logger_;
-std::vector<std::string> Logger::history_;
+std::deque<std::string> Logger::history_;
 std::mutex Logger::history_mutex_;
 std::vector<Logger::ScriptError> Logger::script_errors_;
 std::uint64_t Logger::script_error_sequence_ = 0;
@@ -75,10 +75,10 @@ void Logger::PushHistory(std::string entry) {
   // Cap history to prevent unbounded growth from per-frame logging.
   constexpr size_t kMaxHistory = 1000;
   std::lock_guard<std::mutex> lock(history_mutex_);
-  history_.push_back(std::move(entry));
-  if (history_.size() > kMaxHistory) {
-    history_.erase(history_.begin());
+  if (history_.size() >= kMaxHistory) {
+    history_.pop_front();
   }
+  history_.push_back(std::move(entry));
 }
 
 void Logger::Error(const std::string& message) {
@@ -125,7 +125,7 @@ void Logger::InfoLua(const std::string& message) {
 
 std::vector<std::string> Logger::GetHistory() {
   std::lock_guard<std::mutex> lock(history_mutex_);
-  return history_;
+  return {history_.begin(), history_.end()};
 }
 
 void Logger::ForEachHistory(const std::function<void(const std::string&)>& callback) {
