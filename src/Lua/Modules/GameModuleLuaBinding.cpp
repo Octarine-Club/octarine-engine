@@ -108,7 +108,7 @@ void BindDiagnostics(sol::state& lua, LuaBindingContext& ctx) {
   });
 }
 
-void BindSimulationControl(sol::state& lua, LuaBindingContext& ctx) {
+void BindSubsteppingAndDt(sol::state& lua, LuaBindingContext& ctx) {
   lua.set_function("set_sim_substeps", [&ctx](const int substeps) {
     auto* gameConfig = ctx.GetRegistry()->TryGet<GameConfig>();
     if (!gameConfig) return;
@@ -133,6 +133,13 @@ void BindSimulationControl(sol::state& lua, LuaBindingContext& ctx) {
     return static_cast<double>(gameConfig->GetEngineOptions().fixedStepDt);
   });
 
+  // Seeds the engine-side simulation RNG (e.g. CullDistanceSystem perimeter repositioning).
+  // Lua's math.randomseed covers script randomness; this covers C++ systems.
+  lua.set_function("set_sim_seed",
+                   [](const double seed) { sim_random::Seed(static_cast<uint32_t>(static_cast<int64_t>(seed))); });
+}
+
+void BindExecutionEnvironment(sol::state& lua, LuaBindingContext& ctx) {
   // Deterministic simulation mode: forces ECS ParallelForEach / ThreadPool::ParallelChunks to run
   // serially and KDTreeCollisionSystem to run synchronously, so a seeded run replays bit-identically.
   // Costs multi-core throughput; intended for bot simulations, replays and A/B experiments.
@@ -173,11 +180,6 @@ void BindSimulationControl(sol::state& lua, LuaBindingContext& ctx) {
     if (!gameConfig) return false;
     return gameConfig->GetEngineOptions().headless;
   });
-
-  // Seeds the engine-side simulation RNG (e.g. CullDistanceSystem perimeter repositioning).
-  // Lua's math.randomseed covers script randomness; this covers C++ systems.
-  lua.set_function("set_sim_seed",
-                   [](const double seed) { sim_random::Seed(static_cast<uint32_t>(static_cast<int64_t>(seed))); });
 }
 
 void BindStateInspection(sol::state& lua, LuaBindingContext& ctx) {
@@ -260,7 +262,8 @@ void BindWorldAndCamera(sol::state& lua, LuaBindingContext& ctx) {
 
 void LuaModuleBinding<GameModule>::install(sol::state& lua, LuaBindingContext& ctx) {
   BindDiagnostics(lua, ctx);
-  BindSimulationControl(lua, ctx);
+  BindSubsteppingAndDt(lua, ctx);
+  BindExecutionEnvironment(lua, ctx);
   BindStateInspection(lua, ctx);
   BindWorldAndCamera(lua, ctx);
 }
