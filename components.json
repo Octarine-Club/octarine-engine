@@ -38,40 +38,10 @@
       "get_accessor": "registry.get_color_grid"
     },
     {
-      "lua_key": "contact_damage",
-      "usertype": "contact_damage_component",
-      "has_accessor": "registry.has_contact_damage",
-      "get_accessor": "registry.get_contact_damage"
-    },
-    {
-      "lua_key": "enemy_steering",
-      "usertype": "enemy_steering_component",
-      "has_accessor": "registry.has_enemy_steering",
-      "get_accessor": "registry.get_enemy_steering"
-    },
-    {
-      "lua_key": "health",
-      "usertype": "health_component",
-      "has_accessor": "registry.has_health",
-      "get_accessor": "registry.get_health"
-    },
-    {
-      "lua_key": "homing",
-      "usertype": "homing_component",
-      "has_accessor": "registry.has_homing",
-      "get_accessor": "registry.get_homing"
-    },
-    {
       "lua_key": "lifetime",
       "usertype": "lifetime_component",
       "has_accessor": "registry.has_lifetime",
       "get_accessor": "registry.get_lifetime"
-    },
-    {
-      "lua_key": "magnet",
-      "usertype": "magnet_component",
-      "has_accessor": "registry.has_magnet",
-      "get_accessor": "registry.get_magnet"
     },
     {
       "lua_key": "name",
@@ -90,18 +60,6 @@
       "usertype": "position_component",
       "has_accessor": "registry.has_position",
       "get_accessor": "registry.get_position"
-    },
-    {
-      "lua_key": "projectile_emitter",
-      "usertype": "projectile_emitter_component",
-      "has_accessor": "registry.has_projectile_emitter",
-      "get_accessor": "registry.get_projectile_emitter"
-    },
-    {
-      "lua_key": "retaliation",
-      "usertype": "retaliation_component",
-      "has_accessor": "registry.has_retaliation",
-      "get_accessor": "registry.get_retaliation"
     },
     {
       "lua_key": "rigidbody",
@@ -132,12 +90,6 @@
       "usertype": "script_callback_component",
       "has_accessor": "registry.has_script_callbacks",
       "get_accessor": "registry.get_script_callbacks"
-    },
-    {
-      "lua_key": "separation",
-      "usertype": "separation_component",
-      "has_accessor": "registry.has_separation",
-      "get_accessor": "registry.get_separation"
     },
     {
       "lua_key": "sprite",
@@ -186,12 +138,6 @@
       "usertype": "ui_z_index_component",
       "has_accessor": "registry.has_ui_z_index",
       "get_accessor": "registry.get_ui_z_index"
-    },
-    {
-      "lua_key": "weapon_zone",
-      "usertype": "weapon_zone_component",
-      "has_accessor": "registry.has_weapon_zone",
-      "get_accessor": "registry.get_weapon_zone"
     }
   ]
 }

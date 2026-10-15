@@ -7,7 +7,6 @@
 
 #include "Components/BoxColliderComponent.h"
 #include "Components/GlobalTransformComponent.h"
-#include "Components/HealthComponent.h"
 #include "Components/LifetimeComponent.h"
 #include "Components/NameComponent.h"
 #include "Components/PositionComponent.h"
@@ -117,14 +116,6 @@ void AppendBoxColliderJson(const Registry& registry, Entity entity, const Inspec
   comps.push_back(ss.str());
 }
 
-void AppendHealthJson(const Registry& registry, Entity entity, std::vector<std::string>& comps) {
-  if (!registry.HasComponent<HealthComponent>(entity)) return;
-  const auto& h = registry.GetComponent<HealthComponent>(entity);
-  std::ostringstream ss;
-  ss << R"("HealthComponent": {"currentHealth": )" << h.current_health << R"(, "maxHealth": )" << h.max_health << "}";
-  comps.push_back(ss.str());
-}
-
 void AppendNameJson(const Registry& registry, Entity entity, std::vector<std::string>& comps) {
   if (!registry.HasComponent<NameComponent>(entity)) return;
   const auto& n = registry.GetComponent<NameComponent>(entity);
@@ -159,7 +150,6 @@ bool HasNamedComponent(const Registry& registry, Entity entity, std::string_view
   if (compName == "RigidBodyComponent") return registry.HasComponent<RigidBodyComponent>(entity);
   if (compName == "GlobalTransformComponent") return registry.HasComponent<GlobalTransformComponent>(entity);
   if (compName == "BoxColliderComponent") return registry.HasComponent<BoxColliderComponent>(entity);
-  if (compName == "HealthComponent") return registry.HasComponent<HealthComponent>(entity);
   if (compName == "NameComponent") return registry.HasComponent<NameComponent>(entity);
   if (compName == "LifetimeComponent") return registry.HasComponent<LifetimeComponent>(entity);
   if (compName == "UIRectComponent") return registry.HasComponent<UIRectComponent>(entity);
@@ -215,8 +205,8 @@ std::string StateInspector::DumpEntity(const Registry& registry, Entity entity, 
   AppendRigidBodyJson(registry, entity, opts, comps);
   AppendGlobalTransformJson(registry, entity, opts, comps);
   AppendBoxColliderJson(registry, entity, opts, comps);
-  AppendHealthJson(registry, entity, comps);
   AppendNameJson(registry, entity, comps);
+
   AppendLifetimeJson(registry, entity, opts, comps);
   AppendUIRectJson(registry, entity, opts, comps);
 
@@ -289,11 +279,6 @@ uint64_t StateInspector::ComputeStateHash(const Registry& registry, float floatS
       hash = FnvHashInt64(hash, Quantize(gt.scale.y, floatScale));
       hash = FnvHashInt64(hash, Quantize(gt.rotation, floatScale));
     }
-    if (registry.HasComponent<HealthComponent>(e)) {
-      const auto& h = registry.GetComponent<HealthComponent>(e);
-      hash = FnvHashInt64(hash, h.current_health);
-      hash = FnvHashInt64(hash, h.max_health);
-    }
   }
 
   return hash;
@@ -319,12 +304,9 @@ std::string StateInspector::DumpCanonicalState(const Registry& registry, float f
           << Quantize(gt.scale.x, floatScale) << ',' << Quantize(gt.scale.y, floatScale) << ','
           << Quantize(gt.rotation, floatScale);
     }
-    if (registry.HasComponent<HealthComponent>(e)) {
-      const auto& h = registry.GetComponent<HealthComponent>(e);
-      out << " hp=" << h.current_health << '/' << h.max_health;
-    }
     out << '\n';
   }
+
   return out.str();
 }
 

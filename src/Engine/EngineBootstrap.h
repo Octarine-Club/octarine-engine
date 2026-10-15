@@ -8,8 +8,8 @@ class EventBus;
 class Game;
 class GameConfig;
 class InputSystem;
-class ProjectileEmitSystem;
 class Registry;
+
 struct EngineContext;
 
 // Shared boot-sequence phases used by both Game::Setup (full per-frame loop) and
@@ -40,11 +40,9 @@ void InstallLuaLibraries(sol::state& lua);
 void InstallCoreSingletons(Registry& registry, EngineContext& context, int windowWidth, int windowHeight,
                            bool withFramePathCaches, sol::state* lua = nullptr);
 
-// EntityPoolManager + ProjectileEmitSystem. ProjectileEmitSystem::Init calls RegisterPool
-// against the EntityPoolManager, so EntityPoolManager must be Set first. Both bind Lua
+// EntityPoolManager + GameModule singletons (e.g. ProjectileEmitSystem). Both bind Lua
 // surfaces (fire_projectile), so registration must happen before InstallLuaModules.
-// Returns the system reference so callers can stash it for later use.
-ProjectileEmitSystem& InstallPoolAndProjectile(Registry& registry);
+void InstallPoolAndSingletons(Registry& registry);
 
 // InputSystem owned by the Registry + subscribed to its three input events. The `input.*`
 // Lua surface is installed later via LuaSystemRegistry::bindAll once Lua libs are open;

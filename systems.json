@@ -19,7 +19,7 @@
       "name": "AudioCullingSystem",
       "source": "src/Systems/AudioCullingSystem.h",
       "tier": "serial",
-      "setup_order": 16,
+      "setup_order": 9,
       "queried_components": [
         "GlobalTransformComponent",
         "AudioSourceComponent"
@@ -46,7 +46,7 @@
       "name": "CameraFollowSystem",
       "source": "src/Systems/CameraFollowSystem.h",
       "tier": "serial",
-      "setup_order": 19,
+      "setup_order": 12,
       "queried_components": [
         "PositionComponent",
         "CameraFollowComponent"
@@ -66,59 +66,10 @@
       "lua_surface": false
     },
     {
-      "name": "CombatSystem",
-      "source": "src/Systems/CombatSystem.h",
-      "tier": null,
-      "setup_order": null,
-      "queried_components": [
-        "HealthComponent",
-        "ContactDamageComponent"
-      ],
-      "emits": [
-        "CombatDamagePlayerEvent",
-        "CombatDeathEvent",
-        "CombatHitEvent"
-      ],
-      "subscribes": [
-        "CollisionBatchEvent",
-        "CollisionExitBatchEvent"
-      ],
-      "lua_surface": false
-    },
-    {
-      "name": "CullDistanceSystem",
-      "source": "src/Systems/CullDistanceSystem.h",
-      "tier": "bulk",
-      "setup_order": 7,
-      "queried_components": [
-        "PositionComponent",
-        "EnemySteeringComponent"
-      ],
-      "emits": [],
-      "subscribes": [],
-      "lua_surface": false
-    },
-    {
-      "name": "DamageSystem",
-      "source": "src/Systems/DamageSystem.h",
-      "tier": null,
-      "setup_order": null,
-      "queried_components": [],
-      "emits": [
-        "CombatDamagePlayerEvent",
-        "CombatDeathEvent",
-        "CombatHitEvent"
-      ],
-      "subscribes": [
-        "CollisionBatchEvent"
-      ],
-      "lua_surface": false
-    },
-    {
       "name": "DopplerSystem",
       "source": "src/Systems/DopplerSystem.h",
       "tier": "serial",
-      "setup_order": 18,
+      "setup_order": 11,
       "queried_components": [
         "GlobalTransformComponent",
         "RigidBodyComponent",
@@ -140,39 +91,11 @@
       "lua_surface": false
     },
     {
-      "name": "EnemySteeringSystem",
-      "source": "src/Systems/EnemySteeringSystem.h",
-      "tier": "bulk",
-      "setup_order": 5,
-      "queried_components": [
-        "PositionComponent",
-        "RigidBodyComponent",
-        "EnemySteeringComponent"
-      ],
-      "emits": [],
-      "subscribes": [],
-      "lua_surface": false
-    },
-    {
       "name": "EntityPoolSystem",
       "source": "src/Systems/EntityPoolSystem.h",
       "tier": null,
       "setup_order": null,
       "queried_components": [],
-      "emits": [],
-      "subscribes": [],
-      "lua_surface": false
-    },
-    {
-      "name": "HomingSystem",
-      "source": "src/Systems/HomingSystem.h",
-      "tier": "bulk",
-      "setup_order": 6,
-      "queried_components": [
-        "PositionComponent",
-        "RigidBodyComponent",
-        "HomingComponent"
-      ],
       "emits": [],
       "subscribes": [],
       "lua_surface": false
@@ -196,7 +119,7 @@
       "name": "KDTreeCollisionSystem",
       "source": "src/Systems/KDTreeCollisionSystem.h",
       "tier": "bulk",
-      "setup_order": 13,
+      "setup_order": 6,
       "queried_components": [
         "GlobalTransformComponent",
         "BoxColliderComponent",
@@ -213,7 +136,7 @@
       "name": "LifetimeSystem",
       "source": "src/Systems/LifetimeSystem.h",
       "tier": "bulk",
-      "setup_order": 14,
+      "setup_order": 7,
       "queried_components": [
         "LifetimeComponent"
       ],
@@ -222,36 +145,10 @@
       "lua_surface": false
     },
     {
-      "name": "MagnetSystem",
-      "source": "src/Systems/MagnetSystem.h",
-      "tier": "bulk",
-      "setup_order": 9,
-      "queried_components": [
-        "PositionComponent",
-        "MagnetComponent",
-        "BoxColliderComponent"
-      ],
-      "emits": [],
-      "subscribes": [],
-      "lua_surface": false
-    },
-    {
-      "name": "ObstacleBounceSystem",
-      "source": "src/Systems/ObstacleBounceSystem.h",
-      "tier": null,
-      "setup_order": null,
-      "queried_components": [],
-      "emits": [],
-      "subscribes": [
-        "CollisionBatchEvent"
-      ],
-      "lua_surface": false
-    },
-    {
       "name": "OffScreenDespawnSystem",
       "source": "src/Systems/OffScreenDespawnSystem.h",
       "tier": "parallel",
-      "setup_order": 11,
+      "setup_order": 4,
       "queried_components": [
         "PositionComponent",
         "SpriteComponent"
@@ -271,35 +168,10 @@
       "lua_surface": false
     },
     {
-      "name": "ProjectileEmitSystem",
-      "source": "src/Systems/ProjectileEmitSystem.h",
-      "tier": "bulk",
-      "setup_order": 4,
-      "queried_components": [
-        "ProjectileEmitterComponent",
-        "PositionComponent"
-      ],
-      "emits": [],
-      "subscribes": [],
-      "lua_surface": false
-    },
-    {
-      "name": "ProjectileLifecycleSystem",
-      "source": "src/Systems/ProjectileLifecycleSystem.h",
-      "tier": "parallel",
-      "setup_order": 3,
-      "queried_components": [
-        "ProjectileComponent"
-      ],
-      "emits": [],
-      "subscribes": [],
-      "lua_surface": false
-    },
-    {
       "name": "RenderColorGridSystem",
       "source": "src/Systems/RenderColorGridSystem.h",
       "tier": "parallel",
-      "setup_order": 26,
+      "setup_order": 19,
       "queried_components": [
         "ColorGridComponent",
         "GlobalTransformComponent"
@@ -324,7 +196,7 @@
       "name": "RenderPrimitiveSystem",
       "source": "src/Systems/RenderPrimitiveSystem.h",
       "tier": "parallel",
-      "setup_order": 25,
+      "setup_order": 18,
       "queried_components": [
         "SquarePrimitiveComponent",
         "GlobalTransformComponent"
@@ -337,7 +209,7 @@
       "name": "RenderSpriteSystem",
       "source": "src/Systems/RenderSpriteSystem.h",
       "tier": "parallel",
-      "setup_order": 21,
+      "setup_order": 14,
       "queried_components": [
         "GlobalTransformComponent",
         "SpriteComponent"
@@ -350,7 +222,7 @@
       "name": "RenderTextSystem",
       "source": "src/Systems/RenderTextSystem.h",
       "tier": "serial",
-      "setup_order": 24,
+      "setup_order": 17,
       "queried_components": [
         "TextLabelComponent"
       ],
@@ -362,7 +234,7 @@
       "name": "RenderUIPrimitiveSystem",
       "source": "src/Systems/RenderUIPrimitiveSystem.h",
       "tier": "serial",
-      "setup_order": 23,
+      "setup_order": 16,
       "queried_components": [
         "UIRectComponent",
         "SquarePrimitiveComponent"
@@ -375,21 +247,11 @@
       "name": "RenderUISpriteSystem",
       "source": "src/Systems/RenderUISpriteSystem.h",
       "tier": "serial",
-      "setup_order": 22,
+      "setup_order": 15,
       "queried_components": [
         "UIRectComponent",
         "SpriteComponent"
       ],
-      "emits": [],
-      "subscribes": [],
-      "lua_surface": false
-    },
-    {
-      "name": "RetaliationSystem",
-      "source": "src/Systems/RetaliationSystem.h",
-      "tier": null,
-      "setup_order": null,
-      "queried_components": [],
       "emits": [],
       "subscribes": [],
       "lua_surface": false
@@ -408,20 +270,6 @@
       "lua_surface": false
     },
     {
-      "name": "ScriptCombatCallbackSystem",
-      "source": "src/Systems/ScriptCombatCallbackSystem.h",
-      "tier": null,
-      "setup_order": null,
-      "queried_components": [],
-      "emits": [],
-      "subscribes": [
-        "CombatDamagePlayerEvent",
-        "CombatDeathEvent",
-        "CombatHitEvent"
-      ],
-      "lua_surface": false
-    },
-    {
       "name": "ScriptSystem",
       "source": "src/Systems/ScriptSystem.h",
       "tier": "serial",
@@ -434,23 +282,10 @@
       "lua_surface": false
     },
     {
-      "name": "SeparationSystem",
-      "source": "src/Systems/SeparationSystem.h",
-      "tier": "bulk",
-      "setup_order": 8,
-      "queried_components": [
-        "PositionComponent",
-        "SeparationComponent"
-      ],
-      "emits": [],
-      "subscribes": [],
-      "lua_surface": false
-    },
-    {
       "name": "SpatialAudioSystem",
       "source": "src/Systems/SpatialAudioSystem.h",
       "tier": "serial",
-      "setup_order": 17,
+      "setup_order": 10,
       "queried_components": [
         "GlobalTransformComponent",
         "AudioSourceComponent",
@@ -464,7 +299,7 @@
       "name": "TransformSystem",
       "source": "src/Systems/TransformSystem.h",
       "tier": "bulk",
-      "setup_order": 12,
+      "setup_order": 5,
       "queried_components": [
         "GlobalTransformComponent"
       ],
@@ -494,7 +329,7 @@
       "name": "UILayoutSystem",
       "source": "src/Systems/UILayoutSystem.h",
       "tier": "bulk",
-      "setup_order": 20,
+      "setup_order": 13,
       "queried_components": [
         "UICanvasComponent"
       ],
@@ -506,7 +341,7 @@
       "name": "UpdateListenerTransformSystem",
       "source": "src/Systems/UpdateListenerTransformSystem.h",
       "tier": "bulk",
-      "setup_order": 15,
+      "setup_order": 8,
       "queried_components": [
         "GlobalTransformComponent"
       ],
@@ -518,7 +353,7 @@
       "name": "VelocityIntegrationSystem",
       "source": "src/Systems/VelocityIntegrationSystem.h",
       "tier": "parallel",
-      "setup_order": 10,
+      "setup_order": 3,
       "queried_components": [
         "PositionComponent",
         "RigidBodyComponent"

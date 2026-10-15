@@ -164,13 +164,20 @@ test_targets=(
   OctarineLuaApiTest OctarineAssetPipelineTest OctarineProcessTest OctarineProjectIniTest
   OctarineAdbTest
   OctarineEcsTest OctarineEcsHierarchyTest OctarineSystemLogicTest OctarineEventBusTest
-  OctarineKDTreeCollisionSystemTest OctarineCollisionResponseTest OctarineProjectileEmitSystemTest
-  OctarineCombatSystemTest
+  OctarineKDTreeCollisionSystemTest OctarineCollisionResponseTest
   OctarineStateInspectorTest OctarineGoldenPathIntegrationTest OctarineSimulationFuzzTest OctarineScenarioRunnerTest
   OctarineAssetRefcounterTest OctarineDevListenServerTest OctarineLuaBehaviorTest
   OctarineFileWatcherTest OctarineGameBakeTest OctarineFileSandboxTest
   OctarineRenderQueueTest OctarineAssetStoreTest
 )
+
+# Optional game module test targets
+if [[ -f "$repo_root/src/GameModule/tests/ProjectileEmitSystemTest.cpp" || ( -n "${OCTARINE_GAME_MODULE_DIR:-}" && -f "${OCTARINE_GAME_MODULE_DIR}/tests/ProjectileEmitSystemTest.cpp" ) ]]; then
+  test_targets+=(OctarineProjectileEmitSystemTest)
+fi
+if [[ -f "$repo_root/src/GameModule/tests/CombatSystemTest.cpp" || ( -n "${OCTARINE_GAME_MODULE_DIR:-}" && -f "${OCTARINE_GAME_MODULE_DIR}/tests/CombatSystemTest.cpp" ) ]]; then
+  test_targets+=(OctarineCombatSystemTest)
+fi
 
 if [[ $do_build -eq 1 ]]; then
   if [[ ! -f "$build_dir/CMakeCache.txt" ]]; then
@@ -183,7 +190,12 @@ if [[ $do_build -eq 1 ]]; then
   build_targets=("${test_targets[@]}")
   [[ "$mode" == "full" ]] && build_targets+=(OctarineEngine)
   target_args=()
-  for t in "${build_targets[@]}"; do target_args+=(--target "$t"); done
+  ninja_targets="$(ninja -C "$build_dir" -t targets 2>/dev/null || true)"
+  for t in "${build_targets[@]}"; do
+    if [[ -z "$ninja_targets" ]] || echo "$ninja_targets" | grep -q "^$t: "; then
+      target_args+=(--target "$t")
+    fi
+  done
   if ! cmake --build "$build_dir" "${target_args[@]}" --parallel; then
     fail 11 "build"
   fi

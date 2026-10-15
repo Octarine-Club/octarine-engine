@@ -1,5 +1,7 @@
 #pragma once
 
+#ifdef OCTARINE_HAS_GAME_MODULE
+
 #include <cstdint>
 #include <glm/glm.hpp>
 #include <memory>
@@ -120,3 +122,5 @@ class BenchWorld {
 };
 
 }  // namespace bench
+
+#endif  // OCTARINE_HAS_GAME_MODULE

@@ -1,3 +1,5 @@
+#ifdef OCTARINE_HAS_GAME_MODULE
+
 #include <benchmark/benchmark.h>
 
 #include <functional>
@@ -438,3 +440,5 @@ static void BM_LuaScriptUpdate(benchmark::State& state) {
   });
 }
 BENCHMARK(BM_LuaScriptUpdate)->Name("Sys/Lua/ScriptUpdate")->Arg(1000)->Arg(5000)->Arg(20000)->UseRealTime();
+
+#endif  // OCTARINE_HAS_GAME_MODULE

@@ -23,11 +23,8 @@
 #include "Components/CameraComponents.h"
 #include "Components/EntityMaskComponent.h"
 #include "Components/GlobalTransformComponent.h"
-#include "Components/HealthComponent.h"
 #include "Components/PivotComponent.h"
 #include "Components/PositionComponent.h"
-#include "Components/ProjectileComponent.h"
-#include "Components/ProjectileEmitterComponent.h"
 #include "Components/RigidBodyComponent.h"
 #include "Components/RotationComponent.h"
 #include "Components/ScaleComponent.h"
@@ -60,6 +57,7 @@
 #include "Components/AudioActiveTag.h"
 #include "Components/AudioListenerComponent.h"
 #include "Components/LifetimeComponent.h"
+#include "Engine/GameModuleHooks.h"
 #include "Lua/Bindings/InputSystemLuaBinding.h"
 #include "Lua/Bindings/LuaSystemRegistry.h"
 #include "Lua/HotReload/ScriptHotReload.h"
@@ -69,32 +67,20 @@
 #include "Systems/AudioCullingSystem.h"
 #include "Systems/AudioSystem.h"
 #include "Systems/CameraFollowSystem.h"
-#include "Systems/CombatSystem.h"
-#include "Systems/CullDistanceSystem.h"
-#include "Systems/DamageSystem.h"
 #include "Systems/DopplerSystem.h"
 #include "Systems/DrawColliderSystem.h"
-#include "Systems/EnemySteeringSystem.h"
-#include "Systems/HomingSystem.h"
 #include "Systems/InputSystem.h"
 #include "Systems/KDTreeCollisionSystem.h"
 #include "Systems/LifetimeSystem.h"
-#include "Systems/MagnetSystem.h"
-#include "Systems/ObstacleBounceSystem.h"
 #include "Systems/OffScreenDespawnSystem.h"
-#include "Systems/ProjectileEmitSystem.h"
-#include "Systems/ProjectileLifecycleSystem.h"
 #include "Systems/RenderColorGridSystem.h"
 #include "Systems/RenderPrimitiveSystem.h"
 #include "Systems/RenderSpriteSystem.h"
 #include "Systems/RenderTextSystem.h"
 #include "Systems/RenderUIPrimitiveSystem.h"
 #include "Systems/RenderUISpriteSystem.h"
-#include "Systems/RetaliationSystem.h"
 #include "Systems/ScriptCollisionSystem.h"
-#include "Systems/ScriptCombatCallbackSystem.h"
 #include "Systems/ScriptSystem.h"
-#include "Systems/SeparationSystem.h"
 #include "Systems/SpatialAudioSystem.h"
 #include "Systems/TransformSystem.h"
 #include "Systems/UIButtonSystem.h"
@@ -444,7 +430,7 @@ bool Game::RunBakeValidation(const std::string& assetPath, const std::string& sc
   // so the SpriteRenderCache / AudioTrackCache slots are unused.
   engine_bootstrap::InstallCoreSingletons(*registry_, registry_->Get<EngineContext>(), gameConfig.windowWidth,
                                           gameConfig.windowHeight, /*withFramePathCaches=*/false, &lua);
-  engine_bootstrap::InstallPoolAndProjectile(*registry_);
+  engine_bootstrap::InstallPoolAndSingletons(*registry_);
   auto& inputSystem = engine_bootstrap::InstallInputSystem(*registry_, event_bus_);
   engine_bootstrap::RegisterAllComponentBindings();
   LuaSystemRegistry::clear();
@@ -675,7 +661,7 @@ void Game::Setup() {
   // Snapshot stdlib globals before binding so the API manifest can diff out everything the
   // engine adds. Cheap; the actual dump below only fires in editor mode or via env override.
   const auto preBindingGlobals = LuaApiManifest::SnapshotGlobals(lua);
-  engine_bootstrap::InstallPoolAndProjectile(*registry_);
+  engine_bootstrap::InstallPoolAndSingletons(*registry_);
   scriptSystem.Func().CreateLuaBindings(lua);
   engine_bootstrap::InstallLuaModules(lua, *this);
   LuaSystemRegistry::bindAll(lua);
@@ -818,13 +804,10 @@ void Game::Setup() {
   // Event-driven systems with no per-frame Update — owned by the Registry instead of
   // living as parallel members on Game. Keeps the registry as the single source of truth.
   auto& uiButtonSystem = registry_->Set<UIButtonSystem>(UIButtonSystem());
-  auto& damageSystem = registry_->Set<DamageSystem>(DamageSystem());
-  auto& obstacleBounceSystem = registry_->Set<ObstacleBounceSystem>(ObstacleBounceSystem());
   auto& scriptCollisionSystem = registry_->Set<ScriptCollisionSystem>(ScriptCollisionSystem());
   uiButtonSystem.Init(registry_.get(), event_bus_);
-  damageSystem.Init(registry_.get(), event_bus_);
-  obstacleBounceSystem.Init(registry_.get(), event_bus_);
   scriptCollisionSystem.Init(registry_.get(), event_bus_);
+  game_module::RegisterEventSystems(*registry_, event_bus_);
 
   // Hot reload owns its own FileWatcher + (path -> entities) discovery loop. Compiled out
   // under OCTARINE_SHIPPED; in dev/editor builds the runtime gate lives on EngineOptions.

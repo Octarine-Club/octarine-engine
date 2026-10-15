@@ -1016,3 +1016,6 @@ imgui.ini
 # Local benchmark output and reports (root only — tests/benchmarks/ holds tracked sources)
 /benchmarks/
 
+# Optional private game module
+/src/GameModule
+

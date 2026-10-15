@@ -1,6 +1,6 @@
 #include <string>
 
-#include "Components/HealthComponent.h"
+#include "Components/LifetimeComponent.h"
 #include "Components/NameComponent.h"
 #include "Components/PositionComponent.h"
 #include "ECS/Registry.h"
@@ -19,7 +19,7 @@ int main() {
     const Entity e1 = registry.CreateEntity();
     const Entity e2 = registry.CreateEntity();
     registry.AddComponent(e1, PositionComponent{glm::vec2(10.0f, 20.0f)});
-    registry.AddComponent(e2, HealthComponent{100});
+    registry.AddComponent(e2, LifetimeComponent{10.0f});
 
     const std::string summaryPopulated = octarine::inspect::StateInspector::DumpSummary(registry, 42);
     Check(summaryPopulated.find("\"user_entity_count\": 2") != std::string::npos,
@@ -32,12 +32,12 @@ int main() {
     Registry registry;
     const Entity e = registry.CreateEntity();
     registry.AddComponent(e, PositionComponent{glm::vec2(15.5f, 30.5f)});
-    registry.AddComponent(e, HealthComponent{80});
+    registry.AddComponent(e, LifetimeComponent{10.0f});
     registry.AddComponent(e, NameComponent{"Player"});
 
     const std::string entityJson = octarine::inspect::StateInspector::DumpEntity(registry, e);
     Check(entityJson.find("\"PositionComponent\"") != std::string::npos, "DumpEntity includes PositionComponent");
-    Check(entityJson.find("\"HealthComponent\"") != std::string::npos, "DumpEntity includes HealthComponent");
+    Check(entityJson.find("\"LifetimeComponent\"") != std::string::npos, "DumpEntity includes LifetimeComponent");
     Check(entityJson.find("\"NameComponent\"") != std::string::npos, "DumpEntity includes NameComponent");
     Check(entityJson.find(R"("name": "Player")") != std::string::npos, "DumpEntity preserves string property");
 
@@ -51,13 +51,14 @@ int main() {
     const Entity e1 = registry.CreateEntity();
     const Entity e2 = registry.CreateEntity();
     registry.AddComponent(e1, PositionComponent{glm::vec2(1.0f, 2.0f)});
-    registry.AddComponent(e2, HealthComponent{50});
+    registry.AddComponent(e2, LifetimeComponent{10.0f});
 
     const std::string queryPos = octarine::inspect::StateInspector::QueryComponents(registry, {"PositionComponent"});
     Check(queryPos.find("\"matches\": 1") != std::string::npos, "QueryComponents finds matching entity");
 
     const std::string queryNone =
-        octarine::inspect::StateInspector::QueryComponents(registry, {"PositionComponent", "HealthComponent"});
+        octarine::inspect::StateInspector::QueryComponents(registry, {"PositionComponent", "LifetimeComponent"});
+
     Check(queryNone.find("\"matches\": 0") != std::string::npos, "QueryComponents handles non-overlapping query");
 
     const std::string queryUnknown =

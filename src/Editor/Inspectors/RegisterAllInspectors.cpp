@@ -9,12 +9,9 @@
 #include "Editor/Inspectors/ComponentInspectorRegistry.h"
 #include "Editor/Inspectors/EntityMaskComponentInspector.h"
 #include "Editor/Inspectors/GlobalTransformComponentInspector.h"
-#include "Editor/Inspectors/HealthComponentInspector.h"
 #include "Editor/Inspectors/LifetimeComponentInspector.h"
 #include "Editor/Inspectors/PivotComponentInspector.h"
 #include "Editor/Inspectors/PositionComponentInspector.h"
-#include "Editor/Inspectors/ProjectileComponentInspector.h"
-#include "Editor/Inspectors/ProjectileEmitterComponentInspector.h"
 #include "Editor/Inspectors/RigidBodyComponentInspector.h"
 #include "Editor/Inspectors/RotationComponentInspector.h"
 #include "Editor/Inspectors/ScaleComponentInspector.h"
@@ -23,8 +20,9 @@
 #include "Editor/Inspectors/SquarePrimitiveComponentInspector.h"
 #include "Editor/Inspectors/TextLabelComponentInspector.h"
 #include "Editor/Inspectors/UIButtonComponentInspector.h"
+#include "Engine/GameModuleHooks.h"
 
-void RegisterAllComponentInspectors() {
+void RegisterAllComponentInspectors(bool includeGameModule) {
   ComponentInspectorRegistry::clear();
   // Order = display order in the inspector.
   ComponentInspectorRegistry::registerComponent<PositionComponent>();
@@ -32,21 +30,22 @@ void RegisterAllComponentInspectors() {
   ComponentInspectorRegistry::registerComponent<RotationComponent>();
   ComponentInspectorRegistry::registerComponent<PivotComponent>();
   ComponentInspectorRegistry::registerComponent<GlobalTransformComponent>();
-  ComponentInspectorRegistry::registerComponent<HealthComponent>();
   ComponentInspectorRegistry::registerComponent<LifetimeComponent>();
   ComponentInspectorRegistry::registerComponent<SpriteComponent>();
   ComponentInspectorRegistry::registerComponent<RigidBodyComponent>();
   ComponentInspectorRegistry::registerComponent<BoxColliderComponent>();
   ComponentInspectorRegistry::registerComponent<AnimationComponent>();
-  ComponentInspectorRegistry::registerComponent<ProjectileEmitterComponent>();
   ComponentInspectorRegistry::registerComponent<TextLabelComponent>();
   ComponentInspectorRegistry::registerComponent<ScriptComponent>();
   ComponentInspectorRegistry::registerComponent<CameraFollowComponent>();
   ComponentInspectorRegistry::registerComponent<EntityMaskComponent>();
-  ComponentInspectorRegistry::registerComponent<ProjectileComponent>();
   ComponentInspectorRegistry::registerComponent<SquarePrimitiveComponent>();
   ComponentInspectorRegistry::registerComponent<ColorGridComponent>();
   ComponentInspectorRegistry::registerComponent<UIButtonComponent>();
+
+  if (includeGameModule) {
+    game_module::RegisterComponentInspectors();
+  }
 }
 
 #endif  // OCTARINE_WITH_EDITOR

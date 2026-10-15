@@ -73,10 +73,10 @@ int main() {
   const auto preBinding = LuaApiManifest::SnapshotGlobals(lua);
 
   // Mirror Game::Setup's binding order: component types, then free-function modules, then
-  // system surfaces.
-  RegisterAllLuaBindings();
+  // system surfaces. Pass false so catalogs reflect the pure engine API surface.
+  RegisterAllLuaBindings(false);
 #ifdef OCTARINE_WITH_EDITOR
-  RegisterAllComponentInspectors();
+  RegisterAllComponentInspectors(false);
 #endif
 
   ScriptSystem scriptSystem;

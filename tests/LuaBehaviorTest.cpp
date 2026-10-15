@@ -11,7 +11,10 @@
 
 #include "Components/ColorGridComponent.h"
 #include "Components/GlobalTransformComponent.h"
+#ifdef OCTARINE_HAS_GAME_MODULE
 #include "Components/HealthComponent.h"
+#include "Lua/Bindings/HealthComponentLuaBinding.h"
+#endif
 #include "Components/LifetimeComponent.h"
 #include "Components/NameComponent.h"
 #include "Components/PivotComponent.h"
@@ -27,7 +30,6 @@
 #include "Game/GameConfig.h"
 #include "General/AngleUnit.h"
 #include "General/Logger.h"
-#include "Lua/Bindings/HealthComponentLuaBinding.h"
 #include "Lua/Bindings/LuaBinding.h"
 #include "Lua/Bindings/LuaComponentRegistry.h"
 #include "Lua/Bindings/PositionComponentLuaBinding.h"
@@ -77,6 +79,7 @@ int main() {
 
   Registry* reg = game.GetRegistry();
 
+#ifdef OCTARINE_HAS_GAME_MODULE
   std::cout << "[health: damage / heal round-trip via Lua]\n";
   {
     const Entity e = reg->CreateEntity();
@@ -111,6 +114,7 @@ int main() {
     Check(RunLua(lua, "registry.get_health(test_entity).current_health = -42"), "Lua write current_health=-42");
     CheckEq(reg->GetComponent<HealthComponent>(e).current_health, 0, "current_health setter clamps to 0");
   }
+#endif
 
   std::cout << "[position: write field through bound usertype]\n";
   {
@@ -125,14 +129,14 @@ int main() {
 
   std::cout << "[has_/get_ accessors]\n";
   {
-    const Entity hasHealth = reg->CreateEntity();
-    reg->AddComponent<HealthComponent>(hasHealth, HealthComponent(10));
-    const Entity noHealth = reg->CreateEntity();
+    const Entity hasPos = reg->CreateEntity();
+    reg->AddComponent<PositionComponent>(hasPos, PositionComponent(glm::vec2(1.0f, 2.0f)));
+    const Entity noPos = reg->CreateEntity();
 
-    lua["with_health"] = hasHealth;
-    lua["without_health"] = noHealth;
-    Check(RunLua(lua, "assert(registry.has_health(with_health))"), "registry.has_health true for owner");
-    Check(RunLua(lua, "assert(not registry.has_health(without_health))"), "registry.has_health false for non-owner");
+    lua["with_pos"] = hasPos;
+    lua["without_pos"] = noPos;
+    Check(RunLua(lua, "assert(registry.has_position(with_pos))"), "registry.has_position true for owner");
+    Check(RunLua(lua, "assert(not registry.has_position(without_pos))"), "registry.has_position false for non-owner");
   }
 
   std::cout << "[blam: single entity and table of entities]\n";
@@ -223,6 +227,7 @@ int main() {
             "handle resolves to the entity built from the table");
   }
 
+#ifdef OCTARINE_HAS_GAME_MODULE
   std::cout << "[fromLua: defaults applied when fields omitted]\n";
   {
     // HealthComponent has no default-constructor (deleted); fromLua must synthesize one
@@ -237,6 +242,7 @@ int main() {
     CheckEq(custom.max_health, 25, "fromLua reads max_health");
     CheckEq(custom.current_health, 25, "fromLua initializes current to max");
   }
+#endif
 
   std::cout << "[module callable: log() runs]\n";
   {

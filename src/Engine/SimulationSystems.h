@@ -24,7 +24,7 @@ struct SimulationSystemHandles {
 // off-screen despawn, transforms, collision, lifetime — plus the ordering edges between them.
 //
 // Shared by Game::Setup and the headless benchmark harness so the benchmarked frame cannot drift
-// from the shipped one. Requires InstallPoolAndProjectile to have run (ProjectileEmitSystem and
+// from the shipped one. Requires InstallPoolAndSingletons to have run (EntityPoolManager and
 // EntityPoolManager must already be Set) and an EngineContext with a live eventBus.
 SimulationSystemHandles RegisterSimulationSystems(Registry& registry, const std::unique_ptr<EventBus>& eventBus);
 

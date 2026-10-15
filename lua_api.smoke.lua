@@ -1584,21 +1584,11 @@ color = {}
 color_grid_component = {}
 
 
----@class contact_damage_component
-contact_damage_component = {}
-
-
----@class enemy_steering_component
-enemy_steering_component = {}
-
-
 ---@class entity
 entity = {}
 
 
 function find_entity_by_name(...) end
-
-function fire_projectile(...) end
 
 function get_asset_path(...) end
 
@@ -1609,6 +1599,8 @@ function get_camera_zoom(...) end
 function get_env(...) end
 
 function get_fixed_dt(...) end
+
+function get_fps_target(...) end
 
 function get_game_map_dimensions(...) end
 
@@ -1621,14 +1613,6 @@ function get_position_xy(...) end
 function get_sim_substeps(...) end
 
 function get_state_hash(...) end
-
----@class health_component
-health_component = {}
-
-
----@class homing_component
-homing_component = {}
-
 
 ---@class input
 input = {}
@@ -1688,6 +1672,8 @@ function input.unbind(...) end
 
 function is_deterministic(...) end
 
+function is_headless(...) end
+
 ---@class lifetime_component
 lifetime_component = {}
 
@@ -1708,10 +1694,6 @@ function log_table(...) end
 
 function log_w(...) end
 
----@class magnet_component
-magnet_component = {}
-
-
 ---@class name_component
 name_component = {}
 
@@ -1724,10 +1706,6 @@ function play_sound(...) end
 
 ---@class position_component
 position_component = {}
-
-
----@class projectile_emitter_component
-projectile_emitter_component = {}
 
 
 function quit_game(...) end
@@ -1749,17 +1727,7 @@ function registry.get_camera_follow(...) end
 
 function registry.get_color_grid(...) end
 
-function registry.get_contact_damage(...) end
-
-function registry.get_enemy_steering(...) end
-
-function registry.get_health(...) end
-
-function registry.get_homing(...) end
-
 function registry.get_lifetime(...) end
-
-function registry.get_magnet(...) end
 
 function registry.get_name(...) end
 
@@ -1768,10 +1736,6 @@ function registry.get_parent(...) end
 function registry.get_pivot(...) end
 
 function registry.get_position(...) end
-
-function registry.get_projectile_emitter(...) end
-
-function registry.get_retaliation(...) end
 
 function registry.get_rigidbody(...) end
 
@@ -1782,8 +1746,6 @@ function registry.get_scale(...) end
 function registry.get_script(...) end
 
 function registry.get_script_callbacks(...) end
-
-function registry.get_separation(...) end
 
 function registry.get_sprite(...) end
 
@@ -1801,8 +1763,6 @@ function registry.get_ui_rect(...) end
 
 function registry.get_ui_z_index(...) end
 
-function registry.get_weapon_zone(...) end
-
 function registry.has_animation(...) end
 
 function registry.has_audio_listener(...) end
@@ -1815,27 +1775,13 @@ function registry.has_camera_follow(...) end
 
 function registry.has_color_grid(...) end
 
-function registry.has_contact_damage(...) end
-
-function registry.has_enemy_steering(...) end
-
-function registry.has_health(...) end
-
-function registry.has_homing(...) end
-
 function registry.has_lifetime(...) end
-
-function registry.has_magnet(...) end
 
 function registry.has_name(...) end
 
 function registry.has_pivot(...) end
 
 function registry.has_position(...) end
-
-function registry.has_projectile_emitter(...) end
-
-function registry.has_retaliation(...) end
 
 function registry.has_rigidbody(...) end
 
@@ -1846,8 +1792,6 @@ function registry.has_scale(...) end
 function registry.has_script(...) end
 
 function registry.has_script_callbacks(...) end
-
-function registry.has_separation(...) end
 
 function registry.has_sprite(...) end
 
@@ -1865,8 +1809,6 @@ function registry.has_ui_rect(...) end
 
 function registry.has_ui_z_index(...) end
 
-function registry.has_weapon_zone(...) end
-
 function registry.is_alive(...) end
 
 function registry.is_paused(...) end
@@ -1877,10 +1819,6 @@ function registry.set_paused(...) end
 
 
 function reload_scene(...) end
-
----@class retaliation_component
-retaliation_component = {}
-
 
 ---@class rigidbody_component
 rigidbody_component = {}
@@ -1902,17 +1840,17 @@ script_callback_component = {}
 script_component = {}
 
 
----@class separation_component
-separation_component = {}
-
-
 function set_camera_zoom(...) end
 
 function set_deterministic(...) end
 
 function set_fixed_dt(...) end
 
+function set_fps_target(...) end
+
 function set_game_map_dimensions(...) end
+
+function set_headless(...) end
 
 function set_name(...) end
 
@@ -1996,10 +1934,6 @@ ui_z_index_component = {}
 
 ---@class vec2
 vec2 = {}
-
-
----@class weapon_zone_component
-weapon_zone_component = {}
 
 
 function write_project_file(...) end

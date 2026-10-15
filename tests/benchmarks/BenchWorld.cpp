@@ -1,5 +1,7 @@
 #include "BenchWorld.h"
 
+#ifdef OCTARINE_HAS_GAME_MODULE
+
 #include <algorithm>
 #include <cmath>
 #include <numbers>
@@ -132,7 +134,7 @@ void BenchWorld::InstallSingletons() {
   storedCtx.config = &config;
   engine_bootstrap::InstallCoreSingletons(registry_, storedCtx, kWindowWidth, kWindowHeight,
                                           /*withFramePathCaches=*/true, nullptr);
-  engine_bootstrap::InstallPoolAndProjectile(registry_);
+  engine_bootstrap::InstallPoolAndSingletons(registry_);
 }
 
 float BenchWorld::RandomFloat(const float lo, const float hi) {
@@ -334,3 +336,5 @@ void BenchWorld::Step() {
 }
 
 }  // namespace bench
+
+#endif  // OCTARINE_HAS_GAME_MODULE

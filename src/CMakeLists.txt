@@ -145,16 +145,9 @@ target_link_libraries(octarine_lua PUBLIC
 # -----------------------------------------------------------------------------
 octarine_library(octarine_systems
         Lua/Bindings/InputSystemLuaBinding.cpp
-        Systems/CombatSystem.cpp
         Systems/AudioSystem.cpp
-        Systems/CullDistanceSystem.cpp
-        Systems/EnemySteeringSystem.cpp
-        Systems/HomingSystem.cpp
         Systems/InputSystem.cpp
-        Systems/RetaliationSystem.cpp
-        Systems/MagnetSystem.cpp
         Systems/PerfOverlaySystem.cpp
-        Systems/SeparationSystem.cpp
 )
 target_link_libraries(octarine_systems PUBLIC
         octarine_core
@@ -162,6 +155,17 @@ target_link_libraries(octarine_systems PUBLIC
         octarine_renderer
         octarine_lua
 )
+
+# -----------------------------------------------------------------------------
+# Optional private GameModule (e.g. dash-vs native systems and components)
+# -----------------------------------------------------------------------------
+set(OCTARINE_GAME_MODULE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/GameModule" CACHE PATH "Optional path to private game C++ module")
+if (EXISTS "${OCTARINE_GAME_MODULE_DIR}/CMakeLists.txt")
+    message(STATUS "Octarine: Private GameModule FOUND at ${OCTARINE_GAME_MODULE_DIR}")
+    add_subdirectory("${OCTARINE_GAME_MODULE_DIR}" GameModule)
+    target_compile_definitions(octarine_core PUBLIC OCTARINE_HAS_GAME_MODULE)
+endif ()
+
 
 # -----------------------------------------------------------------------------
 # octarine_editor — desktop-only editor UI + inspectors + RenderDebugGUISystem +
@@ -269,6 +273,10 @@ target_link_libraries(octarine_engine PUBLIC
 if (TARGET octarine_editor)
     target_link_libraries(octarine_engine PUBLIC octarine_editor)
 endif ()
+if (TARGET octarine_game_module)
+    target_link_libraries(octarine_engine PUBLIC octarine_game_module)
+endif ()
+
 # Winsock provides the BSD-socket API (ws2_32) on Windows; POSIX sockets come from libc so no
 # extra link is needed there. Only when the dev server is compiled in (non-shipped builds).
 if (NOT OCTARINE_SHIPPED AND WIN32)

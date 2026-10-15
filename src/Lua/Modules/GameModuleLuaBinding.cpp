@@ -19,7 +19,6 @@
 #include "General/SimRandom.h"
 #include "General/ThreadPool.h"
 #include "Lua/LuaBindingContext.h"
-#include "Systems/ProjectileEmitSystem.h"
 
 namespace {
 constexpr size_t kDefaultMaxDepth = 5;
@@ -251,15 +250,4 @@ void LuaModuleBinding<GameModule>::install(sol::state& lua, LuaBindingContext& c
     if (!camera) return 1.0;
     return static_cast<double>(camera->zoom);
   });
-
-  // Manual fire from Lua. Player-tagged emitters skip auto-fire — gameplay code drives shots
-  // via input callbacks. dx/dy is a non-normalized aim vector; 0,0 falls back to the
-  // emitter's configured velocity.
-  lua.set_function(
-      "fire_projectile", [&ctx](const Entity emitter, const sol::optional<double> dx, const sol::optional<double> dy) {
-        auto* registry = ctx.GetRegistry();
-        auto& projectileEmitSystem = registry->Get<ProjectileEmitSystem>();
-        projectileEmitSystem.Fire(
-            *registry, emitter, glm::vec2(static_cast<float>(dx.value_or(0.0)), static_cast<float>(dy.value_or(0.0))));
-      });
 }

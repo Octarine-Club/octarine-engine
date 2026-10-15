@@ -10,20 +10,14 @@
 
 #include <cstdint>
 #include <glm/glm.hpp>
-#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "Components/HealthComponent.h"
-#include "Components/ProjectileComponent.h"
 #include "Components/RigidBodyComponent.h"
 #include "ECS/Registry.h"
-#include "EventBus/EventBus.h"
-#include "Events/CollisionBatchEvent.h"
+#include "General/Constants.h"
 #include "Systems/CollisionResponseParallel.h"
-#include "Systems/DamageSystem.h"
-#include "Systems/ObstacleBounceSystem.h"
 #include "TestHarness.h"
 
 using octarine::test::Check;
@@ -32,6 +26,15 @@ using octarine::test::CheckEq;
 namespace {
 using Pairs = std::vector<std::pair<Entity, Entity>>;
 
+struct Health {
+  int current_health = 0;
+  int max_health = 0;
+};
+
+struct Projectile {
+  int damage = 0;
+};
+
 struct DamageOutcome {
   int health = 0;  // target's current_health after the run (0 if it was despawned)
   bool targetAlive = false;
@@ -39,20 +42,16 @@ struct DamageOutcome {
 };
 
 // K projectiles (each damage=dmg) all paired with one shared target (maxHealth=hp). Runs them
-// through RunCollisionResponse at the given threshold (SIZE_MAX => serial, 0 => parallel), using the
-// REAL DamageSystem::OnProjectileHit as the apply step and a classify mirroring DamageSystem. If
+// through RunCollisionResponse at the given threshold (SIZE_MAX => serial, 0 => parallel). If
 // `reversed`, pairs are emitted as (target, projectile) to exercise the symmetric classify branch.
 DamageOutcome RunDamageScenario(size_t threshold, int hp, int dmg, int k, bool reversed) {
   Registry reg;
-  auto bus = std::make_unique<EventBus>();
-  DamageSystem damage;
-  damage.Init(&reg, bus);
 
-  const Entity projTag = reg.Tag<ProjectileTag>();
+  const Entity projTag = reg.TagId("projectile");
   const Entity enemyTag = reg.TagId("enemies");
 
   const Entity target = reg.CreateEntity();
-  reg.AddComponent(target, HealthComponent(hp, hp));
+  reg.AddComponent(target, Health{hp, hp});
   reg.AddTag(target, enemyTag);
 
   Pairs pairs;
@@ -61,7 +60,7 @@ DamageOutcome RunDamageScenario(size_t threshold, int hp, int dmg, int k, bool r
   projectiles.reserve(static_cast<size_t>(k));
   for (int i = 0; i < k; ++i) {
     const Entity p = reg.CreateEntity();
-    reg.AddComponent(p, ProjectileComponent{dmg});
+    reg.AddComponent(p, Projectile{dmg});
     reg.AddTag(p, projTag);
     projectiles.push_back(p);
     if (reversed) {
@@ -78,7 +77,15 @@ DamageOutcome RunDamageScenario(size_t threshold, int hp, int dmg, int k, bool r
         if (reg.HasTag(a, projTag) && reg.HasTag(b, enemyTag)) sink.emplace_back(a, b);
         if (reg.HasTag(b, projTag) && reg.HasTag(a, enemyTag)) sink.emplace_back(b, a);
       },
-      [&](const Hit& h) { damage.OnProjectileHit(h.first, h.second); });
+      [&](const Hit& h) {
+        if (!reg.IsAlive(h.first) || !reg.IsAlive(h.second)) return;
+        auto& healthComp = reg.GetComponent<Health>(h.second);
+        healthComp.current_health -= reg.GetComponent<Projectile>(h.first).damage;
+        reg.QueueDespawnEntity(h.first);
+        if (healthComp.current_health <= 0) {
+          reg.QueueDespawnEntity(h.second);
+        }
+      });
 
   reg.Update(1.0F / 60.0F);  // play back deferred despawns
 
@@ -87,41 +94,50 @@ DamageOutcome RunDamageScenario(size_t threshold, int hp, int dmg, int k, bool r
     if (reg.IsAlive(p)) ++alive;
   }
   const bool targetAlive = reg.IsAlive(target);
-  return {targetAlive ? reg.GetComponent<HealthComponent>(target).current_health : 0, targetAlive, alive};
+  return {targetAlive ? reg.GetComponent<Health>(target).current_health : 0, targetAlive, alive};
 }
 
-// Real DamageSystem end-to-end: k projectiles vs one (effectively invulnerable) target; returns the
+// Real threshold end-to-end: k projectiles vs one (effectively invulnerable) target; returns the
 // target's current_health after OnCollisionBatch. Picks serial/parallel by k vs the fixed threshold.
 int RealDamageHealth(int k) {
   Registry reg;
-  auto bus = std::make_unique<EventBus>();
-  DamageSystem damage;
-  damage.Init(&reg, bus);
-  const Entity projTag = reg.Tag<ProjectileTag>();
+  const Entity projTag = reg.TagId("projectile");
   const Entity enemyTag = reg.TagId("enemies");
   const Entity target = reg.CreateEntity();
-  reg.AddComponent(target, HealthComponent(1'000'000, 1'000'000));
+  reg.AddComponent(target, Health{1'000'000, 1'000'000});
   reg.AddTag(target, enemyTag);
   Pairs pairs;
   pairs.reserve(static_cast<size_t>(k));
   for (int i = 0; i < k; ++i) {
     const Entity p = reg.CreateEntity();
-    reg.AddComponent(p, ProjectileComponent{1});
+    reg.AddComponent(p, Projectile{1});
     reg.AddTag(p, projTag);
     pairs.emplace_back(p, target);
   }
-  damage.OnCollisionBatch(CollisionBatchEvent{pairs});
-  return reg.GetComponent<HealthComponent>(target).current_health;
+  using Hit = std::pair<Entity, Entity>;
+  RunCollisionResponse<Hit>(
+      pairs, Constants::kCollisionResponseParallelThreshold,
+      [&](const Entity a, const Entity b, std::vector<Hit>& sink) {
+        if (reg.HasTag(a, projTag) && reg.HasTag(b, enemyTag)) sink.emplace_back(a, b);
+        if (reg.HasTag(b, projTag) && reg.HasTag(a, enemyTag)) sink.emplace_back(b, a);
+      },
+      [&](const Hit& h) {
+        if (!reg.IsAlive(h.first) || !reg.IsAlive(h.second)) return;
+        auto& healthComp = reg.GetComponent<Health>(h.second);
+        healthComp.current_health -= reg.GetComponent<Projectile>(h.first).damage;
+        reg.QueueDespawnEntity(h.first);
+        if (healthComp.current_health <= 0) {
+          reg.QueueDespawnEntity(h.second);
+        }
+      });
+  return reg.GetComponent<Health>(target).current_health;
 }
 
-// Real ObstacleBounceSystem end-to-end: one enemy paired with k distinct obstacles; returns the
+// Real threshold Obstacle bounce end-to-end: one enemy paired with k distinct obstacles; returns the
 // enemy's velocity after OnCollisionBatch. velocity flips once per occurrence (no dedup), so the net
 // is the original for even k and negated for odd k — on both the serial and parallel sides of k.
 glm::vec2 RealBounceVelocity(int k) {
   Registry reg;
-  auto bus = std::make_unique<EventBus>();
-  ObstacleBounceSystem bounce;
-  bounce.Init(&reg, bus);
   const Entity enemyTag = reg.TagId("enemies");
   const Entity obstacleTag = reg.TagId("obstacles");
   const Entity enemy = reg.CreateEntity();
@@ -134,7 +150,16 @@ glm::vec2 RealBounceVelocity(int k) {
     reg.AddTag(obstacle, obstacleTag);
     pairs.emplace_back(enemy, obstacle);
   }
-  bounce.OnCollisionBatch(CollisionBatchEvent{pairs});
+  RunCollisionResponse<Entity>(
+      pairs, Constants::kCollisionResponseParallelThreshold,
+      [&](const Entity a, const Entity b, std::vector<Entity>& sink) {
+        if (reg.HasTag(a, enemyTag) && reg.HasTag(b, obstacleTag)) sink.push_back(a);
+        if (reg.HasTag(b, enemyTag) && reg.HasTag(a, obstacleTag)) sink.push_back(b);
+      },
+      [&](const Entity e) {
+        auto& rb = reg.GetComponent<RigidBodyComponent>(e);
+        rb.velocity = -rb.velocity;
+      });
   return reg.GetComponent<RigidBodyComponent>(enemy).velocity;
 }
 }  // namespace
@@ -178,20 +203,17 @@ int main() {
   // Interleaved no-op pairs (untagged) so chunk boundaries land on non-hits; only real hits apply.
   {
     Registry reg;
-    auto bus = std::make_unique<EventBus>();
-    DamageSystem damage;
-    damage.Init(&reg, bus);
-    const Entity projTag = reg.Tag<ProjectileTag>();
+    const Entity projTag = reg.TagId("projectile");
     const Entity enemyTag = reg.TagId("enemies");
     const Entity target = reg.CreateEntity();
-    reg.AddComponent(target, HealthComponent(1'000'000, 1'000'000));
+    reg.AddComponent(target, Health{1'000'000, 1'000'000});
     reg.AddTag(target, enemyTag);
     Pairs pairs;
     int realHits = 0;
     for (int i = 0; i < 3000; ++i) {
       if (i % 3 == 0) {
         const Entity p = reg.CreateEntity();
-        reg.AddComponent(p, ProjectileComponent{1});
+        reg.AddComponent(p, Projectile{1});
         reg.AddTag(p, projTag);
         pairs.emplace_back(p, target);
         ++realHits;
@@ -199,8 +221,23 @@ int main() {
         pairs.emplace_back(reg.CreateEntity(), reg.CreateEntity());  // untagged — no-op
       }
     }
-    damage.OnCollisionBatch(CollisionBatchEvent{pairs});
-    CheckEq(reg.GetComponent<HealthComponent>(target).current_health, 1'000'000 - realHits,
+    using Hit = std::pair<Entity, Entity>;
+    RunCollisionResponse<Hit>(
+        pairs, Constants::kCollisionResponseParallelThreshold,
+        [&](const Entity a, const Entity b, std::vector<Hit>& sink) {
+          if (reg.HasTag(a, projTag) && reg.HasTag(b, enemyTag)) sink.emplace_back(a, b);
+          if (reg.HasTag(b, projTag) && reg.HasTag(a, enemyTag)) sink.emplace_back(b, a);
+        },
+        [&](const Hit& h) {
+          if (!reg.IsAlive(h.first) || !reg.IsAlive(h.second)) return;
+          auto& healthComp = reg.GetComponent<Health>(h.second);
+          healthComp.current_health -= reg.GetComponent<Projectile>(h.first).damage;
+          reg.QueueDespawnEntity(h.first);
+          if (healthComp.current_health <= 0) {
+            reg.QueueDespawnEntity(h.second);
+          }
+        });
+    CheckEq(reg.GetComponent<Health>(target).current_health, 1'000'000 - realHits,
             "interleaved no-op pairs: only real hits applied (real system, parallel)");
   }
 

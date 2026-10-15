@@ -413,9 +413,19 @@ class Registry {
       return *this;
     }
 
+    OrderBuilder& After(const SystemId other) {
+      registry_->AddOrderEdge(other, id_);
+      return *this;
+    }
+
     template <typename T>
     OrderBuilder& Before(const SystemHandle<T>& other) {
       registry_->AddOrderEdge(id_, other.Id());
+      return *this;
+    }
+
+    OrderBuilder& Before(const SystemId other) {
+      registry_->AddOrderEdge(id_, other);
       return *this;
     }
 
@@ -428,6 +438,8 @@ class Registry {
   OrderBuilder Order(const SystemHandle<T>& handle) {
     return OrderBuilder(this, handle.Id());
   }
+
+  OrderBuilder Order(const SystemId id) { return OrderBuilder(this, id); }
 
   // Stores singleton service wrapped in shared_ptr to support move-only types.
   template <typename T>

@@ -4,6 +4,6 @@
 
 // Populates ComponentInspectorRegistry with every inspectable component.
 // Call once during Game::Setup (editor builds only).
-void RegisterAllComponentInspectors();
+void RegisterAllComponentInspectors(bool includeGameModule = true);
 
 #endif  // OCTARINE_WITH_EDITOR

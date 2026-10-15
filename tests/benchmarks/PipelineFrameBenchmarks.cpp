@@ -1,3 +1,5 @@
+#ifdef OCTARINE_HAS_GAME_MODULE
+
 #include <benchmark/benchmark.h>
 
 #include <algorithm>
@@ -319,3 +321,5 @@ BENCHMARK(BM_MaxEntities)
     ->Iterations(1)
     ->UseManualTime()
     ->Unit(benchmark::kSecond);
+
+#endif  // OCTARINE_HAS_GAME_MODULE
