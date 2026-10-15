@@ -22,12 +22,12 @@ class EngineRuntime {
   ~EngineRuntime() = default;
 
   // SDL_Init(video/audio/events/gamepad) + TTF_Init. Returns false (logging the SDL error) on
-  // failure so Game::Initialize can abort.
-  [[nodiscard]] bool InitSubsystems();
+  // failure so Game::Initialize can abort. When `headless` is true, sets SDL dummy video/audio hints.
+  [[nodiscard]] bool InitSubsystems(bool headless = false);
 
-  // Create the window + accelerated renderer (resizable). Returns false on failure; on success
-  // Window()/SdlRenderer() are non-null.
-  [[nodiscard]] bool CreateWindow(const std::string& title, int width, int height);
+  // Create the window + accelerated renderer (resizable, or hidden when `headless` is true).
+  // Returns false on failure; on success Window()/SdlRenderer() are non-null.
+  [[nodiscard]] bool CreateWindow(const std::string& title, int width, int height, bool headless = false);
 
 #ifdef OCTARINE_WITH_IMGUI
   // Stand up the ImGui context + SDL3/SDLRenderer3 backends and the docking/nav config flags.

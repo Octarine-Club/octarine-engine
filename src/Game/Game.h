@@ -82,6 +82,8 @@ class Game : public LuaBindingContext {
   // scanning — the only way to exercise the manifest-load branch without producing a full package.
   // In a shipped build (OCTARINE_SHIPPED) the manifest is used unconditionally and this is moot.
   void SetUseManifest(bool useManifest) { use_manifest_ = useManifest; }
+  void SetHeadless(bool headless) { headless_ = headless; }
+  [[nodiscard]] bool IsHeadless() const { return headless_; }
 
 #ifndef OCTARINE_SHIPPED
   // Dev-only: opt into the DevListenServer. port=0 leaves the server stopped; >0 binds on
@@ -151,6 +153,7 @@ class Game : public LuaBindingContext {
   uint64_t current_tick_ = 0;
   bool bake_mode_ = false;
   bool use_manifest_ = false;
+  bool headless_ = false;
 #ifndef OCTARINE_SHIPPED
   int dev_listen_port_ = 0;
 #endif

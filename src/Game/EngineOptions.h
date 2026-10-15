@@ -61,6 +61,10 @@ struct EngineOptions {
   // Mirrors ThreadPool::IsForceSerial(): serial ECS iteration + synchronous collision for
   // bit-reproducible seeded runs (see set_deterministic in GameModuleLuaBinding).
   bool deterministic = false;
+  // Headless simulation mode (--headless or OCTARINE_HEADLESS=1): uses SDL dummy video/audio
+  // drivers, hides the window, uncaps FPS (fpsTarget = 0), and skips software rasterization
+  // in FrameLoop::Render unless OCTARINE_CAPTURE_PATH is set.
+  bool headless = false;
   // When true, a scene whose asset references fail validation aborts the load (dev gate). Off by
   // default so players never hard-fail; the bake step is the CI enforcement point.
   bool assetValidationFatal = false;

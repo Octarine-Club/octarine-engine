@@ -13,7 +13,12 @@
 #include "imgui_impl_sdlrenderer3.h"
 #endif
 
-bool EngineRuntime::InitSubsystems() {
+bool EngineRuntime::InitSubsystems(const bool headless) {
+  if (headless) {
+    SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
+    SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "dummy");
+  }
+
   constexpr auto SDL_INI = SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS | SDL_INIT_GAMEPAD;
 
   if (!SDL_Init(SDL_INI)) {
@@ -29,8 +34,9 @@ bool EngineRuntime::InitSubsystems() {
   return true;
 }
 
-bool EngineRuntime::CreateWindow(const std::string& title, int width, int height) {
-  SDL_CreateWindowAndRenderer(title.c_str(), width, height, SDL_WINDOW_RESIZABLE, &window_, &sdl_renderer_);
+bool EngineRuntime::CreateWindow(const std::string& title, int width, int height, const bool headless) {
+  const SDL_WindowFlags windowFlags = headless ? SDL_WINDOW_HIDDEN : SDL_WINDOW_RESIZABLE;
+  SDL_CreateWindowAndRenderer(title.c_str(), width, height, windowFlags, &window_, &sdl_renderer_);
 
   if (!window_) {
     Logger::Error("SDL_CreateWindow Error: " + std::string(SDL_GetError()));

@@ -145,6 +145,35 @@ void LuaModuleBinding<GameModule>::install(sol::state& lua, LuaBindingContext& c
 
   lua.set_function("is_deterministic", []() -> bool { return ThreadPool::IsForceSerial(); });
 
+  lua.set_function("set_fps_target", [&ctx](const int fps) {
+    if (auto* gameConfig = ctx.GetRegistry()->TryGet<GameConfig>()) {
+      gameConfig->GetEngineOptions().fpsTarget = std::max(0, fps);
+    }
+  });
+
+  lua.set_function("get_fps_target", [&ctx]() -> int {
+    const auto* gameConfig = ctx.GetRegistry()->TryGet<GameConfig>();
+    if (!gameConfig) return 0;
+    return gameConfig->GetEngineOptions().fpsTarget;
+  });
+
+  lua.set_function("set_headless", [&ctx](const bool enabled) {
+    if (auto* gameConfig = ctx.GetRegistry()->TryGet<GameConfig>()) {
+      auto& opts = gameConfig->GetEngineOptions();
+      opts.headless = enabled;
+      if (enabled) {
+        opts.fpsTarget = 0;
+        opts.audioEnabled = false;
+      }
+    }
+  });
+
+  lua.set_function("is_headless", [&ctx]() -> bool {
+    const auto* gameConfig = ctx.GetRegistry()->TryGet<GameConfig>();
+    if (!gameConfig) return false;
+    return gameConfig->GetEngineOptions().headless;
+  });
+
   // Seeds the engine-side simulation RNG (e.g. CullDistanceSystem perimeter repositioning).
   // Lua's math.randomseed covers script randomness; this covers C++ systems.
   lua.set_function("set_sim_seed",

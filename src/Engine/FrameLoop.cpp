@@ -298,6 +298,12 @@ void FrameLoop::Render(const float deltaTime) {
   PROFILE_COUNTER_SET("RenderQueue: Size", static_cast<long long>(renderQueue.Size()));
   PROFILE_COUNTER_SET("Entities: User", static_cast<long long>(registry_->GetUserEntityCount()));
 
+  if ((game_->IsHeadless() || gameConfig.GetEngineOptions().headless) && capture_path_.empty()) {
+    PROFILE_COUNTERS_REPORT();
+    renderQueue.Clear();
+    return;
+  }
+
   renderer_->BeginScene(runtime_->SdlRenderer());
 
 #ifdef OCTARINE_PROFILING
