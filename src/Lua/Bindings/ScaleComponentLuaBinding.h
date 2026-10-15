@@ -44,9 +44,14 @@ struct LuaBinding<ScaleComponent> {
     // `scale` is the uniform-scale view: it reads the x axis, so ask is_uniform() before trusting
     // it on an entity that may have been scaled per-axis.
     lua.new_usertype<ScaleComponent>(kUsertypeName, "value", &ScaleComponent::value, "x",
-                                     sol::property(&ScaleComponent::get_x, &ScaleComponent::set_x), "y",
-                                     sol::property(&ScaleComponent::get_y, &ScaleComponent::set_y), "scale",
-                                     sol::property(&ScaleComponent::get_scale, &ScaleComponent::set_scale),
+                                     sol::property([](const ScaleComponent& s) { return s.get_x(); },
+                                                   [](ScaleComponent& s, float x) { s.set_x(x); }),
+                                     "y",
+                                     sol::property([](const ScaleComponent& s) { return s.get_y(); },
+                                                   [](ScaleComponent& s, float y) { s.set_y(y); }),
+                                     "scale",
+                                     sol::property([](const ScaleComponent& s) { return s.get_scale(); },
+                                                   [](ScaleComponent& s, float scale) { s.set_scale(scale); }),
                                      "is_uniform", &ScaleComponent::is_uniform);
   }
 };

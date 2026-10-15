@@ -32,7 +32,6 @@
 #include "General/Logger.h"
 #include "Lua/Bindings/LuaBinding.h"
 #include "Lua/Bindings/LuaComponentRegistry.h"
-#include "Lua/Bindings/PositionComponentLuaBinding.h"
 #include "Lua/Bindings/RegisterAllBindings.h"
 #include "Lua/Bindings/RotationComponentLuaBinding.h"
 #include "Lua/Modules/RegisterAllModules.h"
