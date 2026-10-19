@@ -86,6 +86,38 @@ struct TestScene {
     return e;
   }
 
+  Entity MakeCircle(const float x, const float y, const float radius) {
+    const Entity e = reg.CreateEntity();
+    reg.AddComponent(e, GlobalTransformComponent{glm::vec2(x, y), glm::vec2(1.0f, 1.0f), 0.0f});
+    reg.AddComponent(e, CircleColliderComponent{radius});
+    reg.AddComponent(e, EntityMaskComponent{});
+    return e;
+  }
+
+  Entity MakeCapsule(const float x, const float y, const glm::vec2 start, const glm::vec2 end, const float radius) {
+    const Entity e = reg.CreateEntity();
+    reg.AddComponent(e, GlobalTransformComponent{glm::vec2(x, y), glm::vec2(1.0f, 1.0f), 0.0f});
+    reg.AddComponent(e, CapsuleColliderComponent{start, end, radius});
+    reg.AddComponent(e, EntityMaskComponent{});
+    return e;
+  }
+
+  Entity MakeTriangle(const float x, const float y, const glm::vec2 p1, const glm::vec2 p2, const glm::vec2 p3) {
+    const Entity e = reg.CreateEntity();
+    reg.AddComponent(e, GlobalTransformComponent{glm::vec2(x, y), glm::vec2(1.0f, 1.0f), 0.0f});
+    reg.AddComponent(e, TriangleColliderComponent{p1, p2, p3});
+    reg.AddComponent(e, EntityMaskComponent{});
+    return e;
+  }
+
+  Entity MakeLine(const float x, const float y, const glm::vec2 start, const glm::vec2 end) {
+    const Entity e = reg.CreateEntity();
+    reg.AddComponent(e, GlobalTransformComponent{glm::vec2(x, y), glm::vec2(1.0f, 1.0f), 0.0f});
+    reg.AddComponent(e, LineColliderComponent{start, end});
+    reg.AddComponent(e, EntityMaskComponent{});
+    return e;
+  }
+
   void MoveTo(const Entity e, const float x, const float y) const {
     reg.GetComponent<GlobalTransformComponent>(e).position = glm::vec2(x, y);
   }
@@ -93,6 +125,94 @@ struct TestScene {
   // Advance one engine tick synchronously.
   void Tick() { reg.Update(1.0f / 60.0f); }
 };
+
+void TestMultiShapeCollisions() {
+  // --- Circle vs Circle: true Euclidean radius check (not just AABB corners).
+  // Two radius-10 circles at (0,0) and (15,15): AABBs [-10,10]^2 and [5,25]^2 overlap in X and Y,
+  // but center distance is sqrt(450) ≈ 21.21 > 20, so narrowphase rejects the pair.
+  {
+    TestScene scene;
+    const Entity c1 = scene.MakeCircle(0.0f, 0.0f, 10.0f);
+    const Entity c2 = scene.MakeCircle(15.0f, 15.0f, 10.0f);
+    scene.Tick();
+    CheckEq(scene.capture.TotalPairs(), 0, "circle-circle: AABB corner overlap rejected by Euclidean radius check");
+
+    scene.MoveTo(c2, 12.0f, 12.0f);  // dist = sqrt(288) ≈ 16.97 <= 20
+    scene.Tick();
+    CheckEq(scene.capture.TotalPairs(), 1, "circle-circle: overlapping circles detected");
+    Check(scene.capture.Contains(c1, c2), "circle-circle: (c1, c2) emitted");
+  }
+
+  // --- Circle vs Box: corner distance check vs edge overlap.
+  // Box [0, 32]x[0, 32], Circle r=10 at (-8, -8): AABBs overlap ([-18,2] vs [0,32]),
+  // but distance to corner (0,0) is sqrt(128) ≈ 11.31 > 10.
+  {
+    TestScene scene;
+    const Entity box = scene.MakeBox(0.0f, 0.0f);
+    const Entity circle = scene.MakeCircle(-8.0f, -8.0f, 10.0f);
+    scene.Tick();
+    CheckEq(scene.capture.TotalPairs(), 0, "circle-box: circle missing box corner rejected");
+
+    scene.MoveTo(circle, -5.0f, 16.0f);  // 5px left of box edge, r=10 -> hits
+    scene.Tick();
+    CheckEq(scene.capture.TotalPairs(), 1, "circle-box: circle overlapping box edge detected");
+    Check(scene.capture.Contains(box, circle), "circle-box: (box, circle) emitted");
+  }
+
+  // --- Capsule vs Circle and Capsule vs Box.
+  {
+    TestScene scene;
+    const Entity cap = scene.MakeCapsule(0.0f, 0.0f, {-20.0f, 0.0f}, {20.0f, 0.0f}, 6.0f);
+    const Entity circle = scene.MakeCircle(0.0f, 10.0f, 5.0f);  // 10px from spine <= 6+5=11
+    const Entity farBox = scene.MakeBox(100.0f, 100.0f);
+    scene.Tick();
+    CheckEq(scene.capture.TotalPairs(), 1, "capsule-circle: overlapping capsule and circle detected");
+    Check(scene.capture.Contains(cap, circle), "capsule-circle: (cap, circle) emitted");
+
+    scene.MoveTo(farBox, 18.0f, -4.0f);  // overlaps right cap of capsule
+    scene.Tick();
+    Check(scene.capture.Contains(cap, farBox), "capsule-box: (cap, farBox) emitted");
+  }
+
+  // --- Triangle vs Circle, Triangle vs Box, and Triangle vs Triangle.
+  {
+    TestScene scene;
+    const Entity tri1 = scene.MakeTriangle(0.0f, 0.0f, {0.0f, 0.0f}, {20.0f, 0.0f}, {0.0f, 20.0f});
+    // Point (18, 18) is inside the triangle's AABB [0,20]x[0,20], but outside hypotenuse x+y=20
+    // (distance from (18,18) to x+y=20 is 16/sqrt(2) ≈ 11.31 > r=4).
+    const Entity circle = scene.MakeCircle(18.0f, 18.0f, 4.0f);
+    scene.Tick();
+    CheckEq(scene.capture.TotalPairs(), 0, "triangle-circle: circle in AABB corner outside hypotenuse rejected");
+
+    scene.MoveTo(circle, 10.0f, 10.0f);  // right on hypotenuse x+y=20
+    scene.Tick();
+    CheckEq(scene.capture.TotalPairs(), 1, "triangle-circle: circle touching hypotenuse detected");
+    Check(scene.capture.Contains(tri1, circle), "triangle-circle: (tri1, circle) emitted");
+
+    const Entity tri2 = scene.MakeTriangle(5.0f, 5.0f, {0.0f, 0.0f}, {10.0f, 0.0f}, {0.0f, 10.0f});
+    const Entity box = scene.MakeBox(15.0f, 0.0f);
+    scene.Tick();
+    Check(scene.capture.Contains(tri1, tri2), "triangle-triangle: overlapping triangles detected");
+    Check(scene.capture.Contains(tri1, box), "triangle-box: overlapping triangle and box detected");
+  }
+
+  // --- Line vs Line, Line vs Circle, Line vs Box, Line vs Triangle.
+  {
+    TestScene scene;
+    const Entity line1 = scene.MakeLine(0.0f, 0.0f, {-10.0f, 0.0f}, {10.0f, 0.0f});
+    const Entity line2 = scene.MakeLine(0.0f, 0.0f, {0.0f, -10.0f}, {0.0f, 10.0f});
+    const Entity lineParallel = scene.MakeLine(0.0f, 25.0f, {-10.0f, 0.0f}, {10.0f, 0.0f});
+    scene.Tick();
+    CheckEq(scene.capture.TotalPairs(), 1, "line-line: crossing segments detected, parallel disjoint ignored");
+    Check(scene.capture.Contains(line1, line2), "line-line: (line1, line2) emitted");
+    Check(!scene.capture.Contains(line1, lineParallel), "line-line: parallel disjoint line not emitted");
+
+    const Entity circle = scene.MakeCircle(0.0f, 3.0f, 4.0f);  // crosses both line1 (dist 3<=4) and line2 (dist 0<=4)
+    scene.Tick();
+    Check(scene.capture.Contains(line1, circle), "line-circle: circle intersecting horizontal line detected");
+    Check(scene.capture.Contains(line2, circle), "line-circle: circle intersecting vertical line detected");
+  }
+}
 
 }  // namespace
 
@@ -200,6 +320,8 @@ int main() {
 
     CheckEq(scene.capture.TotalPairs(), 0, "mask pruning: overlapping boxes with incompatible masks emit no pairs");
   }
+
+  TestMultiShapeCollisions();
 
   return octarine::test::Result();
 }

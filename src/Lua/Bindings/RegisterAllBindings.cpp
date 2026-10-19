@@ -6,10 +6,13 @@
 #include "Lua/Bindings/AudioSourceComponentLuaBinding.h"
 #include "Lua/Bindings/BoxColliderComponentLuaBinding.h"
 #include "Lua/Bindings/CameraFollowComponentLuaBinding.h"
+#include "Lua/Bindings/CapsuleColliderComponentLuaBinding.h"
 #include "Lua/Bindings/CapsulePrimitiveComponentLuaBinding.h"
+#include "Lua/Bindings/CircleColliderComponentLuaBinding.h"
 #include "Lua/Bindings/CirclePrimitiveComponentLuaBinding.h"
 #include "Lua/Bindings/ColorGridComponentLuaBinding.h"
 #include "Lua/Bindings/LifetimeComponentLuaBinding.h"
+#include "Lua/Bindings/LineColliderComponentLuaBinding.h"
 #include "Lua/Bindings/LinePrimitiveComponentLuaBinding.h"
 #include "Lua/Bindings/LuaComponentRegistry.h"
 #include "Lua/Bindings/NameComponentLuaBinding.h"
@@ -23,6 +26,7 @@
 #include "Lua/Bindings/SpriteComponentLuaBinding.h"
 #include "Lua/Bindings/SquarePrimitiveComponentLuaBinding.h"
 #include "Lua/Bindings/TextLabelComponentLuaBinding.h"
+#include "Lua/Bindings/TriangleColliderComponentLuaBinding.h"
 #include "Lua/Bindings/TrianglePrimitiveComponentLuaBinding.h"
 #include "Lua/Bindings/UIAnchorComponentLuaBinding.h"
 #include "Lua/Bindings/UIButtonComponentLuaBinding.h"
@@ -42,6 +46,10 @@ void RegisterAllLuaBindings(bool includeGameModule) {
   LuaComponentRegistry::registerComponent<ColorGridComponent>();
   LuaComponentRegistry::registerComponent<AnimationComponent>();
   LuaComponentRegistry::registerComponent<BoxColliderComponent>();
+  LuaComponentRegistry::registerComponent<CircleColliderComponent>();
+  LuaComponentRegistry::registerComponent<CapsuleColliderComponent>();
+  LuaComponentRegistry::registerComponent<TriangleColliderComponent>();
+  LuaComponentRegistry::registerComponent<LineColliderComponent>();
   LuaComponentRegistry::registerComponent<LifetimeComponent>();
   LuaComponentRegistry::registerComponent<CameraFollowComponent>();
   LuaComponentRegistry::registerComponent<ScriptCallbackComponent>();

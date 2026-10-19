@@ -60,9 +60,6 @@ std::string GetEnvVar(const char* name) {
 FrameLoop::FrameLoop(Game* game, Registry* registry, EventBus* eventBus, Renderer* renderer, EngineRuntime* runtime,
                      sol::state& lua)
     : game_(game), registry_(registry), event_bus_(eventBus), renderer_(renderer), runtime_(runtime), lua_(lua) {
-  // Pre-build the debug-collider query once so we don't allocate per render frame.
-  collider_query_ = registry_->CreateQuery<GlobalTransformComponent, BoxColliderComponent>();
-
   if (const std::string path = GetEnvVar("OCTARINE_CAPTURE_PATH"); !path.empty()) {
     capture_path_ = path;
     if (const std::string frame = GetEnvVar("OCTARINE_CAPTURE_FRAME"); !frame.empty()) {
@@ -331,10 +328,8 @@ void FrameLoop::Render(const float deltaTime) {
   renderer_->DrawQueue(renderQueue, runtime_->SdlRenderer());
 #endif
 
-  if (gameConfig.GetEngineOptions().drawColliders && collider_query_) {
-    collider_query_->Update();
-    DrawColliderSystem drawColliderSystem;
-    collider_query_->ForEach(drawColliderSystem);
+  if (gameConfig.GetEngineOptions().drawColliders) {
+    draw_collider_system_.Draw(registry_);
   }
 
   // Built-in perf overlay (no ImGui). Drawn into the scene texture so it composites for both the

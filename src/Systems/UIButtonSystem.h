@@ -23,6 +23,7 @@
 #include "Game/GameConfig.h"
 #include "General/Logger.h"
 #include "Systems/InputSystem.h"
+#include "Systems/KDTreeCollisionSystem.h"
 
 class UIButtonSystem {
  public:
@@ -238,6 +239,14 @@ class UIButtonSystem {
     });
   }
 
+  template <typename ColliderT>
+  [[nodiscard]] bool HitTestCollider(const Entity entity, const GlobalTransformComponent& transform,
+                                     const glm::vec2 worldMouse) const {
+    if (!registry_->HasComponent<ColliderT>(entity)) return false;
+    const auto& c = registry_->GetComponent<ColliderT>(entity);
+    return KDTreeCollisionSystem::BuildBox(entity, transform, c, EntityMaskComponent{}).containsPoint(worldMouse);
+  }
+
   [[nodiscard]] bool HitTest(const Entity entity, const UIButtonComponent& button,
                              const GlobalTransformComponent* transform, const BoxColliderComponent* collider,
                              const octarine::Rect& camera, const float zoom, const float mouseX,
@@ -248,21 +257,16 @@ class UIButtonSystem {
       const auto& rect = registry_->GetComponent<UIRectComponent>(entity);
       return mouseX >= rect.left && mouseX <= rect.right && mouseY >= rect.top && mouseY <= rect.bottom;
     }
-    // World-space button: position the collider in transform space.
-    if (collider && transform) {
-      float x = transform->position.x + collider->offset.x * transform->scale.x;
-      float y = transform->position.y + collider->offset.y * transform->scale.y;
-      float w = static_cast<float>(collider->width) * transform->scale.x;
-      float h = static_cast<float>(collider->height) * transform->scale.y;
-      if (!button.isFixed) {
-        x = (x - camera.x) * zoom;
-        y = (y - camera.y) * zoom;
-        w *= zoom;
-        h *= zoom;
-      }
-      return mouseX >= x && mouseX <= x + w && mouseY >= y && mouseY <= y + h;
+    if (!transform) return false;
+    const glm::vec2 worldMouse =
+        button.isFixed ? glm::vec2{mouseX, mouseY} : glm::vec2{mouseX / zoom + camera.x, mouseY / zoom + camera.y};
+    if (collider && KDTreeCollisionSystem::BuildBox(entity, *transform, *collider, EntityMaskComponent{})
+                        .containsPoint(worldMouse)) {
+      return true;
     }
-    return false;
+    return HitTestCollider<CircleColliderComponent>(entity, *transform, worldMouse) ||
+           HitTestCollider<CapsuleColliderComponent>(entity, *transform, worldMouse) ||
+           HitTestCollider<TriangleColliderComponent>(entity, *transform, worldMouse);
   }
 
   using MouseQuery = ComponentQuery<UIButtonComponent, Opt<GlobalTransformComponent>, Opt<BoxColliderComponent>>;

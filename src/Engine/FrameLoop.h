@@ -10,6 +10,7 @@
 #include "Components/GlobalTransformComponent.h"
 #include "ECS/Query.h"
 #include "EventBus/EventBus.h"
+#include "Systems/DrawColliderSystem.h"
 #include "Systems/PerfOverlaySystem.h"
 
 class Game;
@@ -70,7 +71,7 @@ class FrameLoop {
   // Nanosecond ticks (SDL_GetTicksNS) — ms granularity rounds sub-millisecond frames to a zero
   // deltaTime when FpsTarget=0 lets the loop run uncapped.
   Uint64 nanoseconds_previous_frame_ = 0;
-  std::unique_ptr<ComponentQuery<GlobalTransformComponent, BoxColliderComponent>> collider_query_;
+  DrawColliderSystem draw_collider_system_;
   // Built-in (no-ImGui) FPS + frame-time overlay. Holds a small per-line text-texture cache, so it
   // is a long-lived member rather than reconstructed each frame.
   PerfOverlaySystem perf_overlay_;

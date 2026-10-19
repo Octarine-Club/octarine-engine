@@ -38,10 +38,22 @@
       "get_accessor": "registry.get_capsule"
     },
     {
+      "lua_key": "capsule_collider",
+      "usertype": "capsule_collider_component",
+      "has_accessor": "registry.has_capsule_collider",
+      "get_accessor": "registry.get_capsule_collider"
+    },
+    {
       "lua_key": "circle",
       "usertype": "circle_primitive_component",
       "has_accessor": "registry.has_circle",
       "get_accessor": "registry.get_circle"
+    },
+    {
+      "lua_key": "circle_collider",
+      "usertype": "circle_collider_component",
+      "has_accessor": "registry.has_circle_collider",
+      "get_accessor": "registry.get_circle_collider"
     },
     {
       "lua_key": "color_grid",
@@ -60,6 +72,12 @@
       "usertype": "line_primitive_component",
       "has_accessor": "registry.has_line",
       "get_accessor": "registry.get_line"
+    },
+    {
+      "lua_key": "line_collider",
+      "usertype": "line_collider_component",
+      "has_accessor": "registry.has_line_collider",
+      "get_accessor": "registry.get_line_collider"
     },
     {
       "lua_key": "name",
@@ -132,6 +150,12 @@
       "usertype": "triangle_primitive_component",
       "has_accessor": "registry.has_triangle",
       "get_accessor": "registry.get_triangle"
+    },
+    {
+      "lua_key": "triangle_collider",
+      "usertype": "triangle_collider_component",
+      "has_accessor": "registry.has_triangle_collider",
+      "get_accessor": "registry.get_triangle_collider"
     },
     {
       "lua_key": "ui_anchor",

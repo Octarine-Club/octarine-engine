@@ -172,6 +172,72 @@ void TestPrimitiveBindings(sol::state& lua, Registry* reg) {
   Check(reg->GetComponent<CapsulePrimitiveComponent>(eCap).blendMode == octarine::BlendMode::Add,
         "capsule.blend_mode mutated from Lua");
 }
+
+void TestColliderBindings(sol::state& lua, Registry* reg) {
+  std::cout << "[collider components: circle / capsule / triangle / line round-trip via Lua]\n";
+  Check(RunLua(lua, R"LUA(
+    c_circle = load_entity({
+      components = {
+        transform = { position = { x = 10, y = 20 } },
+        circle_collider = { radius = 12.5, offset = { x = 2, y = 3 }, is_fixed = true, collision_mask = 3 }
+      }
+    })
+    c_cap = load_entity({
+      components = {
+        transform = { position = { x = 0, y = 0 } },
+        capsule_collider = { start = { x = -8, y = 0 }, ["end"] = { x = 8, y = 0 }, radius = 4.0 }
+      }
+    })
+    c_tri = load_entity({
+      components = {
+        transform = { position = { x = 0, y = 0 } },
+        triangle_collider = { p1 = { x = 0, y = -6 }, p2 = { x = 6, y = 6 }, p3 = { x = -6, y = 6 } }
+      }
+    })
+    c_line = load_entity({
+      components = {
+        transform = { position = { x = 0, y = 0 } },
+        line_collider = { start = { x = -15, y = -5 }, ["end"] = { x = 15, y = 5 }, is_fixed = false }
+      }
+    })
+  )LUA"),
+        "load_entity succeeds for circle_collider, capsule_collider, triangle_collider, and line_collider");
+
+  const Entity cCircle = lua["c_circle"];
+  const Entity cCap = lua["c_cap"];
+  const Entity cTri = lua["c_tri"];
+  const Entity cLine = lua["c_line"];
+
+  Check(reg->HasComponent<GlobalTransformComponent>(cCircle), "circle_collider auto-attaches GlobalTransformComponent");
+  Check(reg->HasComponent<EntityMaskComponent>(cCircle), "circle_collider auto-attaches EntityMaskComponent");
+  Check(reg->HasComponent<GlobalTransformComponent>(cCap), "capsule_collider auto-attaches GlobalTransformComponent");
+  Check(reg->HasComponent<EntityMaskComponent>(cCap), "capsule_collider auto-attaches EntityMaskComponent");
+  Check(reg->HasComponent<GlobalTransformComponent>(cTri), "triangle_collider auto-attaches GlobalTransformComponent");
+  Check(reg->HasComponent<EntityMaskComponent>(cTri), "triangle_collider auto-attaches EntityMaskComponent");
+  Check(reg->HasComponent<GlobalTransformComponent>(cLine), "line_collider auto-attaches GlobalTransformComponent");
+  Check(reg->HasComponent<EntityMaskComponent>(cLine), "line_collider auto-attaches EntityMaskComponent");
+
+  CheckEq(reg->GetComponent<CircleColliderComponent>(cCircle).radius, 12.5F, "circle_collider.radius parsed");
+  Check(reg->GetComponent<CircleColliderComponent>(cCircle).isFixed, "circle_collider.is_fixed parsed");
+  CheckEq(reg->GetComponent<CapsuleColliderComponent>(cCap).radius, 4.0F, "capsule_collider.radius parsed");
+  Check(NearVec2(reg->GetComponent<TriangleColliderComponent>(cTri).p2, {6.0F, 6.0F}), "triangle_collider.p2 parsed");
+  Check(NearVec2(reg->GetComponent<LineColliderComponent>(cLine).end, {15.0F, 5.0F}), "line_collider.end parsed");
+
+  Check(RunLua(lua, R"LUA(
+    registry.get_circle_collider(c_circle).radius = 24.0
+    registry.get_capsule_collider(c_cap).radius = 7.5
+    registry.get_triangle_collider(c_tri).p3 = vec2.new(-10, 8)
+    registry.get_line_collider(c_line).start = vec2.new(-20, -10)
+  )LUA"),
+        "Lua mutations on collider components succeed");
+
+  CheckEq(reg->GetComponent<CircleColliderComponent>(cCircle).radius, 24.0F, "circle_collider.radius mutated");
+  CheckEq(reg->GetComponent<CapsuleColliderComponent>(cCap).radius, 7.5F, "capsule_collider.radius mutated");
+  Check(NearVec2(reg->GetComponent<TriangleColliderComponent>(cTri).p3, {-10.0F, 8.0F}),
+        "triangle_collider.p3 mutated");
+  Check(NearVec2(reg->GetComponent<LineColliderComponent>(cLine).start, {-20.0F, -10.0F}),
+        "line_collider.start mutated");
+}
 }  // namespace
 
 int main() {
@@ -887,6 +953,7 @@ int main() {
   }
 
   TestPrimitiveBindings(lua, reg);
+  TestColliderBindings(lua, reg);
 
   return octarine::test::ReportSummary("Lua behavior test");
 }

@@ -85,7 +85,14 @@
       "source": "src/Systems/DrawColliderSystem.h",
       "tier": null,
       "setup_order": null,
-      "queried_components": [],
+      "queried_components": [
+        "GlobalTransformComponent",
+        "BoxColliderComponent",
+        "CircleColliderComponent",
+        "CapsuleColliderComponent",
+        "TriangleColliderComponent",
+        "LineColliderComponent"
+      ],
       "emits": [],
       "subscribes": [],
       "lua_surface": false
@@ -123,7 +130,11 @@
       "queried_components": [
         "GlobalTransformComponent",
         "BoxColliderComponent",
-        "EntityMaskComponent"
+        "EntityMaskComponent",
+        "CircleColliderComponent",
+        "CapsuleColliderComponent",
+        "TriangleColliderComponent",
+        "LineColliderComponent"
       ],
       "emits": [
         "CollisionBatchEvent",
