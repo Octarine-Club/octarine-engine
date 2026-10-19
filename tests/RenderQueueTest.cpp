@@ -29,6 +29,7 @@
 #include "Systems/RenderLinePrimitiveSystem.h"
 #include "Systems/RenderPrimitiveSystem.h"
 #include "Systems/RenderTrianglePrimitiveSystem.h"
+#include "Systems/RenderUIPrimitiveSystem.h"
 #include "TestHarness.h"
 
 using octarine::BlendMode;
@@ -46,6 +47,48 @@ std::uint64_t Key(const unsigned int layer, const float depth, const RenderableT
 // the two values apart in the bits the hash actually reads (it shifts off the low 4).
 alignas(64) char g_texMemA[64];
 alignas(64) char g_texMemB[64];
+
+void TestUIPrimitiveRendering() {
+  std::cout << "[ui_primitive] RenderUIPrimitiveSystem emplaces layout-driven primitives\n";
+  Registry registry;
+  registry.Set<RenderQueue>(RenderQueue(32));
+  registry.RegisterBulkSystem(RenderUIPrimitiveSystem());
+
+  const UIRectComponent rect(10.0f, 20.0f, 110.0f, 60.0f, 3);  // 100x40, center=(60, 40)
+  registry.CreateEntityWithBundle(rect, SquarePrimitiveComponent{});
+  registry.CreateEntityWithBundle(rect, CirclePrimitiveComponent{});
+  registry.CreateEntityWithBundle(rect, CapsulePrimitiveComponent{});
+  registry.CreateEntityWithBundle(rect, TrianglePrimitiveComponent{});
+  registry.CreateEntityWithBundle(rect, LinePrimitiveComponent{});
+
+  registry.Update(0.016f);
+
+  const auto& queue = registry.Get<RenderQueue>();
+  CheckEq(queue.Size(), static_cast<size_t>(5), "all 5 UI primitives emplaced");
+
+  auto it = queue.begin();
+  CheckEq(it->payload.square.destRect.x, 10.0f, "UI square left");
+  CheckEq(it->payload.square.destRect.w, 100.0f, "UI square width");
+  ++it;
+  CheckEq(it->payload.circle.center.x, 60.0f, "UI circle center.x auto-fits rect");
+  CheckEq(it->payload.circle.center.y, 40.0f, "UI circle center.y auto-fits rect");
+  CheckEq(it->payload.circle.radiusX, 50.0f, "UI circle radiusX auto-fits rect half-width");
+  CheckEq(it->payload.circle.radiusY, 20.0f, "UI circle radiusY auto-fits rect half-height");
+  ++it;
+  CheckEq(it->payload.capsule.radius, 20.0f, "UI capsule radius auto-fits half of minor dimension");
+  CheckEq(it->payload.capsule.start.x, 30.0f, "UI capsule horizontal pill start.x = left + r");
+  CheckEq(it->payload.capsule.end.x, 90.0f, "UI capsule horizontal pill end.x = right - r");
+  CheckEq(it->payload.capsule.start.y, 40.0f, "UI capsule start.y = center.y");
+  ++it;
+  CheckEq(it->payload.triangle.p1.x, 60.0f, "UI triangle apex p1.x = midX");
+  CheckEq(it->payload.triangle.p1.y, 20.0f, "UI triangle apex p1.y = top");
+  CheckEq(it->payload.triangle.p2.x, 10.0f, "UI triangle p2.x = left");
+  CheckEq(it->payload.triangle.p3.x, 110.0f, "UI triangle p3.x = right");
+  ++it;
+  CheckEq(it->payload.line.start.x, 10.0f, "UI line horizontal divider start.x = left");
+  CheckEq(it->payload.line.end.x, 110.0f, "UI line horizontal divider end.x = right");
+  CheckEq(it->payload.line.start.y, 40.0f, "UI line horizontal divider y = center.y");
+}
 
 }  // namespace
 
@@ -422,6 +465,8 @@ int main() {
     const auto& queue = registry.Get<RenderQueue>();
     Check(queue.IsEmpty(), "bounded grid completely outside camera is culled");
   }
+
+  TestUIPrimitiveRendering();
 
   return octarine::test::ReportSummary("RenderQueueTest");
 }

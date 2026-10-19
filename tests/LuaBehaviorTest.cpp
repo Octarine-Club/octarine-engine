@@ -238,6 +238,91 @@ void TestColliderBindings(sol::state& lua, Registry* reg) {
   Check(NearVec2(reg->GetComponent<LineColliderComponent>(cLine).start, {-20.0F, -10.0F}),
         "line_collider.start mutated");
 }
+
+void EmitLeftMouseClick(EventBus& bus, const float x, const float y) {
+  SDL_MouseButtonEvent ev{};
+  ev.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+  ev.button = 1;
+  ev.x = x;
+  ev.y = y;
+  bus.EmitEvent<MouseInputEvent>(ev);
+}
+
+void TestUIButtonShapes(sol::state& lua, Registry* reg) {
+  std::cout << "[ui_button: shaped hit-testing for layout UIRect and transform buttons]\n";
+  auto eventBus = std::make_unique<EventBus>();
+  UIButtonSystem uiButtonSystem;
+  uiButtonSystem.Init(reg, eventBus);
+
+  Check(RunLua(lua, R"LUA(
+    hit_circle = false
+    hit_capsule = false
+    hit_tri = false
+    hit_transform_circle = false
+
+    btn_circle = load_entity({
+      components = {
+        circle = { color = { r = 255, a = 255 } },
+        ui_button = { on_click = function() hit_circle = true end }
+      }
+    })
+    ui.anchor(btn_circle, "top_left", { width = 100, height = 100 })
+
+    btn_capsule = load_entity({
+      components = {
+        capsule = { color = { g = 255, a = 255 } },
+        ui_button = { on_click = function() hit_capsule = true end }
+      }
+    })
+    ui.anchor(btn_capsule, "top_left", { width = 200, height = 60 })
+
+    btn_tri = load_entity({
+      components = {
+        triangle = { color = { b = 255, a = 255 } },
+        ui_button = { on_click = function() hit_tri = true end }
+      }
+    })
+    ui.anchor(btn_tri, "top_left", { width = 100, height = 100 })
+
+    btn_tx_circle = load_entity({
+      components = {
+        transform = { position = { x = 300, y = 300 } },
+        circle = { radius = 25.0, fixed = true },
+        ui_button = { is_fixed = true, on_click = function() hit_transform_circle = true end }
+      }
+    })
+  )LUA"),
+        "shaped UI buttons loaded from Lua");
+
+  const Entity btnCircle = lua["btn_circle"];
+  const Entity btnCapsule = lua["btn_capsule"];
+  const Entity btnTri = lua["btn_tri"];
+  const Entity btnTxCircle = lua["btn_tx_circle"];
+  reg->GetComponent<UIRectComponent>(btnCircle) = UIRectComponent(0.0F, 0.0F, 100.0F, 100.0F, 1);
+  reg->GetComponent<UIRectComponent>(btnCapsule) = UIRectComponent(0.0F, 200.0F, 200.0F, 260.0F, 1);
+  reg->GetComponent<UIRectComponent>(btnTri) = UIRectComponent(0.0F, 400.0F, 100.0F, 500.0F, 1);
+  reg->GetComponent<GlobalTransformComponent>(btnTxCircle).position = {300.0F, 300.0F};
+
+  EmitLeftMouseClick(*eventBus, 2.0F, 2.0F);
+  Check(lua["hit_circle"] == false, "UIRect circle button ignores click in bounding-box corner outside circle");
+  EmitLeftMouseClick(*eventBus, 50.0F, 50.0F);
+  Check(lua["hit_circle"] == true, "UIRect circle button fires on click inside circle");
+
+  EmitLeftMouseClick(*eventBus, 1.0F, 201.0F);
+  Check(lua["hit_capsule"] == false, "UIRect capsule button ignores click outside pill cap");
+  EmitLeftMouseClick(*eventBus, 100.0F, 230.0F);
+  Check(lua["hit_capsule"] == true, "UIRect capsule button fires on click inside pill");
+
+  EmitLeftMouseClick(*eventBus, 5.0F, 405.0F);
+  Check(lua["hit_tri"] == false, "UIRect triangle button ignores click outside triangle edge");
+  EmitLeftMouseClick(*eventBus, 50.0F, 480.0F);
+  Check(lua["hit_tri"] == true, "UIRect triangle button fires on click inside triangle");
+
+  EmitLeftMouseClick(*eventBus, 350.0F, 350.0F);
+  Check(lua["hit_transform_circle"] == false, "transform circle button ignores click outside radius");
+  EmitLeftMouseClick(*eventBus, 310.0F, 310.0F);
+  Check(lua["hit_transform_circle"] == true, "transform circle button fires via primitive fallback");
+}
 }  // namespace
 
 int main() {
@@ -954,6 +1039,7 @@ int main() {
 
   TestPrimitiveBindings(lua, reg);
   TestColliderBindings(lua, reg);
+  TestUIButtonShapes(lua, reg);
 
   return octarine::test::ReportSummary("Lua behavior test");
 }

@@ -811,7 +811,7 @@ void Game::Setup() {
   // Render queue producers
   registry_->RegisterParallelSystem<GlobalTransformComponent, SpriteComponent>(RenderSpriteSystem());
   registry_->RegisterSystem<UIRectComponent, SpriteComponent>(RenderUISpriteSystem());
-  registry_->RegisterSystem<UIRectComponent, SquarePrimitiveComponent>(RenderUIPrimitiveSystem());
+  registry_->RegisterBulkSystem(RenderUIPrimitiveSystem());
   registry_->RegisterSystem<TextLabelComponent>(RenderTextSystem());
   registry_->RegisterParallelSystem<SquarePrimitiveComponent, GlobalTransformComponent>(RenderPrimitiveSystem());
   registry_->RegisterParallelSystem<CirclePrimitiveComponent, GlobalTransformComponent>(RenderCirclePrimitiveSystem());

@@ -296,11 +296,15 @@
     {
       "name": "RenderUIPrimitiveSystem",
       "source": "src/Systems/RenderUIPrimitiveSystem.h",
-      "tier": "serial",
+      "tier": "bulk",
       "setup_order": 16,
       "queried_components": [
         "UIRectComponent",
-        "SquarePrimitiveComponent"
+        "SquarePrimitiveComponent",
+        "CirclePrimitiveComponent",
+        "CapsulePrimitiveComponent",
+        "TrianglePrimitiveComponent",
+        "LinePrimitiveComponent"
       ],
       "emits": [],
       "subscribes": [],

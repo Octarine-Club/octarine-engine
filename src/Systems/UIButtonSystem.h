@@ -24,6 +24,7 @@
 #include "General/Logger.h"
 #include "Systems/InputSystem.h"
 #include "Systems/KDTreeCollisionSystem.h"
+#include "Systems/RenderUIPrimitiveSystem.h"
 
 class UIButtonSystem {
  public:
@@ -239,6 +240,83 @@ class UIButtonSystem {
     });
   }
 
+  [[nodiscard]] static bool ContainsPointInCircle(const octarine::ui::ResolvedCircle& c, const glm::vec2 pt) {
+    if (c.radiusX <= 0.0f || c.radiusY <= 0.0f) return false;
+    const float dx = (pt.x - c.center.x) / c.radiusX;
+    const float dy = (pt.y - c.center.y) / c.radiusY;
+    return (dx * dx + dy * dy) <= 1.0f;
+  }
+
+  [[nodiscard]] static bool ContainsPointInCapsule(const octarine::ui::ResolvedCapsule& c, const glm::vec2 pt) {
+    if (c.radius < 0.0f) return false;
+    return octarine::collision::PointSegmentDistanceSq(pt, c.start, c.end) <= (c.radius * c.radius);
+  }
+
+  [[nodiscard]] static bool ContainsPointInTriangle(const octarine::ui::ResolvedTriangle& t, const glm::vec2 pt) {
+    return octarine::collision::PointInTriangle(pt, t.p1, t.p2, t.p3);
+  }
+
+  [[nodiscard]] static bool ContainsPointInRect(const UIRectComponent& rect, const glm::vec2 pt) {
+    return pt.x >= rect.left && pt.x <= rect.right && pt.y >= rect.top && pt.y <= rect.bottom;
+  }
+
+  [[nodiscard]] static bool HitTestUIRectBoxCollider(const UIRectComponent& rect, const BoxColliderComponent& box,
+                                                     const glm::vec2 mouse) {
+    if (box.width <= 0 && box.height <= 0) {
+      return ContainsPointInRect(rect, mouse);
+    }
+    const float x = rect.left + box.offset.x;
+    const float y = rect.top + box.offset.y;
+    return mouse.x >= x && mouse.x <= x + static_cast<float>(box.width) && mouse.y >= y &&
+           mouse.y <= y + static_cast<float>(box.height);
+  }
+
+  [[nodiscard]] bool HasAnyCollider(const Entity entity, const BoxColliderComponent* boxCollider) const {
+    return boxCollider != nullptr || registry_->HasComponent<CircleColliderComponent>(entity) ||
+           registry_->HasComponent<CapsuleColliderComponent>(entity) ||
+           registry_->HasComponent<TriangleColliderComponent>(entity);
+  }
+
+  [[nodiscard]] bool HitTestUIRectCollider(const Entity entity, const UIRectComponent& rect,
+                                           const BoxColliderComponent* boxCollider, const glm::vec2 mouse) const {
+    if (boxCollider && HitTestUIRectBoxCollider(rect, *boxCollider, mouse)) {
+      return true;
+    }
+    if (registry_->HasComponent<CircleColliderComponent>(entity)) {
+      const auto& c = registry_->GetComponent<CircleColliderComponent>(entity);
+      if (ContainsPointInCircle(octarine::ui::ResolveCircle(rect, c.offset, c.radius), mouse)) return true;
+    }
+    if (registry_->HasComponent<CapsuleColliderComponent>(entity)) {
+      const auto& c = registry_->GetComponent<CapsuleColliderComponent>(entity);
+      if (ContainsPointInCapsule(octarine::ui::ResolveCapsule(rect, c.start, c.end, c.radius), mouse)) return true;
+    }
+    if (registry_->HasComponent<TriangleColliderComponent>(entity)) {
+      const auto& c = registry_->GetComponent<TriangleColliderComponent>(entity);
+      if (ContainsPointInTriangle(octarine::ui::ResolveTriangle(rect, c.p1, c.p2, c.p3), mouse)) return true;
+    }
+    return false;
+  }
+
+  [[nodiscard]] bool HitTestUIRect(const Entity entity, const UIRectComponent& rect,
+                                   const BoxColliderComponent* boxCollider, const glm::vec2 mouse) const {
+    if (HasAnyCollider(entity, boxCollider)) {
+      return HitTestUIRectCollider(entity, rect, boxCollider, mouse);
+    }
+    if (registry_->HasComponent<CirclePrimitiveComponent>(entity)) {
+      const auto& c = registry_->GetComponent<CirclePrimitiveComponent>(entity);
+      return ContainsPointInCircle(octarine::ui::ResolveCircle(rect, c.position, c.radius), mouse);
+    }
+    if (registry_->HasComponent<CapsulePrimitiveComponent>(entity)) {
+      const auto& c = registry_->GetComponent<CapsulePrimitiveComponent>(entity);
+      return ContainsPointInCapsule(octarine::ui::ResolveCapsule(rect, c.start, c.end, c.radius), mouse);
+    }
+    if (registry_->HasComponent<TrianglePrimitiveComponent>(entity)) {
+      const auto& c = registry_->GetComponent<TrianglePrimitiveComponent>(entity);
+      return ContainsPointInTriangle(octarine::ui::ResolveTriangle(rect, c.p1, c.p2, c.p3), mouse);
+    }
+    return ContainsPointInRect(rect, mouse);
+  }
+
   template <typename ColliderT>
   [[nodiscard]] bool HitTestCollider(const Entity entity, const GlobalTransformComponent& transform,
                                      const glm::vec2 worldMouse) const {
@@ -247,26 +325,59 @@ class UIButtonSystem {
     return KDTreeCollisionSystem::BuildBox(entity, transform, c, EntityMaskComponent{}).containsPoint(worldMouse);
   }
 
+  [[nodiscard]] bool HitTestTransformPrimitive(const Entity entity, const GlobalTransformComponent& transform,
+                                               const glm::vec2 worldMouse) const {
+    if (registry_->HasComponent<SquarePrimitiveComponent>(entity)) {
+      const auto& s = registry_->GetComponent<SquarePrimitiveComponent>(entity);
+      const BoxColliderComponent col(static_cast<int>(s.width), static_cast<int>(s.height), s.position, s.isFixed);
+      if (KDTreeCollisionSystem::BuildBox(entity, transform, col, EntityMaskComponent{}).containsPoint(worldMouse)) {
+        return true;
+      }
+    }
+    if (registry_->HasComponent<CirclePrimitiveComponent>(entity)) {
+      const auto& c = registry_->GetComponent<CirclePrimitiveComponent>(entity);
+      const CircleColliderComponent col(c.radius, c.position, c.isFixed);
+      if (KDTreeCollisionSystem::BuildBox(entity, transform, col, EntityMaskComponent{}).containsPoint(worldMouse)) {
+        return true;
+      }
+    }
+    if (registry_->HasComponent<CapsulePrimitiveComponent>(entity)) {
+      const auto& c = registry_->GetComponent<CapsulePrimitiveComponent>(entity);
+      const CapsuleColliderComponent col(c.start, c.end, c.radius, c.isFixed);
+      if (KDTreeCollisionSystem::BuildBox(entity, transform, col, EntityMaskComponent{}).containsPoint(worldMouse)) {
+        return true;
+      }
+    }
+    if (registry_->HasComponent<TrianglePrimitiveComponent>(entity)) {
+      const auto& t = registry_->GetComponent<TrianglePrimitiveComponent>(entity);
+      const TriangleColliderComponent col(t.p1, t.p2, t.p3, t.isFixed);
+      if (KDTreeCollisionSystem::BuildBox(entity, transform, col, EntityMaskComponent{}).containsPoint(worldMouse)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   [[nodiscard]] bool HitTest(const Entity entity, const UIButtonComponent& button,
                              const GlobalTransformComponent* transform, const BoxColliderComponent* collider,
                              const octarine::Rect& camera, const float zoom, const float mouseX,
                              const float mouseY) const {
-    // Layout-driven UI button: the resolved rect already accounts for anchoring, so no collider or
-    // transform is needed — this is the preferred path for `ui_button` + `ui_anchor` entities.
     if (registry_->HasComponent<UIRectComponent>(entity)) {
-      const auto& rect = registry_->GetComponent<UIRectComponent>(entity);
-      return mouseX >= rect.left && mouseX <= rect.right && mouseY >= rect.top && mouseY <= rect.bottom;
+      return HitTestUIRect(entity, registry_->GetComponent<UIRectComponent>(entity), collider, {mouseX, mouseY});
     }
     if (!transform) return false;
     const glm::vec2 worldMouse =
         button.isFixed ? glm::vec2{mouseX, mouseY} : glm::vec2{mouseX / zoom + camera.x, mouseY / zoom + camera.y};
-    if (collider && KDTreeCollisionSystem::BuildBox(entity, *transform, *collider, EntityMaskComponent{})
-                        .containsPoint(worldMouse)) {
-      return true;
+    if (HasAnyCollider(entity, collider)) {
+      if (collider && KDTreeCollisionSystem::BuildBox(entity, *transform, *collider, EntityMaskComponent{})
+                          .containsPoint(worldMouse)) {
+        return true;
+      }
+      return HitTestCollider<CircleColliderComponent>(entity, *transform, worldMouse) ||
+             HitTestCollider<CapsuleColliderComponent>(entity, *transform, worldMouse) ||
+             HitTestCollider<TriangleColliderComponent>(entity, *transform, worldMouse);
     }
-    return HitTestCollider<CircleColliderComponent>(entity, *transform, worldMouse) ||
-           HitTestCollider<CapsuleColliderComponent>(entity, *transform, worldMouse) ||
-           HitTestCollider<TriangleColliderComponent>(entity, *transform, worldMouse);
+    return HitTestTransformPrimitive(entity, *transform, worldMouse);
   }
 
   using MouseQuery = ComponentQuery<UIButtonComponent, Opt<GlobalTransformComponent>, Opt<BoxColliderComponent>>;
