@@ -143,9 +143,13 @@ octarine_add_test(OctarineProcessTest ProcessTest
 )
 
 octarine_add_test(OctarineProjectIniTest ProjectIniTest
-        SOURCES "${CMAKE_SOURCE_DIR}/src/Project/ProjectIni.cpp" ProjectIniTest.cpp
+        SOURCES "${CMAKE_SOURCE_DIR}/src/General/IniParser.cpp"
+                "${CMAKE_SOURCE_DIR}/src/Project/ProjectIni.cpp"
+                ProjectIniTest.cpp
         INCLUDES "${CMAKE_SOURCE_DIR}/src"
 )
+
+octarine_add_engine_test(OctarineUserSettingsTest UserSettingsTest UserSettingsTest.cpp)
 
 octarine_add_test(OctarineFileWatcherTest FileWatcherTest
         SOURCES "${CMAKE_SOURCE_DIR}/src/General/FileWatcher.cpp"

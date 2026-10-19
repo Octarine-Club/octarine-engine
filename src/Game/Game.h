@@ -129,6 +129,9 @@ class Game : public LuaBindingContext {
   // this at the top of Update, before systems run, so the swap happens outside any ForEach.
   void FlushPendingSceneLoad() { scene_loader_->FlushPendingSceneLoad(); }
 
+  // Captures live window/audio state (when not headless/editor) and writes user_settings.ini.
+  bool SaveUserSettings();
+
  private:
   void Setup();
   // Resolve the ImGui ini path (project dir / pref dir / cwd fallback), init the backend, and hand

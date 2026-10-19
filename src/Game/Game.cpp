@@ -48,6 +48,7 @@
 #include "Events/KeyInputEvent.h"
 #include "Events/MouseInputEvent.h"
 #include "Events/MouseWheelEvent.h"
+#include "Game/UserSettings.h"
 #include "GameConfig.h"
 #include "General/Logger.h"
 #include "General/PerfUtils.h"
@@ -184,6 +185,45 @@ void ApplyHeadlessOptions(EngineOptions& opts) {
   opts.showPerfOverlay = false;
   opts.hotReloadEnabled = false;
 }
+
+void InitUserSettings(Registry& registry, GameConfig& gameConfig, const std::string& saveDataPath) {
+  octarine::UserSettings userSettings;
+  if (!saveDataPath.empty()) {
+    static_cast<void>(userSettings.Load(saveDataPath));
+  }
+  gameConfig.GetEngineOptions().masterVolume = userSettings.masterVolume;
+  gameConfig.GetEngineOptions().audioEnabled = !userSettings.audioMuted;
+  if (userSettings.fpsTarget.has_value()) {
+    gameConfig.GetEngineOptions().fpsTarget = *userSettings.fpsTarget;
+  }
+  if (userSettings.showPerfOverlay.has_value()) {
+    gameConfig.GetEngineOptions().showPerfOverlay = *userSettings.showPerfOverlay;
+  }
+  registry.Set<octarine::UserSettings>(userSettings);
+}
+
+std::string ResolveProjectIniPath(const std::string& assetBase) {
+  if (assetBase.empty()) {
+    return "project.ini";
+  }
+  if (assetBase.back() == '/' || assetBase.back() == '\\') {
+    return assetBase + "project.ini";
+  }
+  return assetBase + "/project.ini";
+}
+
+bool HasExplicitSavePathEnv() {
+#ifdef _MSC_VER
+  char* envVal = nullptr;
+  size_t envLen = 0;
+  const bool ok = _dupenv_s(&envVal, &envLen, "OCTARINE_SAVE_PATH") == 0 && envVal != nullptr && *envVal != '\0';
+  free(envVal);
+  return ok;
+#else
+  const char* envVal = std::getenv("OCTARINE_SAVE_PATH");
+  return envVal != nullptr && *envVal != '\0';
+#endif
+}
 }  // namespace
 
 bool Game::Initialize(const std::string& assetPath) {
@@ -220,12 +260,7 @@ bool Game::Initialize(const std::string& assetPath) {
     }
   }
 
-  // Editor-global audio prefs (mute + master volume) layered over the per-project preferences.
-  engine_bootstrap::editor::ApplyAudioPrefs(*registry_);
-
-  if (headless_) {
-    ApplyHeadlessOptions(gameConfig.GetEngineOptions());
-  }
+  InitUserSettings(*registry_, gameConfig, GetSaveDataPath());
 
   // Editor builds default into editor mode (unless a non-editor mode was requested); player builds
   // never do and reject `--startup-mode editor` (ok=false → abort).
@@ -238,6 +273,7 @@ bool Game::Initialize(const std::string& assetPath) {
     if (startupDecision.defaultToEditor) {
       Logger::Info("Starting in Editor Mode.");
       gameConfig.SetIsEditorMode(true);
+      engine_bootstrap::editor::ApplyAudioPrefs(*registry_);
       engine_bootstrap::editor::PauseForEditorSession(*registry_);
     } else {
       Logger::Error("Failed to load project from path: '" + effectivePath +
@@ -247,7 +283,12 @@ bool Game::Initialize(const std::string& assetPath) {
   } else if (startupDecision.defaultToEditor) {
     Logger::Info("Starting in Editor Mode.");
     gameConfig.SetIsEditorMode(true);
+    engine_bootstrap::editor::ApplyAudioPrefs(*registry_);
     engine_bootstrap::editor::PauseForEditorSession(*registry_);
+  }
+
+  if (headless_) {
+    ApplyHeadlessOptions(gameConfig.GetEngineOptions());
   }
 
   if (!CreateWindowAndScene(projectLoaded)) {
@@ -264,6 +305,7 @@ bool Game::Initialize(const std::string& assetPath) {
   ctx.sdlRenderer = runtime_.SdlRenderer();
   ctx.eventBus = event_bus_.get();
   ctx.config = &gameConfig;
+  ctx.userSettings = registry_->TryGet<octarine::UserSettings>();
   registry_->Set<EngineContext>(ctx);
 
   s_is_running_ = true;
@@ -318,9 +360,29 @@ bool Game::CreateWindowAndScene(bool projectLoaded) {
                                 ? gameConfig.GetGameTitle()
                                 : (gameConfig.IsEditorMode() ? "Octarine Engine - Editor" : "Octarine Engine");
 
-  if (!runtime_.CreateWindow(title, gameConfig.windowWidth, gameConfig.windowHeight, headless_)) {
+  int initialWidth = gameConfig.windowWidth;
+  int initialHeight = gameConfig.windowHeight;
+#ifndef OCTARINE_PLATFORM_MOBILE
+  if (!headless_ && !gameConfig.IsEditorMode()) {
+    if (const auto* userSettings = registry_->TryGet<octarine::UserSettings>()) {
+      if (userSettings->windowWidth > 0 && userSettings->windowHeight > 0) {
+        initialWidth = userSettings->windowWidth;
+        initialHeight = userSettings->windowHeight;
+      }
+    }
+  }
+#endif
+
+  if (!runtime_.CreateWindow(title, initialWidth, initialHeight, headless_)) {
     return false;
   }
+
+  if (!headless_ && !gameConfig.IsEditorMode()) {
+    if (auto* userSettings = registry_->TryGet<octarine::UserSettings>()) {
+      userSettings->ApplyToWindow(runtime_.Window(), gameConfig.windowWidth, gameConfig.windowHeight);
+    }
+  }
+
   return renderer_->CreateScene(runtime_.SdlRenderer(), gameConfig.windowWidth, gameConfig.windowHeight);
 }
 
@@ -360,7 +422,7 @@ std::string Game::GetSaveDataPath() {
     if (!config->GetGameTitle().empty()) {
       app = config->GetGameTitle();
     }
-    const std::string iniPath = config->GetAssetPath() + "/project.ini";
+    const std::string iniPath = ResolveProjectIniPath(config->GetAssetPath());
     size_t dataSize = 0;
     if (void* data = SDL_LoadFile(iniPath.c_str(), &dataSize)) {
       const auto ini = octarine::project::ProjectIni::Parse(std::string_view(static_cast<const char*>(data), dataSize));
@@ -383,6 +445,28 @@ std::string Game::GetSaveDataPath() {
   return save_data_path_;
 }
 
+bool Game::SaveUserSettings() {
+  if (!registry_ || bake_mode_) return false;
+  auto* userSettings = registry_->TryGet<octarine::UserSettings>();
+  if (userSettings == nullptr) return false;
+
+  const auto* config = registry_->TryGet<GameConfig>();
+  const bool isHeadless = headless_ || (config != nullptr && config->GetEngineOptions().headless);
+  if (!isHeadless && !IsEditorMode()) {
+    if (runtime_.Window() != nullptr) {
+      userSettings->CaptureWindow(runtime_.Window());
+    }
+    if (config != nullptr) {
+      userSettings->masterVolume = config->GetEngineOptions().masterVolume;
+      userSettings->audioMuted = !config->GetEngineOptions().audioEnabled;
+    }
+  }
+
+  const std::string savePath = GetSaveDataPath();
+  if (savePath.empty()) return false;
+  return userSettings->Save(savePath);
+}
+
 void Game::Destroy() {
   if (registry_) {
 #ifndef OCTARINE_SHIPPED
@@ -392,6 +476,10 @@ void Game::Destroy() {
       devListen->Stop();
     }
 #endif
+
+    if (!bake_mode_ && (!headless_ || HasExplicitSavePathEnv())) {
+      static_cast<void>(SaveUserSettings());
+    }
 
     // GameConfig is only Set once Initialize gets past subsystem init; a failed Initialize
     // (e.g. SDL_Init with no video device) tears down here with the singleton absent, so guard

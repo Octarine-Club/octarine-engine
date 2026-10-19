@@ -21,6 +21,7 @@
 # octarine_core — POD/data foundation. No SDL_image, no SDL_mixer, no imgui.
 # -----------------------------------------------------------------------------
 set(OCTARINE_CORE_SOURCES
+        General/IniParser.cpp
         General/Logger.cpp
         General/FileSandbox.cpp
         General/FileWatcher.cpp
@@ -29,6 +30,7 @@ set(OCTARINE_CORE_SOURCES
         ECS/Registry.cpp
         ECS/StateInspector.cpp
         Game/GameConfig.cpp
+        Game/UserSettings.cpp
         Deploy/Adb.cpp
         Process/Process.cpp
         Project/ProjectIni.cpp

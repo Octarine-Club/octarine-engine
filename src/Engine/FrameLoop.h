@@ -56,6 +56,7 @@ class FrameLoop {
 
  private:
   static KeyInputEvent GetKeyInputEvent(SDL_KeyboardEvent* event);
+  void HandleWindowEvent(const SDL_Event& event);
   void UpdateViewportInfo(bool editorSession, bool showDebugGUI);
   void CheckHeadlessCapture();
   void SyncAudioGain(const EngineOptions& options);

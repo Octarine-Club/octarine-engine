@@ -1612,6 +1612,12 @@ function get_camera_position(...) end
 
 function get_camera_zoom(...) end
 
+function get_current_display_index(...) end
+
+function get_current_display_name(...) end
+
+function get_display_count(...) end
+
 function get_env(...) end
 
 function get_fixed_dt(...) end
@@ -1619,6 +1625,8 @@ function get_fixed_dt(...) end
 function get_fps_target(...) end
 
 function get_game_map_dimensions(...) end
+
+function get_master_volume(...) end
 
 function get_name(...) end
 
@@ -1629,6 +1637,12 @@ function get_position_xy(...) end
 function get_sim_substeps(...) end
 
 function get_state_hash(...) end
+
+function get_user_setting(...) end
+
+function get_window_position(...) end
+
+function get_window_size(...) end
 
 ---@class input
 input = {}
@@ -1686,9 +1700,15 @@ function input.on_mouse_wheel(...) end
 function input.unbind(...) end
 
 
+function is_audio_muted(...) end
+
 function is_deterministic(...) end
 
+function is_fullscreen(...) end
+
 function is_headless(...) end
+
+function is_maximized(...) end
 
 ---@class lifetime_component
 lifetime_component = {}
@@ -1884,6 +1904,8 @@ rigidbody_component = {}
 rotation_component = {}
 
 
+function save_user_settings(...) end
+
 ---@class scale_component
 scale_component = {}
 
@@ -1896,6 +1918,8 @@ script_callback_component = {}
 script_component = {}
 
 
+function set_audio_muted(...) end
+
 function set_camera_zoom(...) end
 
 function set_debug_gui(...) end
@@ -1906,9 +1930,15 @@ function set_fixed_dt(...) end
 
 function set_fps_target(...) end
 
+function set_fullscreen(...) end
+
 function set_game_map_dimensions(...) end
 
 function set_headless(...) end
+
+function set_master_volume(...) end
+
+function set_maximized(...) end
 
 function set_name(...) end
 
@@ -1923,6 +1953,36 @@ function set_sim_seed(...) end
 function set_sim_substeps(...) end
 
 function set_sprite_src_rect(...) end
+
+function set_user_setting(...) end
+
+function set_window_display(...) end
+
+function set_window_position(...) end
+
+function set_window_size(...) end
+
+---@class settings
+settings = {}
+
+function settings.define(...) end
+
+function settings.get(...) end
+
+function settings.get_all(...) end
+
+function settings.get_default(...) end
+
+function settings.has(...) end
+
+function settings.reset(...) end
+
+function settings.reset_all(...) end
+
+function settings.save(...) end
+
+function settings.set(...) end
+
 
 ---@class sprite_component
 sprite_component = {}

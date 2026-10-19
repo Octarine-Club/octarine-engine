@@ -20,6 +20,7 @@
 #include "Events/MouseWheelEvent.h"
 #include "Game/Game.h"
 #include "Game/GameConfig.h"
+#include "Game/UserSettings.h"
 #include "General/Logger.h"
 #include "General/PerfUtils.h"
 #include "Lua/HotReload/ScriptHotReload.h"
@@ -99,6 +100,14 @@ void FrameLoop::ProcessInput() {
         Game::Quit();
         break;
 
+      case SDL_EVENT_WILL_ENTER_BACKGROUND:
+      case SDL_EVENT_TERMINATING: {
+        // Mobile OSes (Android/iOS) frequently kill apps while backgrounded without firing
+        // SDL_EVENT_QUIT, so flush user settings as soon as the app transitions to background.
+        static_cast<void>(game_->SaveUserSettings());
+        break;
+      }
+
       case SDL_EVENT_KEY_DOWN:
       case SDL_EVENT_KEY_UP: {
         KeyInputEvent keyInputEvent = GetKeyInputEvent(&event.key);
@@ -134,17 +143,37 @@ void FrameLoop::ProcessInput() {
         event_bus_->EmitEvent<GamepadButtonEvent>(gamepadEvent);
         break;
       }
+      case SDL_EVENT_WINDOW_MOVED:
       case SDL_EVENT_WINDOW_RESIZED:
-      case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED: {
-        auto& viewportInfo = registry_->Get<ViewportInfo>();
-        int windowW, windowH;
-        SDL_GetWindowSize(runtime_->Window(), &windowW, &windowH);
-        viewportInfo.width = static_cast<float>(windowW);
-        viewportInfo.height = static_cast<float>(windowH);
+      case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+      case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
+      case SDL_EVENT_WINDOW_MAXIMIZED:
+      case SDL_EVENT_WINDOW_RESTORED:
+      case SDL_EVENT_WINDOW_ENTER_FULLSCREEN:
+      case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN: {
+        HandleWindowEvent(event);
         break;
       }
       default:
         break;
+    }
+  }
+}
+
+void FrameLoop::HandleWindowEvent(const SDL_Event& event) {
+  if (!game_->IsEditorMode()) {
+    if (auto* userSettings = registry_->TryGet<octarine::UserSettings>()) {
+      userSettings->CaptureWindow(runtime_->Window());
+    }
+  }
+  if (event.type == SDL_EVENT_WINDOW_RESIZED || event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) {
+    auto* viewportInfo = registry_->TryGet<ViewportInfo>();
+    if (viewportInfo != nullptr && runtime_->Window() != nullptr) {
+      int windowW = 0;
+      int windowH = 0;
+      SDL_GetWindowSize(runtime_->Window(), &windowW, &windowH);
+      viewportInfo->width = static_cast<float>(windowW);
+      viewportInfo->height = static_cast<float>(windowH);
     }
   }
 }
