@@ -21,8 +21,11 @@
 #include "AssetManager/TextureAtlasBaker.h"
 #include "Components/BoxColliderComponent.h"
 #include "Components/CameraComponents.h"
+#include "Components/CapsulePrimitiveComponent.h"
+#include "Components/CirclePrimitiveComponent.h"
 #include "Components/EntityMaskComponent.h"
 #include "Components/GlobalTransformComponent.h"
+#include "Components/LinePrimitiveComponent.h"
 #include "Components/PivotComponent.h"
 #include "Components/PositionComponent.h"
 #include "Components/RigidBodyComponent.h"
@@ -32,6 +35,7 @@
 #include "Components/SpriteComponent.h"
 #include "Components/SquarePrimitiveComponent.h"
 #include "Components/TextLabelComponent.h"
+#include "Components/TrianglePrimitiveComponent.h"
 #include "Components/ViewportInfo.h"
 #include "ECS/Query.h"
 #include "ECS/Registry.h"
@@ -73,10 +77,14 @@
 #include "Systems/KDTreeCollisionSystem.h"
 #include "Systems/LifetimeSystem.h"
 #include "Systems/OffScreenDespawnSystem.h"
+#include "Systems/RenderCapsulePrimitiveSystem.h"
+#include "Systems/RenderCirclePrimitiveSystem.h"
 #include "Systems/RenderColorGridSystem.h"
+#include "Systems/RenderLinePrimitiveSystem.h"
 #include "Systems/RenderPrimitiveSystem.h"
 #include "Systems/RenderSpriteSystem.h"
 #include "Systems/RenderTextSystem.h"
+#include "Systems/RenderTrianglePrimitiveSystem.h"
 #include "Systems/RenderUIPrimitiveSystem.h"
 #include "Systems/RenderUISpriteSystem.h"
 #include "Systems/ScriptCollisionSystem.h"
@@ -806,6 +814,12 @@ void Game::Setup() {
   registry_->RegisterSystem<UIRectComponent, SquarePrimitiveComponent>(RenderUIPrimitiveSystem());
   registry_->RegisterSystem<TextLabelComponent>(RenderTextSystem());
   registry_->RegisterParallelSystem<SquarePrimitiveComponent, GlobalTransformComponent>(RenderPrimitiveSystem());
+  registry_->RegisterParallelSystem<CirclePrimitiveComponent, GlobalTransformComponent>(RenderCirclePrimitiveSystem());
+  registry_->RegisterParallelSystem<LinePrimitiveComponent, GlobalTransformComponent>(RenderLinePrimitiveSystem());
+  registry_->RegisterParallelSystem<TrianglePrimitiveComponent, GlobalTransformComponent>(
+      RenderTrianglePrimitiveSystem());
+  registry_->RegisterParallelSystem<CapsulePrimitiveComponent, GlobalTransformComponent>(
+      RenderCapsulePrimitiveSystem());
   registry_->RegisterParallelSystem<ColorGridComponent, GlobalTransformComponent>(RenderColorGridSystem());
 
   // Execution-order edges (topo-sorted in Registry::Update; registration order breaks ties).

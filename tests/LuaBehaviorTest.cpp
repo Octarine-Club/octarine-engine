@@ -9,8 +9,12 @@
 #include <sol/sol.hpp>
 #include <string>
 
+#include "Components/CapsulePrimitiveComponent.h"
+#include "Components/CirclePrimitiveComponent.h"
 #include "Components/ColorGridComponent.h"
 #include "Components/GlobalTransformComponent.h"
+#include "Components/LinePrimitiveComponent.h"
+#include "Components/TrianglePrimitiveComponent.h"
 #ifdef OCTARINE_HAS_GAME_MODULE
 #include "Components/HealthComponent.h"
 #include "Lua/Bindings/HealthComponentLuaBinding.h"
@@ -59,6 +63,114 @@ bool RunLua(sol::state& lua, const std::string& script) {
     return false;
   }
   return true;
+}
+
+void TestPrimitiveBindings(sol::state& lua, Registry* reg) {
+  std::cout << "[primitive components: circle / line / triangle / capsule round-trip via Lua]\n";
+  Check(RunLua(lua, R"LUA(
+    e_circle = load_entity({
+      components = {
+        transform = { position = { x = 0, y = 0 } },
+        circle = {
+          position = { x = 4, y = 8 },
+          layer = 3,
+          radius = 16.5,
+          thickness = 2.5,
+          color = { r = 200, a = 128 },
+          fixed = true,
+          filled = false,
+          blend_mode = "add",
+        }
+      }
+    })
+    e_line = load_entity({
+      components = {
+        transform = { position = { x = 0, y = 0 } },
+        line = {
+          start = { x = 1, y = 2 },
+          ["end"] = { x = 10, y = 20 },
+          layer = 2,
+          thickness = 3.0,
+          color = { g = 180, a = 255 },
+          fixed = false,
+          blend_mode = "mod",
+        }
+      }
+    })
+    e_tri = load_entity({
+      components = {
+        transform = { position = { x = 0, y = 0 } },
+        triangle = {
+          p1 = { x = 0, y = -5 },
+          p2 = { x = 5, y = 5 },
+          p3 = { x = -5, y = 5 },
+          layer = 4,
+          thickness = 2.0,
+          color = { b = 250, a = 200 },
+          fixed = true,
+          filled = true,
+        }
+      }
+    })
+    e_cap = load_entity({
+      components = {
+        transform = { position = { x = 0, y = 0 } },
+        capsule = {
+          start = { x = -10, y = 0 },
+          ["end"] = { x = 10, y = 0 },
+          layer = 5,
+          radius = 6.0,
+          thickness = 1.5,
+          color = { r = 100, g = 150, b = 200, a = 255 },
+          fixed = false,
+          filled = false,
+        }
+      }
+    })
+  )LUA"),
+        "load_entity succeeds for circle, line, triangle, and capsule");
+
+  const Entity eCircle = lua["e_circle"];
+  const Entity eLine = lua["e_line"];
+  const Entity eTri = lua["e_tri"];
+  const Entity eCap = lua["e_cap"];
+
+  Check(reg->HasComponent<GlobalTransformComponent>(eCircle), "circle auto-attaches GlobalTransformComponent");
+  Check(reg->HasComponent<GlobalTransformComponent>(eLine), "line auto-attaches GlobalTransformComponent");
+  Check(reg->HasComponent<GlobalTransformComponent>(eTri), "triangle auto-attaches GlobalTransformComponent");
+  Check(reg->HasComponent<GlobalTransformComponent>(eCap), "capsule auto-attaches GlobalTransformComponent");
+
+  const auto& circleComp = reg->GetComponent<CirclePrimitiveComponent>(eCircle);
+  CheckEq(circleComp.radius, 16.5F, "circle radius parsed");
+  CheckEq(static_cast<int>(circleComp.color.r), 200, "circle partial color r parsed");
+  CheckEq(static_cast<int>(circleComp.color.g), 0, "circle partial color omitted g defaults to 0");
+  Check(circleComp.blendMode == octarine::BlendMode::Add, "circle blend_mode parsed as Add");
+  Check(!circleComp.filled, "circle filled=false parsed");
+
+  Check(RunLua(lua, R"LUA(
+    local c = registry.get_circle(e_circle)
+    c.radius = 32.0
+    c.filled = true
+    c.blend_mode = "blend"
+    local l = registry.get_line(e_line)
+    l.thickness = 5.0
+    local tr = registry.get_triangle(e_tri)
+    tr.p2 = vec2.new(12, 15)
+    local cp = registry.get_capsule(e_cap)
+    cp.radius = 9.5
+    cp.blend_mode = "add"
+  )LUA"),
+        "Lua mutations on circle, line, triangle, and capsule succeed");
+
+  CheckEq(circleComp.radius, 32.0F, "circle.radius mutated from Lua");
+  Check(circleComp.filled, "circle.filled mutated from Lua");
+  Check(circleComp.blendMode == octarine::BlendMode::Blend, "circle.blend_mode mutated from Lua");
+  CheckEq(reg->GetComponent<LinePrimitiveComponent>(eLine).thickness, 5.0F, "line.thickness mutated from Lua");
+  Check(NearVec2(reg->GetComponent<TrianglePrimitiveComponent>(eTri).p2, {12.0F, 15.0F}),
+        "triangle.p2 mutated from Lua");
+  CheckEq(reg->GetComponent<CapsulePrimitiveComponent>(eCap).radius, 9.5F, "capsule.radius mutated from Lua");
+  Check(reg->GetComponent<CapsulePrimitiveComponent>(eCap).blendMode == octarine::BlendMode::Add,
+        "capsule.blend_mode mutated from Lua");
 }
 }  // namespace
 
@@ -773,6 +885,8 @@ int main() {
     Check(RunLua(lua, "test_world.paused = false"), "test_world.paused = false script execution");
     Check(!reg->IsPaused(), "test_world.paused = false synchronized to C++ registry");
   }
+
+  TestPrimitiveBindings(lua, reg);
 
   return octarine::test::ReportSummary("Lua behavior test");
 }

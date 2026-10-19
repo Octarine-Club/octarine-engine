@@ -168,10 +168,36 @@
       "lua_surface": false
     },
     {
+      "name": "RenderCapsulePrimitiveSystem",
+      "source": "src/Systems/RenderCapsulePrimitiveSystem.h",
+      "tier": "parallel",
+      "setup_order": 22,
+      "queried_components": [
+        "CapsulePrimitiveComponent",
+        "GlobalTransformComponent"
+      ],
+      "emits": [],
+      "subscribes": [],
+      "lua_surface": false
+    },
+    {
+      "name": "RenderCirclePrimitiveSystem",
+      "source": "src/Systems/RenderCirclePrimitiveSystem.h",
+      "tier": "parallel",
+      "setup_order": 19,
+      "queried_components": [
+        "CirclePrimitiveComponent",
+        "GlobalTransformComponent"
+      ],
+      "emits": [],
+      "subscribes": [],
+      "lua_surface": false
+    },
+    {
       "name": "RenderColorGridSystem",
       "source": "src/Systems/RenderColorGridSystem.h",
       "tier": "parallel",
-      "setup_order": 19,
+      "setup_order": 23,
       "queried_components": [
         "ColorGridComponent",
         "GlobalTransformComponent"
@@ -187,6 +213,19 @@
       "setup_order": null,
       "queried_components": [
         "ScriptComponent"
+      ],
+      "emits": [],
+      "subscribes": [],
+      "lua_surface": false
+    },
+    {
+      "name": "RenderLinePrimitiveSystem",
+      "source": "src/Systems/RenderLinePrimitiveSystem.h",
+      "tier": "parallel",
+      "setup_order": 20,
+      "queried_components": [
+        "LinePrimitiveComponent",
+        "GlobalTransformComponent"
       ],
       "emits": [],
       "subscribes": [],
@@ -225,6 +264,19 @@
       "setup_order": 17,
       "queried_components": [
         "TextLabelComponent"
+      ],
+      "emits": [],
+      "subscribes": [],
+      "lua_surface": false
+    },
+    {
+      "name": "RenderTrianglePrimitiveSystem",
+      "source": "src/Systems/RenderTrianglePrimitiveSystem.h",
+      "tier": "parallel",
+      "setup_order": 21,
+      "queried_components": [
+        "TrianglePrimitiveComponent",
+        "GlobalTransformComponent"
       ],
       "emits": [],
       "subscribes": [],

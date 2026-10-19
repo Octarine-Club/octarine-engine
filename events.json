@@ -93,13 +93,13 @@
       "emit_sites": [
         {
           "file": "src/Engine/FrameLoop.cpp",
-          "line": 141
+          "line": 137
         }
       ],
       "subscribe_sites": [
         {
           "file": "src/Systems/InputSystem.h",
-          "line": 55,
+          "line": 57,
           "owner": "InputSystem"
         },
         {
@@ -130,18 +130,13 @@
       "emit_sites": [
         {
           "file": "src/Engine/FrameLoop.cpp",
-          "line": 112
+          "line": 108
         }
       ],
       "subscribe_sites": [
         {
-          "file": "src/Engine/FrameLoop.cpp",
-          "line": 75,
-          "owner": "FrameLoop"
-        },
-        {
           "file": "src/Systems/InputSystem.h",
-          "line": 51,
+          "line": 53,
           "owner": "InputSystem"
         },
         {
@@ -164,13 +159,13 @@
       "emit_sites": [
         {
           "file": "src/Engine/FrameLoop.cpp",
-          "line": 118
+          "line": 114
         }
       ],
       "subscribe_sites": [
         {
           "file": "src/Systems/InputSystem.h",
-          "line": 52,
+          "line": 54,
           "owner": "InputSystem"
         },
         {
@@ -197,13 +192,13 @@
       "emit_sites": [
         {
           "file": "src/Engine/FrameLoop.cpp",
-          "line": 122
+          "line": 118
         }
       ],
       "subscribe_sites": [
         {
           "file": "src/Systems/InputSystem.h",
-          "line": 53,
+          "line": 55,
           "owner": "InputSystem"
         }
       ]

@@ -50,3 +50,42 @@ struct TextCommand {
   SDL_FRect destRect{};
   SDL_Texture* texture{};
 };
+
+struct CircleCommand {
+  SDL_FPoint center{};
+  float radiusX{};
+  float radiusY{};
+  float rotation{};
+  float thickness{1.0f};
+  SDL_Color color{};
+  SDL_BlendMode blendMode{SDL_BLENDMODE_BLEND};
+  bool filled{true};
+};
+
+struct LineCommand {
+  SDL_FPoint start{};
+  SDL_FPoint end{};
+  float thickness{1.0f};
+  SDL_Color color{};
+  SDL_BlendMode blendMode{SDL_BLENDMODE_BLEND};
+};
+
+struct TriangleCommand {
+  SDL_FPoint p1{};
+  SDL_FPoint p2{};
+  SDL_FPoint p3{};
+  float thickness{1.0f};
+  SDL_Color color{};
+  SDL_BlendMode blendMode{SDL_BLENDMODE_BLEND};
+  bool filled{true};
+};
+
+struct CapsuleCommand {
+  SDL_FPoint start{};
+  SDL_FPoint end{};
+  float radius{};
+  float thickness{1.0f};
+  SDL_Color color{};
+  SDL_BlendMode blendMode{SDL_BLENDMODE_BLEND};
+  bool filled{true};
+};

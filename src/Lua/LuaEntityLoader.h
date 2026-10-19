@@ -3,9 +3,12 @@
 #include <stack>
 
 #include "Components/BoxColliderComponent.h"
+#include "Components/CapsulePrimitiveComponent.h"
+#include "Components/CirclePrimitiveComponent.h"
 #include "Components/ColorGridComponent.h"
 #include "Components/EntityMaskComponent.h"
 #include "Components/GlobalTransformComponent.h"
+#include "Components/LinePrimitiveComponent.h"
 #include "Components/NameComponent.h"
 #include "Components/PivotComponent.h"
 #include "Components/PositionComponent.h"
@@ -14,6 +17,7 @@
 #include "Components/SpriteComponent.h"
 #include "Components/SquarePrimitiveComponent.h"
 #include "Components/TextLabelComponent.h"
+#include "Components/TrianglePrimitiveComponent.h"
 #include "Components/UIButtonComponent.h"
 #include "ECS/Registry.h"
 #include "General/AngleUnit.h"
@@ -255,6 +259,10 @@ class LuaEntityLoader {
 
     const bool needsGlobal =
         registry->HasComponent<SpriteComponent>(entity) || registry->HasComponent<SquarePrimitiveComponent>(entity) ||
+        registry->HasComponent<CirclePrimitiveComponent>(entity) ||
+        registry->HasComponent<LinePrimitiveComponent>(entity) ||
+        registry->HasComponent<TrianglePrimitiveComponent>(entity) ||
+        registry->HasComponent<CapsulePrimitiveComponent>(entity) ||
         registry->HasComponent<ColorGridComponent>(entity) || registry->HasComponent<BoxColliderComponent>(entity) ||
         registry->HasComponent<UIButtonComponent>(entity) || registry->HasComponent<TextLabelComponent>(entity);
     if (!needsGlobal) return;

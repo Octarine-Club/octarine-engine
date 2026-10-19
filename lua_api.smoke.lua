@@ -1574,6 +1574,14 @@ box_collider_component = {}
 camera_follow_component = {}
 
 
+---@class capsule_primitive_component
+capsule_primitive_component = {}
+
+
+---@class circle_primitive_component
+circle_primitive_component = {}
+
+
 function clear_scene(...) end
 
 ---@class color
@@ -1678,6 +1686,10 @@ function is_headless(...) end
 lifetime_component = {}
 
 
+---@class line_primitive_component
+line_primitive_component = {}
+
+
 function load_asset(...) end
 
 function load_entity(...) end
@@ -1725,9 +1737,15 @@ function registry.get_box_collider(...) end
 
 function registry.get_camera_follow(...) end
 
+function registry.get_capsule(...) end
+
+function registry.get_circle(...) end
+
 function registry.get_color_grid(...) end
 
 function registry.get_lifetime(...) end
+
+function registry.get_line(...) end
 
 function registry.get_name(...) end
 
@@ -1753,6 +1771,8 @@ function registry.get_square(...) end
 
 function registry.get_text_label(...) end
 
+function registry.get_triangle(...) end
+
 function registry.get_ui_anchor(...) end
 
 function registry.get_ui_button(...) end
@@ -1773,9 +1793,15 @@ function registry.has_box_collider(...) end
 
 function registry.has_camera_follow(...) end
 
+function registry.has_capsule(...) end
+
+function registry.has_circle(...) end
+
 function registry.has_color_grid(...) end
 
 function registry.has_lifetime(...) end
+
+function registry.has_line(...) end
 
 function registry.has_name(...) end
 
@@ -1798,6 +1824,8 @@ function registry.has_sprite(...) end
 function registry.has_square(...) end
 
 function registry.has_text_label(...) end
+
+function registry.has_triangle(...) end
 
 function registry.has_ui_anchor(...) end
 
@@ -1841,6 +1869,8 @@ script_component = {}
 
 
 function set_camera_zoom(...) end
+
+function set_debug_gui(...) end
 
 function set_deterministic(...) end
 
@@ -1898,7 +1928,13 @@ function storage.write_table(...) end
 text_label_component = {}
 
 
+function toggle_debug_gui(...) end
+
 function toggle_perf_overlay(...) end
+
+---@class triangle_primitive_component
+triangle_primitive_component = {}
+
 
 ---@class ui
 ui = {}

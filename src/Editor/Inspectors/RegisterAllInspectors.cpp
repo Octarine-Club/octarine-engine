@@ -5,11 +5,14 @@
 #include "Editor/Inspectors/AnimationComponentInspector.h"
 #include "Editor/Inspectors/BoxColliderComponentInspector.h"
 #include "Editor/Inspectors/CameraFollowComponentInspector.h"
+#include "Editor/Inspectors/CapsulePrimitiveComponentInspector.h"
+#include "Editor/Inspectors/CirclePrimitiveComponentInspector.h"
 #include "Editor/Inspectors/ColorGridComponentInspector.h"
 #include "Editor/Inspectors/ComponentInspectorRegistry.h"
 #include "Editor/Inspectors/EntityMaskComponentInspector.h"
 #include "Editor/Inspectors/GlobalTransformComponentInspector.h"
 #include "Editor/Inspectors/LifetimeComponentInspector.h"
+#include "Editor/Inspectors/LinePrimitiveComponentInspector.h"
 #include "Editor/Inspectors/PivotComponentInspector.h"
 #include "Editor/Inspectors/PositionComponentInspector.h"
 #include "Editor/Inspectors/RigidBodyComponentInspector.h"
@@ -19,6 +22,7 @@
 #include "Editor/Inspectors/SpriteComponentInspector.h"
 #include "Editor/Inspectors/SquarePrimitiveComponentInspector.h"
 #include "Editor/Inspectors/TextLabelComponentInspector.h"
+#include "Editor/Inspectors/TrianglePrimitiveComponentInspector.h"
 #include "Editor/Inspectors/UIButtonComponentInspector.h"
 #include "Engine/GameModuleHooks.h"
 
@@ -40,6 +44,10 @@ void RegisterAllComponentInspectors(bool includeGameModule) {
   ComponentInspectorRegistry::registerComponent<CameraFollowComponent>();
   ComponentInspectorRegistry::registerComponent<EntityMaskComponent>();
   ComponentInspectorRegistry::registerComponent<SquarePrimitiveComponent>();
+  ComponentInspectorRegistry::registerComponent<CirclePrimitiveComponent>();
+  ComponentInspectorRegistry::registerComponent<LinePrimitiveComponent>();
+  ComponentInspectorRegistry::registerComponent<TrianglePrimitiveComponent>();
+  ComponentInspectorRegistry::registerComponent<CapsulePrimitiveComponent>();
   ComponentInspectorRegistry::registerComponent<ColorGridComponent>();
   ComponentInspectorRegistry::registerComponent<UIButtonComponent>();
 
