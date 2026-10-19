@@ -822,8 +822,6 @@ void Game::Setup() {
   // Camera follows after gameplay-driven transform updates.
   registry_->Order(cameraFollow).After(transform);
 
-  // Event subscriptions (one-time). FrameLoop holds its own RAII subscription handle.
-  frame_loop_->SubscribeToEvents();
   // Event-driven systems with no per-frame Update — owned by the Registry instead of
   // living as parallel members on Game. Keeps the registry as the single source of truth.
   auto& uiButtonSystem = registry_->Set<UIButtonSystem>(UIButtonSystem());

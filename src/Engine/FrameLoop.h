@@ -53,14 +53,6 @@ class FrameLoop {
   void Render(float deltaTime);
   [[nodiscard]] float WaitTime();
 
-  // Subscribe OnKeyInputEvent to the bus. Called once by Game during Setup; the returned RAII
-  // handle is held as a member so the subscription drops when this FrameLoop is destroyed.
-  void SubscribeToEvents();
-
-  // KeyInputEvent subscriber (Esc → quit, backtick → toggle debug GUI). Public so Game can wire
-  // it to the EventBus during Setup.
-  void OnKeyInputEvent(const KeyInputEvent& event);
-
  private:
   static KeyInputEvent GetKeyInputEvent(SDL_KeyboardEvent* event);
   void UpdateViewportInfo(bool editorSession, bool showDebugGUI);
@@ -79,7 +71,6 @@ class FrameLoop {
   // deltaTime when FpsTarget=0 lets the loop run uncapped.
   Uint64 nanoseconds_previous_frame_ = 0;
   std::unique_ptr<ComponentQuery<GlobalTransformComponent, BoxColliderComponent>> collider_query_;
-  EventBus::SubscriptionHandle key_input_subscription_;
   // Built-in (no-ImGui) FPS + frame-time overlay. Holds a small per-line text-texture cache, so it
   // is a long-lived member rather than reconstructed each frame.
   PerfOverlaySystem perf_overlay_;

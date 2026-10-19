@@ -19,6 +19,9 @@
 #include "General/SimRandom.h"
 #include "General/ThreadPool.h"
 #include "Lua/LuaBindingContext.h"
+#ifdef OCTARINE_WITH_IMGUI
+#include "Systems/RenderDebugGUISystem.h"
+#endif
 
 namespace {
 constexpr size_t kDefaultMaxDepth = 5;
@@ -105,6 +108,28 @@ void BindDiagnostics(sol::state& lua, LuaBindingContext& ctx) {
     auto& options = ctx.GetRegistry()->Get<GameConfig>().GetEngineOptions();
     options.showPerfOverlay = !options.showPerfOverlay;
     return options.showPerfOverlay;
+  });
+
+  // Toggle the ImGui debug GUI (overlay / inspector) at runtime.
+  lua.set_function("set_debug_gui", [&ctx](const bool enabled) {
+    auto& options = ctx.GetRegistry()->Get<GameConfig>().GetEngineOptions();
+    options.showDebugGUI = enabled;
+#ifdef OCTARINE_WITH_IMGUI
+    if (!options.showDebugGUI) {
+      RenderDebugGUISystem::ReturnFocusToGame(ctx.GetRegistry());
+    }
+#endif
+  });
+
+  lua.set_function("toggle_debug_gui", [&ctx]() {
+    auto& options = ctx.GetRegistry()->Get<GameConfig>().GetEngineOptions();
+    options.showDebugGUI = !options.showDebugGUI;
+#ifdef OCTARINE_WITH_IMGUI
+    if (!options.showDebugGUI) {
+      RenderDebugGUISystem::ReturnFocusToGame(ctx.GetRegistry());
+    }
+#endif
+    return options.showDebugGUI;
   });
 }
 

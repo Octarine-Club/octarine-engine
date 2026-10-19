@@ -25,7 +25,10 @@
 
 void RenderDebugGUISystem::ReturnFocusToGame(Game* game) {
   if (!game) return;
-  auto* registry = game->GetRegistry();
+  ReturnFocusToGame(game->GetRegistry());
+}
+
+void RenderDebugGUISystem::ReturnFocusToGame(Registry* registry) {
   if (!registry) return;
   auto& viewportInfo = registry->Get<ViewportInfo>();
 

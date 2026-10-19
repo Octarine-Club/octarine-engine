@@ -71,10 +71,6 @@ FrameLoop::FrameLoop(Game* game, Registry* registry, EventBus* eventBus, Rendere
   }
 }
 
-void FrameLoop::SubscribeToEvents() {
-  key_input_subscription_ = event_bus_->SubscribeEvent<FrameLoop, KeyInputEvent>(this, &FrameLoop::OnKeyInputEvent);
-}
-
 void FrameLoop::Begin() {
   nanoseconds_previous_frame_ = SDL_GetTicksNS();
   int count = 0;
@@ -408,30 +404,6 @@ float FrameLoop::WaitTime() {
   nanoseconds_previous_frame_ = now;
 
   return deltaTime;
-}
-
-void FrameLoop::OnKeyInputEvent(const KeyInputEvent& event) {
-  if (!event.isPressed) {
-    return;
-  }
-
-  auto& gameConfig = registry_->Get<GameConfig>();
-
-  switch (event.inputKey) {
-    case SDLK_ESCAPE:
-      Game::Quit();
-      break;
-    case SDLK_GRAVE:
-      gameConfig.GetEngineOptions().showDebugGUI = !gameConfig.GetEngineOptions().showDebugGUI;
-      if (!gameConfig.GetEngineOptions().showDebugGUI) {
-#ifdef OCTARINE_WITH_IMGUI
-        RenderDebugGUISystem::ReturnFocusToGame(game_);
-#endif
-      }
-      break;
-    default:
-      break;
-  }
 }
 
 KeyInputEvent FrameLoop::GetKeyInputEvent(SDL_KeyboardEvent* event) {
