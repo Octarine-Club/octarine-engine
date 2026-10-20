@@ -10,17 +10,26 @@
 #include <vector>
 
 #include "Components/CameraComponents.h"
+#include "Components/CapsulePrimitiveComponent.h"
+#include "Components/CirclePrimitiveComponent.h"
 #include "Components/ColorGridComponent.h"
 #include "Components/GlobalTransformComponent.h"
+#include "Components/LinePrimitiveComponent.h"
 #include "Components/SquarePrimitiveComponent.h"
+#include "Components/TrianglePrimitiveComponent.h"
 #include "ECS/Registry.h"
 #include "Game/GameConfig.h"
 #include "General/BlendMode.h"
 #include "General/Constants.h"
 #include "Renderer/RenderKey.h"
 #include "Renderer/RenderQueue.h"
+#include "Systems/RenderCapsulePrimitiveSystem.h"
+#include "Systems/RenderCirclePrimitiveSystem.h"
 #include "Systems/RenderColorGridSystem.h"
+#include "Systems/RenderLinePrimitiveSystem.h"
 #include "Systems/RenderPrimitiveSystem.h"
+#include "Systems/RenderTrianglePrimitiveSystem.h"
+#include "Systems/RenderUIPrimitiveSystem.h"
 #include "TestHarness.h"
 
 using octarine::BlendMode;
@@ -39,6 +48,48 @@ std::uint64_t Key(const unsigned int layer, const float depth, const RenderableT
 alignas(64) char g_texMemA[64];
 alignas(64) char g_texMemB[64];
 
+void TestUIPrimitiveRendering() {
+  std::cout << "[ui_primitive] RenderUIPrimitiveSystem emplaces layout-driven primitives\n";
+  Registry registry;
+  registry.Set<RenderQueue>(RenderQueue(32));
+  registry.RegisterBulkSystem(RenderUIPrimitiveSystem());
+
+  const UIRectComponent rect(10.0f, 20.0f, 110.0f, 60.0f, 3);  // 100x40, center=(60, 40)
+  registry.CreateEntityWithBundle(rect, SquarePrimitiveComponent{});
+  registry.CreateEntityWithBundle(rect, CirclePrimitiveComponent{});
+  registry.CreateEntityWithBundle(rect, CapsulePrimitiveComponent{});
+  registry.CreateEntityWithBundle(rect, TrianglePrimitiveComponent{});
+  registry.CreateEntityWithBundle(rect, LinePrimitiveComponent{});
+
+  registry.Update(0.016f);
+
+  const auto& queue = registry.Get<RenderQueue>();
+  CheckEq(queue.Size(), static_cast<size_t>(5), "all 5 UI primitives emplaced");
+
+  auto it = queue.begin();
+  CheckEq(it->payload.square.destRect.x, 10.0f, "UI square left");
+  CheckEq(it->payload.square.destRect.w, 100.0f, "UI square width");
+  ++it;
+  CheckEq(it->payload.circle.center.x, 60.0f, "UI circle center.x auto-fits rect");
+  CheckEq(it->payload.circle.center.y, 40.0f, "UI circle center.y auto-fits rect");
+  CheckEq(it->payload.circle.radiusX, 50.0f, "UI circle radiusX auto-fits rect half-width");
+  CheckEq(it->payload.circle.radiusY, 20.0f, "UI circle radiusY auto-fits rect half-height");
+  ++it;
+  CheckEq(it->payload.capsule.radius, 20.0f, "UI capsule radius auto-fits half of minor dimension");
+  CheckEq(it->payload.capsule.start.x, 30.0f, "UI capsule horizontal pill start.x = left + r");
+  CheckEq(it->payload.capsule.end.x, 90.0f, "UI capsule horizontal pill end.x = right - r");
+  CheckEq(it->payload.capsule.start.y, 40.0f, "UI capsule start.y = center.y");
+  ++it;
+  CheckEq(it->payload.triangle.p1.x, 60.0f, "UI triangle apex p1.x = midX");
+  CheckEq(it->payload.triangle.p1.y, 20.0f, "UI triangle apex p1.y = top");
+  CheckEq(it->payload.triangle.p2.x, 10.0f, "UI triangle p2.x = left");
+  CheckEq(it->payload.triangle.p3.x, 110.0f, "UI triangle p3.x = right");
+  ++it;
+  CheckEq(it->payload.line.start.x, 10.0f, "UI line horizontal divider start.x = left");
+  CheckEq(it->payload.line.end.x, 110.0f, "UI line horizontal divider end.x = right");
+  CheckEq(it->payload.line.start.y, 40.0f, "UI line horizontal divider y = center.y");
+}
+
 }  // namespace
 
 int main() {
@@ -55,6 +106,12 @@ int main() {
     Check(Key(0, -2.0f * Constants::kRenderBatchYBandPx, SPRITE, nullptr) < Key(0, 0.0f, SPRITE, nullptr),
           "negative depth sorts before zero (band bias)");
     Check(Key(0, 0.0f, SPRITE, nullptr) != Key(0, 0.0f, SQUARE_PRIMITIVE, nullptr), "type participates in the key");
+    Check(Key(0, 0.0f, SPRITE, nullptr) != Key(0, 0.0f, CIRCLE_PRIMITIVE, nullptr), "circle type participates in key");
+    Check(Key(0, 0.0f, SPRITE, nullptr) != Key(0, 0.0f, LINE_PRIMITIVE, nullptr), "line type participates in key");
+    Check(Key(0, 0.0f, SPRITE, nullptr) != Key(0, 0.0f, TRIANGLE_PRIMITIVE, nullptr),
+          "triangle type participates in key");
+    Check(Key(0, 0.0f, SPRITE, nullptr) != Key(0, 0.0f, CAPSULE_PRIMITIVE, nullptr),
+          "capsule type participates in key");
     Check(Key(0, 0.0f, SPRITE, texA) != Key(0, 0.0f, SPRITE, texB), "distinct textures get distinct batch hashes");
     CheckEq(Key(0, 0.0f, SPRITE, texA), Key(0, 0.0f, SPRITE, texA), "key is deterministic");
     // Blend sits above the texture hash inside the batch bits, so every same-blend run clusters
@@ -228,6 +285,119 @@ int main() {
     CheckEq(cmd.pivot.y, cmd.destRect.h * 0.5f, "centre pivot stays centred on y under scale");
   }
 
+  std::cout << "[primitive] RenderCirclePrimitiveSystem emplaces and scales circle\n";
+  {
+    Registry registry;
+    registry.Set<GameConfig>(GameConfig{});
+    registry.Get<GameConfig>().windowWidth = 800;
+    registry.Get<GameConfig>().windowHeight = 600;
+    registry.Set<CameraComponent>(CameraComponent{});
+    registry.Set<RenderQueue>(RenderQueue(16));
+
+    RenderCirclePrimitiveSystem system;
+    system.Prepare(&registry);
+
+    CirclePrimitiveComponent circle(glm::vec2(10.0f, 20.0f), 1, 15.0f);
+    GlobalTransformComponent transform;
+    transform.position = {100.0f, 100.0f};
+    transform.scale = {2.0f, 2.0f};
+
+    system(circle, transform);
+
+    const auto& queue = registry.Get<RenderQueue>();
+    CheckEq(queue.Size(), static_cast<size_t>(1), "circle emplaced");
+    const auto& cmd = queue.begin()->payload.circle;
+    CheckEq(cmd.radiusX, 30.0f, "circle radius scales with transform");
+    CheckEq(cmd.radiusY, 30.0f, "circle radius scales on y");
+    CheckEq(cmd.center.x, 120.0f, "circle center x accounts for scale and offset");
+    CheckEq(cmd.center.y, 140.0f, "circle center y accounts for scale and offset");
+    Check(cmd.filled, "circle is filled by default");
+  }
+
+  std::cout << "[primitive] RenderLinePrimitiveSystem emplaces line\n";
+  {
+    Registry registry;
+    registry.Set<GameConfig>(GameConfig{});
+    registry.Get<GameConfig>().windowWidth = 800;
+    registry.Get<GameConfig>().windowHeight = 600;
+    registry.Set<CameraComponent>(CameraComponent{});
+    registry.Set<RenderQueue>(RenderQueue(16));
+
+    RenderLinePrimitiveSystem system;
+    system.Prepare(&registry);
+
+    LinePrimitiveComponent line(glm::vec2(0.0f, 0.0f), glm::vec2(50.0f, 50.0f), 0, 2.0f);
+    GlobalTransformComponent transform;
+    transform.position = {10.0f, 20.0f};
+    transform.scale = {1.0f, 1.0f};
+
+    system(line, transform);
+
+    const auto& queue = registry.Get<RenderQueue>();
+    CheckEq(queue.Size(), static_cast<size_t>(1), "line emplaced");
+    const auto& cmd = queue.begin()->payload.line;
+    CheckEq(cmd.start.x, 10.0f, "line start.x matches world position");
+    CheckEq(cmd.start.y, 20.0f, "line start.y matches world position");
+    CheckEq(cmd.end.x, 60.0f, "line end.x matches world position");
+    CheckEq(cmd.end.y, 70.0f, "line end.y matches world position");
+    CheckEq(cmd.thickness, 2.0f, "line thickness preserved");
+  }
+
+  std::cout << "[primitive] RenderTrianglePrimitiveSystem emplaces triangle\n";
+  {
+    Registry registry;
+    registry.Set<GameConfig>(GameConfig{});
+    registry.Get<GameConfig>().windowWidth = 800;
+    registry.Get<GameConfig>().windowHeight = 600;
+    registry.Set<CameraComponent>(CameraComponent{});
+    registry.Set<RenderQueue>(RenderQueue(16));
+
+    RenderTrianglePrimitiveSystem system;
+    system.Prepare(&registry);
+
+    TrianglePrimitiveComponent triangle(glm::vec2(0.0f, 0.0f), glm::vec2(10.0f, 0.0f), glm::vec2(5.0f, 10.0f));
+    GlobalTransformComponent transform;
+    transform.position = {50.0f, 50.0f};
+    transform.scale = {1.0f, 1.0f};
+
+    system(triangle, transform);
+
+    const auto& queue = registry.Get<RenderQueue>();
+    CheckEq(queue.Size(), static_cast<size_t>(1), "triangle emplaced");
+    const auto& cmd = queue.begin()->payload.triangle;
+    CheckEq(cmd.p1.x, 50.0f, "triangle p1.x");
+    CheckEq(cmd.p2.x, 60.0f, "triangle p2.x");
+    CheckEq(cmd.p3.y, 60.0f, "triangle p3.y");
+    Check(cmd.filled, "triangle filled by default");
+  }
+
+  std::cout << "[primitive] RenderCapsulePrimitiveSystem emplaces capsule\n";
+  {
+    Registry registry;
+    registry.Set<GameConfig>(GameConfig{});
+    registry.Get<GameConfig>().windowWidth = 800;
+    registry.Get<GameConfig>().windowHeight = 600;
+    registry.Set<CameraComponent>(CameraComponent{});
+    registry.Set<RenderQueue>(RenderQueue(16));
+
+    RenderCapsulePrimitiveSystem system;
+    system.Prepare(&registry);
+
+    CapsulePrimitiveComponent capsule(glm::vec2(0.0f, 0.0f), glm::vec2(0.0f, 40.0f), 0, 10.0f);
+    GlobalTransformComponent transform;
+    transform.position = {100.0f, 100.0f};
+    transform.scale = {1.0f, 1.0f};
+
+    system(capsule, transform);
+
+    const auto& queue = registry.Get<RenderQueue>();
+    CheckEq(queue.Size(), static_cast<size_t>(1), "capsule emplaced");
+    const auto& cmd = queue.begin()->payload.capsule;
+    CheckEq(cmd.start.x, 100.0f, "capsule start.x");
+    CheckEq(cmd.end.y, 140.0f, "capsule end.y");
+    CheckEq(cmd.radius, 10.0f, "capsule radius");
+  }
+
   std::cout << "[color_grid] RenderColorGridSystem auto-scrolls and emits batched squares\n";
   {
     Registry registry;
@@ -295,6 +465,8 @@ int main() {
     const auto& queue = registry.Get<RenderQueue>();
     Check(queue.IsEmpty(), "bounded grid completely outside camera is culled");
   }
+
+  TestUIPrimitiveRendering();
 
   return octarine::test::ReportSummary("RenderQueueTest");
 }

@@ -8,6 +8,7 @@
 #include <fstream>
 #include <sstream>
 
+#include "General/IniParser.h"
 #include "General/Logger.h"
 
 namespace {
@@ -33,24 +34,24 @@ void ApplyProjectSetting(EditorPersistence& prefs, const std::string& key, const
     return;
   }
   if (key == "showDebugGUI") {
-    prefs.showDebugGUI = (value == "true");
+    prefs.showDebugGUI = octarine::IniParser::ParseBool(value);
     return;
   }
   if (key == "drawColliders") {
-    prefs.drawColliders = (value == "true");
+    prefs.drawColliders = octarine::IniParser::ParseBool(value);
     return;
   }
   if (key == "showFpsCounter") {
-    prefs.showFpsCounter = (value == "true");
+    prefs.showFpsCounter = octarine::IniParser::ParseBool(value);
     return;
   }
   if (key == "showEntityInfo") {
-    prefs.showEntityInfo = (value == "true");
+    prefs.showEntityInfo = octarine::IniParser::ParseBool(value);
     return;
   }
   for (const auto& [flagKey, member] : EditorPersistence::kWindowFlags) {
     if (key == flagKey) {
-      prefs.*member = (value == "true");
+      prefs.*member = octarine::IniParser::ParseBool(value);
       return;
     }
   }
@@ -58,15 +59,7 @@ void ApplyProjectSetting(EditorPersistence& prefs, const std::string& key, const
 }  // namespace
 
 bool ParseIniLine(const std::string& line, std::string& key, std::string& value) {
-  const auto eq = line.find('=');
-  if (eq == std::string::npos) return false;
-  key = line.substr(0, eq);
-  value = line.substr(eq + 1);
-  // Trim trailing whitespace / CR so CRLF files and hand edits round-trip cleanly.
-  while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back()))) {
-    value.pop_back();
-  }
-  return true;
+  return octarine::IniParser::ParseLine(line, key, value);
 }
 
 void EditorPersistence::SaveGlobal() const {

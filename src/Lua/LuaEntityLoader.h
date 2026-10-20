@@ -1,11 +1,18 @@
 #pragma once
+#include <algorithm>
 #include <optional>
 #include <stack>
 
 #include "Components/BoxColliderComponent.h"
+#include "Components/CapsuleColliderComponent.h"
+#include "Components/CapsulePrimitiveComponent.h"
+#include "Components/CircleColliderComponent.h"
+#include "Components/CirclePrimitiveComponent.h"
 #include "Components/ColorGridComponent.h"
 #include "Components/EntityMaskComponent.h"
 #include "Components/GlobalTransformComponent.h"
+#include "Components/LineColliderComponent.h"
+#include "Components/LinePrimitiveComponent.h"
 #include "Components/NameComponent.h"
 #include "Components/PivotComponent.h"
 #include "Components/PositionComponent.h"
@@ -14,6 +21,8 @@
 #include "Components/SpriteComponent.h"
 #include "Components/SquarePrimitiveComponent.h"
 #include "Components/TextLabelComponent.h"
+#include "Components/TriangleColliderComponent.h"
+#include "Components/TrianglePrimitiveComponent.h"
 #include "Components/UIButtonComponent.h"
 #include "ECS/Registry.h"
 #include "General/AngleUnit.h"
@@ -46,6 +55,15 @@ class LuaEntityLoader {
     bool hasCollider = false;
   };
 
+  [[nodiscard]] static bool HasAnyColliderTable(const sol::table& t) {
+    constexpr const char* kColliderKeys[] = {"box_collider", "circle_collider", "capsule_collider", "triangle_collider",
+                                             "line_collider"};
+    return std::ranges::any_of(kColliderKeys, [&t](const char* key) {
+      const sol::object obj = t.get<sol::object>(key);
+      return obj.valid() && obj.is<sol::table>();
+    });
+  }
+
   static void ScanInnerComponentTable(const sol::table& inner, ComponentMaskAndCollider& result) {
     if (!result.hasMask) {
       const sol::object innerMask = inner.get<sol::object>("entity_mask");
@@ -54,11 +72,8 @@ class LuaEntityLoader {
         result.hasMask = true;
       }
     }
-    if (!result.hasCollider) {
-      const sol::object innerCollider = inner.get<sol::object>("box_collider");
-      if (innerCollider.valid() && innerCollider.is<sol::table>()) {
-        result.hasCollider = true;
-      }
+    if (!result.hasCollider && HasAnyColliderTable(inner)) {
+      result.hasCollider = true;
     }
   }
 
@@ -72,9 +87,7 @@ class LuaEntityLoader {
     const sol::table& components = componentsOpt.value();
     result.mask = components.get<sol::object>("entity_mask");
     result.hasMask = result.mask.valid() && result.mask.is<int>();
-
-    const sol::object boxCollider = components.get<sol::object>("box_collider");
-    result.hasCollider = boxCollider.valid() && boxCollider.is<sol::table>();
+    result.hasCollider = HasAnyColliderTable(components);
 
     if (result.hasCollider && result.hasMask) {
       return result;
@@ -255,8 +268,16 @@ class LuaEntityLoader {
 
     const bool needsGlobal =
         registry->HasComponent<SpriteComponent>(entity) || registry->HasComponent<SquarePrimitiveComponent>(entity) ||
+        registry->HasComponent<CirclePrimitiveComponent>(entity) ||
+        registry->HasComponent<LinePrimitiveComponent>(entity) ||
+        registry->HasComponent<TrianglePrimitiveComponent>(entity) ||
+        registry->HasComponent<CapsulePrimitiveComponent>(entity) ||
         registry->HasComponent<ColorGridComponent>(entity) || registry->HasComponent<BoxColliderComponent>(entity) ||
-        registry->HasComponent<UIButtonComponent>(entity) || registry->HasComponent<TextLabelComponent>(entity);
+        registry->HasComponent<CircleColliderComponent>(entity) ||
+        registry->HasComponent<CapsuleColliderComponent>(entity) ||
+        registry->HasComponent<TriangleColliderComponent>(entity) ||
+        registry->HasComponent<LineColliderComponent>(entity) || registry->HasComponent<UIButtonComponent>(entity) ||
+        registry->HasComponent<TextLabelComponent>(entity);
     if (!needsGlobal) return;
 
     if (registry->HasComponent<GlobalTransformComponent>(entity)) return;

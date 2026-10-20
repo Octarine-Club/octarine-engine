@@ -20,6 +20,7 @@
 #include "Events/MouseWheelEvent.h"
 #include "Game/Game.h"
 #include "Game/GameConfig.h"
+#include "Game/UserSettings.h"
 #include "General/Logger.h"
 #include "General/PerfUtils.h"
 #include "Lua/HotReload/ScriptHotReload.h"
@@ -60,19 +61,12 @@ std::string GetEnvVar(const char* name) {
 FrameLoop::FrameLoop(Game* game, Registry* registry, EventBus* eventBus, Renderer* renderer, EngineRuntime* runtime,
                      sol::state& lua)
     : game_(game), registry_(registry), event_bus_(eventBus), renderer_(renderer), runtime_(runtime), lua_(lua) {
-  // Pre-build the debug-collider query once so we don't allocate per render frame.
-  collider_query_ = registry_->CreateQuery<GlobalTransformComponent, BoxColliderComponent>();
-
   if (const std::string path = GetEnvVar("OCTARINE_CAPTURE_PATH"); !path.empty()) {
     capture_path_ = path;
     if (const std::string frame = GetEnvVar("OCTARINE_CAPTURE_FRAME"); !frame.empty()) {
       capture_frame_ = std::stol(frame);
     }
   }
-}
-
-void FrameLoop::SubscribeToEvents() {
-  key_input_subscription_ = event_bus_->SubscribeEvent<FrameLoop, KeyInputEvent>(this, &FrameLoop::OnKeyInputEvent);
 }
 
 void FrameLoop::Begin() {
@@ -105,6 +99,14 @@ void FrameLoop::ProcessInput() {
       case SDL_EVENT_QUIT:
         Game::Quit();
         break;
+
+      case SDL_EVENT_WILL_ENTER_BACKGROUND:
+      case SDL_EVENT_TERMINATING: {
+        // Mobile OSes (Android/iOS) frequently kill apps while backgrounded without firing
+        // SDL_EVENT_QUIT, so flush user settings as soon as the app transitions to background.
+        static_cast<void>(game_->SaveUserSettings());
+        break;
+      }
 
       case SDL_EVENT_KEY_DOWN:
       case SDL_EVENT_KEY_UP: {
@@ -141,17 +143,37 @@ void FrameLoop::ProcessInput() {
         event_bus_->EmitEvent<GamepadButtonEvent>(gamepadEvent);
         break;
       }
+      case SDL_EVENT_WINDOW_MOVED:
       case SDL_EVENT_WINDOW_RESIZED:
-      case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED: {
-        auto& viewportInfo = registry_->Get<ViewportInfo>();
-        int windowW, windowH;
-        SDL_GetWindowSize(runtime_->Window(), &windowW, &windowH);
-        viewportInfo.width = static_cast<float>(windowW);
-        viewportInfo.height = static_cast<float>(windowH);
+      case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+      case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
+      case SDL_EVENT_WINDOW_MAXIMIZED:
+      case SDL_EVENT_WINDOW_RESTORED:
+      case SDL_EVENT_WINDOW_ENTER_FULLSCREEN:
+      case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN: {
+        HandleWindowEvent(event);
         break;
       }
       default:
         break;
+    }
+  }
+}
+
+void FrameLoop::HandleWindowEvent(const SDL_Event& event) {
+  if (!game_->IsEditorMode()) {
+    if (auto* userSettings = registry_->TryGet<octarine::UserSettings>()) {
+      userSettings->CaptureWindow(runtime_->Window());
+    }
+  }
+  if (event.type == SDL_EVENT_WINDOW_RESIZED || event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) {
+    auto* viewportInfo = registry_->TryGet<ViewportInfo>();
+    if (viewportInfo != nullptr && runtime_->Window() != nullptr) {
+      int windowW = 0;
+      int windowH = 0;
+      SDL_GetWindowSize(runtime_->Window(), &windowW, &windowH);
+      viewportInfo->width = static_cast<float>(windowW);
+      viewportInfo->height = static_cast<float>(windowH);
     }
   }
 }
@@ -335,10 +357,8 @@ void FrameLoop::Render(const float deltaTime) {
   renderer_->DrawQueue(renderQueue, runtime_->SdlRenderer());
 #endif
 
-  if (gameConfig.GetEngineOptions().drawColliders && collider_query_) {
-    collider_query_->Update();
-    DrawColliderSystem drawColliderSystem;
-    collider_query_->ForEach(drawColliderSystem);
+  if (gameConfig.GetEngineOptions().drawColliders) {
+    draw_collider_system_.Draw(registry_);
   }
 
   // Built-in perf overlay (no ImGui). Drawn into the scene texture so it composites for both the
@@ -408,30 +428,6 @@ float FrameLoop::WaitTime() {
   nanoseconds_previous_frame_ = now;
 
   return deltaTime;
-}
-
-void FrameLoop::OnKeyInputEvent(const KeyInputEvent& event) {
-  if (!event.isPressed) {
-    return;
-  }
-
-  auto& gameConfig = registry_->Get<GameConfig>();
-
-  switch (event.inputKey) {
-    case SDLK_ESCAPE:
-      Game::Quit();
-      break;
-    case SDLK_GRAVE:
-      gameConfig.GetEngineOptions().showDebugGUI = !gameConfig.GetEngineOptions().showDebugGUI;
-      if (!gameConfig.GetEngineOptions().showDebugGUI) {
-#ifdef OCTARINE_WITH_IMGUI
-        RenderDebugGUISystem::ReturnFocusToGame(game_);
-#endif
-      }
-      break;
-    default:
-      break;
-  }
 }
 
 KeyInputEvent FrameLoop::GetKeyInputEvent(SDL_KeyboardEvent* event) {

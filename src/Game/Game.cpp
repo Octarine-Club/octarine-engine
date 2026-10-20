@@ -21,8 +21,11 @@
 #include "AssetManager/TextureAtlasBaker.h"
 #include "Components/BoxColliderComponent.h"
 #include "Components/CameraComponents.h"
+#include "Components/CapsulePrimitiveComponent.h"
+#include "Components/CirclePrimitiveComponent.h"
 #include "Components/EntityMaskComponent.h"
 #include "Components/GlobalTransformComponent.h"
+#include "Components/LinePrimitiveComponent.h"
 #include "Components/PivotComponent.h"
 #include "Components/PositionComponent.h"
 #include "Components/RigidBodyComponent.h"
@@ -32,6 +35,7 @@
 #include "Components/SpriteComponent.h"
 #include "Components/SquarePrimitiveComponent.h"
 #include "Components/TextLabelComponent.h"
+#include "Components/TrianglePrimitiveComponent.h"
 #include "Components/ViewportInfo.h"
 #include "ECS/Query.h"
 #include "ECS/Registry.h"
@@ -44,6 +48,7 @@
 #include "Events/KeyInputEvent.h"
 #include "Events/MouseInputEvent.h"
 #include "Events/MouseWheelEvent.h"
+#include "Game/UserSettings.h"
 #include "GameConfig.h"
 #include "General/Logger.h"
 #include "General/PerfUtils.h"
@@ -73,10 +78,14 @@
 #include "Systems/KDTreeCollisionSystem.h"
 #include "Systems/LifetimeSystem.h"
 #include "Systems/OffScreenDespawnSystem.h"
+#include "Systems/RenderCapsulePrimitiveSystem.h"
+#include "Systems/RenderCirclePrimitiveSystem.h"
 #include "Systems/RenderColorGridSystem.h"
+#include "Systems/RenderLinePrimitiveSystem.h"
 #include "Systems/RenderPrimitiveSystem.h"
 #include "Systems/RenderSpriteSystem.h"
 #include "Systems/RenderTextSystem.h"
+#include "Systems/RenderTrianglePrimitiveSystem.h"
 #include "Systems/RenderUIPrimitiveSystem.h"
 #include "Systems/RenderUISpriteSystem.h"
 #include "Systems/ScriptCollisionSystem.h"
@@ -176,6 +185,78 @@ void ApplyHeadlessOptions(EngineOptions& opts) {
   opts.showPerfOverlay = false;
   opts.hotReloadEnabled = false;
 }
+
+void InitUserSettings(Registry& registry, GameConfig& gameConfig, const std::string& saveDataPath) {
+  octarine::UserSettings userSettings;
+  if (!saveDataPath.empty()) {
+    static_cast<void>(userSettings.Load(saveDataPath));
+  }
+  gameConfig.GetEngineOptions().masterVolume = userSettings.masterVolume;
+  gameConfig.GetEngineOptions().audioEnabled = !userSettings.audioMuted;
+  if (userSettings.fpsTarget.has_value()) {
+    gameConfig.GetEngineOptions().fpsTarget = *userSettings.fpsTarget;
+  }
+  if (userSettings.showPerfOverlay.has_value()) {
+    gameConfig.GetEngineOptions().showPerfOverlay = *userSettings.showPerfOverlay;
+  }
+  registry.Set<octarine::UserSettings>(userSettings);
+}
+
+std::string ResolveProjectIniPath(const std::string& assetBase) {
+  if (assetBase.empty()) {
+    return "project.ini";
+  }
+  if (assetBase.back() == '/' || assetBase.back() == '\\') {
+    return assetBase + "project.ini";
+  }
+  return assetBase + "/project.ini";
+}
+
+std::string ReadSavePathEnv() {
+  std::string path;
+#ifdef _MSC_VER
+  char* envVal = nullptr;
+  size_t envLen = 0;
+  if (_dupenv_s(&envVal, &envLen, "OCTARINE_SAVE_PATH") == 0 && envVal != nullptr) {
+    path = envVal;
+    free(envVal);
+  }
+#else
+  if (const char* envVal = std::getenv("OCTARINE_SAVE_PATH")) {
+    path = envVal;
+  }
+#endif
+  if (!path.empty() && path.back() != '/' && path.back() != '\\') {
+    path += '/';
+  }
+  return path;
+}
+
+bool HasExplicitSavePathEnv() { return !ReadSavePathEnv().empty(); }
+
+std::pair<std::string, std::string> ResolveSaveDataIdentity(const GameConfig* config) {
+  std::string org = "Octarine";
+  std::string app = "Engine";
+  if (config == nullptr || !config->HasLoadedConfig()) {
+    return {org, app};
+  }
+  if (!config->GetGameTitle().empty()) {
+    app = config->GetGameTitle();
+  }
+  const std::string iniPath = ResolveProjectIniPath(config->GetAssetPath());
+  size_t dataSize = 0;
+  if (void* data = SDL_LoadFile(iniPath.c_str(), &dataSize)) {
+    const auto ini = octarine::project::ProjectIni::Parse(std::string_view(static_cast<const char*>(data), dataSize));
+    SDL_free(data);
+    if (!ini.vendor.empty()) {
+      org = ini.vendor;
+    }
+    if (!ini.name.empty()) {
+      app = ini.name;
+    }
+  }
+  return {org, app};
+}
 }  // namespace
 
 bool Game::Initialize(const std::string& assetPath) {
@@ -212,12 +293,7 @@ bool Game::Initialize(const std::string& assetPath) {
     }
   }
 
-  // Editor-global audio prefs (mute + master volume) layered over the per-project preferences.
-  engine_bootstrap::editor::ApplyAudioPrefs(*registry_);
-
-  if (headless_) {
-    ApplyHeadlessOptions(gameConfig.GetEngineOptions());
-  }
+  InitUserSettings(*registry_, gameConfig, GetSaveDataPath());
 
   // Editor builds default into editor mode (unless a non-editor mode was requested); player builds
   // never do and reject `--startup-mode editor` (ok=false → abort).
@@ -230,6 +306,7 @@ bool Game::Initialize(const std::string& assetPath) {
     if (startupDecision.defaultToEditor) {
       Logger::Info("Starting in Editor Mode.");
       gameConfig.SetIsEditorMode(true);
+      engine_bootstrap::editor::ApplyAudioPrefs(*registry_);
       engine_bootstrap::editor::PauseForEditorSession(*registry_);
     } else {
       Logger::Error("Failed to load project from path: '" + effectivePath +
@@ -239,7 +316,12 @@ bool Game::Initialize(const std::string& assetPath) {
   } else if (startupDecision.defaultToEditor) {
     Logger::Info("Starting in Editor Mode.");
     gameConfig.SetIsEditorMode(true);
+    engine_bootstrap::editor::ApplyAudioPrefs(*registry_);
     engine_bootstrap::editor::PauseForEditorSession(*registry_);
+  }
+
+  if (headless_) {
+    ApplyHeadlessOptions(gameConfig.GetEngineOptions());
   }
 
   if (!CreateWindowAndScene(projectLoaded)) {
@@ -256,6 +338,7 @@ bool Game::Initialize(const std::string& assetPath) {
   ctx.sdlRenderer = runtime_.SdlRenderer();
   ctx.eventBus = event_bus_.get();
   ctx.config = &gameConfig;
+  ctx.userSettings = registry_->TryGet<octarine::UserSettings>();
   registry_->Set<EngineContext>(ctx);
 
   s_is_running_ = true;
@@ -302,6 +385,25 @@ void Game::StartDevListenServer() {
 #endif
 }
 
+namespace {
+std::pair<int, int> ResolveInitialWindowSize([[maybe_unused]] Registry& registry, const GameConfig& gameConfig,
+                                             [[maybe_unused]] const bool headless) {
+  int initialWidth = gameConfig.windowWidth;
+  int initialHeight = gameConfig.windowHeight;
+#ifndef OCTARINE_PLATFORM_MOBILE
+  if (!headless && !gameConfig.IsEditorMode()) {
+    if (const auto* userSettings = registry.TryGet<octarine::UserSettings>()) {
+      if (userSettings->windowWidth > 0 && userSettings->windowHeight > 0) {
+        initialWidth = userSettings->windowWidth;
+        initialHeight = userSettings->windowHeight;
+      }
+    }
+  }
+#endif
+  return {initialWidth, initialHeight};
+}
+}  // namespace
+
 bool Game::CreateWindowAndScene(bool projectLoaded) {
   auto& gameConfig = registry_->Get<GameConfig>();
   gameConfig.windowWidth = projectLoaded ? gameConfig.GetDefaultWidth() : Constants::kDefaultWindowWidth;
@@ -310,9 +412,17 @@ bool Game::CreateWindowAndScene(bool projectLoaded) {
                                 ? gameConfig.GetGameTitle()
                                 : (gameConfig.IsEditorMode() ? "Octarine Engine - Editor" : "Octarine Engine");
 
-  if (!runtime_.CreateWindow(title, gameConfig.windowWidth, gameConfig.windowHeight, headless_)) {
+  const auto [initialWidth, initialHeight] = ResolveInitialWindowSize(*registry_, gameConfig, headless_);
+  if (!runtime_.CreateWindow(title, initialWidth, initialHeight, headless_)) {
     return false;
   }
+
+  if (!headless_ && !gameConfig.IsEditorMode()) {
+    if (auto* userSettings = registry_->TryGet<octarine::UserSettings>()) {
+      userSettings->ApplyToWindow(runtime_.Window(), gameConfig.windowWidth, gameConfig.windowHeight);
+    }
+  }
+
   return renderer_->CreateScene(runtime_.SdlRenderer(), gameConfig.windowWidth, gameConfig.windowHeight);
 }
 
@@ -331,28 +441,16 @@ std::string Game::GetSaveDataPath() {
     return save_data_path_;
   }
 
+  // Environment override: allows development runs, CI, or portable builds to isolate save data.
+  if (std::string envPath = ReadSavePathEnv(); !envPath.empty()) {
+    save_data_path_ = std::move(envPath);
+    return save_data_path_;
+  }
+
   // Identity precedence: project.ini vendor/name > config.ini GameTitle > engine defaults.
   // project.ini is read via SDL so it resolves inside an APK or .app bundle the same way
   // config.ini does.
-  std::string org = "Octarine";
-  std::string app = "Engine";
-  if (const auto* config = registry_->TryGet<GameConfig>(); config != nullptr && config->HasLoadedConfig()) {
-    if (!config->GetGameTitle().empty()) {
-      app = config->GetGameTitle();
-    }
-    const std::string iniPath = config->GetAssetPath() + "/project.ini";
-    size_t dataSize = 0;
-    if (void* data = SDL_LoadFile(iniPath.c_str(), &dataSize)) {
-      const auto ini = octarine::project::ProjectIni::Parse(std::string_view(static_cast<const char*>(data), dataSize));
-      SDL_free(data);
-      if (!ini.vendor.empty()) {
-        org = ini.vendor;
-      }
-      if (!ini.name.empty()) {
-        app = ini.name;
-      }
-    }
-  }
+  const auto [org, app] = ResolveSaveDataIdentity(registry_->TryGet<GameConfig>());
 
   if (char* prefPath = SDL_GetPrefPath(org.c_str(), app.c_str())) {
     save_data_path_ = prefPath;
@@ -361,6 +459,28 @@ std::string Game::GetSaveDataPath() {
     Logger::Error("Game::GetSaveDataPath: SDL_GetPrefPath failed: " + std::string(SDL_GetError()));
   }
   return save_data_path_;
+}
+
+bool Game::SaveUserSettings() {
+  if (!registry_ || bake_mode_) return false;
+  auto* userSettings = registry_->TryGet<octarine::UserSettings>();
+  if (userSettings == nullptr) return false;
+
+  const auto* config = registry_->TryGet<GameConfig>();
+  const bool isHeadless = headless_ || (config != nullptr && config->GetEngineOptions().headless);
+  if (!isHeadless && !IsEditorMode()) {
+    if (runtime_.Window() != nullptr) {
+      userSettings->CaptureWindow(runtime_.Window());
+    }
+    if (config != nullptr) {
+      userSettings->masterVolume = config->GetEngineOptions().masterVolume;
+      userSettings->audioMuted = !config->GetEngineOptions().audioEnabled;
+    }
+  }
+
+  const std::string savePath = GetSaveDataPath();
+  if (savePath.empty()) return false;
+  return userSettings->Save(savePath);
 }
 
 void Game::Destroy() {
@@ -372,6 +492,10 @@ void Game::Destroy() {
       devListen->Stop();
     }
 #endif
+
+    if (!bake_mode_ && (!headless_ || HasExplicitSavePathEnv())) {
+      static_cast<void>(SaveUserSettings());
+    }
 
     // GameConfig is only Set once Initialize gets past subsystem init; a failed Initialize
     // (e.g. SDL_Init with no video device) tears down here with the singleton absent, so guard
@@ -791,9 +915,15 @@ void Game::Setup() {
   // Render queue producers
   registry_->RegisterParallelSystem<GlobalTransformComponent, SpriteComponent>(RenderSpriteSystem());
   registry_->RegisterSystem<UIRectComponent, SpriteComponent>(RenderUISpriteSystem());
-  registry_->RegisterSystem<UIRectComponent, SquarePrimitiveComponent>(RenderUIPrimitiveSystem());
+  registry_->RegisterBulkSystem(RenderUIPrimitiveSystem());
   registry_->RegisterSystem<TextLabelComponent>(RenderTextSystem());
   registry_->RegisterParallelSystem<SquarePrimitiveComponent, GlobalTransformComponent>(RenderPrimitiveSystem());
+  registry_->RegisterParallelSystem<CirclePrimitiveComponent, GlobalTransformComponent>(RenderCirclePrimitiveSystem());
+  registry_->RegisterParallelSystem<LinePrimitiveComponent, GlobalTransformComponent>(RenderLinePrimitiveSystem());
+  registry_->RegisterParallelSystem<TrianglePrimitiveComponent, GlobalTransformComponent>(
+      RenderTrianglePrimitiveSystem());
+  registry_->RegisterParallelSystem<CapsulePrimitiveComponent, GlobalTransformComponent>(
+      RenderCapsulePrimitiveSystem());
   registry_->RegisterParallelSystem<ColorGridComponent, GlobalTransformComponent>(RenderColorGridSystem());
 
   // Execution-order edges (topo-sorted in Registry::Update; registration order breaks ties).
@@ -810,8 +940,6 @@ void Game::Setup() {
   // Camera follows after gameplay-driven transform updates.
   registry_->Order(cameraFollow).After(transform);
 
-  // Event subscriptions (one-time). FrameLoop holds its own RAII subscription handle.
-  frame_loop_->SubscribeToEvents();
   // Event-driven systems with no per-frame Update — owned by the Registry instead of
   // living as parallel members on Game. Keeps the registry as the single source of truth.
   auto& uiButtonSystem = registry_->Set<UIButtonSystem>(UIButtonSystem());

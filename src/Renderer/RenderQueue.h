@@ -72,6 +72,42 @@ class RenderQueue {
     return key.payload.text;
   }
 
+  CircleCommand& EmplaceCircle(unsigned int layer, float depth, const void* batchKey = nullptr,
+                               octarine::BlendMode blendMode = octarine::BlendMode::Blend) {
+    auto& key = ClaimSlot();
+    key.sortKey =
+        RenderKey::ComputeSortKey(layer, depth, CIRCLE_PRIMITIVE, batchKey, static_cast<std::uint8_t>(blendMode));
+    key.type = CIRCLE_PRIMITIVE;
+    return key.payload.circle;
+  }
+
+  LineCommand& EmplaceLine(unsigned int layer, float depth, const void* batchKey = nullptr,
+                           octarine::BlendMode blendMode = octarine::BlendMode::Blend) {
+    auto& key = ClaimSlot();
+    key.sortKey =
+        RenderKey::ComputeSortKey(layer, depth, LINE_PRIMITIVE, batchKey, static_cast<std::uint8_t>(blendMode));
+    key.type = LINE_PRIMITIVE;
+    return key.payload.line;
+  }
+
+  TriangleCommand& EmplaceTriangle(unsigned int layer, float depth, const void* batchKey = nullptr,
+                                   octarine::BlendMode blendMode = octarine::BlendMode::Blend) {
+    auto& key = ClaimSlot();
+    key.sortKey =
+        RenderKey::ComputeSortKey(layer, depth, TRIANGLE_PRIMITIVE, batchKey, static_cast<std::uint8_t>(blendMode));
+    key.type = TRIANGLE_PRIMITIVE;
+    return key.payload.triangle;
+  }
+
+  CapsuleCommand& EmplaceCapsule(unsigned int layer, float depth, const void* batchKey = nullptr,
+                                 octarine::BlendMode blendMode = octarine::BlendMode::Blend) {
+    auto& key = ClaimSlot();
+    key.sortKey =
+        RenderKey::ComputeSortKey(layer, depth, CAPSULE_PRIMITIVE, batchKey, static_cast<std::uint8_t>(blendMode));
+    key.type = CAPSULE_PRIMITIVE;
+    return key.payload.capsule;
+  }
+
   void Clear() { count_.store(0, std::memory_order_relaxed); }
 
   void Sort() {

@@ -9,8 +9,12 @@
 #include <sol/sol.hpp>
 #include <string>
 
+#include "Components/CapsulePrimitiveComponent.h"
+#include "Components/CirclePrimitiveComponent.h"
 #include "Components/ColorGridComponent.h"
 #include "Components/GlobalTransformComponent.h"
+#include "Components/LinePrimitiveComponent.h"
+#include "Components/TrianglePrimitiveComponent.h"
 #ifdef OCTARINE_HAS_GAME_MODULE
 #include "Components/HealthComponent.h"
 #include "Lua/Bindings/HealthComponentLuaBinding.h"
@@ -59,6 +63,265 @@ bool RunLua(sol::state& lua, const std::string& script) {
     return false;
   }
   return true;
+}
+
+void TestPrimitiveBindings(sol::state& lua, Registry* reg) {
+  std::cout << "[primitive components: circle / line / triangle / capsule round-trip via Lua]\n";
+  Check(RunLua(lua, R"LUA(
+    e_circle = load_entity({
+      components = {
+        transform = { position = { x = 0, y = 0 } },
+        circle = {
+          position = { x = 4, y = 8 },
+          layer = 3,
+          radius = 16.5,
+          thickness = 2.5,
+          color = { r = 200, a = 128 },
+          fixed = true,
+          filled = false,
+          blend_mode = "add",
+        }
+      }
+    })
+    e_line = load_entity({
+      components = {
+        transform = { position = { x = 0, y = 0 } },
+        line = {
+          start = { x = 1, y = 2 },
+          ["end"] = { x = 10, y = 20 },
+          layer = 2,
+          thickness = 3.0,
+          color = { g = 180, a = 255 },
+          fixed = false,
+          blend_mode = "mod",
+        }
+      }
+    })
+    e_tri = load_entity({
+      components = {
+        transform = { position = { x = 0, y = 0 } },
+        triangle = {
+          p1 = { x = 0, y = -5 },
+          p2 = { x = 5, y = 5 },
+          p3 = { x = -5, y = 5 },
+          layer = 4,
+          thickness = 2.0,
+          color = { b = 250, a = 200 },
+          fixed = true,
+          filled = true,
+        }
+      }
+    })
+    e_cap = load_entity({
+      components = {
+        transform = { position = { x = 0, y = 0 } },
+        capsule = {
+          start = { x = -10, y = 0 },
+          ["end"] = { x = 10, y = 0 },
+          layer = 5,
+          radius = 6.0,
+          thickness = 1.5,
+          color = { r = 100, g = 150, b = 200, a = 255 },
+          fixed = false,
+          filled = false,
+        }
+      }
+    })
+  )LUA"),
+        "load_entity succeeds for circle, line, triangle, and capsule");
+
+  const Entity eCircle = lua["e_circle"];
+  const Entity eLine = lua["e_line"];
+  const Entity eTri = lua["e_tri"];
+  const Entity eCap = lua["e_cap"];
+
+  Check(reg->HasComponent<GlobalTransformComponent>(eCircle), "circle auto-attaches GlobalTransformComponent");
+  Check(reg->HasComponent<GlobalTransformComponent>(eLine), "line auto-attaches GlobalTransformComponent");
+  Check(reg->HasComponent<GlobalTransformComponent>(eTri), "triangle auto-attaches GlobalTransformComponent");
+  Check(reg->HasComponent<GlobalTransformComponent>(eCap), "capsule auto-attaches GlobalTransformComponent");
+
+  const auto& circleComp = reg->GetComponent<CirclePrimitiveComponent>(eCircle);
+  CheckEq(circleComp.radius, 16.5F, "circle radius parsed");
+  CheckEq(static_cast<int>(circleComp.color.r), 200, "circle partial color r parsed");
+  CheckEq(static_cast<int>(circleComp.color.g), 0, "circle partial color omitted g defaults to 0");
+  Check(circleComp.blendMode == octarine::BlendMode::Add, "circle blend_mode parsed as Add");
+  Check(!circleComp.filled, "circle filled=false parsed");
+
+  Check(RunLua(lua, R"LUA(
+    local c = registry.get_circle(e_circle)
+    c.radius = 32.0
+    c.filled = true
+    c.blend_mode = "blend"
+    local l = registry.get_line(e_line)
+    l.thickness = 5.0
+    local tr = registry.get_triangle(e_tri)
+    tr.p2 = vec2.new(12, 15)
+    local cp = registry.get_capsule(e_cap)
+    cp.radius = 9.5
+    cp.blend_mode = "add"
+  )LUA"),
+        "Lua mutations on circle, line, triangle, and capsule succeed");
+
+  CheckEq(circleComp.radius, 32.0F, "circle.radius mutated from Lua");
+  Check(circleComp.filled, "circle.filled mutated from Lua");
+  Check(circleComp.blendMode == octarine::BlendMode::Blend, "circle.blend_mode mutated from Lua");
+  CheckEq(reg->GetComponent<LinePrimitiveComponent>(eLine).thickness, 5.0F, "line.thickness mutated from Lua");
+  Check(NearVec2(reg->GetComponent<TrianglePrimitiveComponent>(eTri).p2, {12.0F, 15.0F}),
+        "triangle.p2 mutated from Lua");
+  CheckEq(reg->GetComponent<CapsulePrimitiveComponent>(eCap).radius, 9.5F, "capsule.radius mutated from Lua");
+  Check(reg->GetComponent<CapsulePrimitiveComponent>(eCap).blendMode == octarine::BlendMode::Add,
+        "capsule.blend_mode mutated from Lua");
+}
+
+void TestColliderBindings(sol::state& lua, Registry* reg) {
+  std::cout << "[collider components: circle / capsule / triangle / line round-trip via Lua]\n";
+  Check(RunLua(lua, R"LUA(
+    c_circle = load_entity({
+      components = {
+        transform = { position = { x = 10, y = 20 } },
+        circle_collider = { radius = 12.5, offset = { x = 2, y = 3 }, is_fixed = true, collision_mask = 3 }
+      }
+    })
+    c_cap = load_entity({
+      components = {
+        transform = { position = { x = 0, y = 0 } },
+        capsule_collider = { start = { x = -8, y = 0 }, ["end"] = { x = 8, y = 0 }, radius = 4.0 }
+      }
+    })
+    c_tri = load_entity({
+      components = {
+        transform = { position = { x = 0, y = 0 } },
+        triangle_collider = { p1 = { x = 0, y = -6 }, p2 = { x = 6, y = 6 }, p3 = { x = -6, y = 6 } }
+      }
+    })
+    c_line = load_entity({
+      components = {
+        transform = { position = { x = 0, y = 0 } },
+        line_collider = { start = { x = -15, y = -5 }, ["end"] = { x = 15, y = 5 }, is_fixed = false }
+      }
+    })
+  )LUA"),
+        "load_entity succeeds for circle_collider, capsule_collider, triangle_collider, and line_collider");
+
+  const Entity cCircle = lua["c_circle"];
+  const Entity cCap = lua["c_cap"];
+  const Entity cTri = lua["c_tri"];
+  const Entity cLine = lua["c_line"];
+
+  Check(reg->HasComponent<GlobalTransformComponent>(cCircle), "circle_collider auto-attaches GlobalTransformComponent");
+  Check(reg->HasComponent<EntityMaskComponent>(cCircle), "circle_collider auto-attaches EntityMaskComponent");
+  Check(reg->HasComponent<GlobalTransformComponent>(cCap), "capsule_collider auto-attaches GlobalTransformComponent");
+  Check(reg->HasComponent<EntityMaskComponent>(cCap), "capsule_collider auto-attaches EntityMaskComponent");
+  Check(reg->HasComponent<GlobalTransformComponent>(cTri), "triangle_collider auto-attaches GlobalTransformComponent");
+  Check(reg->HasComponent<EntityMaskComponent>(cTri), "triangle_collider auto-attaches EntityMaskComponent");
+  Check(reg->HasComponent<GlobalTransformComponent>(cLine), "line_collider auto-attaches GlobalTransformComponent");
+  Check(reg->HasComponent<EntityMaskComponent>(cLine), "line_collider auto-attaches EntityMaskComponent");
+
+  CheckEq(reg->GetComponent<CircleColliderComponent>(cCircle).radius, 12.5F, "circle_collider.radius parsed");
+  Check(reg->GetComponent<CircleColliderComponent>(cCircle).isFixed, "circle_collider.is_fixed parsed");
+  CheckEq(reg->GetComponent<CapsuleColliderComponent>(cCap).radius, 4.0F, "capsule_collider.radius parsed");
+  Check(NearVec2(reg->GetComponent<TriangleColliderComponent>(cTri).p2, {6.0F, 6.0F}), "triangle_collider.p2 parsed");
+  Check(NearVec2(reg->GetComponent<LineColliderComponent>(cLine).end, {15.0F, 5.0F}), "line_collider.end parsed");
+
+  Check(RunLua(lua, R"LUA(
+    registry.get_circle_collider(c_circle).radius = 24.0
+    registry.get_capsule_collider(c_cap).radius = 7.5
+    registry.get_triangle_collider(c_tri).p3 = vec2.new(-10, 8)
+    registry.get_line_collider(c_line).start = vec2.new(-20, -10)
+  )LUA"),
+        "Lua mutations on collider components succeed");
+
+  CheckEq(reg->GetComponent<CircleColliderComponent>(cCircle).radius, 24.0F, "circle_collider.radius mutated");
+  CheckEq(reg->GetComponent<CapsuleColliderComponent>(cCap).radius, 7.5F, "capsule_collider.radius mutated");
+  Check(NearVec2(reg->GetComponent<TriangleColliderComponent>(cTri).p3, {-10.0F, 8.0F}),
+        "triangle_collider.p3 mutated");
+  Check(NearVec2(reg->GetComponent<LineColliderComponent>(cLine).start, {-20.0F, -10.0F}),
+        "line_collider.start mutated");
+}
+
+void EmitLeftMouseClick(EventBus& bus, const float x, const float y) {
+  SDL_MouseButtonEvent ev{};
+  ev.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+  ev.button = 1;
+  ev.x = x;
+  ev.y = y;
+  bus.EmitEvent<MouseInputEvent>(ev);
+}
+
+void TestUIButtonShapes(sol::state& lua, Registry* reg) {
+  std::cout << "[ui_button: shaped hit-testing for layout UIRect and transform buttons]\n";
+  auto eventBus = std::make_unique<EventBus>();
+  UIButtonSystem uiButtonSystem;
+  uiButtonSystem.Init(reg, eventBus);
+
+  Check(RunLua(lua, R"LUA(
+    hit_circle = false
+    hit_capsule = false
+    hit_tri = false
+    hit_transform_circle = false
+
+    btn_circle = load_entity({
+      components = {
+        circle = { color = { r = 255, a = 255 } },
+        ui_button = { on_click = function() hit_circle = true end }
+      }
+    })
+    ui.anchor(btn_circle, "top_left", { width = 100, height = 100 })
+
+    btn_capsule = load_entity({
+      components = {
+        capsule = { color = { g = 255, a = 255 } },
+        ui_button = { on_click = function() hit_capsule = true end }
+      }
+    })
+    ui.anchor(btn_capsule, "top_left", { width = 200, height = 60 })
+
+    btn_tri = load_entity({
+      components = {
+        triangle = { color = { b = 255, a = 255 } },
+        ui_button = { on_click = function() hit_tri = true end }
+      }
+    })
+    ui.anchor(btn_tri, "top_left", { width = 100, height = 100 })
+
+    btn_tx_circle = load_entity({
+      components = {
+        transform = { position = { x = 300, y = 300 } },
+        circle = { radius = 25.0, fixed = true },
+        ui_button = { is_fixed = true, on_click = function() hit_transform_circle = true end }
+      }
+    })
+  )LUA"),
+        "shaped UI buttons loaded from Lua");
+
+  const Entity btnCircle = lua["btn_circle"];
+  const Entity btnCapsule = lua["btn_capsule"];
+  const Entity btnTri = lua["btn_tri"];
+  const Entity btnTxCircle = lua["btn_tx_circle"];
+  reg->GetComponent<UIRectComponent>(btnCircle) = UIRectComponent(0.0F, 0.0F, 100.0F, 100.0F, 1);
+  reg->GetComponent<UIRectComponent>(btnCapsule) = UIRectComponent(0.0F, 200.0F, 200.0F, 260.0F, 1);
+  reg->GetComponent<UIRectComponent>(btnTri) = UIRectComponent(0.0F, 400.0F, 100.0F, 500.0F, 1);
+  reg->GetComponent<GlobalTransformComponent>(btnTxCircle).position = {300.0F, 300.0F};
+
+  EmitLeftMouseClick(*eventBus, 2.0F, 2.0F);
+  Check(lua["hit_circle"] == false, "UIRect circle button ignores click in bounding-box corner outside circle");
+  EmitLeftMouseClick(*eventBus, 50.0F, 50.0F);
+  Check(lua["hit_circle"] == true, "UIRect circle button fires on click inside circle");
+
+  EmitLeftMouseClick(*eventBus, 1.0F, 201.0F);
+  Check(lua["hit_capsule"] == false, "UIRect capsule button ignores click outside pill cap");
+  EmitLeftMouseClick(*eventBus, 100.0F, 230.0F);
+  Check(lua["hit_capsule"] == true, "UIRect capsule button fires on click inside pill");
+
+  EmitLeftMouseClick(*eventBus, 5.0F, 405.0F);
+  Check(lua["hit_tri"] == false, "UIRect triangle button ignores click outside triangle edge");
+  EmitLeftMouseClick(*eventBus, 50.0F, 480.0F);
+  Check(lua["hit_tri"] == true, "UIRect triangle button fires on click inside triangle");
+
+  EmitLeftMouseClick(*eventBus, 350.0F, 350.0F);
+  Check(lua["hit_transform_circle"] == false, "transform circle button ignores click outside radius");
+  EmitLeftMouseClick(*eventBus, 310.0F, 310.0F);
+  Check(lua["hit_transform_circle"] == true, "transform circle button fires via primitive fallback");
 }
 }  // namespace
 
@@ -773,6 +1036,10 @@ int main() {
     Check(RunLua(lua, "test_world.paused = false"), "test_world.paused = false script execution");
     Check(!reg->IsPaused(), "test_world.paused = false synchronized to C++ registry");
   }
+
+  TestPrimitiveBindings(lua, reg);
+  TestColliderBindings(lua, reg);
+  TestUIButtonShapes(lua, reg);
 
   return octarine::test::ReportSummary("Lua behavior test");
 }

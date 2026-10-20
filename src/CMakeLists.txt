@@ -21,6 +21,7 @@
 # octarine_core — POD/data foundation. No SDL_image, no SDL_mixer, no imgui.
 # -----------------------------------------------------------------------------
 set(OCTARINE_CORE_SOURCES
+        General/IniParser.cpp
         General/Logger.cpp
         General/FileSandbox.cpp
         General/FileWatcher.cpp
@@ -29,6 +30,7 @@ set(OCTARINE_CORE_SOURCES
         ECS/Registry.cpp
         ECS/StateInspector.cpp
         Game/GameConfig.cpp
+        Game/UserSettings.cpp
         Deploy/Adb.cpp
         Process/Process.cpp
         Project/ProjectIni.cpp
@@ -224,6 +226,11 @@ if (OCTARINE_WITH_IMGUI OR OCTARINE_WITH_EDITOR)
             octarine_lua
             octarine_systems
     )
+    # GameModuleLuaBinding (in octarine_lua) calls RenderDebugGUISystem::ReturnFocusToGame (in
+    # octarine_editor when OCTARINE_WITH_IMGUI is ON). Declaring the reciprocal link lets CMake
+    # repeat static archives for single-pass linkers (GNU ld on Linux) even in targets that don't
+    # pull in Game.cpp.o first.
+    target_link_libraries(octarine_lua PUBLIC octarine_editor)
     if (OCTARINE_WITH_IMGUI)
         target_link_libraries(octarine_editor PUBLIC imgui::imgui sol2_ImGui_Bindings::sol2_ImGui_Bindings ${LUA_LIBRARIES})
     endif ()
@@ -272,6 +279,10 @@ target_link_libraries(octarine_engine PUBLIC
 )
 if (TARGET octarine_editor)
     target_link_libraries(octarine_engine PUBLIC octarine_editor)
+    # RenderDebugGUISystem (in octarine_editor) calls Game methods and under UBSan (-fsanitize=vptr)
+    # references `typeinfo for Game` (in octarine_engine). Declaring the reciprocal dependency ensures
+    # single-pass linkers rescan liboctarine_engine.a after liboctarine_editor.a in test binaries.
+    target_link_libraries(octarine_editor PUBLIC octarine_engine)
 endif ()
 if (TARGET octarine_game_module)
     target_link_libraries(octarine_engine PUBLIC octarine_game_module)

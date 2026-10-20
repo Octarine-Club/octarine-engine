@@ -1,9 +1,11 @@
 #include "Project/ProjectIni.h"
 
-#include <cctype>
 #include <fstream>
 #include <regex>
 #include <sstream>
+#include <utility>
+
+#include "General/IniParser.h"
 
 namespace octarine::project {
 namespace {
@@ -12,17 +14,6 @@ namespace {
 const std::regex& PackageIdRegex() {
   static const std::regex re(R"(^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$)");
   return re;
-}
-
-std::string_view Trim(std::string_view s) {
-  const auto is_ws = [](char c) { return c == ' ' || c == '\t' || c == '\r'; };
-  while (!s.empty() && is_ws(s.front())) {
-    s.remove_prefix(1);
-  }
-  while (!s.empty() && is_ws(s.back())) {
-    s.remove_suffix(1);
-  }
-  return s;
 }
 
 void Assign(ProjectIni& ini, const std::string& key, std::string value) {
@@ -54,49 +45,8 @@ void Assign(ProjectIni& ini, const std::string& key, std::string value) {
 
 ProjectIni ProjectIni::Parse(std::string_view text, std::vector<std::string>* parse_warnings) {
   ProjectIni ini;
-  std::string line;
-  size_t pos = 0;
-  size_t line_no = 0;
-  while (pos <= text.size()) {
-    const size_t nl = text.find('\n', pos);
-    const size_t end = (nl == std::string_view::npos) ? text.size() : nl;
-    line.assign(text.data() + pos, end - pos);
-    pos = end + 1;
-    ++line_no;
-
-    std::string_view trimmed = Trim(line);
-    if (trimmed.empty() || trimmed.front() == '#') {
-      if (nl == std::string_view::npos) break;
-      continue;
-    }
-
-    const auto eq = trimmed.find('=');
-    if (eq == std::string_view::npos) {
-      if (parse_warnings) {
-        std::ostringstream w;
-        w << "line " << line_no << ": malformed (no '='): " << trimmed;
-        parse_warnings->push_back(w.str());
-      }
-      if (nl == std::string_view::npos) break;
-      continue;
-    }
-
-    std::string_view key_sv = Trim(trimmed.substr(0, eq));
-    std::string_view val_sv = Trim(trimmed.substr(eq + 1));
-
-    if (key_sv.empty()) {
-      if (parse_warnings) {
-        std::ostringstream w;
-        w << "line " << line_no << ": empty key";
-        parse_warnings->push_back(w.str());
-      }
-      if (nl == std::string_view::npos) break;
-      continue;
-    }
-
-    Assign(ini, std::string(key_sv), std::string(val_sv));
-
-    if (nl == std::string_view::npos) break;
+  for (auto& entry : octarine::IniParser::ParseEntries(text, parse_warnings)) {
+    Assign(ini, entry.key, std::move(entry.value));
   }
   return ini;
 }

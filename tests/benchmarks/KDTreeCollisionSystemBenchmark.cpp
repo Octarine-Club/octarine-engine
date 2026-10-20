@@ -5,8 +5,12 @@
 #include <stdexcept>
 
 #include "Components/BoxColliderComponent.h"
+#include "Components/CapsuleColliderComponent.h"
+#include "Components/CircleColliderComponent.h"
 #include "Components/EntityMaskComponent.h"
 #include "Components/GlobalTransformComponent.h"
+#include "Components/LineColliderComponent.h"
+#include "Components/TriangleColliderComponent.h"
 #include "ECS/Query.h"
 #include "ECS/Registry.h"
 #include "Engine/EngineContext.h"
@@ -120,3 +124,62 @@ static void BM_CollisionDispatchDense(benchmark::State& state) {
   state.SetItemsProcessed(static_cast<int64_t>(state.iterations()));
 }
 BENCHMARK(BM_CollisionDispatchDense)->Name("Sys/Collision/DenseSustainedPairs")->Range(16, 512)->UseRealTime();
+
+namespace {
+void BuildMixedShapesGrid(Registry& registry, const int n) {
+  EntityMask mask;
+  mask.set(0);
+  const int cols = std::max(1, static_cast<int>(std::sqrt(static_cast<double>(n))));
+  for (int i = 0; i < n; ++i) {
+    const Entity e = registry.CreateEntity();
+    // 24px spacing with ~16-24px shapes produces neighbor overlaps across all 5 shape types.
+    const int col = i % cols;
+    const int row = i / cols;
+    const float x = static_cast<float>(col) * 24.0f;
+    const float y = static_cast<float>(row) * 24.0f;
+    registry.AddComponent(e, GlobalTransformComponent{glm::vec2(x, y), glm::vec2(1.0f, 1.0f), 0.0f});
+    registry.AddComponent(e, EntityMaskComponent(mask));
+    switch (i % 5) {
+      case 0:
+        registry.AddComponent(e, BoxColliderComponent(28, 28, glm::vec2(0.0f, 0.0f), false, mask));
+        break;
+      case 1:
+        registry.AddComponent(e, CircleColliderComponent(16.0f, glm::vec2(0.0f, 0.0f), false, mask));
+        break;
+      case 2:
+        registry.AddComponent(
+            e, CapsuleColliderComponent(glm::vec2(-8.0f, 0.0f), glm::vec2(8.0f, 0.0f), 10.0f, false, mask));
+        break;
+      case 3:
+        registry.AddComponent(e, TriangleColliderComponent(glm::vec2(-14.0f, -14.0f), glm::vec2(18.0f, 0.0f),
+                                                           glm::vec2(0.0f, 18.0f), false, mask));
+        break;
+      default:
+        registry.AddComponent(e,
+                              LineColliderComponent(glm::vec2(-16.0f, -16.0f), glm::vec2(16.0f, 16.0f), false, mask));
+        break;
+    }
+  }
+}
+}  // namespace
+
+static void BM_CollisionMixedShapesSync(benchmark::State& state) {
+  Registry registry;
+  EventBus bus;
+  EngineContext ec;
+  ec.eventBus = &bus;
+  registry.Set<EngineContext>(ec);
+
+  const int n = static_cast<int>(state.range(0));
+  BuildMixedShapesGrid(registry, n);
+
+  KDTreeCollisionSystem system(/*synchronous=*/true);
+  ContextFacade ctx(&registry, 0.016f, nullptr, Internal::BulkGetComponent);
+  system(ctx);  // warm up queries and initial pair set
+
+  for (auto _ : state) {
+    system(ctx);
+  }
+  state.SetItemsProcessed(static_cast<int64_t>(state.iterations()) * n);
+}
+BENCHMARK(BM_CollisionMixedShapesSync)->Name("Sys/Collision/MixedShapesSync")->Range(64, 4096)->UseRealTime();

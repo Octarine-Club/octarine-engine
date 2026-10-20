@@ -15,6 +15,9 @@ struct MIX_Mixer;
 class AssetManager;
 class EventBus;
 class GameConfig;
+namespace octarine {
+struct UserSettings;
+}
 
 struct EngineContext {
   SDL_Renderer* sdlRenderer = nullptr;
@@ -23,4 +26,5 @@ struct EngineContext {
   EventBus* eventBus = nullptr;
   AssetManager* assets = nullptr;
   GameConfig* config = nullptr;
+  octarine::UserSettings* userSettings = nullptr;
 };

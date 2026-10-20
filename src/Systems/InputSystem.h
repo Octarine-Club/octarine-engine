@@ -35,6 +35,8 @@ class InputSystem {
     keyAliases_["return"] = {"return", "enter", "keypad enter"};
     keyAliases_["esc"] = {"escape", "esc"};
     keyAliases_["escape"] = {"escape", "esc"};
+    keyAliases_["grave"] = {"`", "grave"};
+    keyAliases_["`"] = {"`", "grave"};
     InitGamepadAliases();
   }
 

@@ -2,16 +2,23 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <cstdint>
 #include <functional>
 #include <future>
 #include <memory>
+#include <tuple>
 #include <unordered_set>
 #include <utility>
 #include <vector>
 
 #include "Components/BoxColliderComponent.h"
+#include "Components/CapsuleColliderComponent.h"
+#include "Components/CircleColliderComponent.h"
 #include "Components/EntityMaskComponent.h"
 #include "Components/GlobalTransformComponent.h"
+#include "Components/LineColliderComponent.h"
+#include "Components/TriangleColliderComponent.h"
 #include "ECS/Entity.h"
 #include "ECS/Query.h"
 #include "ECS/Registry.h"
@@ -28,21 +35,174 @@ constexpr int kMaxDimensions = 2;
 constexpr int kMaxRecursionDepth = 64;
 constexpr int kBruteforceCutoff = 32;
 
+enum class ColliderShape : uint8_t {
+  Box = 0,
+  Circle = 1,
+  Capsule = 2,
+  Triangle = 3,
+  Line = 4,
+};
+
+namespace octarine::collision {
+
+[[nodiscard]] inline float Cross2D(const glm::vec2 u, const glm::vec2 v) { return u.x * v.y - u.y * v.x; }
+
+[[nodiscard]] inline float PointSegmentDistanceSq(const glm::vec2 p, const glm::vec2 a, const glm::vec2 b) {
+  const glm::vec2 ab = b - a;
+  const float lenSq = glm::dot(ab, ab);
+  float t = 0.0f;
+  if (lenSq > 1e-12f) {
+    t = std::clamp(glm::dot(p - a, ab) / lenSq, 0.0f, 1.0f);
+  }
+  const glm::vec2 diff = p - (a + ab * t);
+  return glm::dot(diff, diff);
+}
+
+[[nodiscard]] inline bool OppositeSigns(const float a, const float b) {
+  return (a > 0.0f && b < 0.0f) || (a < 0.0f && b > 0.0f);
+}
+
+[[nodiscard]] inline bool SegmentsStrictlyCross(const glm::vec2 a1, const glm::vec2 a2, const glm::vec2 b1,
+                                                const glm::vec2 b2) {
+  const glm::vec2 da = a2 - a1;
+  const glm::vec2 db = b2 - b1;
+  const float d1 = Cross2D(db, a1 - b1);
+  const float d2 = Cross2D(db, a2 - b1);
+  const float d3 = Cross2D(da, b1 - a1);
+  const float d4 = Cross2D(da, b2 - a1);
+  return OppositeSigns(d1, d2) && OppositeSigns(d3, d4);
+}
+
+[[nodiscard]] inline float SegmentSegmentDistanceSq(const glm::vec2 a1, const glm::vec2 a2, const glm::vec2 b1,
+                                                    const glm::vec2 b2) {
+  if (SegmentsStrictlyCross(a1, a2, b1, b2)) return 0.0f;
+  return std::min({PointSegmentDistanceSq(a1, b1, b2), PointSegmentDistanceSq(a2, b1, b2),
+                   PointSegmentDistanceSq(b1, a1, a2), PointSegmentDistanceSq(b2, a1, a2)});
+}
+
+[[nodiscard]] inline float PointAabbDistanceSq(const glm::vec2 p, const float hx, const float hy) {
+  const float dx = std::max(std::abs(p.x) - hx, 0.0f);
+  const float dy = std::max(std::abs(p.y) - hy, 0.0f);
+  return dx * dx + dy * dy;
+}
+
+[[nodiscard]] inline float SegmentAabbDistanceSq(const glm::vec2 p1, const glm::vec2 p2, const float hx,
+                                                 const float hy) {
+  if (PointAabbDistanceSq(p1, hx, hy) == 0.0f || PointAabbDistanceSq(p2, hx, hy) == 0.0f) {
+    return 0.0f;
+  }
+  const glm::vec2 c0{-hx, -hy};
+  const glm::vec2 c1{hx, -hy};
+  const glm::vec2 c2{hx, hy};
+  const glm::vec2 c3{-hx, hy};
+  return std::min({SegmentSegmentDistanceSq(p1, p2, c0, c1), SegmentSegmentDistanceSq(p1, p2, c1, c2),
+                   SegmentSegmentDistanceSq(p1, p2, c2, c3), SegmentSegmentDistanceSq(p1, p2, c3, c0)});
+}
+
+[[nodiscard]] inline bool PointInTriangle(const glm::vec2 p, const glm::vec2 v0, const glm::vec2 v1,
+                                          const glm::vec2 v2) {
+  const float d1 = Cross2D(v1 - v0, p - v0);
+  const float d2 = Cross2D(v2 - v1, p - v1);
+  const float d3 = Cross2D(v0 - v2, p - v2);
+  const bool hasNeg = (d1 < 0.0f) || (d2 < 0.0f) || (d3 < 0.0f);
+  const bool hasPos = (d1 > 0.0f) || (d2 > 0.0f) || (d3 > 0.0f);
+  return !(hasNeg && hasPos);
+}
+
+[[nodiscard]] inline float SegmentTriangleDistanceSq(const glm::vec2 p1, const glm::vec2 p2, const glm::vec2 v0,
+                                                     const glm::vec2 v1, const glm::vec2 v2) {
+  if (PointInTriangle(p1, v0, v1, v2) || PointInTriangle(p2, v0, v1, v2)) {
+    return 0.0f;
+  }
+  return std::min({SegmentSegmentDistanceSq(p1, p2, v0, v1), SegmentSegmentDistanceSq(p1, p2, v1, v2),
+                   SegmentSegmentDistanceSq(p1, p2, v2, v0)});
+}
+
+[[nodiscard]] inline glm::vec2 ProjectTriangle(const glm::vec2 v0, const glm::vec2 v1, const glm::vec2 v2,
+                                               const glm::vec2 axis) {
+  const float p0 = glm::dot(v0, axis);
+  const float p1 = glm::dot(v1, axis);
+  const float p2 = glm::dot(v2, axis);
+  return {std::min({p0, p1, p2}), std::max({p0, p1, p2})};
+}
+
+[[nodiscard]] inline bool IntervalsOverlap(const glm::vec2 a, const glm::vec2 b) { return a.y >= b.x && b.y >= a.x; }
+
+[[nodiscard]] inline bool SeparatedByEdge(const glm::vec2 e0, const glm::vec2 e1, const glm::vec2 a0,
+                                          const glm::vec2 a1, const glm::vec2 a2, const glm::vec2 b0,
+                                          const glm::vec2 b1, const glm::vec2 b2) {
+  const glm::vec2 edge = e1 - e0;
+  if (glm::dot(edge, edge) <= 1e-12f) return false;
+  const glm::vec2 axis{-edge.y, edge.x};
+  return !IntervalsOverlap(ProjectTriangle(a0, a1, a2, axis), ProjectTriangle(b0, b1, b2, axis));
+}
+
+[[nodiscard]] inline bool TrianglesIntersect(const glm::vec2 a0, const glm::vec2 a1, const glm::vec2 a2,
+                                             const glm::vec2 b0, const glm::vec2 b1, const glm::vec2 b2) {
+  if (std::abs(Cross2D(a1 - a0, a2 - a0)) <= 1e-6f) {
+    return SegmentTriangleDistanceSq(a0, a1, b0, b1, b2) == 0.0f ||
+           SegmentTriangleDistanceSq(a1, a2, b0, b1, b2) == 0.0f;
+  }
+  if (std::abs(Cross2D(b1 - b0, b2 - b0)) <= 1e-6f) {
+    return SegmentTriangleDistanceSq(b0, b1, a0, a1, a2) == 0.0f ||
+           SegmentTriangleDistanceSq(b1, b2, a0, a1, a2) == 0.0f;
+  }
+  return !SeparatedByEdge(a0, a1, a0, a1, a2, b0, b1, b2) && !SeparatedByEdge(a1, a2, a0, a1, a2, b0, b1, b2) &&
+         !SeparatedByEdge(a2, a0, a0, a1, a2, b0, b1, b2) && !SeparatedByEdge(b0, b1, a0, a1, a2, b0, b1, b2) &&
+         !SeparatedByEdge(b1, b2, a0, a1, a2, b0, b1, b2) && !SeparatedByEdge(b2, b0, a0, a1, a2, b0, b1, b2);
+}
+
+[[nodiscard]] inline bool ObbTriangleSeparatedOnAxis(const glm::vec2 obbCenter, const glm::vec2 obbHalf,
+                                                     const glm::vec2 ax0, const glm::vec2 ax1, const glm::vec2 v0,
+                                                     const glm::vec2 v1, const glm::vec2 v2, const glm::vec2 axis) {
+  if (glm::dot(axis, axis) <= 1e-12f) return false;
+  const float cProj = glm::dot(obbCenter, axis);
+  const float rProj = obbHalf.x * std::abs(glm::dot(ax0, axis)) + obbHalf.y * std::abs(glm::dot(ax1, axis));
+  return !IntervalsOverlap({cProj - rProj, cProj + rProj}, ProjectTriangle(v0, v1, v2, axis));
+}
+
+[[nodiscard]] inline bool ObbTriangleIntersects(const glm::vec2 obbCenter, const glm::vec2 obbHalf,
+                                                const octarine::Rotation2D obbRot, const glm::vec2 v0,
+                                                const glm::vec2 v1, const glm::vec2 v2) {
+  const glm::vec2 ax0{obbRot.cos, obbRot.sin};
+  const glm::vec2 ax1{-obbRot.sin, obbRot.cos};
+  const glm::vec2 e0 = v1 - v0;
+  const glm::vec2 e1 = v2 - v1;
+  const glm::vec2 e2 = v0 - v2;
+  return !ObbTriangleSeparatedOnAxis(obbCenter, obbHalf, ax0, ax1, v0, v1, v2, ax0) &&
+         !ObbTriangleSeparatedOnAxis(obbCenter, obbHalf, ax0, ax1, v0, v1, v2, ax1) &&
+         !ObbTriangleSeparatedOnAxis(obbCenter, obbHalf, ax0, ax1, v0, v1, v2, {-e0.y, e0.x}) &&
+         !ObbTriangleSeparatedOnAxis(obbCenter, obbHalf, ax0, ax1, v0, v1, v2, {-e1.y, e1.x}) &&
+         !ObbTriangleSeparatedOnAxis(obbCenter, obbHalf, ax0, ax1, v0, v1, v2, {-e2.y, e2.x});
+}
+
+}  // namespace octarine::collision
+
 struct Box {
   Entity entity{};
-  EntityMask entityMask{};
-  EntityMask collisionMask{};
-  // AABB enclosing the (possibly rotated) OBB — used by the median-cut broadphase.
+  uint32_t entityMask{0};
+  uint32_t collisionMask{0};
+  // AABB enclosing the world-space shape — used by the median-cut broadphase.
   float minX{0.0f};
   float minY{0.0f};
   float maxX{0.0f};
   float maxY{0.0f};
-  // OBB narrowphase state.
+  // Shape narrowphase payload:
+  //   - Box:      (cx, cy) = center, (hx, hy) = half-extents, rot = orientation
+  //   - Circle:   (cx, cy) = center, (hx, hy) = center, rot.cos = radius
+  //   - Capsule:  (cx, cy) = start,  (hx, hy) = end,    rot.cos = radius
+  //   - Line:     (cx, cy) = start,  (hx, hy) = end,    rot.cos = 0
+  //   - Triangle: (cx, cy) = v0,     (hx, hy) = v1,     (rot.cos, rot.sin) = v2
   float cx{0.0f};
   float cy{0.0f};
   float hx{0.0f};
   float hy{0.0f};
   octarine::Rotation2D rot{};
+  ColliderShape shape{ColliderShape::Box};
+
+  [[nodiscard]] bool IsCapsuleLike() const {
+    return shape == ColliderShape::Circle || shape == ColliderShape::Capsule || shape == ColliderShape::Line;
+  }
 
   [[nodiscard]] bool intersectsInDimension(const Box& other, const int dim) const {
     if (dim == 0) return !(maxX < other.minX || minX > other.maxX);
@@ -71,16 +231,93 @@ struct Box {
     });
   }
 
+  [[nodiscard]] static bool CapsuleObbIntersects(const Box& cap, const Box& obb) {
+    const octarine::Rotation2D invRot{obb.rot.cos, -obb.rot.sin};
+    const glm::vec2 obbCenter{obb.cx, obb.cy};
+    const glm::vec2 localP1 = octarine::Rotate(glm::vec2{cap.cx, cap.cy} - obbCenter, invRot);
+    const float rSq = cap.rot.cos * cap.rot.cos;
+    if (cap.shape == ColliderShape::Circle) {
+      return octarine::collision::PointAabbDistanceSq(localP1, obb.hx, obb.hy) <= rSq;
+    }
+    const glm::vec2 localP2 = octarine::Rotate(glm::vec2{cap.hx, cap.hy} - obbCenter, invRot);
+    return octarine::collision::SegmentAabbDistanceSq(localP1, localP2, obb.hx, obb.hy) <= rSq;
+  }
+
+  [[nodiscard]] static bool CapsuleTriangleIntersects(const Box& cap, const Box& tri) {
+    const float rSq = cap.rot.cos * cap.rot.cos;
+    return octarine::collision::SegmentTriangleDistanceSq({cap.cx, cap.cy}, {cap.hx, cap.hy}, {tri.cx, tri.cy},
+                                                          {tri.hx, tri.hy}, {tri.rot.cos, tri.rot.sin}) <= rSq;
+  }
+
+  [[nodiscard]] static bool CapsulePairIntersects(const Box& a, const Box& b) {
+    const float rSum = a.rot.cos + b.rot.cos;
+    if (a.shape == ColliderShape::Circle && b.shape == ColliderShape::Circle) {
+      const float dx = b.cx - a.cx;
+      const float dy = b.cy - a.cy;
+      return (dx * dx + dy * dy) <= (rSum * rSum);
+    }
+    return octarine::collision::SegmentSegmentDistanceSq({a.cx, a.cy}, {a.hx, a.hy}, {b.cx, b.cy}, {b.hx, b.hy}) <=
+           (rSum * rSum);
+  }
+
+  [[nodiscard]] static bool BoxTrianglePairIntersects(const Box& a, const Box& b) {
+    if (a.shape == ColliderShape::Box) {
+      return octarine::collision::ObbTriangleIntersects({a.cx, a.cy}, {a.hx, a.hy}, a.rot, {b.cx, b.cy}, {b.hx, b.hy},
+                                                        {b.rot.cos, b.rot.sin});
+    }
+    return octarine::collision::ObbTriangleIntersects({b.cx, b.cy}, {b.hx, b.hy}, b.rot, {a.cx, a.cy}, {a.hx, a.hy},
+                                                      {a.rot.cos, a.rot.sin});
+  }
+
+#if defined(__clang__) || defined(__GNUC__)
+  [[gnu::noinline]]
+#endif
+  [[nodiscard]] bool
+  narrowphaseIntersects(const Box& other) const {
+    if (shape == ColliderShape::Box && other.shape == ColliderShape::Box) {
+      return obbIntersects(other);
+    }
+    if (IsCapsuleLike() && other.IsCapsuleLike()) {
+      return CapsulePairIntersects(*this, other);
+    }
+    if (IsCapsuleLike() && other.shape == ColliderShape::Box) return CapsuleObbIntersects(*this, other);
+    if (shape == ColliderShape::Box && other.IsCapsuleLike()) return CapsuleObbIntersects(other, *this);
+    if (IsCapsuleLike() && other.shape == ColliderShape::Triangle) return CapsuleTriangleIntersects(*this, other);
+    if (shape == ColliderShape::Triangle && other.IsCapsuleLike()) return CapsuleTriangleIntersects(other, *this);
+    if (shape == ColliderShape::Box || other.shape == ColliderShape::Box) {
+      return BoxTrianglePairIntersects(*this, other);
+    }
+    return octarine::collision::TrianglesIntersect({cx, cy}, {hx, hy}, {rot.cos, rot.sin}, {other.cx, other.cy},
+                                                   {other.hx, other.hy}, {other.rot.cos, other.rot.sin});
+  }
+
+  [[nodiscard]] bool containsPoint(const glm::vec2 pt) const {
+    if (pt.x < minX || pt.x > maxX || pt.y < minY || pt.y > maxY) return false;
+    if (shape == ColliderShape::Box) {
+      if (rot.IsIdentity()) return true;
+      const glm::vec2 local = octarine::Rotate(pt - glm::vec2{cx, cy}, {rot.cos, -rot.sin});
+      return std::abs(local.x) <= hx && std::abs(local.y) <= hy;
+    }
+    if (IsCapsuleLike()) {
+      return octarine::collision::PointSegmentDistanceSq(pt, {cx, cy}, {hx, hy}) <= (rot.cos * rot.cos);
+    }
+    return octarine::collision::PointInTriangle(pt, {cx, cy}, {hx, hy}, {rot.cos, rot.sin});
+  }
+
   [[nodiscard]] bool intersects(const Box& other) const {
-    const bool canInteract = !(collisionMask & other.entityMask).none() || !(other.collisionMask & entityMask).none();
-    if (!canInteract) {
+    if (entity == other.entity) return false;
+    if (((collisionMask & other.entityMask) | (other.collisionMask & entityMask)) == 0U) {
       return false;
     }
     if (!intersectsInDimension(other, 0) || !intersectsInDimension(other, 1)) return false;
-    if (rot.IsIdentity() && other.rot.IsIdentity()) return true;
-    return obbIntersects(other);
+    if ((static_cast<uint8_t>(shape) | static_cast<uint8_t>(other.shape)) == 0U && rot.IsIdentity() &&
+        other.rot.IsIdentity()) {
+      return true;
+    }
+    return narrowphaseIntersects(other);
   }
 };
+static_assert(sizeof(Box) <= 64, "Box must fit in a single 64-byte cache line for KD-tree partitioning");
 
 struct CollisionResult {
   std::vector<std::pair<Entity, Entity>> intersectingPairs;
@@ -99,10 +336,17 @@ class KDTreeCollisionSystem {
   void SetSynchronous(bool sync) { synchronous_ = sync; }
   [[nodiscard]] bool IsSynchronous() const { return synchronous_; }
 
+  [[nodiscard]] static glm::vec2 TransformLocalPoint(const glm::vec2 localOffset,
+                                                     const GlobalTransformComponent& transform,
+                                                     const octarine::Rotation2D rot) {
+    return octarine::RotateAround(transform.position + localOffset * transform.scale,
+                                  transform.position + transform.pivot, rot);
+  }
+
   static Box BuildBox(Entity entity, const GlobalTransformComponent& transform, const BoxColliderComponent& collider,
                       const EntityMaskComponent& entityMask) {
-    const float w = static_cast<float>(collider.width) * transform.scale.x;
-    const float h = static_cast<float>(collider.height) * transform.scale.y;
+    const float w = static_cast<float>(collider.width) * std::abs(transform.scale.x);
+    const float h = static_cast<float>(collider.height) * std::abs(transform.scale.y);
     const float hx = w * 0.5f;
     const float hy = h * 0.5f;
 
@@ -117,8 +361,8 @@ class KDTreeCollisionSystem {
     const glm::vec2 aabbHalf = octarine::RotatedHalfExtents({hx, hy}, rot);
 
     return {.entity = entity,
-            .entityMask = entityMask.mask,
-            .collisionMask = collider.collisionMask,
+            .entityMask = static_cast<uint32_t>(entityMask.mask.to_ulong()),
+            .collisionMask = static_cast<uint32_t>(collider.collisionMask.to_ulong()),
             .minX = centre.x - aabbHalf.x,
             .minY = centre.y - aabbHalf.y,
             .maxX = centre.x + aabbHalf.x,
@@ -127,17 +371,103 @@ class KDTreeCollisionSystem {
             .cy = centre.y,
             .hx = hx,
             .hy = hy,
-            .rot = rot};
+            .rot = rot,
+            .shape = ColliderShape::Box};
+  }
+
+  static Box BuildBox(Entity entity, const GlobalTransformComponent& transform, const CircleColliderComponent& collider,
+                      const EntityMaskComponent& entityMask) {
+    const octarine::Rotation2D rot = octarine::Rotation2D::FromRadians(transform.rotation);
+    const glm::vec2 centre = TransformLocalPoint(collider.offset, transform, rot);
+    const float scaleMax = std::max(std::abs(transform.scale.x), std::abs(transform.scale.y));
+    const float r = std::max(0.0f, collider.radius) * scaleMax;
+
+    return {.entity = entity,
+            .entityMask = static_cast<uint32_t>(entityMask.mask.to_ulong()),
+            .collisionMask = static_cast<uint32_t>(collider.collisionMask.to_ulong()),
+            .minX = centre.x - r,
+            .minY = centre.y - r,
+            .maxX = centre.x + r,
+            .maxY = centre.y + r,
+            .cx = centre.x,
+            .cy = centre.y,
+            .hx = centre.x,
+            .hy = centre.y,
+            .rot = {r, 0.0f},
+            .shape = ColliderShape::Circle};
+  }
+
+  static Box BuildBox(Entity entity, const GlobalTransformComponent& transform,
+                      const CapsuleColliderComponent& collider, const EntityMaskComponent& entityMask) {
+    const octarine::Rotation2D rot = octarine::Rotation2D::FromRadians(transform.rotation);
+    const glm::vec2 p1 = TransformLocalPoint(collider.start, transform, rot);
+    const glm::vec2 p2 = TransformLocalPoint(collider.end, transform, rot);
+    const float scaleMax = std::max(std::abs(transform.scale.x), std::abs(transform.scale.y));
+    const float r = std::max(0.0f, collider.radius) * scaleMax;
+
+    return {.entity = entity,
+            .entityMask = static_cast<uint32_t>(entityMask.mask.to_ulong()),
+            .collisionMask = static_cast<uint32_t>(collider.collisionMask.to_ulong()),
+            .minX = std::min(p1.x, p2.x) - r,
+            .minY = std::min(p1.y, p2.y) - r,
+            .maxX = std::max(p1.x, p2.x) + r,
+            .maxY = std::max(p1.y, p2.y) + r,
+            .cx = p1.x,
+            .cy = p1.y,
+            .hx = p2.x,
+            .hy = p2.y,
+            .rot = {r, 0.0f},
+            .shape = ColliderShape::Capsule};
+  }
+
+  static Box BuildBox(Entity entity, const GlobalTransformComponent& transform,
+                      const TriangleColliderComponent& collider, const EntityMaskComponent& entityMask) {
+    const octarine::Rotation2D rot = octarine::Rotation2D::FromRadians(transform.rotation);
+    const glm::vec2 v0 = TransformLocalPoint(collider.p1, transform, rot);
+    const glm::vec2 v1 = TransformLocalPoint(collider.p2, transform, rot);
+    const glm::vec2 v2 = TransformLocalPoint(collider.p3, transform, rot);
+
+    return {.entity = entity,
+            .entityMask = static_cast<uint32_t>(entityMask.mask.to_ulong()),
+            .collisionMask = static_cast<uint32_t>(collider.collisionMask.to_ulong()),
+            .minX = std::min({v0.x, v1.x, v2.x}),
+            .minY = std::min({v0.y, v1.y, v2.y}),
+            .maxX = std::max({v0.x, v1.x, v2.x}),
+            .maxY = std::max({v0.y, v1.y, v2.y}),
+            .cx = v0.x,
+            .cy = v0.y,
+            .hx = v1.x,
+            .hy = v1.y,
+            .rot = {v2.x, v2.y},
+            .shape = ColliderShape::Triangle};
+  }
+
+  static Box BuildBox(Entity entity, const GlobalTransformComponent& transform, const LineColliderComponent& collider,
+                      const EntityMaskComponent& entityMask) {
+    const octarine::Rotation2D rot = octarine::Rotation2D::FromRadians(transform.rotation);
+    const glm::vec2 p1 = TransformLocalPoint(collider.start, transform, rot);
+    const glm::vec2 p2 = TransformLocalPoint(collider.end, transform, rot);
+
+    return {.entity = entity,
+            .entityMask = static_cast<uint32_t>(entityMask.mask.to_ulong()),
+            .collisionMask = static_cast<uint32_t>(collider.collisionMask.to_ulong()),
+            .minX = std::min(p1.x, p2.x),
+            .minY = std::min(p1.y, p2.y),
+            .maxX = std::max(p1.x, p2.x),
+            .maxY = std::max(p1.y, p2.y),
+            .cx = p1.x,
+            .cy = p1.y,
+            .hx = p2.x,
+            .hy = p2.y,
+            .rot = {0.0f, 0.0f},
+            .shape = ColliderShape::Line};
   }
 
   void operator()(const ContextFacade& ctx) {
     auto* registry = ctx.GetRegistry();
     auto* eventBus = registry->Get<EngineContext>().eventBus;
 
-    if (!query_) {
-      query_ = registry->CreateQuery<GlobalTransformComponent, BoxColliderComponent, EntityMaskComponent>();
-    }
-    query_->Update();
+    EnsureAndUpdateQueries(registry);
 
     // Deterministic simulation mode (ThreadPool force-serial) also forces synchronous detection:
     // the async path emits whichever pass has finished by wall-clock time, which varies per run.
@@ -152,14 +482,61 @@ class KDTreeCollisionSystem {
   }
 
  private:
-  void UpdateSynchronous(EventBus* eventBus) {
-    std::vector<Box> boxes;
-    boxes.reserve(query_->GetCount());
-    query_->ForEach([&](Entity entity, const GlobalTransformComponent& transform, const BoxColliderComponent& collider,
-                        const EntityMaskComponent& entityMask) {
+  template <typename ColliderT>
+  using ColliderQuery = ComponentQuery<GlobalTransformComponent, ColliderT, EntityMaskComponent>;
+
+  void EnsureAndUpdateQueries(Registry* registry) {
+    if (!query_) {
+      query_ = registry->CreateQuery<GlobalTransformComponent, BoxColliderComponent, EntityMaskComponent>();
+      circleQuery_ = registry->CreateQuery<GlobalTransformComponent, CircleColliderComponent, EntityMaskComponent>();
+      capsuleQuery_ = registry->CreateQuery<GlobalTransformComponent, CapsuleColliderComponent, EntityMaskComponent>();
+      triangleQuery_ =
+          registry->CreateQuery<GlobalTransformComponent, TriangleColliderComponent, EntityMaskComponent>();
+      lineQuery_ = registry->CreateQuery<GlobalTransformComponent, LineColliderComponent, EntityMaskComponent>();
+    }
+    query_->Update();
+    circleQuery_->Update();
+    capsuleQuery_->Update();
+    triangleQuery_->Update();
+    lineQuery_->Update();
+  }
+
+  [[nodiscard]] size_t TotalColliderCount() const {
+    return query_->GetCount() + circleQuery_->GetCount() + capsuleQuery_->GetCount() + triangleQuery_->GetCount() +
+           lineQuery_->GetCount();
+  }
+
+  template <typename QueryT>
+  static void AppendBoxesSync(QueryT& q, std::vector<Box>& boxes) {
+    if (q.GetCount() == 0) return;
+    q.ForEach([&](Entity entity, const GlobalTransformComponent& transform, const auto& collider,
+                  const EntityMaskComponent& entityMask) {
       boxes.push_back(BuildBox(entity, transform, collider, entityMask));
     });
-    std::sort(boxes.begin(), boxes.end(), [](const Box& a, const Box& b) { return a.entity.id < b.entity.id; });
+  }
+
+  template <typename QueryT>
+  static void AppendBoxesAsync(QueryT& q, std::vector<Box>& boxes, std::atomic<size_t>& nextIndex) {
+    if (q.GetCount() == 0) return;
+    q.ParallelForEach([&](Entity entity, const GlobalTransformComponent& transform, const auto& collider,
+                          const EntityMaskComponent& entityMask) {
+      const size_t idx = nextIndex.fetch_add(1, std::memory_order_relaxed);
+      boxes[idx] = BuildBox(entity, transform, collider, entityMask);
+    });
+  }
+
+  void UpdateSynchronous(EventBus* eventBus) {
+    std::vector<Box>& boxes = cachedBoxes_;
+    boxes.clear();
+    boxes.reserve(TotalColliderCount());
+    AppendBoxesSync(*query_, boxes);
+    AppendBoxesSync(*circleQuery_, boxes);
+    AppendBoxesSync(*capsuleQuery_, boxes);
+    AppendBoxesSync(*triangleQuery_, boxes);
+    AppendBoxesSync(*lineQuery_, boxes);
+    std::sort(boxes.begin(), boxes.end(), [](const Box& a, const Box& b) {
+      return a.entity.id != b.entity.id ? (a.entity.id < b.entity.id) : (a.shape < b.shape);
+    });
 
     PROFILE_COUNTER_SET("Collision: Box count", static_cast<long long>(boxes.size()));
 
@@ -190,14 +567,14 @@ class KDTreeCollisionSystem {
 
     PROFILE_NAMED_SCOPE("Gather Boxes");
     std::vector<Box> boxes = std::move(cachedBoxes_);
-    boxes.resize(query_->GetCount());
+    boxes.resize(TotalColliderCount());
     std::atomic<size_t> nextIndex{0};
 
-    query_->ParallelForEach([&](Entity entity, const GlobalTransformComponent& transform,
-                                const BoxColliderComponent& collider, const EntityMaskComponent& entityMask) {
-      const size_t idx = nextIndex.fetch_add(1, std::memory_order_relaxed);
-      boxes[idx] = BuildBox(entity, transform, collider, entityMask);
-    });
+    AppendBoxesAsync(*query_, boxes, nextIndex);
+    AppendBoxesAsync(*circleQuery_, boxes, nextIndex);
+    AppendBoxesAsync(*capsuleQuery_, boxes, nextIndex);
+    AppendBoxesAsync(*triangleQuery_, boxes, nextIndex);
+    AppendBoxesAsync(*lineQuery_, boxes, nextIndex);
 
     PROFILE_COUNTER_SET("Collision: Box count", static_cast<long long>(boxes.size()));
 
@@ -232,7 +609,11 @@ class KDTreeCollisionSystem {
   PairSet prevPairSet_;
   std::vector<Box> cachedBoxes_;
   std::future<CollisionResult> collisionResult_;
-  std::unique_ptr<ComponentQuery<GlobalTransformComponent, BoxColliderComponent, EntityMaskComponent>> query_;
+  std::unique_ptr<ColliderQuery<BoxColliderComponent>> query_;
+  std::unique_ptr<ColliderQuery<CircleColliderComponent>> circleQuery_;
+  std::unique_ptr<ColliderQuery<CapsuleColliderComponent>> capsuleQuery_;
+  std::unique_ptr<ColliderQuery<TriangleColliderComponent>> triangleQuery_;
+  std::unique_ptr<ColliderQuery<LineColliderComponent>> lineQuery_;
   bool synchronous_{false};
 
   // Diff this frame's overlaps against the previous frame and emit the enter/exit batches.
@@ -244,14 +625,11 @@ class KDTreeCollisionSystem {
 
     PairSet currentSet;
     currentSet.reserve(intersectingPairs.size());
-    for (const auto& [a, b] : intersectingPairs) {
-      currentSet.emplace(std::min(a.id, b.id), std::max(a.id, b.id));
-    }
-
     std::vector<std::pair<Entity, Entity>> enteringPairs;
     enteringPairs.reserve(intersectingPairs.size());
     for (const auto& [a, b] : intersectingPairs) {
-      if (!prevPairSet_.contains({std::min(a.id, b.id), std::max(a.id, b.id)})) {
+      const auto key = std::make_pair(std::min(a.id, b.id), std::max(a.id, b.id));
+      if (currentSet.insert(key).second && !prevPairSet_.contains(key)) {
         enteringPairs.emplace_back(a, b);
       }
     }
@@ -337,13 +715,13 @@ class KDTreeCollisionSystem {
                                           std::vector<std::pair<Entity, Entity>>& intersectingPairs) {
     ACCUMULATE_PROFILE_SCOPE("Brute Force Intersection");
 
-    EntityMask entityUnion = 0;
-    EntityMask collUnion = 0;
+    uint32_t entityUnion = 0;
+    uint32_t collUnion = 0;
     for (int i = begin; i < end; ++i) {
       entityUnion |= boxes[static_cast<size_t>(i)].entityMask;
       collUnion |= boxes[static_cast<size_t>(i)].collisionMask;
     }
-    if ((entityUnion & collUnion).none()) {
+    if ((entityUnion & collUnion) == 0U) {
       return;
     }
 
@@ -427,21 +805,21 @@ class KDTreeCollisionSystem {
 
     // Aggregate Mask Pruning: Skips bipartite sweep entirely if the union of entity and collision masks proves no
     // interaction is possible.
-    EntityMask entity1 = 0;
-    EntityMask coll1 = 0;
+    uint32_t entity1 = 0;
+    uint32_t coll1 = 0;
     for (int i = begin1; i < end1; ++i) {
       entity1 |= boxes[static_cast<size_t>(i)].entityMask;
       coll1 |= boxes[static_cast<size_t>(i)].collisionMask;
     }
 
-    EntityMask entity2 = 0;
-    EntityMask coll2 = 0;
+    uint32_t entity2 = 0;
+    uint32_t coll2 = 0;
     for (int i = begin2; i < end2; ++i) {
       entity2 |= boxes[static_cast<size_t>(i)].entityMask;
       coll2 |= boxes[static_cast<size_t>(i)].collisionMask;
     }
 
-    const bool groupCanInteract = !(coll1 & entity2).none() || !(coll2 & entity1).none();
+    const bool groupCanInteract = ((coll1 & entity2) | (coll2 & entity1)) != 0U;
     if (!groupCanInteract) {
       return;
     }

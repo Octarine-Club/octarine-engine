@@ -216,7 +216,7 @@ Entity BenchWorld::SpawnEnemy(const glm::vec2 position, const int index) {
       BoxColliderComponent(kEnemySize, kEnemySize, glm::vec2(0, 0), false, EntityMask{layer::kWeapon}),
       EntityMaskComponent(EntityMask{layer::kEnemy}), RigidBodyComponent(), steering,
       SeparationComponent{static_cast<float>(kEnemySize) / 2.0f + 2.0f, 1.0f}, health,
-      WeaponZoneComponent{8.0f, -1, 0.5f, false, false});
+      WeaponZoneComponent{8.0f, -1, 0.5f, false});
   registry_.AddTag(enemy, enemy_tag_);
 
   if (spitter || trail) {
@@ -250,7 +250,7 @@ void BenchWorld::SpawnWeapons() {
         PositionComponent(glm::vec2(std::cos(a), std::sin(a)) * 90.0f), GlobalTransformComponent{},
         SquarePrimitiveComponent(glm::vec2(0, 0), 4, 64.0f, 64.0f, octarine::Color{255, 200, 80, 255}, false),
         BoxColliderComponent(64, 64, glm::vec2(0, 0), false, EntityMask{layer::kEnemy}),
-        EntityMaskComponent(EntityMask{layer::kWeapon}), WeaponZoneComponent{damage, -1, 0.25f, false, false});
+        EntityMaskComponent(EntityMask{layer::kWeapon}), WeaponZoneComponent{damage, -1, 0.25f, false});
     registry_.SetParent(weapon, player_);
   }
 
@@ -265,7 +265,7 @@ void BenchWorld::SpawnWeapons() {
         GlobalTransformComponent{}, RigidBodyComponent(), HomingComponent{target, 600.0f, true},
         SquarePrimitiveComponent(glm::vec2(0, 0), 4, 12.0f, 12.0f, octarine::Color{255, 255, 255, 255}, false),
         BoxColliderComponent(16, 16, glm::vec2(0, 0), false, EntityMask{layer::kEnemy}),
-        EntityMaskComponent(EntityMask{layer::kWeapon}), WeaponZoneComponent{damage, -1, 0.25f, false, false});
+        EntityMaskComponent(EntityMask{layer::kWeapon}), WeaponZoneComponent{damage, -1, 0.25f, false});
   }
 }
 

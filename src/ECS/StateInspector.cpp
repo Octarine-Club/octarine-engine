@@ -6,11 +6,15 @@
 #include <vector>
 
 #include "Components/BoxColliderComponent.h"
+#include "Components/CapsuleColliderComponent.h"
+#include "Components/CircleColliderComponent.h"
 #include "Components/GlobalTransformComponent.h"
 #include "Components/LifetimeComponent.h"
+#include "Components/LineColliderComponent.h"
 #include "Components/NameComponent.h"
 #include "Components/PositionComponent.h"
 #include "Components/RigidBodyComponent.h"
+#include "Components/TriangleColliderComponent.h"
 #include "Components/UIRectComponent.h"
 #include "ECS/Registry.h"
 
@@ -116,6 +120,52 @@ void AppendBoxColliderJson(const Registry& registry, Entity entity, const Inspec
   comps.push_back(ss.str());
 }
 
+void AppendCircleColliderJson(const Registry& registry, Entity entity, const InspectOptions& opts,
+                              std::vector<std::string>& comps) {
+  if (!registry.HasComponent<CircleColliderComponent>(entity)) return;
+  const auto& cc = registry.GetComponent<CircleColliderComponent>(entity);
+  std::ostringstream ss;
+  ss << R"("CircleColliderComponent": {"radius": )" << FormatFloat(cc.radius, opts) << R"(, "offsetX": )"
+     << FormatFloat(cc.offset.x, opts) << R"(, "offsetY": )" << FormatFloat(cc.offset.y, opts) << R"(, "isFixed": )"
+     << (cc.isFixed ? "true" : "false") << "}";
+  comps.push_back(ss.str());
+}
+
+void AppendCapsuleColliderJson(const Registry& registry, Entity entity, const InspectOptions& opts,
+                               std::vector<std::string>& comps) {
+  if (!registry.HasComponent<CapsuleColliderComponent>(entity)) return;
+  const auto& cc = registry.GetComponent<CapsuleColliderComponent>(entity);
+  std::ostringstream ss;
+  ss << R"("CapsuleColliderComponent": {"startX": )" << FormatFloat(cc.start.x, opts) << R"(, "startY": )"
+     << FormatFloat(cc.start.y, opts) << R"(, "endX": )" << FormatFloat(cc.end.x, opts) << R"(, "endY": )"
+     << FormatFloat(cc.end.y, opts) << R"(, "radius": )" << FormatFloat(cc.radius, opts) << R"(, "isFixed": )"
+     << (cc.isFixed ? "true" : "false") << "}";
+  comps.push_back(ss.str());
+}
+
+void AppendTriangleColliderJson(const Registry& registry, Entity entity, const InspectOptions& opts,
+                                std::vector<std::string>& comps) {
+  if (!registry.HasComponent<TriangleColliderComponent>(entity)) return;
+  const auto& tc = registry.GetComponent<TriangleColliderComponent>(entity);
+  std::ostringstream ss;
+  ss << R"("TriangleColliderComponent": {"p1X": )" << FormatFloat(tc.p1.x, opts) << R"(, "p1Y": )"
+     << FormatFloat(tc.p1.y, opts) << R"(, "p2X": )" << FormatFloat(tc.p2.x, opts) << R"(, "p2Y": )"
+     << FormatFloat(tc.p2.y, opts) << R"(, "p3X": )" << FormatFloat(tc.p3.x, opts) << R"(, "p3Y": )"
+     << FormatFloat(tc.p3.y, opts) << R"(, "isFixed": )" << (tc.isFixed ? "true" : "false") << "}";
+  comps.push_back(ss.str());
+}
+
+void AppendLineColliderJson(const Registry& registry, Entity entity, const InspectOptions& opts,
+                            std::vector<std::string>& comps) {
+  if (!registry.HasComponent<LineColliderComponent>(entity)) return;
+  const auto& lc = registry.GetComponent<LineColliderComponent>(entity);
+  std::ostringstream ss;
+  ss << R"("LineColliderComponent": {"startX": )" << FormatFloat(lc.start.x, opts) << R"(, "startY": )"
+     << FormatFloat(lc.start.y, opts) << R"(, "endX": )" << FormatFloat(lc.end.x, opts) << R"(, "endY": )"
+     << FormatFloat(lc.end.y, opts) << R"(, "isFixed": )" << (lc.isFixed ? "true" : "false") << "}";
+  comps.push_back(ss.str());
+}
+
 void AppendNameJson(const Registry& registry, Entity entity, std::vector<std::string>& comps) {
   if (!registry.HasComponent<NameComponent>(entity)) return;
   const auto& n = registry.GetComponent<NameComponent>(entity);
@@ -146,13 +196,6 @@ void AppendUIRectJson(const Registry& registry, Entity entity, const InspectOpti
 }
 
 bool HasNamedComponent(const Registry& registry, Entity entity, std::string_view compName) {
-  if (compName == "PositionComponent") return registry.HasComponent<PositionComponent>(entity);
-  if (compName == "RigidBodyComponent") return registry.HasComponent<RigidBodyComponent>(entity);
-  if (compName == "GlobalTransformComponent") return registry.HasComponent<GlobalTransformComponent>(entity);
-  if (compName == "BoxColliderComponent") return registry.HasComponent<BoxColliderComponent>(entity);
-  if (compName == "NameComponent") return registry.HasComponent<NameComponent>(entity);
-  if (compName == "LifetimeComponent") return registry.HasComponent<LifetimeComponent>(entity);
-  if (compName == "UIRectComponent") return registry.HasComponent<UIRectComponent>(entity);
   const auto loc = registry.GetEntityLocation(entity);
   if (!loc.archetype) return false;
   return std::ranges::any_of(loc.archetype->component_infos(), [&](const ComponentInfo& info) {
@@ -205,6 +248,10 @@ std::string StateInspector::DumpEntity(const Registry& registry, Entity entity, 
   AppendRigidBodyJson(registry, entity, opts, comps);
   AppendGlobalTransformJson(registry, entity, opts, comps);
   AppendBoxColliderJson(registry, entity, opts, comps);
+  AppendCircleColliderJson(registry, entity, opts, comps);
+  AppendCapsuleColliderJson(registry, entity, opts, comps);
+  AppendTriangleColliderJson(registry, entity, opts, comps);
+  AppendLineColliderJson(registry, entity, opts, comps);
   AppendNameJson(registry, entity, comps);
 
   AppendLifetimeJson(registry, entity, opts, comps);

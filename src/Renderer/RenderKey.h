@@ -35,6 +35,10 @@ struct RenderKey {
     SpriteCommand sprite;
     SquareCommand square;
     TextCommand text;
+    CircleCommand circle;
+    LineCommand line;
+    TriangleCommand triangle;
+    CapsuleCommand capsule;
 
     // Leaves union storage uninitialized — the producing system always overwrites the
     // active member chosen by `type`. Skipping zero-init saves ~56 bytes of writes per

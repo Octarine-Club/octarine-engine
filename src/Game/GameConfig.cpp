@@ -9,16 +9,11 @@
 
 #include "General/AngleUnit.h"
 #include "General/Constants.h"
+#include "General/IniParser.h"
 #include "General/Logger.h"
 #include "General/Utils.h"
 
 inline constexpr auto kConfigFileName = "config.ini";
-inline constexpr auto kWhiteSpaceSymbols = " \t\n\r\f\v";
-
-std::string TrimRight(const std::string& s) {
-  const size_t end = s.find_last_not_of(kWhiteSpaceSymbols);
-  return end == std::string::npos ? "" : s.substr(0, end + 1);
-}
 
 inline auto ReadConfigFile(void* dst, const Uint64 dstLen) -> std::unordered_map<std::string, std::string> {
   if (dst == nullptr || dstLen == 0) {
@@ -26,39 +21,17 @@ inline auto ReadConfigFile(void* dst, const Uint64 dstLen) -> std::unordered_map
     return {};
   }
 
-  auto config = std::unordered_map<std::string, std::string>();
-  const auto content = std::string(static_cast<char*>(dst), dstLen);
+  const std::string_view content(static_cast<const char*>(dst), dstLen);
   if (content.empty()) {
     Logger::Warn("Config file content is empty after conversion.");
     return {};
   }
 
-  auto stream = std::istringstream(content);
-  std::string line;
-
-  while (getline(stream, line, '\n')) {
-    const size_t first = line.find_first_not_of(kWhiteSpaceSymbols);
-    if (std::string::npos == first) {
-      continue;
-    }
-
-    line = line.substr(first);
-    line = TrimRight(line);
-
-    if (line.empty() || line[0] == '[' || line[0] == '#') {
-      continue;
-    }
-
-    const auto keyValue = line.find('=');
-    if (keyValue == std::string::npos) {
-      Logger::Warn("Could not find config settings on line: " + line);
-      continue;
-    }
-
-    auto key = line.substr(0, keyValue);
-    config[key] = line.substr(keyValue + 1);
+  std::vector<std::string> warnings;
+  auto config = octarine::IniParser::ParseFlatMap(content, &warnings);
+  for (const auto& w : warnings) {
+    Logger::Warn("config.ini: " + w);
   }
-
   return config;
 }
 

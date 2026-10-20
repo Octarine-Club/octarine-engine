@@ -85,7 +85,14 @@
       "source": "src/Systems/DrawColliderSystem.h",
       "tier": null,
       "setup_order": null,
-      "queried_components": [],
+      "queried_components": [
+        "GlobalTransformComponent",
+        "BoxColliderComponent",
+        "CircleColliderComponent",
+        "CapsuleColliderComponent",
+        "TriangleColliderComponent",
+        "LineColliderComponent"
+      ],
       "emits": [],
       "subscribes": [],
       "lua_surface": false
@@ -123,7 +130,11 @@
       "queried_components": [
         "GlobalTransformComponent",
         "BoxColliderComponent",
-        "EntityMaskComponent"
+        "EntityMaskComponent",
+        "CircleColliderComponent",
+        "CapsuleColliderComponent",
+        "TriangleColliderComponent",
+        "LineColliderComponent"
       ],
       "emits": [
         "CollisionBatchEvent",
@@ -168,10 +179,36 @@
       "lua_surface": false
     },
     {
+      "name": "RenderCapsulePrimitiveSystem",
+      "source": "src/Systems/RenderCapsulePrimitiveSystem.h",
+      "tier": "parallel",
+      "setup_order": 22,
+      "queried_components": [
+        "CapsulePrimitiveComponent",
+        "GlobalTransformComponent"
+      ],
+      "emits": [],
+      "subscribes": [],
+      "lua_surface": false
+    },
+    {
+      "name": "RenderCirclePrimitiveSystem",
+      "source": "src/Systems/RenderCirclePrimitiveSystem.h",
+      "tier": "parallel",
+      "setup_order": 19,
+      "queried_components": [
+        "CirclePrimitiveComponent",
+        "GlobalTransformComponent"
+      ],
+      "emits": [],
+      "subscribes": [],
+      "lua_surface": false
+    },
+    {
       "name": "RenderColorGridSystem",
       "source": "src/Systems/RenderColorGridSystem.h",
       "tier": "parallel",
-      "setup_order": 19,
+      "setup_order": 23,
       "queried_components": [
         "ColorGridComponent",
         "GlobalTransformComponent"
@@ -187,6 +224,19 @@
       "setup_order": null,
       "queried_components": [
         "ScriptComponent"
+      ],
+      "emits": [],
+      "subscribes": [],
+      "lua_surface": false
+    },
+    {
+      "name": "RenderLinePrimitiveSystem",
+      "source": "src/Systems/RenderLinePrimitiveSystem.h",
+      "tier": "parallel",
+      "setup_order": 20,
+      "queried_components": [
+        "LinePrimitiveComponent",
+        "GlobalTransformComponent"
       ],
       "emits": [],
       "subscribes": [],
@@ -231,13 +281,30 @@
       "lua_surface": false
     },
     {
+      "name": "RenderTrianglePrimitiveSystem",
+      "source": "src/Systems/RenderTrianglePrimitiveSystem.h",
+      "tier": "parallel",
+      "setup_order": 21,
+      "queried_components": [
+        "TrianglePrimitiveComponent",
+        "GlobalTransformComponent"
+      ],
+      "emits": [],
+      "subscribes": [],
+      "lua_surface": false
+    },
+    {
       "name": "RenderUIPrimitiveSystem",
       "source": "src/Systems/RenderUIPrimitiveSystem.h",
-      "tier": "serial",
+      "tier": "bulk",
       "setup_order": 16,
       "queried_components": [
         "UIRectComponent",
-        "SquarePrimitiveComponent"
+        "SquarePrimitiveComponent",
+        "CirclePrimitiveComponent",
+        "CapsulePrimitiveComponent",
+        "TrianglePrimitiveComponent",
+        "LinePrimitiveComponent"
       ],
       "emits": [],
       "subscribes": [],
