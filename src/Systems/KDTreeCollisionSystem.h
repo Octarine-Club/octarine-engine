@@ -249,6 +249,26 @@ struct Box {
                                                           {tri.hx, tri.hy}, {tri.rot.cos, tri.rot.sin}) <= rSq;
   }
 
+  [[nodiscard]] static bool CapsulePairIntersects(const Box& a, const Box& b) {
+    const float rSum = a.rot.cos + b.rot.cos;
+    if (a.shape == ColliderShape::Circle && b.shape == ColliderShape::Circle) {
+      const float dx = b.cx - a.cx;
+      const float dy = b.cy - a.cy;
+      return (dx * dx + dy * dy) <= (rSum * rSum);
+    }
+    return octarine::collision::SegmentSegmentDistanceSq({a.cx, a.cy}, {a.hx, a.hy}, {b.cx, b.cy}, {b.hx, b.hy}) <=
+           (rSum * rSum);
+  }
+
+  [[nodiscard]] static bool BoxTrianglePairIntersects(const Box& a, const Box& b) {
+    if (a.shape == ColliderShape::Box) {
+      return octarine::collision::ObbTriangleIntersects({a.cx, a.cy}, {a.hx, a.hy}, a.rot, {b.cx, b.cy}, {b.hx, b.hy},
+                                                        {b.rot.cos, b.rot.sin});
+    }
+    return octarine::collision::ObbTriangleIntersects({b.cx, b.cy}, {b.hx, b.hy}, b.rot, {a.cx, a.cy}, {a.hx, a.hy},
+                                                      {a.rot.cos, a.rot.sin});
+  }
+
 #if defined(__clang__) || defined(__GNUC__)
   [[gnu::noinline]]
 #endif
@@ -258,26 +278,14 @@ struct Box {
       return obbIntersects(other);
     }
     if (IsCapsuleLike() && other.IsCapsuleLike()) {
-      const float rSum = rot.cos + other.rot.cos;
-      if (shape == ColliderShape::Circle && other.shape == ColliderShape::Circle) {
-        const float dx = other.cx - cx;
-        const float dy = other.cy - cy;
-        return (dx * dx + dy * dy) <= (rSum * rSum);
-      }
-      return octarine::collision::SegmentSegmentDistanceSq({cx, cy}, {hx, hy}, {other.cx, other.cy},
-                                                           {other.hx, other.hy}) <= (rSum * rSum);
+      return CapsulePairIntersects(*this, other);
     }
     if (IsCapsuleLike() && other.shape == ColliderShape::Box) return CapsuleObbIntersects(*this, other);
     if (shape == ColliderShape::Box && other.IsCapsuleLike()) return CapsuleObbIntersects(other, *this);
     if (IsCapsuleLike() && other.shape == ColliderShape::Triangle) return CapsuleTriangleIntersects(*this, other);
     if (shape == ColliderShape::Triangle && other.IsCapsuleLike()) return CapsuleTriangleIntersects(other, *this);
-    if (shape == ColliderShape::Box && other.shape == ColliderShape::Triangle) {
-      return octarine::collision::ObbTriangleIntersects({cx, cy}, {hx, hy}, rot, {other.cx, other.cy},
-                                                        {other.hx, other.hy}, {other.rot.cos, other.rot.sin});
-    }
-    if (shape == ColliderShape::Triangle && other.shape == ColliderShape::Box) {
-      return octarine::collision::ObbTriangleIntersects({other.cx, other.cy}, {other.hx, other.hy}, other.rot, {cx, cy},
-                                                        {hx, hy}, {rot.cos, rot.sin});
+    if (shape == ColliderShape::Box || other.shape == ColliderShape::Box) {
+      return BoxTrianglePairIntersects(*this, other);
     }
     return octarine::collision::TrianglesIntersect({cx, cy}, {hx, hy}, {rot.cos, rot.sin}, {other.cx, other.cy},
                                                    {other.hx, other.hy}, {other.rot.cos, other.rot.sin});

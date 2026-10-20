@@ -52,11 +52,9 @@ bool IniParser::ParseLine(std::string_view line, std::string& keyOut, std::strin
   if (eq == std::string_view::npos) return false;
 
   const std::string_view keySv = Trim(trimmed.substr(0, eq));
-  if (keySv.empty()) return false;
-
   keyOut = std::string(keySv);
   valueOut = std::string(Trim(trimmed.substr(eq + 1)));
-  return true;
+  return !keyOut.empty();
 }
 
 std::vector<IniParser::Entry> IniParser::ParseEntries(std::string_view text, std::vector<std::string>* warnings) {

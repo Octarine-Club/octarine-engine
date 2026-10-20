@@ -14,10 +14,10 @@ struct LuaBinding<CircleColliderComponent> {
   static CircleColliderComponent fromLua(const sol::object& data) {
     const auto t = data.as<sol::table>();
     using namespace LuaComponentHelpers;
-    const float radius = SafeGetOptionalValue<float>(t, "radius", 1.0f);
+    const auto radius = SafeGetOptionalValue<float>(t, "radius", 1.0f);
     const glm::vec2 offset =
         t.get<sol::object>("offset").valid() ? SafeGetVec2(t, "offset") : SafeGetVec2(t, "position");
-    const bool isFixed = SafeGetOptionalValue<bool>(t, "is_fixed", false);
+    const auto isFixed = SafeGetOptionalValue<bool>(t, "is_fixed", false);
     const auto collisionMask = SafeGetOptionalValue<int>(t, "collision_mask", Constants::kDefaultEntityMask);
     const auto collisionMaskBits = EntityMask(static_cast<unsigned long long>(collisionMask));
     return CircleColliderComponent(radius, offset, isFixed, collisionMaskBits);

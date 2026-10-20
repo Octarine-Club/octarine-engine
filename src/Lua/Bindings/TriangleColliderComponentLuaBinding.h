@@ -17,7 +17,7 @@ struct LuaBinding<TriangleColliderComponent> {
     const glm::vec2 p1 = SafeGetVec2(t, "p1");
     const glm::vec2 p2 = SafeGetVec2(t, "p2");
     const glm::vec2 p3 = SafeGetVec2(t, "p3");
-    const bool isFixed = SafeGetOptionalValue<bool>(t, "is_fixed", false);
+    const auto isFixed = SafeGetOptionalValue<bool>(t, "is_fixed", false);
     const auto collisionMask = SafeGetOptionalValue<int>(t, "collision_mask", Constants::kDefaultEntityMask);
     const auto collisionMaskBits = EntityMask(static_cast<unsigned long long>(collisionMask));
     return TriangleColliderComponent(p1, p2, p3, isFixed, collisionMaskBits);

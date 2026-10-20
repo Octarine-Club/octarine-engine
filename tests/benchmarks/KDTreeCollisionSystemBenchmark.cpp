@@ -133,8 +133,10 @@ void BuildMixedShapesGrid(Registry& registry, const int n) {
   for (int i = 0; i < n; ++i) {
     const Entity e = registry.CreateEntity();
     // 24px spacing with ~16-24px shapes produces neighbor overlaps across all 5 shape types.
-    const float x = static_cast<float>(i % cols) * 24.0f;
-    const float y = static_cast<float>(i / cols) * 24.0f;
+    const int col = i % cols;
+    const int row = i / cols;
+    const float x = static_cast<float>(col) * 24.0f;
+    const float y = static_cast<float>(row) * 24.0f;
     registry.AddComponent(e, GlobalTransformComponent{glm::vec2(x, y), glm::vec2(1.0f, 1.0f), 0.0f});
     registry.AddComponent(e, EntityMaskComponent(mask));
     switch (i % 5) {

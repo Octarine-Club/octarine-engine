@@ -457,21 +457,27 @@ void SetWindowPositionState(LuaBindingContext& ctx, const int x, const int y) {
 #endif
 }
 
-int GetCurrentDisplayIndexState(LuaBindingContext& ctx) {
-  if (auto* window = TryGetWindow(ctx)) {
-    const SDL_DisplayID dispID = SDL_GetDisplayForWindow(window);
-    if (dispID != 0) {
-      int count = 0;
-      if (SDL_DisplayID* displays = SDL_GetDisplays(&count)) {
-        for (int i = 0; i < count; ++i) {
-          if (displays[i] == dispID) {
-            SDL_free(displays);
-            return i;
-          }
-        }
-        SDL_free(displays);
-      }
+std::optional<int> FindWindowDisplayIndex(SDL_Window* window) {
+  if (window == nullptr) return std::nullopt;
+  const SDL_DisplayID dispID = SDL_GetDisplayForWindow(window);
+  if (dispID == 0) return std::nullopt;
+  int count = 0;
+  SDL_DisplayID* displays = SDL_GetDisplays(&count);
+  if (displays == nullptr) return std::nullopt;
+  std::optional<int> found;
+  for (int i = 0; i < count; ++i) {
+    if (displays[i] == dispID) {
+      found = i;
+      break;
     }
+  }
+  SDL_free(displays);
+  return found;
+}
+
+int GetCurrentDisplayIndexState(LuaBindingContext& ctx) {
+  if (const auto idx = FindWindowDisplayIndex(TryGetWindow(ctx))) {
+    return *idx;
   }
   if (const auto* settings = GetOrCreateUserSettings(ctx); settings && settings->displayIndex >= 0) {
     return settings->displayIndex;
@@ -567,7 +573,7 @@ bool SaveSettingsToDisk(LuaBindingContext& ctx) {
   return settings->Save(savePath);
 }
 
-sol::object SettingValueToLuaObject(sol::state_view lua, const octarine::UserSettings::SettingValue& val) {
+sol::object SettingValueToLuaObject(const sol::state_view& lua, const octarine::UserSettings::SettingValue& val) {
   if (std::holds_alternative<bool>(val)) {
     return sol::make_object(lua, std::get<bool>(val));
   }
@@ -616,8 +622,8 @@ std::string NormalizeBuiltInKey(std::string_view key) {
   return std::string(key);
 }
 
-bool TryGetBuiltInSetting(LuaBindingContext& ctx, std::string_view rawKey, sol::state_view lua, sol::object& out) {
-  const std::string key = NormalizeBuiltInKey(rawKey);
+bool TryGetBuiltInWindowSetting(LuaBindingContext& ctx, const std::string& key, const sol::state_view& lua,
+                                sol::object& out) {
   if (key == "fullscreen") {
     out = sol::make_object(lua, GetFullscreenState(ctx));
     return true;
@@ -648,6 +654,15 @@ bool TryGetBuiltInSetting(LuaBindingContext& ctx, std::string_view rawKey, sol::
   }
   if (key == "display_name") {
     out = sol::make_object(lua, GetCurrentDisplayNameState(ctx));
+    return true;
+  }
+  return false;
+}
+
+bool TryGetBuiltInSetting(LuaBindingContext& ctx, std::string_view rawKey, const sol::state_view& lua,
+                          sol::object& out) {
+  const std::string key = NormalizeBuiltInKey(rawKey);
+  if (TryGetBuiltInWindowSetting(ctx, key, lua, out)) {
     return true;
   }
   if (key == "master_volume") {
@@ -694,6 +709,18 @@ bool TrySetBuiltInBool(LuaBindingContext& ctx, const std::string& key, const sol
   return true;
 }
 
+void ApplyWindowDimensionOrPosSetting(LuaBindingContext& ctx, const std::string& key, const int intVal) {
+  if (key == "window_width" || key == "window_height") {
+    auto [curW, curH] = GetWindowSizeState(ctx);
+    if (curW <= 0) curW = 1280;
+    if (curH <= 0) curH = 720;
+    SetWindowSizeState(ctx, key == "window_width" ? intVal : curW, key == "window_height" ? intVal : curH);
+    return;
+  }
+  auto [curX, curY] = GetWindowPositionState(ctx);
+  SetWindowPositionState(ctx, key == "window_x" ? intVal : curX, key == "window_y" ? intVal : curY);
+}
+
 bool TrySetBuiltInNumber(LuaBindingContext& ctx, const std::string& key, const sol::object& val, bool& handled) {
   if (key != "master_volume" && key != "fps_target" && key != "display_index" && key != "window_width" &&
       key != "window_height" && key != "window_x" && key != "window_y") {
@@ -714,15 +741,7 @@ bool TrySetBuiltInNumber(LuaBindingContext& ctx, const std::string& key, const s
   if (key == "display_index") {
     return SetWindowDisplayState(ctx, intVal);
   }
-  if (key == "window_width" || key == "window_height") {
-    auto [curW, curH] = GetWindowSizeState(ctx);
-    if (curW <= 0) curW = 1280;
-    if (curH <= 0) curH = 720;
-    SetWindowSizeState(ctx, key == "window_width" ? intVal : curW, key == "window_height" ? intVal : curH);
-    return true;
-  }
-  auto [curX, curY] = GetWindowPositionState(ctx);
-  SetWindowPositionState(ctx, key == "window_x" ? intVal : curX, key == "window_y" ? intVal : curY);
+  ApplyWindowDimensionOrPosSetting(ctx, key, intVal);
   return true;
 }
 

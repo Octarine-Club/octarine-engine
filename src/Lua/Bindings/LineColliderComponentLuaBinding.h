@@ -16,7 +16,7 @@ struct LuaBinding<LineColliderComponent> {
     using namespace LuaComponentHelpers;
     const glm::vec2 start = SafeGetVec2(t, "start");
     const glm::vec2 end = SafeGetVec2(t, "end");
-    const bool isFixed = SafeGetOptionalValue<bool>(t, "is_fixed", false);
+    const auto isFixed = SafeGetOptionalValue<bool>(t, "is_fixed", false);
     const auto collisionMask = SafeGetOptionalValue<int>(t, "collision_mask", Constants::kDefaultEntityMask);
     const auto collisionMaskBits = EntityMask(static_cast<unsigned long long>(collisionMask));
     return LineColliderComponent(start, end, isFixed, collisionMaskBits);

@@ -396,41 +396,52 @@ UserSettings UserSettings::Parse(std::string_view text) {
   return settings;
 }
 
+namespace {
+void SerializeWindowSection(std::ostringstream& ss, const UserSettings& s) {
+  ss << "[window]\n";
+  if (s.hasWindowPlacement) {
+    ss << "x = " << s.windowX << "\n";
+    ss << "y = " << s.windowY << "\n";
+  }
+  if (s.windowWidth > 0 && s.windowHeight > 0) {
+    ss << "width = " << s.windowWidth << "\n";
+    ss << "height = " << s.windowHeight << "\n";
+  }
+  if (s.displayIndex >= 0) {
+    ss << "display_index = " << s.displayIndex << "\n";
+  }
+  if (!s.displayName.empty()) {
+    ss << "display_name = " << s.displayName << "\n";
+  }
+  ss << "fullscreen = " << (s.fullscreen ? "true" : "false") << "\n";
+  ss << "maximized = " << (s.maximized ? "true" : "false") << "\n";
+}
+
+void SerializeEngineSection(std::ostringstream& ss, const UserSettings& s) {
+  if (!s.fpsTarget.has_value() && !s.showPerfOverlay.has_value()) {
+    return;
+  }
+  ss << "\n[engine]\n";
+  if (s.fpsTarget.has_value()) {
+    ss << "fps_target = " << *s.fpsTarget << "\n";
+  }
+  if (s.showPerfOverlay.has_value()) {
+    ss << "perf_overlay = " << (*s.showPerfOverlay ? "true" : "false") << "\n";
+  }
+}
+}  // namespace
+
 std::string UserSettings::Serialize() const {
   std::ostringstream ss;
   ss << "# Octarine User Settings\n\n";
 
-  ss << "[window]\n";
-  if (hasWindowPlacement) {
-    ss << "x = " << windowX << "\n";
-    ss << "y = " << windowY << "\n";
-  }
-  if (windowWidth > 0 && windowHeight > 0) {
-    ss << "width = " << windowWidth << "\n";
-    ss << "height = " << windowHeight << "\n";
-  }
-  if (displayIndex >= 0) {
-    ss << "display_index = " << displayIndex << "\n";
-  }
-  if (!displayName.empty()) {
-    ss << "display_name = " << displayName << "\n";
-  }
-  ss << "fullscreen = " << (fullscreen ? "true" : "false") << "\n";
-  ss << "maximized = " << (maximized ? "true" : "false") << "\n";
+  SerializeWindowSection(ss, *this);
 
   ss << "\n[audio]\n";
   ss << "master_volume = " << masterVolume << "\n";
   ss << "muted = " << (audioMuted ? "true" : "false") << "\n";
 
-  if (fpsTarget.has_value() || showPerfOverlay.has_value()) {
-    ss << "\n[engine]\n";
-    if (fpsTarget.has_value()) {
-      ss << "fps_target = " << *fpsTarget << "\n";
-    }
-    if (showPerfOverlay.has_value()) {
-      ss << "perf_overlay = " << (*showPerfOverlay ? "true" : "false") << "\n";
-    }
-  }
+  SerializeEngineSection(ss, *this);
 
   std::set<std::string> allKeys;
   for (const auto& [k, _] : defaultSettings) allKeys.insert(k);

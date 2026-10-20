@@ -152,14 +152,14 @@ void TestSchemaAndTypeValidation() {
   s.DefineSetting("difficulty", std::string("normal"));
 
   Check(s.HasSetting("screen_shake"), "defined setting exists");
-  Check(std::get<bool>(*s.GetSetting("screen_shake")) == true, "defined default returned before set");
+  Check(std::get<bool>(*s.GetSetting("screen_shake")), "defined default returned before set");
 
   Check(s.SetSetting("screen_shake", false), "valid bool set succeeds");
-  Check(std::get<bool>(*s.GetSetting("screen_shake")) == false, "updated bool returned");
-  Check(std::get<bool>(*s.GetDefaultSetting("screen_shake")) == true, "default remains true");
+  Check(!std::get<bool>(*s.GetSetting("screen_shake")), "updated bool returned");
+  Check(std::get<bool>(*s.GetDefaultSetting("screen_shake")), "default remains true");
 
   Check(!s.SetSetting("screen_shake", std::string("invalid")), "setting string into bool key rejected");
-  Check(std::get<bool>(*s.GetSetting("screen_shake")) == false, "rejected set leaves value intact");
+  Check(!std::get<bool>(*s.GetSetting("screen_shake")), "rejected set leaves value intact");
 
   Check(s.SetSetting("sfx_volume", int64_t{1}), "setting integer into double key coerces to double");
   Check(std::holds_alternative<double>(*s.GetSetting("sfx_volume")) &&
@@ -167,7 +167,7 @@ void TestSchemaAndTypeValidation() {
         "coerced value is double 1.0");
 
   Check(s.ResetSetting("screen_shake"), "ResetSetting succeeds");
-  Check(std::get<bool>(*s.GetSetting("screen_shake")) == true, "ResetSetting restores default");
+  Check(std::get<bool>(*s.GetSetting("screen_shake")), "ResetSetting restores default");
 }
 
 void TestSerializationRoundTrip() {
@@ -208,7 +208,7 @@ void TestSerializationRoundTrip() {
   Check(reloaded.audioMuted == original.audioMuted, "roundtrip audioMuted");
   Check(reloaded.fpsTarget == original.fpsTarget, "roundtrip fpsTarget");
   Check(reloaded.showPerfOverlay == original.showPerfOverlay, "roundtrip showPerfOverlay");
-  Check(std::get<bool>(*reloaded.GetSetting("screen_shake")) == false, "roundtrip bool setting");
+  Check(!std::get<bool>(*reloaded.GetSetting("screen_shake")), "roundtrip bool setting");
   Check(std::holds_alternative<double>(*reloaded.GetSetting("sfx_volume")) &&
             std::abs(std::get<double>(*reloaded.GetSetting("sfx_volume")) - 1.0) < 0.001,
         "roundtrip integral double 1.0 stays double");

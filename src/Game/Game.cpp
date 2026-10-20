@@ -212,17 +212,50 @@ std::string ResolveProjectIniPath(const std::string& assetBase) {
   return assetBase + "/project.ini";
 }
 
-bool HasExplicitSavePathEnv() {
+std::string ReadSavePathEnv() {
+  std::string path;
 #ifdef _MSC_VER
   char* envVal = nullptr;
   size_t envLen = 0;
-  const bool ok = _dupenv_s(&envVal, &envLen, "OCTARINE_SAVE_PATH") == 0 && envVal != nullptr && *envVal != '\0';
-  free(envVal);
-  return ok;
+  if (_dupenv_s(&envVal, &envLen, "OCTARINE_SAVE_PATH") == 0 && envVal != nullptr) {
+    path = envVal;
+    free(envVal);
+  }
 #else
-  const char* envVal = std::getenv("OCTARINE_SAVE_PATH");
-  return envVal != nullptr && *envVal != '\0';
+  if (const char* envVal = std::getenv("OCTARINE_SAVE_PATH")) {
+    path = envVal;
+  }
 #endif
+  if (!path.empty() && path.back() != '/' && path.back() != '\\') {
+    path += '/';
+  }
+  return path;
+}
+
+bool HasExplicitSavePathEnv() { return !ReadSavePathEnv().empty(); }
+
+std::pair<std::string, std::string> ResolveSaveDataIdentity(const GameConfig* config) {
+  std::string org = "Octarine";
+  std::string app = "Engine";
+  if (config == nullptr || !config->HasLoadedConfig()) {
+    return {org, app};
+  }
+  if (!config->GetGameTitle().empty()) {
+    app = config->GetGameTitle();
+  }
+  const std::string iniPath = ResolveProjectIniPath(config->GetAssetPath());
+  size_t dataSize = 0;
+  if (void* data = SDL_LoadFile(iniPath.c_str(), &dataSize)) {
+    const auto ini = octarine::project::ProjectIni::Parse(std::string_view(static_cast<const char*>(data), dataSize));
+    SDL_free(data);
+    if (!ini.vendor.empty()) {
+      org = ini.vendor;
+    }
+    if (!ini.name.empty()) {
+      app = ini.name;
+    }
+  }
+  return {org, app};
 }
 }  // namespace
 
@@ -352,6 +385,25 @@ void Game::StartDevListenServer() {
 #endif
 }
 
+namespace {
+std::pair<int, int> ResolveInitialWindowSize([[maybe_unused]] Registry& registry, const GameConfig& gameConfig,
+                                             [[maybe_unused]] const bool headless) {
+  int initialWidth = gameConfig.windowWidth;
+  int initialHeight = gameConfig.windowHeight;
+#ifndef OCTARINE_PLATFORM_MOBILE
+  if (!headless && !gameConfig.IsEditorMode()) {
+    if (const auto* userSettings = registry.TryGet<octarine::UserSettings>()) {
+      if (userSettings->windowWidth > 0 && userSettings->windowHeight > 0) {
+        initialWidth = userSettings->windowWidth;
+        initialHeight = userSettings->windowHeight;
+      }
+    }
+  }
+#endif
+  return {initialWidth, initialHeight};
+}
+}  // namespace
+
 bool Game::CreateWindowAndScene(bool projectLoaded) {
   auto& gameConfig = registry_->Get<GameConfig>();
   gameConfig.windowWidth = projectLoaded ? gameConfig.GetDefaultWidth() : Constants::kDefaultWindowWidth;
@@ -360,19 +412,7 @@ bool Game::CreateWindowAndScene(bool projectLoaded) {
                                 ? gameConfig.GetGameTitle()
                                 : (gameConfig.IsEditorMode() ? "Octarine Engine - Editor" : "Octarine Engine");
 
-  int initialWidth = gameConfig.windowWidth;
-  int initialHeight = gameConfig.windowHeight;
-#ifndef OCTARINE_PLATFORM_MOBILE
-  if (!headless_ && !gameConfig.IsEditorMode()) {
-    if (const auto* userSettings = registry_->TryGet<octarine::UserSettings>()) {
-      if (userSettings->windowWidth > 0 && userSettings->windowHeight > 0) {
-        initialWidth = userSettings->windowWidth;
-        initialHeight = userSettings->windowHeight;
-      }
-    }
-  }
-#endif
-
+  const auto [initialWidth, initialHeight] = ResolveInitialWindowSize(*registry_, gameConfig, headless_);
   if (!runtime_.CreateWindow(title, initialWidth, initialHeight, headless_)) {
     return false;
   }
@@ -402,39 +442,15 @@ std::string Game::GetSaveDataPath() {
   }
 
   // Environment override: allows development runs, CI, or portable builds to isolate save data.
-  if (const char* envPath = std::getenv("OCTARINE_SAVE_PATH")) {
-    if (*envPath != '\0') {
-      std::string path = envPath;
-      if (path.back() != '/' && path.back() != '\\') {
-        path += '/';
-      }
-      save_data_path_ = path;
-      return save_data_path_;
-    }
+  if (std::string envPath = ReadSavePathEnv(); !envPath.empty()) {
+    save_data_path_ = std::move(envPath);
+    return save_data_path_;
   }
 
   // Identity precedence: project.ini vendor/name > config.ini GameTitle > engine defaults.
   // project.ini is read via SDL so it resolves inside an APK or .app bundle the same way
   // config.ini does.
-  std::string org = "Octarine";
-  std::string app = "Engine";
-  if (const auto* config = registry_->TryGet<GameConfig>(); config != nullptr && config->HasLoadedConfig()) {
-    if (!config->GetGameTitle().empty()) {
-      app = config->GetGameTitle();
-    }
-    const std::string iniPath = ResolveProjectIniPath(config->GetAssetPath());
-    size_t dataSize = 0;
-    if (void* data = SDL_LoadFile(iniPath.c_str(), &dataSize)) {
-      const auto ini = octarine::project::ProjectIni::Parse(std::string_view(static_cast<const char*>(data), dataSize));
-      SDL_free(data);
-      if (!ini.vendor.empty()) {
-        org = ini.vendor;
-      }
-      if (!ini.name.empty()) {
-        app = ini.name;
-      }
-    }
-  }
+  const auto [org, app] = ResolveSaveDataIdentity(registry_->TryGet<GameConfig>());
 
   if (char* prefPath = SDL_GetPrefPath(org.c_str(), app.c_str())) {
     save_data_path_ = prefPath;

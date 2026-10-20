@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <optional>
 #include <stack>
 
@@ -57,11 +58,10 @@ class LuaEntityLoader {
   [[nodiscard]] static bool HasAnyColliderTable(const sol::table& t) {
     constexpr const char* kColliderKeys[] = {"box_collider", "circle_collider", "capsule_collider", "triangle_collider",
                                              "line_collider"};
-    for (const char* key : kColliderKeys) {
+    return std::ranges::any_of(kColliderKeys, [&t](const char* key) {
       const sol::object obj = t.get<sol::object>(key);
-      if (obj.valid() && obj.is<sol::table>()) return true;
-    }
-    return false;
+      return obj.valid() && obj.is<sol::table>();
+    });
   }
 
   static void ScanInnerComponentTable(const sol::table& inner, ComponentMaskAndCollider& result) {

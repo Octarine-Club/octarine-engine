@@ -18,9 +18,9 @@ class IniParser {
   using Value = std::variant<bool, int64_t, double, std::string>;
 
   struct Entry {
-    std::string section;
-    std::string key;
-    std::string value;
+    std::string section{};
+    std::string key{};
+    std::string value{};
     size_t lineNumber = 0;
   };
 
