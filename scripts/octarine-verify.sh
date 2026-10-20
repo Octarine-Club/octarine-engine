@@ -178,6 +178,9 @@ fi
 if [[ -f "$repo_root/src/GameModule/tests/CombatSystemTest.cpp" || ( -n "${OCTARINE_GAME_MODULE_DIR:-}" && -f "${OCTARINE_GAME_MODULE_DIR}/tests/CombatSystemTest.cpp" ) ]]; then
   test_targets+=(OctarineCombatSystemTest)
 fi
+if [[ -f "$repo_root/src/GameModule/tests/FormationSystemTest.cpp" || ( -n "${OCTARINE_GAME_MODULE_DIR:-}" && -f "${OCTARINE_GAME_MODULE_DIR}/tests/FormationSystemTest.cpp" ) ]]; then
+  test_targets+=(OctarineFormationSystemTest)
+fi
 
 if [[ $do_build -eq 1 ]]; then
   if [[ ! -f "$build_dir/CMakeCache.txt" ]]; then

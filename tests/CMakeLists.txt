@@ -71,6 +71,11 @@ if (TARGET octarine_game_module)
         target_link_libraries(OctarineProjectileEmitSystemTest PRIVATE octarine_game_module)
         target_include_directories(OctarineProjectileEmitSystemTest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${OCTARINE_GAME_MODULE_DIR}")
     endif ()
+    if (EXISTS "${OCTARINE_GAME_MODULE_DIR}/tests/FormationSystemTest.cpp")
+        octarine_add_engine_test(OctarineFormationSystemTest FormationSystemTest "${OCTARINE_GAME_MODULE_DIR}/tests/FormationSystemTest.cpp")
+        target_link_libraries(OctarineFormationSystemTest PRIVATE octarine_game_module)
+        target_include_directories(OctarineFormationSystemTest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${OCTARINE_GAME_MODULE_DIR}")
+    endif ()
 endif ()
 octarine_add_test(OctarineStateInspectorTest StateInspectorTest
         SOURCES StateInspectorTest.cpp
