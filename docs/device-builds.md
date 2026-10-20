@@ -34,22 +34,20 @@ packed in the platform's native bundle shape:
 ```
 <package or bundle>/
     OctarineEngine[.exe / .app / libmain.so]   # engine binary, per platform
-    asset_manifest.lua                  # baked at package time — id -> relative path + metadata
-    config.ini                          # GameConfig
-    game.lua                            # startup script
-    fonts/ images/ sounds/ scripts/ …   # whatever the project ships
+    asset_bundle.pak                    # encrypted OCPK archive (all assets, scripts, configs, manifest)
 ```
 
 `SDL_GetBasePath()` returns the location of that bundle on every platform
 (the exe dir on desktop, `Contents/Resources/` inside a `.app` on macOS, and
 the APK asset root via SDL's `AAssetManager` shim on Android). The engine
-resolves *every* asset path against this base, so the same C++ code works in
-all three environments without per-platform branches in the asset loaders.
+mounts `asset_bundle.pak` and resolves assets directly from the encrypted archive
+using seekable in-memory streams, so no loose game files exist in the shipped package.
 
-The two pieces that make this work end to end:
+The three pieces that make this work end to end:
 
 1. **`OCTARINE_SHIPPED`** is a build-time define. When on, the engine loads
-   `asset_manifest.lua` instead of scanning the filesystem. The scan code
+   `asset_manifest.lua`, `config.ini`, and `project.ini` directly from
+   `asset_bundle.pak` instead of scanning the filesystem. The scan code
    path is not viable inside a read-only APK or `.app`, so every device build
    must set this. The `ship-release` CMake preset sets it; Android forces it
    on inside `CMakeLists.txt`; `octarine_package` re-forces it on the packaged
@@ -62,6 +60,12 @@ The two pieces that make this work end to end:
    Android the bake cannot run on the host (cross-compiled binary can't
    execute), so the **project commits its `asset_manifest.lua`** or passes a
    host-native binary via `-Poctarine.bakeExe=`.
+3. **`asset_bundle.pak` & Security Hardening**:
+   CPack bundles all project assets, configs, and scripts into a single
+   ChaCha20-encrypted archive (`asset_bundle.pak`) with a 128-bit MAC for tamper
+   detection and scrambled Lua 5.4 bytecode. Loose `.lua` and asset files are
+   completely omitted from the distribution bundle. See [`docs/security.md`](security.md)
+   for architecture, threat model, and custom key configuration.
 
 For the broader engine architecture see [`docs/ecs-architecture.md`](ecs-architecture.md)
 and [`docs/lua-scripting.md`](lua-scripting.md); this doc is strictly about how the build
@@ -219,16 +223,18 @@ PROJECT <dir>)` and the wiring is gated on the top-level
 
 ### What's in the bundle
 
-- **Windows ZIP**: flat layout, engine `.exe` + every transitive DLL vcpkg
+In shipped releases, all game assets, scripts, configs, and manifests are packaged inside the encrypted `asset_bundle.pak` rather than loose files on disk (see [`docs/security.md`](security.md)).
+
+- **Windows ZIP**: flat layout, engine `.exe` + `asset_bundle.pak` + every transitive DLL vcpkg
   app-local-deployed (SDL3, image/mixer/ttf, freetype, libpng, jpeg, zlib, …)
   + MSVC runtime DLLs sourced from the compiler's own redist (NOT the
   ambient VS install). The CRT DLLs ship beside the EXE so Windows' loader
   prefers them over older copies in `System32`.
-- **Linux TGZ**: flat layout. With the default static `x64-linux` triplet,
+- **Linux TGZ**: flat layout, engine binary + `asset_bundle.pak`. With the default static `x64-linux` triplet,
   no `.so`s ride along (vcpkg produces archives that the engine links
   statically). With a dynamic triplet or `SHARED` SDL3, dylibs end up beside
   the binary and `INSTALL_RPATH=$ORIGIN` points the loader at them.
-- **macOS DMG**: `<TargetName>.app/Contents/MacOS/<binary>` + project at
+- **macOS DMG**: `<TargetName>.app/Contents/MacOS/<binary>` + `asset_bundle.pak` at
   `Contents/Resources/`. vcpkg dylibs (if any) get bundled into
   `Contents/Frameworks/`, with `INSTALL_RPATH=@executable_path/../Frameworks`.
 
@@ -238,8 +244,8 @@ PROJECT <dir>)` and the wiring is gated on the top-level
 # Unpack/mount the artifact in a fresh dir and run with NO arguments:
 ./OctarineEngine
 # Expected log line:
+# AssetPak: opened 'asset_bundle.pak' (OCPK, ChaCha20 encrypted, N entries)
 # AssetCatalog: baked manifest found, loading (scan skipped)
-# AssetCatalog: loaded N entries from manifest
 ```
 
 If the engine logs `scanning filesystem` instead, `OCTARINE_SHIPPED` didn't

@@ -22,7 +22,7 @@ Two ways the catalog gets populated:
 | Mode | When | What happens |
 |------|------|--------------|
 | **Filesystem scan** | Dev builds; bake step | Recursively walks the project directory, classifies files by extension, parses `.meta` sidecars, emits one `CatalogEntry` per asset. |
-| **Manifest load** | Shipped builds (`OCTARINE_SHIPPED=ON`); dev override `--use-manifest` | Reads `asset_manifest.lua` from the project root through SDL_IO (works inside a read-only APK / `.app`), restores entries verbatim. No filesystem walk. |
+| **Manifest load** | Shipped builds (`OCTARINE_SHIPPED=ON`); dev override `--use-manifest` | Reads `asset_manifest.lua` directly from `asset_bundle.pak` (or project root via SDL_IO if loose assets are permitted), restoring entries verbatim without a filesystem walk. See [`docs/security.md`](security.md). |
 
 The shipped manifest is produced by the **bake step** (§ 4) — a headless run
 that scans the project, validates every asset reference, optionally packs
@@ -360,3 +360,6 @@ you flipped one of those, delete the manifest and re-run.
 | Scene asset scanner | `src/AssetManager/SceneAssetScanner.{h,cpp}` |
 | `load_asset` / `acquire_scene_assets` Lua bindings | `src/Lua/Modules/SceneModuleLuaBinding.cpp` |
 | Runtime acquire / refcount / release | `src/AssetManager/AssetManager.{h,cpp}` |
+| AssetPak archive & ChaCha20 encryption (shipped) | `src/AssetManager/AssetPak.{h,cpp}`, `src/AssetManager/Crypto.{h,cpp}` |
+
+For end-to-end details on how assets are bundled, encrypted, and protected in production packages, see [`docs/security.md`](security.md).
