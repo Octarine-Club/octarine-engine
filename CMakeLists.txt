@@ -284,6 +284,8 @@ if (CLANG_FORMAT_EXE)
             "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h"
             "${CMAKE_CURRENT_SOURCE_DIR}/src/*.hpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.h"
     )
     add_custom_target(format
             COMMAND ${CLANG_FORMAT_EXE} -i -style=file ${FORMAT_SOURCES}
