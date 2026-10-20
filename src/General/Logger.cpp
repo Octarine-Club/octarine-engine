@@ -91,10 +91,12 @@ void Logger::Warn(const std::string& message) {
   PushHistory("[Warn] " + message);
 }
 
+#ifndef OCTARINE_SHIPPED
 void Logger::Info(const std::string& message) {
   spdlog::info(message);
   PushHistory("[Info] " + message);
 }
+#endif
 
 void Logger::LogLua(const std::string& message) {
   lua_logger_->info(message);
@@ -118,10 +120,12 @@ void Logger::WarnLua(const std::string& message) {
   PushHistory("[Warn] [Lua] " + message);
 }
 
+#ifndef OCTARINE_SHIPPED
 void Logger::InfoLua(const std::string& message) {
   lua_logger_->info(message);
   PushHistory("[Info] [Lua] " + message);
 }
+#endif
 
 std::vector<std::string> Logger::GetHistory() {
   std::lock_guard<std::mutex> lock(history_mutex_);

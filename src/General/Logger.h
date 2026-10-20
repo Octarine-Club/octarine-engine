@@ -35,11 +35,16 @@ class Logger {
   static void SetLevel(const std::string& level);
   static void Error(const std::string& message);
   static void Warn(const std::string& message);
+#ifdef OCTARINE_SHIPPED
+  inline static void Info(const std::string& /*message*/) noexcept {}
+  inline static void InfoLua(const std::string& /*message*/) noexcept {}
+#else
   static void Info(const std::string& message);
+  static void InfoLua(const std::string& message);
+#endif
   static void LogLua(const std::string& message);
   static void ErrorLua(const std::string& message);
   static void WarnLua(const std::string& message);
-  static void InfoLua(const std::string& message);
 
   static std::vector<std::string> GetHistory();
   static void ForEachHistory(const std::function<void(const std::string&)>& callback);
