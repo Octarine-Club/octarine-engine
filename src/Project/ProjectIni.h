@@ -16,6 +16,8 @@
 
 namespace octarine::project {
 struct ProjectIni {
+  static constexpr const char* kFilename = "project.ini";
+
   // Required for shipping builds.
   std::string name;
   std::string package_id;

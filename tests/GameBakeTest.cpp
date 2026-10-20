@@ -8,6 +8,7 @@
 //   is exercised by AssetPipelineTest).
 
 #include <filesystem>
+#include <fstream>
 #include <sol/sol.hpp>
 #include <string>
 
@@ -152,7 +153,35 @@ int main() {
 
     AssetPak pak;
     Check(pak.Open((fixtureDir / "asset_bundle.pak").string()), "AssetPak::Open succeeds on baked asset_bundle.pak");
+    CheckEq(pak.Version(), 1U, "AssetPak is OCPK v1");
+    Check(pak.IsEncrypted(), "AssetPak is encrypted with ChaCha20");
     Check(pak.Contains("main.lua"), "asset_bundle.pak contains main.lua script");
+    Check(pak.Contains("config.ini"), "asset_bundle.pak embeds config.ini");
+    Check(pak.Contains("asset_manifest.lua"), "asset_bundle.pak embeds asset_manifest.lua");
+
+    // Verify on-the-fly seekable stream decryption matches original source
+    SDL_IOStream* io = pak.OpenIO("main.lua");
+    Check(io != nullptr, "OpenIO succeeds for main.lua");
+    if (io != nullptr) {
+      std::size_t loadedSize = 0;
+      void* loadedData = SDL_LoadFile_IO(io, &loadedSize, true);
+      Check(loadedData != nullptr, "SDL_LoadFile_IO successfully read main.lua from pak");
+      if (loadedData != nullptr) {
+        std::ifstream srcIn(fixtureDir / "main.lua", std::ios::binary);
+        std::string srcContent((std::istreambuf_iterator<char>(srcIn)), std::istreambuf_iterator<char>());
+        CheckEq(loadedSize, srcContent.size(), "decrypted main.lua matches source size");
+        Check(std::memcmp(loadedData, srcContent.data(), loadedSize) == 0, "decrypted main.lua content matches source");
+        SDL_free(loadedData);
+      }
+    }
+
+    // Verify raw pak file has no plaintext filenames
+    {
+      std::ifstream rawPak(fixtureDir / "asset_bundle.pak", std::ios::binary);
+      std::string pakBytes((std::istreambuf_iterator<char>(rawPak)), std::istreambuf_iterator<char>());
+      Check(pakBytes.find("main.lua") == std::string::npos, "raw pak on disk contains zero plaintext filenames");
+      Check(pakBytes.find("config.ini") == std::string::npos, "raw pak on disk does not leak config filename");
+    }
 
     CleanBakeOutputs();
   }

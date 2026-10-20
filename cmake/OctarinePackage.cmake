@@ -55,12 +55,8 @@ option(OCTARINE_PACKAGE_NSIS "Also emit an NSIS installer on Windows (requires a
 # copy is touched. Defaults ON for shipped builds. Set OFF to ship plain source.
 option(OCTARINE_PROTECT_SCRIPTS "Compile Lua scripts to stripped bytecode in packaged builds" ${OCTARINE_SHIPPED})
 
-# XOR key for encrypting compiled Lua bytecode at package time and decrypting at runtime.
-# Set to any non-empty uint8 value (decimal or 0x-prefixed hex, e.g. "90" or "0x5A").
-# Leave empty (the default) to skip encryption — bytecode compilation still runs if
-# OCTARINE_PROTECT_SCRIPTS is ON, but the result is unencrypted. Change this value per project/build
-# so that the same decryption key is not shared across all Octarine games.
-set(OCTARINE_LUA_XOR_KEY "" CACHE STRING "XOR key (uint8) for Lua bytecode encryption; empty = no encryption")
+set(OCTARINE_PACKAGE_KEY "" CACHE STRING "256-bit encryption key for AssetPak and script protection; empty = project-derived")
+option(OCTARINE_ALLOW_LOOSE_ASSETS "Allow loose config/manifest/asset overrides beside the binary in shipped builds" OFF)
 
 if (OCTARINE_PROTECT_SCRIPTS)
     find_program(LUAC_EXECUTABLE
@@ -71,10 +67,6 @@ if (OCTARINE_PROTECT_SCRIPTS)
         REQUIRED
     )
     message(STATUS "Octarine: script protection enabled (luac=${LUAC_EXECUTABLE})")
-endif ()
-
-if (OCTARINE_PROTECT_SCRIPTS AND OCTARINE_LUA_XOR_KEY)
-    find_package(Python3 COMPONENTS Interpreter REQUIRED)
 endif ()
 
 # CLI overrides for project identity (precedence: CLI cache var > project.ini > built-in default).
@@ -259,33 +251,6 @@ function(_octarine_setup_desktop_install TARGET PROJECT_DIR RUNTIME_DEST DATA_DE
         endforeach ()
         message(STATUS \"Octarine: Lua bytecode compilation done.\")
         ")
-
-        if (OCTARINE_LUA_XOR_KEY)
-            string(APPEND _script_prep_code "
-        message(STATUS \"Octarine: XOR-encrypting staged Lua bytecode...\")
-        file(GLOB_RECURSE _lua_enc_sources LIST_DIRECTORIES false \"${_staged_scripts_dir}/*.lua\")
-        set(_enc_py \"${CMAKE_BINARY_DIR}/_octarine_enc.py\")
-        file(WRITE \"\${_enc_py}\"
-            \"import sys, os\\n\"
-            \"k = ${OCTARINE_LUA_XOR_KEY}\\n\"
-            \"magic = bytes([27]) + b'OCT'\\n\"
-            \"for f in sys.argv[1:]:\\n\"
-            \"    d = open(f, 'rb').read()\\n\"
-            \"    enc = bytes((b ^ ((k + i) & 0xFF)) for i, b in enumerate(d))\\n\"
-            \"    tmp = f + '.tmp'\\n\"
-            \"    open(tmp, 'wb').write(magic + enc)\\n\"
-            \"    os.replace(tmp, f)\\n\"
-        )
-        execute_process(
-            COMMAND \"${Python3_EXECUTABLE}\" \"\${_enc_py}\" \${_lua_enc_sources}
-            RESULT_VARIABLE _rc)
-        file(REMOVE \"\${_enc_py}\")
-        if (NOT _rc EQUAL 0)
-            message(FATAL_ERROR \"Octarine: Lua XOR encryption failed (rc=\${_rc})\")
-        endif ()
-        message(STATUS \"Octarine: Staged Lua encryption done.\")
-            ")
-        endif ()
     else ()
         set(_bake_args_str "")
         set(_script_prep_code "")
@@ -307,11 +272,13 @@ function(_octarine_setup_desktop_install TARGET PROJECT_DIR RUNTIME_DEST DATA_DE
     # All game assets and Lua scripts are bundled into asset_bundle.pak; only runtime metadata,
     # licenses, the baked manifest, and explicit custom includes are staged loose.
     # 1. Configuration & Project metadata
-    if (EXISTS "${PROJECT_DIR}/config.ini")
-        install(FILES "${PROJECT_DIR}/config.ini" DESTINATION "${DATA_DEST}")
-    endif ()
-    if (EXISTS "${PROJECT_DIR}/project.ini")
-        install(FILES "${PROJECT_DIR}/project.ini" DESTINATION "${DATA_DEST}")
+    if (OCTARINE_ALLOW_LOOSE_ASSETS)
+        if (EXISTS "${PROJECT_DIR}/config.ini")
+            install(FILES "${PROJECT_DIR}/config.ini" DESTINATION "${DATA_DEST}")
+        endif ()
+        if (EXISTS "${PROJECT_DIR}/project.ini")
+            install(FILES "${PROJECT_DIR}/project.ini" DESTINATION "${DATA_DEST}")
+        endif ()
     endif ()
 
     # 2. Project licenses
@@ -324,12 +291,20 @@ function(_octarine_setup_desktop_install TARGET PROJECT_DIR RUNTIME_DEST DATA_DE
     endif ()
 
     # 3. Baked manifest & asset pak (emitted by bake step into PROJECT_DIR)
-    install(FILES "${PROJECT_DIR}/asset_manifest.lua"
-            DESTINATION "${DATA_DEST}"
-            OPTIONAL)
+    if (OCTARINE_ALLOW_LOOSE_ASSETS)
+        install(FILES "${PROJECT_DIR}/asset_manifest.lua"
+                DESTINATION "${DATA_DEST}"
+                OPTIONAL)
+    endif ()
     install(FILES "${PROJECT_DIR}/asset_bundle.pak"
             DESTINATION "${DATA_DEST}"
             OPTIONAL)
+    if (NOT OCTARINE_ALLOW_LOOSE_ASSETS)
+        install(CODE "
+            file(REMOVE \"${PROJECT_DIR}/asset_manifest.lua\" \"${PROJECT_DIR}/asset_bundle.pak\")
+            file(REMOVE_RECURSE \"${_staged_scripts_dir}\")
+        ")
+    endif ()
 
     # 4. Custom extra project includes (package_include in project.ini)
     foreach (_inc IN LISTS _INST_EXTRA_INCLUDES)
@@ -552,6 +527,7 @@ function(octarine_package TARGET)
             _desktop_ico _desktop_icns _desktop_png)
 
     if (APPLE)
+        target_link_options(${TARGET} PRIVATE "LINKER:-exported_symbol,_main" "LINKER:-dead_strip")
         set_target_properties(${TARGET} PROPERTIES
                 MACOSX_BUNDLE ON
                 MACOSX_BUNDLE_GUI_IDENTIFIER "${_pkg_id}"
@@ -589,7 +565,16 @@ function(octarine_package TARGET)
             EXTRA_INCLUDES ${_extra_includes})
     _octarine_bundle_runtime_libs(${TARGET} "${_runtime_dest}" "${_framework_dest}")
     if (APPLE)
+        find_program(STRIP_EXECUTABLE strip)
         find_program(CODESIGN_EXECUTABLE codesign)
+        if (STRIP_EXECUTABLE)
+            install(CODE "
+                message(STATUS \"Octarine: stripping local symbols from application binary...\")
+                execute_process(
+                    COMMAND \"${STRIP_EXECUTABLE}\" -x -S \"\${CMAKE_INSTALL_PREFIX}/${_pkg_name}.app/Contents/MacOS/${_pkg_name}\"
+                    RESULT_VARIABLE _strip_rc)
+            ")
+        endif ()
         if (CODESIGN_EXECUTABLE)
             install(CODE "
                 message(STATUS \"Octarine: ad-hoc signing application bundle...\")

@@ -1,6 +1,7 @@
 #include "GameConfig.h"
 
 #include <SDL3/SDL_filesystem.h>
+#include <SDL3/SDL_iostream.h>
 #include <SDL3/SDL_storage.h>
 #include <SDL3/SDL_timer.h>
 
@@ -12,8 +13,6 @@
 #include "General/IniParser.h"
 #include "General/Logger.h"
 #include "General/Utils.h"
-
-inline constexpr auto kConfigFileName = "config.ini";
 
 inline auto ReadConfigFile(void* dst, const Uint64 dstLen) -> std::unordered_map<std::string, std::string> {
   if (dst == nullptr || dstLen == 0) {
@@ -81,6 +80,30 @@ bool GameConfig::LoadConfigFromFile(const std::string& assetPath) {
   }
 
   // Create the instance and populate it with the config settings
+  SetAssetPath(assetPath);
+  has_loaded_config_ = true;
+  return LoadConfig(config);
+}
+
+bool GameConfig::LoadConfigFromStream(SDL_IOStream* io, const std::string& assetPath) {
+  if (io == nullptr) {
+    Logger::Error("LoadConfigFromStream called with null stream");
+    return false;
+  }
+  std::size_t dstLen = 0;
+  void* dst = SDL_LoadFile_IO(io, &dstLen, true);  // closes io
+  if (!dst) {
+    Logger::Error("Failed to read config from stream: " + std::string(SDL_GetError()));
+    return false;
+  }
+  const auto config = ReadConfigFile(dst, dstLen);
+  SDL_free(dst);
+
+  if (config.empty()) {
+    Logger::Error("Failed to parse config stream for: " + assetPath);
+    return false;
+  }
+
   SetAssetPath(assetPath);
   has_loaded_config_ = true;
   return LoadConfig(config);

@@ -180,10 +180,11 @@ jobs:
           exe="$(find "build/${{ matrix.preset }}/bin/$cfg" -maxdepth 1 -type f \( -name 'OctarineEngine' -o -name 'OctarineEngine-player' -o -name 'OctarineEngine.exe' -o -name 'OctarineEngine-player.exe' \) | head -1)"
           "$exe" "$GITHUB_WORKSPACE/example_repo" -m bake
           test -s "$GITHUB_WORKSPACE/example_repo/asset_manifest.lua"
+          test -s "$GITHUB_WORKSPACE/example_repo/asset_bundle.pak"
 
       # Runtime boot smoke: actually run the engine against the example project, headless.
       # Runs on both player-debug (testing ImGui overlays & debug loop) and ship-release (testing
-      # the shipping binary loading baked asset_manifest.lua).
+      # the shipping binary loading baked asset_bundle.pak from its executable base directory).
       - name: Runtime boot smoke (example project)
         if: matrix.platform == 'linux' && (matrix.preset == 'player-debug' || matrix.preset == 'ship-release')
         shell: bash
@@ -194,6 +195,10 @@ jobs:
         run: |
           cfg="${{ contains(matrix.preset, 'debug') && 'debug' || 'release' }}"
           exe="$(find "build/${{ matrix.preset }}/bin/$cfg" -maxdepth 1 -type f \( -name 'OctarineEngine' -o -name 'OctarineEngine-player' -o -name 'OctarineEngine.exe' -o -name 'OctarineEngine-player.exe' \) | head -1)"
+          if [ "${{ matrix.preset }}" = "ship-release" ]; then
+            cp "$GITHUB_WORKSPACE/example_repo/asset_bundle.pak" "$(dirname "$exe")/asset_bundle.pak"
+            trap 'rm -f "$(dirname "$exe")/asset_bundle.pak"' EXIT
+          fi
           export OCTARINE_CAPTURE_PATH="$RUNNER_TEMP/boot-smoke.bmp"
           log="$RUNNER_TEMP/boot-smoke.log"
           "$exe" "$GITHUB_WORKSPACE/example_repo" | tee "$log"

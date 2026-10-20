@@ -99,6 +99,12 @@ octarine_add_test(OctarineEventBusTest EventBusTest
         LIBS spdlog::spdlog
 )
 
+octarine_add_test(OctarineCryptoTest CryptoTest
+        SOURCES CryptoTest.cpp
+        INCLUDES "${CMAKE_SOURCE_DIR}/src"
+        LIBS octarine_assets octarine_core ${LUA_LIBRARIES}
+)
+
 # -----------------------------------------------------------------------------
 # Asset Pipeline & Storage Tests
 # -----------------------------------------------------------------------------

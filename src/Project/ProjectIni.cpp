@@ -52,7 +52,7 @@ ProjectIni ProjectIni::Parse(std::string_view text, std::vector<std::string>* pa
 }
 
 std::optional<ProjectIni> ProjectIni::Load(const std::filesystem::path& project_dir) {
-  const std::filesystem::path path = project_dir / "project.ini";
+  const std::filesystem::path path = project_dir / kFilename;
   std::error_code ec;
   if (!std::filesystem::exists(path, ec)) {
     return std::nullopt;

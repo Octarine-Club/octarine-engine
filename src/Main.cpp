@@ -1,7 +1,7 @@
 #include <SDL3/SDL_main.h>
 
-#include "./Game/Game.h"
-#include "./General/Logger.h"
+#include "Game/Game.h"
+#include "General/Logger.h"
 
 // <SDL3/SDL_main.h> renames this main to SDL_main and supplies the real platform entry point. On
 // desktop that wrapper is a thin shim; on Android it is what SDLActivity calls into via JNI (the
@@ -89,6 +89,19 @@ int main(const int argc, char* argv[]) {
   if (startupMode == "bake") {
     return Game::Bake(gamePath, scriptsDir) ? 0 : 1;
   }
+
+#ifdef OCTARINE_SHIPPED
+  // Shipped runtime locks the game path to the bundle/executable root (SDL_GetBasePath).
+  // Positional paths, script overrides, and custom startup modes are ignored so shipped builds
+  // cannot be pointed at arbitrary external project folders.
+  if (!gamePath.empty() || !scriptsDir.empty() || !startupMode.empty()) {
+    Logger::Warn("Custom project paths are disabled in shipped builds; defaulting to executable directory.");
+    gamePath.clear();
+    scriptsDir.clear();
+    startupMode.clear();
+  }
+  useManifest = true;
+#endif
 
   Game game{};
   game.SetStartupMode(startupMode);

@@ -89,8 +89,12 @@ void SceneLoader::LoadScene(const std::string& scenePath) {
   auto sceneBytes = ReadFileViaSDL(fullPath, &assetManager);
   sol::protected_function_result result;
   if (sceneBytes) {
-    DecryptLuaBytes(*sceneBytes);
-    result = lua_.safe_script(*sceneBytes, sol::script_pass_on_error, "@" + fullPath);
+    const bool requireProtected = (assetManager.GetAssetPak() != nullptr);
+    if (DecryptLuaBytes(*sceneBytes, requireProtected)) {
+      result = lua_.safe_script(*sceneBytes, sol::script_pass_on_error, "@" + fullPath);
+    }
+    std::fill(sceneBytes->begin(), sceneBytes->end(), '\0');
+    sceneBytes->clear();
   }
   if (!sceneBytes || !result.valid()) {
     if (!sceneBytes) {

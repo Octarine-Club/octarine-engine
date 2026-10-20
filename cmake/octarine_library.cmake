@@ -68,6 +68,8 @@ function(octarine_library NAME)
         target_compile_options(${NAME} PRIVATE
                 $<$<NOT:$<CONFIG:Debug>>:-ffunction-sections>
                 $<$<NOT:$<CONFIG:Debug>>:-fdata-sections>
+                $<$<NOT:$<CONFIG:Debug>>:-fvisibility=hidden>
+                $<$<NOT:$<CONFIG:Debug>>:-fvisibility-inlines-hidden>
         )
     endif ()
 endfunction()

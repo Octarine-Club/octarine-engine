@@ -11,5 +11,6 @@ Octarine Engine is a lightweight, high-performance 2D game engine built with C++
 * **Rendering Architecture:** Lock-free multi-producer render queue, 64-bit packed sort key layout, frustum culling, and sprite render cache powered by SDL3.
 * **Simulation Pipeline:** Kahn's topological sort system DAG, two-tier Transform system, and median-cut/SAT Collision system.
 * **Asset Pipeline:** Dual-path catalog loading, headless reference validation, texture atlas baker, BS.1770 audio normalization, and `AssetPak` archives.
+* **Security & Asset Protection:** OCPK encrypted asset bundles (ChaCha20 + 128-bit MAC), in-memory seekable stream decryption, Lua bytecode opcode scrambling, dynamic symbol stripping, and runtime loose-file lockdown. See [`docs/security.md`](security.md).
 
 Explore the classes, namespaces, and files using the sidebar to dive deeper into the engine's internals.

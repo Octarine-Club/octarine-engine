@@ -32,6 +32,11 @@ SDL_IOStream* AssetManager::OpenAssetIO(const std::string& fullPath) const {
         }
       }
     }
+#if defined(OCTARINE_SHIPPED) && !defined(OCTARINE_ALLOW_LOOSE_ASSETS)
+    // In shipped builds with asset_bundle.pak active, loose filesystem fallback is rejected.
+    SDL_SetError("Asset not present in AssetPak (loose file access disabled in shipped build): %s", fullPath.c_str());
+    return nullptr;
+#endif
   }
   return SDL_IOFromFile(fullPath.c_str(), "rb");
 }
