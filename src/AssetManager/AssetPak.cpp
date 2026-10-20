@@ -3,34 +3,138 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <vector>
 
 #include "AssetManager/AssetCatalog.h"
+#include "Crypto/ChaCha20.h"
+#include "Crypto/Hash.h"
+#include "Crypto/KeyDerivation.h"
+#include "Crypto/LuaBytecodeScrambler.h"
 #include "General/Logger.h"
 
 namespace {
 constexpr char kMagic[4] = {'O', 'C', 'P', 'K'};
 constexpr std::uint32_t kVersion = 1;
+constexpr std::uint32_t kFlagEncrypted = 1;
 
-// Header is fixed-size; declared inline to keep the wire format adjacent to the I/O routines that
-// produce + consume it. `reserved` is padding to a clean 32-byte header (8B magic+ver, 8B toc_off,
-// 4B toc_count, 4B reserved).
 #pragma pack(push, 1)
 struct PakHeader {
   char magic[4];
   std::uint32_t version;
   std::uint64_t tocOffset;
   std::uint32_t tocCount;
-  std::uint32_t reserved;
+  std::uint32_t flags;
+  std::uint8_t salt[16];
+  std::uint8_t tocMac[16];
+};
+
+struct PakTocEntry {
+  std::uint64_t pathHash;
+  std::uint64_t offset;
+  std::uint64_t size;
 };
 #pragma pack(pop)
-static_assert(sizeof(PakHeader) == 24, "PakHeader must be exactly 24 bytes on disk");
 
-// Re-root `fullPath` against `basePath` and normalize to forward slashes. Mirrors the path form
-// AssetCatalog::WriteManifest emits, so the pak key + manifest `file` field are interchangeable.
+static_assert(sizeof(PakHeader) == 56, "PakHeader must be exactly 56 bytes on disk");
+static_assert(sizeof(PakTocEntry) == 24, "PakTocEntry must be exactly 24 bytes on disk");
+
+std::array<std::uint8_t, 16> ComputeHeaderAndTocMac(const PakHeader& header, const PakTocEntry* tocEntries,
+                                                    std::size_t tocCount, std::span<const std::uint8_t, 32> key) {
+  const std::size_t metaSize = 24;  // magic(4) + version(4) + tocOffset(8) + tocCount(4) + flags(4)
+  const std::size_t tocBytes = tocCount * sizeof(PakTocEntry);
+  std::vector<std::uint8_t> macInput(metaSize + tocBytes);
+  std::memcpy(macInput.data(), &header, metaSize);
+  if (tocBytes > 0 && tocEntries != nullptr) {
+    std::memcpy(macInput.data() + metaSize, tocEntries, tocBytes);
+  }
+  std::span<const std::uint8_t, 16> saltSpan(header.salt, 16);
+  return octarine::crypto::ComputeKeyedMac128(key, saltSpan, macInput.data(), macInput.size());
+}
+
+struct PakStreamContext {
+  const uint8_t* baseData{nullptr};
+  uint64_t entryOffset{0};
+  uint64_t entrySize{0};
+  uint64_t cursor{0};
+  octarine::crypto::ChaCha20 cipher;
+};
+
+Sint64 SDLCALL PakStreamSize(void* userdata) {
+  const auto* ctx = static_cast<const PakStreamContext*>(userdata);
+  return static_cast<Sint64>(ctx->entrySize);
+}
+
+Sint64 SDLCALL PakStreamSeek(void* userdata, Sint64 offset, SDL_IOWhence whence) {
+  auto* ctx = static_cast<PakStreamContext*>(userdata);
+  Sint64 nextPos = 0;
+  switch (whence) {
+    case SDL_IO_SEEK_SET:
+      nextPos = offset;
+      break;
+    case SDL_IO_SEEK_CUR:
+      nextPos = static_cast<Sint64>(ctx->cursor) + offset;
+      break;
+    case SDL_IO_SEEK_END:
+      nextPos = static_cast<Sint64>(ctx->entrySize) + offset;
+      break;
+  }
+  if (nextPos < 0 || nextPos > static_cast<Sint64>(ctx->entrySize)) {
+    SDL_SetError("PakStreamSeek: offset out of range");
+    return -1;
+  }
+  ctx->cursor = static_cast<uint64_t>(nextPos);
+  return nextPos;
+}
+
+size_t SDLCALL PakStreamRead(void* userdata, void* ptr, size_t size, SDL_IOStatus* status) {
+  auto* ctx = static_cast<PakStreamContext*>(userdata);
+  if (ctx->cursor >= ctx->entrySize) {
+    if (status != nullptr) *status = SDL_IO_STATUS_EOF;
+    return 0;
+  }
+  const auto available = static_cast<size_t>(ctx->entrySize - ctx->cursor);
+  const size_t toRead = std::min(size, available);
+  ctx->cipher.Crypt(ctx->baseData + ctx->entryOffset + ctx->cursor, static_cast<uint8_t*>(ptr), toRead, ctx->cursor);
+  ctx->cursor += toRead;
+  if (toRead < size && status != nullptr) {
+    *status = SDL_IO_STATUS_EOF;
+  }
+  return toRead;
+}
+
+bool SDLCALL PakStreamClose(void* userdata) {
+  delete static_cast<PakStreamContext*>(userdata);
+  return true;
+}
+
+SDL_IOStream* CreatePakStream(const uint8_t* baseData, uint64_t offset, uint64_t size, std::span<const uint8_t, 32> key,
+                              std::span<const uint8_t, 12> nonce) {
+  auto* ctx = new PakStreamContext{};
+  ctx->baseData = baseData;
+  ctx->entryOffset = offset;
+  ctx->entrySize = size;
+  ctx->cursor = 0;
+  ctx->cipher.SetKey(key);
+  ctx->cipher.SetNonce(nonce, 0);
+
+  SDL_IOStreamInterface iface{};
+  SDL_INIT_INTERFACE(&iface);
+  iface.size = &PakStreamSize;
+  iface.seek = &PakStreamSeek;
+  iface.read = &PakStreamRead;
+  iface.close = &PakStreamClose;
+
+  SDL_IOStream* io = SDL_OpenIO(&iface, ctx);
+  if (io == nullptr) {
+    delete ctx;
+  }
+  return io;
+}
+
 std::string MakeRelPath(const std::string& fullPath, const std::string& basePath) {
   namespace fs = std::filesystem;
   std::error_code ec;
@@ -38,12 +142,49 @@ std::string MakeRelPath(const std::string& fullPath, const std::string& basePath
   if (ec || rel.empty()) {
     rel = fs::path(fullPath);
   }
-  std::string s = rel.generic_string();
-  // Defensive: relative() can yield `..` on a non-prefixed input. Keep as-is — pack/unpack still
-  // round-trip, the bake just lands a non-portable key (which the runtime can still look up).
-  return s;
+  return rel.generic_string();
+}
+
+std::array<std::uint8_t, 16> GenerateSalt() {
+  std::array<std::uint8_t, 16> salt{};
+  const auto now = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+  const auto perf = SDL_GetPerformanceCounter();
+  const uint64_t h1 = octarine::crypto::Fnv1a64(&now, sizeof(now));
+  const uint64_t h2 = octarine::crypto::Fnv1a64(&perf, sizeof(perf), h1);
+  std::memcpy(salt.data(), &h1, 8);
+  std::memcpy(salt.data() + 8, &h2, 8);
+  return salt;
 }
 }  // namespace
+
+// NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+AssetPak::AssetPak(AssetPak&& other) noexcept
+    : data_(other.data_),
+      data_size_(other.data_size_),
+      version_(other.version_),
+      encrypted_(other.encrypted_),
+      salt_(other.salt_),
+      key_(other.key_),
+      entries_(std::move(other.entries_)) {
+  other.data_ = nullptr;
+  other.data_size_ = 0;
+}
+
+AssetPak& AssetPak::operator=(AssetPak&& other) noexcept {
+  if (this != &other) {
+    if (data_ != nullptr) SDL_free(data_);
+    data_ = other.data_;
+    data_size_ = other.data_size_;
+    version_ = other.version_;
+    encrypted_ = other.encrypted_;
+    salt_ = other.salt_;
+    key_ = other.key_;
+    entries_ = std::move(other.entries_);
+    other.data_ = nullptr;
+    other.data_size_ = 0;
+  }
+  return *this;
+}
 
 AssetPak::~AssetPak() {
   if (data_ != nullptr) {
@@ -52,120 +193,57 @@ AssetPak::~AssetPak() {
   }
 }
 
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
-bool AssetPak::Pack(const AssetCatalog& catalog, const std::string& outPath, const std::string& basePath,
-                    const std::vector<std::string>& extraFiles,
-                    const std::map<std::string, std::string>& pathOverrides) {
-  std::ofstream out(outPath, std::ios::binary | std::ios::trunc);
-  if (!out) {
-    Logger::Error("AssetPak::Pack: failed to open " + outPath + " for writing");
+bool AssetPak::LoadFromBuffer(const void* buf, std::size_t sz, const std::string& pakPath) {
+  if (sz < sizeof(PakHeader)) {
+    Logger::Error("AssetPak::Open: " + pakPath + " is shorter than pak header");
     return false;
   }
-
-  // Reserve space for the header — patched in once tocOffset is known.
   PakHeader header{};
-  std::memcpy(header.magic, kMagic, 4);
-  header.version = kVersion;
-  out.write(reinterpret_cast<const char*>(&header), sizeof(header));
-
-  struct StagedEntry {
-    std::string relPath;
-    std::uint64_t offset;
-    std::uint64_t size;
-  };
-  std::vector<StagedEntry> staged;
-  staged.reserve(catalog.Size());
-
-  // Stream each asset's bytes into the output. Buffer per-entry rather than slurping every asset
-  // into RAM — a project with a few hundred MB of assets shouldn't need that much during bake.
-  constexpr std::size_t kCopyChunk = 64 * 1024;
-  std::vector<char> buf(kCopyChunk);
-
-  for (const auto& [id, entry] : catalog.Entries()) {
-    const std::string relPath = MakeRelPath(entry.fullPath, basePath);
-    // pathOverrides[relPath] swaps the source-of-bytes; the pak still stores under `relPath`,
-    // so the runtime lookup is unchanged. Audio normalize uses this to ship the normalized
-    // WAV without rewriting the asset tree.
-    std::string sourcePath = entry.fullPath;
-    if (auto it = pathOverrides.find(relPath); it != pathOverrides.end()) {
-      sourcePath = it->second;
-    }
-    std::ifstream in(sourcePath, std::ios::binary);
-    if (!in) {
-      Logger::Error("AssetPak::Pack: failed to read " + sourcePath);
-      out.close();
-      std::error_code ec;
-      std::filesystem::remove(outPath, ec);
-      return false;
-    }
-    const std::uint64_t offset = static_cast<std::uint64_t>(out.tellp());
-    std::uint64_t size = 0;
-    while (in) {
-      in.read(buf.data(), static_cast<std::streamsize>(buf.size()));
-      const std::streamsize got = in.gcount();
-      if (got > 0) {
-        out.write(buf.data(), got);
-        size += static_cast<std::uint64_t>(got);
-      }
-    }
-    staged.push_back({relPath, offset, size});
-  }
-
-  // Append any extra (non-catalog) files in the same shape. Bake passes derived artifacts —
-  // glyph atlases, audio bakes — here so they ride in the same pak.
-  for (const std::string& extraPath : extraFiles) {
-    const std::string rel = MakeRelPath(extraPath, basePath);
-    const bool dup = std::any_of(staged.begin(), staged.end(), [&](const StagedEntry& s) { return s.relPath == rel; });
-    if (dup) continue;
-    std::string sourcePath = extraPath;
-    if (const auto it = pathOverrides.find(rel); it != pathOverrides.end()) {
-      sourcePath = it->second;
-    }
-    std::ifstream in(sourcePath, std::ios::binary);
-    if (!in) {
-      Logger::Error("AssetPak::Pack: failed to read extra " + sourcePath);
-      out.close();
-      std::error_code ec;
-      std::filesystem::remove(outPath, ec);
-      return false;
-    }
-    const std::uint64_t offset = static_cast<std::uint64_t>(out.tellp());
-    std::uint64_t size = 0;
-    while (in) {
-      in.read(buf.data(), static_cast<std::streamsize>(buf.size()));
-      const std::streamsize got = in.gcount();
-      if (got > 0) {
-        out.write(buf.data(), got);
-        size += static_cast<std::uint64_t>(got);
-      }
-    }
-    staged.push_back({rel, offset, size});
-  }
-
-  // TOC.
-  const std::uint64_t tocOffset = static_cast<std::uint64_t>(out.tellp());
-  for (const auto& s : staged) {
-    out.write(reinterpret_cast<const char*>(&s.offset), sizeof(s.offset));
-    out.write(reinterpret_cast<const char*>(&s.size), sizeof(s.size));
-    const std::uint16_t pathLen = static_cast<std::uint16_t>(s.relPath.size());
-    out.write(reinterpret_cast<const char*>(&pathLen), sizeof(pathLen));
-    out.write(s.relPath.data(), pathLen);
-  }
-
-  // Patch header w/ TOC info.
-  header.tocOffset = tocOffset;
-  header.tocCount = static_cast<std::uint32_t>(staged.size());
-  out.seekp(0, std::ios::beg);
-  out.write(reinterpret_cast<const char*>(&header), sizeof(header));
-  out.close();
-
-  if (!out) {
-    Logger::Error("AssetPak::Pack: write error finalizing " + outPath);
-    std::error_code ec;
-    std::filesystem::remove(outPath, ec);
+  std::memcpy(&header, buf, sizeof(header));
+  if (std::memcmp(header.magic, kMagic, 4) != 0) {
+    Logger::Error("AssetPak::Open: " + pakPath + " has wrong magic (not an OCPK file)");
     return false;
   }
-  Logger::Info("AssetPak::Pack: wrote " + std::to_string(staged.size()) + " entries to " + outPath);
+  if (header.version != kVersion || (header.flags & kFlagEncrypted) == 0) {
+    Logger::Error("AssetPak::Open: " + pakPath + " is unsupported or unencrypted OCPK v" +
+                  std::to_string(header.version));
+    return false;
+  }
+  if (header.tocOffset > sz || header.tocCount > (sz - header.tocOffset) / sizeof(PakTocEntry)) {
+    Logger::Error("AssetPak::Open: " + pakPath + " TOC truncated or past end of file");
+    return false;
+  }
+
+  const std::size_t expectedTocBytes = static_cast<std::size_t>(header.tocCount) * sizeof(PakTocEntry);
+  version_ = header.version;
+  encrypted_ = true;
+  std::memcpy(salt_.data(), header.salt, sizeof(header.salt));
+  key_ = octarine::crypto::GetActivePackageKey();
+  entries_.clear();
+
+  std::vector<PakTocEntry> toc(header.tocCount);
+  if (expectedTocBytes > 0) {
+    std::memcpy(toc.data(), static_cast<const std::uint8_t*>(buf) + header.tocOffset, expectedTocBytes);
+    std::array<std::uint8_t, 12> tocNonce{};
+    std::memcpy(tocNonce.data(), salt_.data(), 12);
+    octarine::crypto::ChaCha20 tocCipher(key_, tocNonce, 0);
+    tocCipher.XorInPlace(reinterpret_cast<uint8_t*>(toc.data()), expectedTocBytes, 0);
+  }
+
+  const auto expectedMac = ComputeHeaderAndTocMac(header, toc.data(), toc.size(), key_);
+  if (std::memcmp(expectedMac.data(), header.tocMac, sizeof(header.tocMac)) != 0) {
+    Logger::Error("AssetPak::Open: header/TOC integrity verification failed in " + pakPath);
+    return false;
+  }
+
+  for (const auto& item : toc) {
+    if (item.size > header.tocOffset || item.offset > header.tocOffset - item.size) {
+      Logger::Error("AssetPak::Open: entry overlaps TOC in " + pakPath);
+      entries_.clear();
+      return false;
+    }
+    entries_.emplace(item.pathHash, Entry{item.offset, item.size, item.pathHash});
+  }
   return true;
 }
 
@@ -177,89 +255,166 @@ bool AssetPak::Open(const std::string& pakPath) {
     entries_.clear();
   }
 
-  // SDL_LoadFile resolves through SDL_IOFromFile, so this works inside an Android APK + a
-  // desktop loose dir without callers needing to know which they're on.
   std::size_t sz = 0;
   void* buf = SDL_LoadFile(pakPath.c_str(), &sz);
   if (buf == nullptr) {
     Logger::Warn("AssetPak::Open: SDL_LoadFile failed for " + pakPath + ": " + std::string(SDL_GetError()));
     return false;
   }
-  if (sz < sizeof(PakHeader)) {
-    Logger::Error("AssetPak::Open: " + pakPath + " is shorter than the pak header");
-    SDL_free(buf);
-    return false;
-  }
-  PakHeader header{};
-  std::memcpy(&header, buf, sizeof(header));
-  if (std::memcmp(header.magic, kMagic, 4) != 0) {
-    Logger::Error("AssetPak::Open: " + pakPath + " has wrong magic (not an OCPK file)");
-    SDL_free(buf);
-    return false;
-  }
-  if (header.version != kVersion) {
-    Logger::Error("AssetPak::Open: " + pakPath + " is OCPK v" + std::to_string(header.version) + "; engine expects v" +
-                  std::to_string(kVersion));
-    SDL_free(buf);
-    return false;
-  }
-  if (header.tocOffset > sz) {
-    Logger::Error("AssetPak::Open: " + pakPath + " TOC offset past end of file");
-    SDL_free(buf);
-    return false;
-  }
 
-  const auto* tocCursor = static_cast<const std::uint8_t*>(buf) + header.tocOffset;
-  const auto* tocEnd = static_cast<const std::uint8_t*>(buf) + sz;
-  entries_.clear();
-  for (std::uint32_t i = 0; i < header.tocCount; ++i) {
-    if (tocCursor + sizeof(std::uint64_t) * 2 + sizeof(std::uint16_t) > tocEnd) {
-      Logger::Error("AssetPak::Open: truncated TOC in " + pakPath);
-      SDL_free(buf);
-      entries_.clear();
-      return false;
-    }
-    Entry e{};
-    std::memcpy(&e.offset, tocCursor, sizeof(e.offset));
-    tocCursor += sizeof(e.offset);
-    std::memcpy(&e.size, tocCursor, sizeof(e.size));
-    tocCursor += sizeof(e.size);
-    std::uint16_t pathLen = 0;
-    std::memcpy(&pathLen, tocCursor, sizeof(pathLen));
-    tocCursor += sizeof(pathLen);
-    if (tocCursor + pathLen > tocEnd) {
-      Logger::Error("AssetPak::Open: TOC path overruns file in " + pakPath);
-      SDL_free(buf);
-      entries_.clear();
-      return false;
-    }
-    std::string relPath(reinterpret_cast<const char*>(tocCursor), pathLen);
-    tocCursor += pathLen;
-    if (e.size > header.tocOffset || e.offset > header.tocOffset - e.size) {
-      Logger::Error("AssetPak::Open: entry '" + relPath + "' overlaps TOC region");
-      SDL_free(buf);
-      entries_.clear();
-      return false;
-    }
-    entries_.emplace(std::move(relPath), e);
+  if (!LoadFromBuffer(buf, sz, pakPath)) {
+    SDL_free(buf);
+    entries_.clear();
+    return false;
   }
 
   data_ = buf;
   data_size_ = sz;
-  Logger::Info("AssetPak::Open: loaded " + std::to_string(entries_.size()) + " entries from " + pakPath);
+  Logger::Info("AssetPak::Open: loaded " + std::to_string(entries_.size()) + " encrypted entries from " + pakPath);
   return true;
 }
 
-bool AssetPak::Contains(const std::string& relPath) const { return entries_.find(relPath) != entries_.end(); }
+bool AssetPak::Contains(const std::string& relPath) const {
+  if (data_ == nullptr) return false;
+  const uint64_t hash = octarine::crypto::HashPath(relPath);
+  return entries_.find(hash) != entries_.end();
+}
 
 SDL_IOStream* AssetPak::OpenIO(const std::string& relPath) const {
-  if (data_ == nullptr) {
-    return nullptr;
-  }
-  const auto it = entries_.find(relPath);
+  if (data_ == nullptr) return nullptr;
+
+  const uint64_t hash = octarine::crypto::HashPath(relPath);
+  const auto it = entries_.find(hash);
   if (it == entries_.end()) {
     return nullptr;
   }
-  const auto* slice = static_cast<const std::uint8_t*>(data_) + it->second.offset;
-  return SDL_IOFromConstMem(slice, it->second.size);
+
+  std::array<std::uint8_t, 12> nonce{};
+  std::memcpy(nonce.data(), &it->second.pathHash, 8);
+  std::memcpy(nonce.data() + 8, salt_.data() + 12, 4);
+  return CreatePakStream(static_cast<const uint8_t*>(data_), it->second.offset, it->second.size, key_, nonce);
+}
+
+namespace {
+bool WriteFileEntry(std::ofstream& out, const std::string& sourcePath, uint64_t pathHash,
+                    std::span<const uint8_t, 32> key, std::span<const uint8_t, 16> salt, PakTocEntry& outEntry) {
+  std::ifstream in(sourcePath, std::ios::binary);
+  if (!in) {
+    Logger::Error("AssetPak::Pack: failed to read " + sourcePath);
+    return false;
+  }
+
+  const auto offset = static_cast<uint64_t>(out.tellp());
+  std::vector<uint8_t> fileData((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+  // Scramble compiled Lua 5.4 bytecode if detected before packing
+  static constexpr uint8_t kLuaMagic[] = {0x1B, 'L', 'u', 'a', 0x54};
+  if (fileData.size() >= 34 && std::memcmp(fileData.data(), kLuaMagic, 5) == 0) {
+    uint64_t seed = 0;
+    std::memcpy(&seed, key.data(), sizeof(seed));
+    octarine::crypto::ScrambleLua54Bytecode(fileData.data(), fileData.size(), seed);
+  }
+
+  std::array<uint8_t, 12> nonce{};
+  std::memcpy(nonce.data(), &pathHash, 8);
+  std::memcpy(nonce.data() + 8, salt.data() + 12, 4);
+  octarine::crypto::ChaCha20 cipher(key, nonce, 0);
+  cipher.XorInPlace(fileData.data(), fileData.size(), 0);
+
+  out.write(reinterpret_cast<const char*>(fileData.data()), static_cast<std::streamsize>(fileData.size()));
+
+  outEntry.pathHash = pathHash;
+  outEntry.offset = offset;
+  outEntry.size = fileData.size();
+  return true;
+}
+}  // namespace
+
+bool AssetPak::Pack(const AssetCatalog& catalog, const std::string& outPath, const std::string& basePath,
+                    const std::vector<std::string>& extraFiles,
+                    const std::map<std::string, std::string>& pathOverrides) {
+  std::ofstream out(outPath, std::ios::binary | std::ios::trunc);
+  if (!out) {
+    Logger::Error("AssetPak::Pack: failed to open " + outPath + " for writing");
+    return false;
+  }
+
+  const auto salt = GenerateSalt();
+  const auto key = octarine::crypto::GetActivePackageKey();
+
+  PakHeader header{};
+  std::memcpy(header.magic, kMagic, 4);
+  header.version = kVersion;
+  header.flags = kFlagEncrypted;
+  std::memcpy(header.salt, salt.data(), sizeof(header.salt));
+  out.write(reinterpret_cast<const char*>(&header), sizeof(header));
+
+  std::vector<PakTocEntry> staged;
+  staged.reserve(catalog.Size() + extraFiles.size());
+
+  for (const auto& [id, entry] : catalog.Entries()) {
+    const std::string relPath = MakeRelPath(entry.fullPath, basePath);
+    std::string sourcePath = entry.fullPath;
+    if (auto it = pathOverrides.find(relPath); it != pathOverrides.end()) {
+      sourcePath = it->second;
+    }
+    PakTocEntry tocEntry{};
+    if (!WriteFileEntry(out, sourcePath, octarine::crypto::HashPath(relPath), key, salt, tocEntry)) {
+      out.close();
+      std::error_code ec;
+      std::filesystem::remove(outPath, ec);
+      return false;
+    }
+    staged.push_back(tocEntry);
+  }
+
+  for (const std::string& extraPath : extraFiles) {
+    const std::string rel = MakeRelPath(extraPath, basePath);
+    const uint64_t hash = octarine::crypto::HashPath(rel);
+    if (std::any_of(staged.begin(), staged.end(), [hash](const auto& s) { return s.pathHash == hash; })) {
+      continue;
+    }
+    std::string sourcePath = extraPath;
+    if (const auto it = pathOverrides.find(rel); it != pathOverrides.end()) {
+      sourcePath = it->second;
+    }
+    PakTocEntry tocEntry{};
+    if (!WriteFileEntry(out, sourcePath, hash, key, salt, tocEntry)) {
+      out.close();
+      std::error_code ec;
+      std::filesystem::remove(outPath, ec);
+      return false;
+    }
+    staged.push_back(tocEntry);
+  }
+
+  // Encrypt and write TOC, then compute MAC over header metadata + plaintext TOC
+  const auto tocOffset = static_cast<uint64_t>(out.tellp());
+  header.tocOffset = tocOffset;
+  header.tocCount = static_cast<std::uint32_t>(staged.size());
+  const auto mac = ComputeHeaderAndTocMac(header, staged.data(), staged.size(), key);
+  std::memcpy(header.tocMac, mac.data(), sizeof(header.tocMac));
+
+  std::vector<PakTocEntry> encToc = staged;
+  if (!encToc.empty()) {
+    std::array<std::uint8_t, 12> tocNonce{};
+    std::memcpy(tocNonce.data(), salt.data(), 12);
+    octarine::crypto::ChaCha20 tocCipher(key, tocNonce, 0);
+    tocCipher.XorInPlace(reinterpret_cast<uint8_t*>(encToc.data()), encToc.size() * sizeof(PakTocEntry), 0);
+    out.write(reinterpret_cast<const char*>(encToc.data()),
+              static_cast<std::streamsize>(encToc.size() * sizeof(PakTocEntry)));
+  }
+
+  out.seekp(0, std::ios::beg);
+  out.write(reinterpret_cast<const char*>(&header), sizeof(header));
+  out.close();
+
+  if (!out) {
+    Logger::Error("AssetPak::Pack: write error finalizing " + outPath);
+    std::error_code ec;
+    std::filesystem::remove(outPath, ec);
+    return false;
+  }
+  Logger::Info("AssetPak::Pack: wrote " + std::to_string(staged.size()) + " encrypted entries to " + outPath);
+  return true;
 }
