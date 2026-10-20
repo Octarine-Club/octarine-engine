@@ -30,6 +30,13 @@ option(OCTARINE_SHIPPED "Build a shipping artifact (loads baked asset manifest, 
 # Packaging & distribution
 set(OCTARINE_PACKAGE_PROJECT "" CACHE PATH "Game project directory to package into a standalone release artifact (empty = no packaging)")
 set(OCTARINE_LOG_LEVEL "" CACHE STRING "Compile-time default log level (trace|debug|info|warn|error|critical|off; empty = auto-detect)")
+set(_octarine_default_protect_scripts OFF)
+if (OCTARINE_SHIPPED AND OCTARINE_PACKAGE_PROJECT)
+    set(_octarine_default_protect_scripts ON)
+endif ()
+option(OCTARINE_PROTECT_SCRIPTS "Compile Lua scripts to stripped bytecode in packaged builds" ${_octarine_default_protect_scripts})
+set(OCTARINE_PACKAGE_KEY "" CACHE STRING "256-bit encryption key for AssetPak and script protection; empty = project-derived")
+option(OCTARINE_ALLOW_LOOSE_ASSETS "Allow loose config/manifest/asset overrides beside the binary in shipped builds" OFF)
 
 # Compiler & performance tuning
 option(OCTARINE_USE_CCACHE "Use ccache or sccache as compiler launcher when available" ON)
