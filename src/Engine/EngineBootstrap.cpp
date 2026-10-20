@@ -45,12 +45,18 @@ int LuaDofileViaSDL(lua_State* L) {
   if (!bytes) {
     return luaL_error(L, "dofile: cannot open '%s'", path.c_str());
   }
-  DecryptLuaBytes(*bytes);
+  const bool requireProtected = (assets != nullptr && assets->GetAssetPak() != nullptr);
+  if (!DecryptLuaBytes(*bytes, requireProtected)) {
+    return luaL_error(L, "dofile: rejected unprotected or corrupted script '%s'", path.c_str());
+  }
 
   lua_settop(L, 0);
   const int topBefore = lua_gettop(L);
   const std::string chunkname = "@" + path;
-  if (luaL_loadbuffer(L, bytes->data(), bytes->size(), chunkname.c_str()) != 0) {
+  const int loadRc = luaL_loadbuffer(L, bytes->data(), bytes->size(), chunkname.c_str());
+  std::fill(bytes->begin(), bytes->end(), '\0');
+  bytes->clear();
+  if (loadRc != 0) {
     return luaL_error(L, "dofile load '%s': %s", path.c_str(), lua_tostring(L, -1));
   }
   if (lua_pcall(L, 0, LUA_MULTRET, 0) != 0) {
@@ -69,6 +75,12 @@ void InstallLuaLibraries(sol::state& lua) {
   lua_State* L = lua.lua_state();
   lua_pushcfunction(L, &LuaDofileViaSDL);
   lua_setglobal(L, "dofile");
+
+#ifdef OCTARINE_SHIPPED
+  // In shipped builds, disable string.dump and stock load/loadfile to prevent runtime script dumping
+  // or arbitrary file loading by injected scripts.
+  lua.script("if string then string.dump = nil end; load = nil; loadfile = nil;");
+#endif
 }
 
 void InstallCoreSingletons(Registry& registry, EngineContext& context, const int windowWidth, const int windowHeight,

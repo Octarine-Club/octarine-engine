@@ -88,6 +88,8 @@ bool GlyphAtlas::Load(SDL_IOStream* pngIo, SDL_IOStream* luaIo, const std::strin
   SDL_free(luaRaw);
   DecryptLuaBytes(luaChunk);
   sol::protected_function_result rc = lua.safe_script(luaChunk, sol::script_pass_on_error, "@" + debugLuaName);
+  std::fill(luaChunk.begin(), luaChunk.end(), '\0');
+  luaChunk.clear();
   if (!rc.valid()) {
     const sol::error err = rc;
     Logger::Error("GlyphAtlas::Load: dofile failed for " + debugLuaName + ": " + err.what());
