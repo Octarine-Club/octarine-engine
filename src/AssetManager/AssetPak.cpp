@@ -236,12 +236,15 @@ bool AssetPak::LoadFromBuffer(const void* buf, std::size_t sz, const std::string
     return false;
   }
 
+  const bool hasOutOfBoundsEntry = std::ranges::any_of(toc, [&](const PakTocEntry& item) {
+    return item.size > header.tocOffset || item.offset > header.tocOffset - item.size;
+  });
+  if (hasOutOfBoundsEntry) {
+    Logger::Error("AssetPak::Open: entry overlaps TOC in " + pakPath);
+    entries_.clear();
+    return false;
+  }
   for (const auto& item : toc) {
-    if (item.size > header.tocOffset || item.offset > header.tocOffset - item.size) {
-      Logger::Error("AssetPak::Open: entry overlaps TOC in " + pakPath);
-      entries_.clear();
-      return false;
-    }
     entries_.emplace(item.pathHash, Entry{item.offset, item.size, item.pathHash});
   }
   return true;

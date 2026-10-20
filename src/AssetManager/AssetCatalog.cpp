@@ -130,6 +130,58 @@ std::optional<ScaleMode> DefaultScaleModeFromConfig(const GameConfig& gameConfig
   }
   return std::nullopt;
 }
+
+void ApplyManifestTextureFields(CatalogEntry& entry, const sol::table& e) {
+  if (const sol::optional<std::string> mode = e["scale_mode"]; mode) entry.scaleMode = ParseScaleMode(*mode);
+  if (const sol::optional<std::string> atlas = e["atlas"]; atlas) entry.atlas = *atlas;
+  if (const sol::optional<bool> noAtlas = e["no_atlas"]; noAtlas) entry.noAtlas = *noAtlas;
+  if (const sol::optional<std::string> atlasId = e["atlas_id"]; atlasId) entry.atlasId = *atlasId;
+  if (const sol::optional<sol::table> slice = e["atlas_slice"]; slice) {
+    SDL_FRect r{};
+    r.x = (*slice)["x"].get_or(0.0F);
+    r.y = (*slice)["y"].get_or(0.0F);
+    r.w = (*slice)["w"].get_or(0.0F);
+    r.h = (*slice)["h"].get_or(0.0F);
+    entry.atlasSlice = r;
+  }
+}
+
+std::optional<CatalogEntry> ParseManifestEntry(const std::string& id, const sol::object& value, const fs::path& root) {
+  if (!value.is<sol::table>()) {
+    Logger::Error("AssetCatalog: manifest entry '" + id + "' is not a table; skipping.");
+    return std::nullopt;
+  }
+  const sol::table e = value;
+  const sol::optional<std::string> typeStr = e["type"];
+  const sol::optional<std::string> file = e["file"];
+  if (!typeStr || !file) {
+    Logger::Error("AssetCatalog: manifest entry '" + id + "' missing required 'type'/'file'; skipping.");
+    return std::nullopt;
+  }
+  const std::optional<AssetType> type = ParseAssetType(*typeStr);
+  if (!type) {
+    Logger::Error("AssetCatalog: manifest entry '" + id + "' has unknown type '" + *typeStr + "'; skipping.");
+    return std::nullopt;
+  }
+
+  CatalogEntry entry;
+  entry.type = *type;
+  entry.id = id;
+  entry.fullPath = ReRootAssetPath(root, *file);
+  switch (*type) {
+    case AssetType::Texture:
+      ApplyManifestTextureFields(entry, e);
+      break;
+    case AssetType::Font:
+      entry.fontSize = e["font_size"].get_or(0.0F);
+      break;
+    case AssetType::Audio:
+      entry.stream = e["stream"].get_or(false);
+      entry.normalize = e["normalize"].get_or(false);
+      break;
+  }
+  return entry;
+}
 }  // namespace
 
 bool AssetCatalog::Build(const std::string& basePath, sol::state& lua, const GameConfig& gameConfig, bool allowManifest,
@@ -313,56 +365,13 @@ bool AssetCatalog::LoadManifestFromStream(SDL_IOStream* io, sol::state& lua, con
   bool ok = true;
 
   for (const auto& [key, value] : table) {
-    const std::string id = key.as<std::string>();
-    if (!value.is<sol::table>()) {
-      Logger::Error("AssetCatalog: manifest entry '" + id + "' is not a table; skipping.");
+    std::string id = key.as<std::string>();
+    auto entry = ParseManifestEntry(id, value, root);
+    if (!entry) {
       ok = false;
       continue;
     }
-    const sol::table e = value;
-
-    const sol::optional<std::string> typeStr = e["type"];
-    const sol::optional<std::string> file = e["file"];
-    if (!typeStr || !file) {
-      Logger::Error("AssetCatalog: manifest entry '" + id + "' missing required 'type'/'file'; skipping.");
-      ok = false;
-      continue;
-    }
-    const std::optional<AssetType> type = ParseAssetType(*typeStr);
-    if (!type) {
-      Logger::Error("AssetCatalog: manifest entry '" + id + "' has unknown type '" + *typeStr + "'; skipping.");
-      ok = false;
-      continue;
-    }
-
-    CatalogEntry entry;
-    entry.type = *type;
-    entry.id = id;
-    entry.fullPath = ReRootAssetPath(root, *file);
-    switch (*type) {
-      case AssetType::Texture:
-        if (const sol::optional<std::string> mode = e["scale_mode"]; mode) entry.scaleMode = ParseScaleMode(*mode);
-        if (const sol::optional<std::string> atlas = e["atlas"]; atlas) entry.atlas = *atlas;
-        if (const sol::optional<bool> noAtlas = e["no_atlas"]; noAtlas) entry.noAtlas = *noAtlas;
-        if (const sol::optional<std::string> atlasId = e["atlas_id"]; atlasId) entry.atlasId = *atlasId;
-        if (const sol::optional<sol::table> slice = e["atlas_slice"]; slice) {
-          SDL_FRect r{};
-          r.x = (*slice)["x"].get_or(0.0F);
-          r.y = (*slice)["y"].get_or(0.0F);
-          r.w = (*slice)["w"].get_or(0.0F);
-          r.h = (*slice)["h"].get_or(0.0F);
-          entry.atlasSlice = r;
-        }
-        break;
-      case AssetType::Font:
-        entry.fontSize = e["font_size"].get_or(0.0F);
-        break;
-      case AssetType::Audio:
-        entry.stream = e["stream"].get_or(false);
-        entry.normalize = e["normalize"].get_or(false);
-        break;
-    }
-    entries_.emplace(std::move(id), std::move(entry));
+    entries_.emplace(std::move(id), std::move(*entry));
   }
 
   from_manifest_ = true;

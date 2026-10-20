@@ -172,8 +172,10 @@ constexpr const char* kDefaultOrgName = "Octarine";
 constexpr const char* kDefaultAppName = "Engine";
 constexpr const char* kDefaultWindowTitle = "Octarine Engine";
 constexpr const char* kDefaultEditorWindowTitle = "Octarine Engine - Editor";
+#ifdef OCTARINE_WITH_IMGUI
 constexpr const char* kImGuiIniFilename = "imgui.ini";
 constexpr const char* kImGuiEditorIniFilename = "imgui_editor.ini";
+#endif
 constexpr const char* kStartupModeBake = "bake";
 constexpr const char* kStartupModeEditor = "editor";
 constexpr const char* kAtlasesDirName = "atlases";
