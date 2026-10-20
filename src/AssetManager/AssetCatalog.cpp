@@ -10,6 +10,7 @@
 #include <sol/sol.hpp>
 #include <string>
 
+#include "AssetManager/AssetPak.h"
 #include "Engine/LuaProtect.h"
 #include "Game/GameConfig.h"
 #include "General/Logger.h"
@@ -131,32 +132,37 @@ std::optional<ScaleMode> DefaultScaleModeFromConfig(const GameConfig& gameConfig
 }
 }  // namespace
 
-bool AssetCatalog::Build(const std::string& basePath, sol::state& lua, const GameConfig& gameConfig,
-                         bool allowManifest) {
-  return Build(basePath, lua, DefaultScaleModeFromConfig(gameConfig), allowManifest);
+bool AssetCatalog::Build(const std::string& basePath, sol::state& lua, const GameConfig& gameConfig, bool allowManifest,
+                         const AssetPak* pak) {
+  return Build(basePath, lua, DefaultScaleModeFromConfig(gameConfig), allowManifest, pak);
 }
 
 bool AssetCatalog::Build(const std::string& basePath, sol::state& lua, std::optional<ScaleMode> defaultScaleMode,
-                         bool allowManifest) {
-  // Shipped builds (allowManifest) carry a baked manifest at the root — load it and skip the
-  // filesystem walk so the same path works inside a read-only bundle. Dev builds gate this off
-  // (OCTARINE_SHIPPED=OFF, no --use-manifest) and always scan, so a stray manifest left beside
-  // source assets can't freeze the catalog on a stale snapshot.
+                         bool allowManifest, const AssetPak* pak) {
+  // Shipped builds (allowManifest) carry a baked manifest at the root (or embedded in asset_bundle.pak).
+  // Check the pak first so shipped games can run with zero loose files on disk.
   if (allowManifest) {
-    // Probe via SDL_IO so the manifest is reachable inside read-only bundles (APK assets / .app
-    // Resources / iOS bundle). std::filesystem::exists would only see a real disk path and miss
-    // AAssetManager-backed entries.
-    const fs::path manifestPath = fs::path(basePath) / "asset_manifest.lua";
+    if (pak != nullptr && pak->IsOpen() && pak->Contains(kManifestFilename)) {
+      if (SDL_IOStream* io = pak->OpenIO(kManifestFilename)) {
+        Logger::Warn("AssetCatalog: loading baked manifest directly from AssetPak");
+        return LoadManifestFromStream(io, lua, basePath,
+                                      std::string("@") + AssetPak::kDefaultFilename + ":" + kManifestFilename);
+      }
+    }
+#if defined(OCTARINE_SHIPPED) && !defined(OCTARINE_ALLOW_LOOSE_ASSETS)
+    Logger::Error("AssetCatalog: rejected loose manifest or filesystem scan in shipped build");
+    return false;
+#endif
+
+    const fs::path manifestPath = fs::path(basePath) / kManifestFilename;
     const std::string manifestStr = manifestPath.string();
     if (SDL_IOStream* probe = SDL_IOFromFile(manifestStr.c_str(), "rb"); probe != nullptr) {
       SDL_CloseIO(probe);
-      // Warn-level on purpose — same rationale as the "loaded N entries" line below: this is
-      // the bootstrap path a shipped (warn-level) build needs visible so the manifest-vs-scan
-      // gate is observable in CI + on-device support repros.
       Logger::Warn("AssetCatalog: baked manifest found, loading (scan skipped): " + manifestStr);
       return LoadManifest(manifestStr, lua, basePath);
     }
-    Logger::Warn("AssetCatalog: manifest load allowed but no asset_manifest.lua at root; scanning.");
+    Logger::Warn(std::string("AssetCatalog: manifest load allowed but no ") + kManifestFilename +
+                 " at root; scanning.");
   }
   return ScanFilesystem(basePath, lua, defaultScaleMode);
 }
@@ -259,9 +265,6 @@ bool AssetCatalog::ScanFilesystem(const std::string& basePath, sol::state& lua,
 }
 
 bool AssetCatalog::LoadManifest(const std::string& manifestPath, sol::state& lua, const std::string& basePath) {
-  entries_.clear();
-  from_manifest_ = false;
-
   // Read manifest bytes through SDL_IO so the same path works inside an APK / .app bundle (where
   // Lua's stock fopen-based loader cannot reach AAssetManager / bundle Resources).
   SDL_IOStream* io = SDL_IOFromFile(manifestPath.c_str(), "rb");
@@ -269,24 +272,39 @@ bool AssetCatalog::LoadManifest(const std::string& manifestPath, sol::state& lua
     Logger::Error("AssetCatalog: failed to open manifest '" + manifestPath + "': " + SDL_GetError());
     return false;
   }
+  return LoadManifestFromStream(io, lua, basePath, "@" + manifestPath);
+}
+
+bool AssetCatalog::LoadManifestFromStream(SDL_IOStream* io, sol::state& lua, const std::string& basePath,
+                                          const std::string& debugChunkName) {
+  entries_.clear();
+  from_manifest_ = false;
+
+  if (io == nullptr) {
+    Logger::Error("AssetCatalog: null manifest stream provided (" + debugChunkName + ")");
+    return false;
+  }
+
   std::size_t size = 0;
   void* data = SDL_LoadFile_IO(io, &size, true);  // closes io
   if (!data) {
-    Logger::Error("AssetCatalog: failed to read manifest '" + manifestPath + "': " + SDL_GetError());
+    Logger::Error("AssetCatalog: failed to read manifest (" + debugChunkName + "): " + SDL_GetError());
     return false;
   }
   std::string chunk(static_cast<const char*>(data), size);
   SDL_free(data);
   DecryptLuaBytes(chunk);
 
-  sol::protected_function_result result = lua.safe_script(chunk, sol::script_pass_on_error, "@" + manifestPath);
+  sol::protected_function_result result = lua.safe_script(chunk, sol::script_pass_on_error, debugChunkName);
+  std::fill(chunk.begin(), chunk.end(), '\0');
+  chunk.clear();
   if (!result.valid()) {
     const sol::error err = result;
-    Logger::Error("AssetCatalog: failed to load manifest '" + manifestPath + "': " + err.what());
+    Logger::Error("AssetCatalog: failed to load manifest (" + debugChunkName + "): " + err.what());
     return false;
   }
   if (result.return_count() == 0 || !result[0].is<sol::table>()) {
-    Logger::Error("AssetCatalog: manifest did not return a table: " + manifestPath);
+    Logger::Error("AssetCatalog: manifest did not return a table: " + debugChunkName);
     return false;
   }
 
@@ -350,8 +368,8 @@ bool AssetCatalog::LoadManifest(const std::string& manifestPath, sol::state& lua
   from_manifest_ = true;
   // Logged at Warn level so it remains visible in shipped builds (which default to
   // warn-level logging) as confirmation that the baked catalog is in use.
-  Logger::Warn("AssetCatalog: loaded " + std::to_string(entries_.size()) + " entries from manifest " + manifestPath +
-               (ok ? "" : " (with malformed entries skipped)"));
+  Logger::Warn("AssetCatalog: loaded " + std::to_string(entries_.size()) + " entries from manifest (" + debugChunkName +
+               ")" + (ok ? "" : " (with malformed entries skipped)"));
   return ok;
 }
 

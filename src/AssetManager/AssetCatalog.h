@@ -55,6 +55,8 @@ struct CatalogEntry {
 // it is the engine's index of what assets exist and how each should be loaded.
 class AssetCatalog {
  public:
+  static constexpr const char* kManifestFilename = "asset_manifest.lua";
+
   // Populate the id -> entry map for the project at `basePath`. When `allowManifest` is true and a
   // baked `asset_manifest.lua` is present at the root, load it and skip the filesystem walk — assets
   // resolve with no scan, which is what makes read-only APK/.app bundles work. Otherwise (dev build,
@@ -65,9 +67,10 @@ class AssetCatalog {
   // or malformed entry (manifest) was found. The GameConfig overload pulls the project default scale
   // mode from config; the explicit overload takes it directly (used by tests, which avoids
   // GameConfig's SDL-backed load path).
-  bool Build(const std::string& basePath, sol::state& lua, const GameConfig& gameConfig, bool allowManifest = true);
+  bool Build(const std::string& basePath, sol::state& lua, const GameConfig& gameConfig, bool allowManifest = true,
+             const class AssetPak* pak = nullptr);
   bool Build(const std::string& basePath, sol::state& lua, std::optional<ScaleMode> defaultScaleMode,
-             bool allowManifest = true);
+             bool allowManifest = true, const class AssetPak* pak = nullptr);
 
   // Force a live filesystem scan, ignoring any baked manifest at the root. `Build` delegates here
   // when no manifest is present; the bake step calls it directly so it always re-derives the
@@ -82,6 +85,8 @@ class AssetCatalog {
   // runtime reaches it through `Build`. Returns false on a missing/unparseable manifest or a
   // malformed entry. Sets IsFromManifest() to true on success.
   bool LoadManifest(const std::string& manifestPath, sol::state& lua, const std::string& basePath);
+  bool LoadManifestFromStream(struct SDL_IOStream* io, sol::state& lua, const std::string& basePath,
+                              const std::string& debugChunkName = kManifestFilename);
 
   // True when the catalog was populated from a baked manifest rather than a live filesystem scan.
   // Callers (e.g. AssetManager::Validate) use this to skip on-disk `stat` checks that cannot hold

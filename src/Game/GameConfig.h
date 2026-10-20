@@ -10,6 +10,8 @@
 
 class GameConfig {
  public:
+  static constexpr const char* kConfigFileName = "config.ini";
+
   GameConfig() = default;
   ~GameConfig() = default;
 
@@ -22,6 +24,7 @@ class GameConfig {
   bool LoadConfig(const std::unordered_map<std::string, std::string>& settings);
 
   bool LoadConfigFromFile(const std::string& assetPath);
+  bool LoadConfigFromStream(struct SDL_IOStream* io, const std::string& assetPath);
 
   [[nodiscard]] bool HasLoadedConfig() const { return has_loaded_config_; }
   [[nodiscard]] bool IsEditorMode() const { return is_editor_mode_; }

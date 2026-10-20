@@ -117,15 +117,23 @@ inline void LoadGame(sol::state& lua, const AssetManager& assetManager, const Ga
     Logger::Error("Failed to read entry script: " + filePath);
     return;
   }
-  DecryptLuaBytes(*bytes);
+  const bool requireProtected = (assetManager.GetAssetPak() != nullptr);
+  if (!DecryptLuaBytes(*bytes, requireProtected)) {
+    Logger::Error("Failed to decrypt or verify entry script: " + filePath);
+    return;
+  }
 
   sol::protected_function_result result;
   try {
     result = lua.safe_script(*bytes, sol::script_pass_on_error, "@" + filePath);
   } catch (const std::exception& ex) {
+    std::fill(bytes->begin(), bytes->end(), '\0');
+    bytes->clear();
     Logger::Error(ex.what());
     return;
   }
+  std::fill(bytes->begin(), bytes->end(), '\0');
+  bytes->clear();
 
   if (!result.valid()) {
     const sol::error err = result;
@@ -158,18 +166,35 @@ Game::Game() {
 Game::~Game() { Logger::Info("Game Destructor called."); }
 
 namespace {
+constexpr const char* kHeadlessEnvVar = "OCTARINE_HEADLESS";
+constexpr const char* kSavePathEnvVar = "OCTARINE_SAVE_PATH";
+constexpr const char* kDefaultOrgName = "Octarine";
+constexpr const char* kDefaultAppName = "Engine";
+constexpr const char* kDefaultWindowTitle = "Octarine Engine";
+constexpr const char* kDefaultEditorWindowTitle = "Octarine Engine - Editor";
+constexpr const char* kImGuiIniFilename = "imgui.ini";
+constexpr const char* kImGuiEditorIniFilename = "imgui_editor.ini";
+constexpr const char* kStartupModeBake = "bake";
+constexpr const char* kStartupModeEditor = "editor";
+constexpr const char* kAtlasesDirName = "atlases";
+constexpr const char* kAtlasPngSuffix = ".atlas.png";
+constexpr const char* kAtlasLuaSuffix = ".atlas.lua";
+constexpr const char* kNormalizedDirName = "normalized";
+constexpr const char* kScriptsDirName = "scripts";
+constexpr const char* kLuaExtension = ".lua";
+
 bool CheckHeadlessEnv() {
 #ifdef _MSC_VER
   char* envVal = nullptr;
   size_t envLen = 0;
-  if (_dupenv_s(&envVal, &envLen, "OCTARINE_HEADLESS") == 0 && envVal != nullptr) {
+  if (_dupenv_s(&envVal, &envLen, kHeadlessEnvVar) == 0 && envVal != nullptr) {
     const std::string s(envVal);
     free(envVal);
     return s == "1" || s == "true";
   }
   return false;
 #else
-  if (const char* envVal = std::getenv("OCTARINE_HEADLESS")) {
+  if (const char* envVal = std::getenv(kHeadlessEnvVar)) {
     const std::string s(envVal);
     return s == "1" || s == "true";
   }
@@ -202,27 +227,29 @@ void InitUserSettings(Registry& registry, GameConfig& gameConfig, const std::str
   registry.Set<octarine::UserSettings>(userSettings);
 }
 
+#if !defined(OCTARINE_SHIPPED) || defined(OCTARINE_ALLOW_LOOSE_ASSETS)
 std::string ResolveProjectIniPath(const std::string& assetBase) {
   if (assetBase.empty()) {
-    return "project.ini";
+    return octarine::project::ProjectIni::kFilename;
   }
   if (assetBase.back() == '/' || assetBase.back() == '\\') {
-    return assetBase + "project.ini";
+    return assetBase + octarine::project::ProjectIni::kFilename;
   }
-  return assetBase + "/project.ini";
+  return assetBase + "/" + octarine::project::ProjectIni::kFilename;
 }
+#endif
 
 std::string ReadSavePathEnv() {
   std::string path;
 #ifdef _MSC_VER
   char* envVal = nullptr;
   size_t envLen = 0;
-  if (_dupenv_s(&envVal, &envLen, "OCTARINE_SAVE_PATH") == 0 && envVal != nullptr) {
+  if (_dupenv_s(&envVal, &envLen, kSavePathEnvVar) == 0 && envVal != nullptr) {
     path = envVal;
     free(envVal);
   }
 #else
-  if (const char* envVal = std::getenv("OCTARINE_SAVE_PATH")) {
+  if (const char* envVal = std::getenv(kSavePathEnvVar)) {
     path = envVal;
   }
 #endif
@@ -234,20 +261,40 @@ std::string ReadSavePathEnv() {
 
 bool HasExplicitSavePathEnv() { return !ReadSavePathEnv().empty(); }
 
-std::pair<std::string, std::string> ResolveSaveDataIdentity(const GameConfig* config) {
-  std::string org = "Octarine";
-  std::string app = "Engine";
+std::optional<std::string> ReadProjectIniBytes([[maybe_unused]] const GameConfig& config, const AssetPak* pak) {
+  if (pak != nullptr && pak->IsOpen() && pak->Contains(octarine::project::ProjectIni::kFilename)) {
+    if (SDL_IOStream* io = pak->OpenIO(octarine::project::ProjectIni::kFilename)) {
+      size_t dataSize = 0;
+      if (void* data = SDL_LoadFile_IO(io, &dataSize, true)) {
+        std::string text(static_cast<const char*>(data), dataSize);
+        SDL_free(data);
+        return text;
+      }
+    }
+  }
+#if !defined(OCTARINE_SHIPPED) || defined(OCTARINE_ALLOW_LOOSE_ASSETS)
+  const std::string iniPath = ResolveProjectIniPath(config.GetAssetPath());
+  size_t dataSize = 0;
+  if (void* data = SDL_LoadFile(iniPath.c_str(), &dataSize)) {
+    std::string text(static_cast<const char*>(data), dataSize);
+    SDL_free(data);
+    return text;
+  }
+#endif
+  return std::nullopt;
+}
+
+std::pair<std::string, std::string> ResolveSaveDataIdentity(const GameConfig* config, const AssetPak* pak = nullptr) {
+  std::string org = kDefaultOrgName;
+  std::string app = kDefaultAppName;
   if (config == nullptr || !config->HasLoadedConfig()) {
     return {org, app};
   }
   if (!config->GetGameTitle().empty()) {
     app = config->GetGameTitle();
   }
-  const std::string iniPath = ResolveProjectIniPath(config->GetAssetPath());
-  size_t dataSize = 0;
-  if (void* data = SDL_LoadFile(iniPath.c_str(), &dataSize)) {
-    const auto ini = octarine::project::ProjectIni::Parse(std::string_view(static_cast<const char*>(data), dataSize));
-    SDL_free(data);
+  if (const auto iniBytes = ReadProjectIniBytes(*config, pak)) {
+    const auto ini = octarine::project::ProjectIni::Parse(*iniBytes);
     if (!ini.vendor.empty()) {
       org = ini.vendor;
     }
@@ -256,6 +303,72 @@ std::pair<std::string, std::string> ResolveSaveDataIdentity(const GameConfig* co
     }
   }
   return {org, app};
+}
+
+bool LoadProjectConfig(Registry& registry, GameConfig& gameConfig, const std::string& effectivePath, bool useManifest) {
+  bool allowPak = useManifest;
+#ifdef OCTARINE_SHIPPED
+  allowPak = true;
+#endif
+
+  if (allowPak) {
+    const std::string pakPath = (std::filesystem::path(effectivePath) / AssetPak::kDefaultFilename).string();
+    auto& pak = registry.Set<AssetPak>(AssetPak());
+    if (pak.Open(pakPath) && pak.Contains(GameConfig::kConfigFileName)) {
+      if (SDL_IOStream* io = pak.OpenIO(GameConfig::kConfigFileName)) {
+        if (gameConfig.LoadConfigFromStream(io, effectivePath)) {
+          Logger::Info(std::string("Loaded ") + GameConfig::kConfigFileName + " directly from " +
+                       AssetPak::kDefaultFilename);
+          return true;
+        }
+      }
+    }
+#if defined(OCTARINE_SHIPPED) && !defined(OCTARINE_ALLOW_LOOSE_ASSETS)
+    Logger::Error(std::string("Shipped build requires a valid ") + AssetPak::kDefaultFilename + " containing " +
+                  GameConfig::kConfigFileName + " at: " + effectivePath);
+    return false;
+#endif
+  }
+
+  if (engine_bootstrap::platform::ShouldAttemptProjectLoad(effectivePath)) {
+    if (gameConfig.LoadConfigFromFile(effectivePath)) {
+      engine_bootstrap::editor::OnProjectLoaded(registry, effectivePath);
+      return true;
+    }
+    Logger::Warn("Failed to load project from path: " + effectivePath);
+  }
+  return false;
+}
+
+void SetupAssetCatalogAndPak(Registry& registry, AssetManager& assetManager, sol::state& lua,
+                             const GameConfig& gameConfig, bool useManifest) {
+  assetManager.LoadGameConfig(gameConfig);
+
+  bool allowManifest = useManifest;
+#ifdef OCTARINE_SHIPPED
+  allowManifest = true;
+#endif
+
+  const AssetPak* activePak = nullptr;
+  if (allowManifest) {
+    if (auto* existingPak = registry.TryGet<AssetPak>(); existingPak != nullptr && existingPak->IsOpen()) {
+      activePak = existingPak;
+    } else {
+      const std::string pakPath =
+          (std::filesystem::path(assetManager.GetBasePath()) / AssetPak::kDefaultFilename).string();
+      auto& pak = registry.Set<AssetPak>(AssetPak());
+      if (pak.Open(pakPath)) {
+        activePak = &pak;
+      }
+    }
+    if (activePak != nullptr) {
+      assetManager.SetAssetPak(activePak);
+    }
+  }
+
+  assetManager.GetCatalog().Build(assetManager.GetBasePath(), lua, gameConfig, allowManifest, activePak);
+  assetManager.GetCatalog().DumpToLog();
+  assetManager.GetCatalog().InstallLuaIdTable(lua);
 }
 }  // namespace
 
@@ -283,15 +396,7 @@ bool Game::Initialize(const std::string& assetPath) {
   // asset root. The Android/desktop fork lives in PlatformPaths, not here.
   engine_bootstrap::platform::ApplyDefaultBasePath(effectivePath);
 
-  bool projectLoaded = false;
-  if (engine_bootstrap::platform::ShouldAttemptProjectLoad(effectivePath)) {
-    if (gameConfig.LoadConfigFromFile(effectivePath)) {
-      engine_bootstrap::editor::OnProjectLoaded(*registry_, effectivePath);
-      projectLoaded = true;
-    } else {
-      Logger::Warn("Failed to load project from path: " + effectivePath);
-    }
-  }
+  const bool projectLoaded = LoadProjectConfig(*registry_, gameConfig, effectivePath, use_manifest_);
 
   InitUserSettings(*registry_, gameConfig, GetSaveDataPath());
 
@@ -302,18 +407,12 @@ bool Game::Initialize(const std::string& assetPath) {
     return false;
   }
 
-  if (!projectLoaded) {
-    if (startupDecision.defaultToEditor) {
-      Logger::Info("Starting in Editor Mode.");
-      gameConfig.SetIsEditorMode(true);
-      engine_bootstrap::editor::ApplyAudioPrefs(*registry_);
-      engine_bootstrap::editor::PauseForEditorSession(*registry_);
-    } else {
-      Logger::Error("Failed to load project from path: '" + effectivePath +
-                    "'. A valid project directory containing config.ini is required.");
-      return false;
-    }
-  } else if (startupDecision.defaultToEditor) {
+  if (!projectLoaded && !startupDecision.defaultToEditor) {
+    Logger::Error("Failed to load project from path: '" + effectivePath + "'. A valid project directory containing " +
+                  GameConfig::kConfigFileName + " is required.");
+    return false;
+  }
+  if (startupDecision.defaultToEditor) {
     Logger::Info("Starting in Editor Mode.");
     gameConfig.SetIsEditorMode(true);
     engine_bootstrap::editor::ApplyAudioPrefs(*registry_);
@@ -352,12 +451,12 @@ void Game::InitImGuiBackend() {
   // outlive InitImGui — keep it static.
   static std::string imguiIniPath;
   if (gameConfig.HasLoadedConfig()) {
-    imguiIniPath = gameConfig.GetAssetPath() + "/imgui.ini";
-  } else if (char* prefPath = SDL_GetPrefPath("Octarine", "Engine")) {
-    imguiIniPath = std::string(prefPath) + "imgui_editor.ini";
+    imguiIniPath = gameConfig.GetAssetPath() + "/" + kImGuiIniFilename;
+  } else if (char* prefPath = SDL_GetPrefPath(kDefaultOrgName, kDefaultAppName)) {
+    imguiIniPath = std::string(prefPath) + kImGuiEditorIniFilename;
     SDL_free(prefPath);
   } else {
-    imguiIniPath = "imgui_editor.ini";
+    imguiIniPath = kImGuiEditorIniFilename;
   }
   runtime_.InitImGui(imguiIniPath.c_str());
 
@@ -410,7 +509,7 @@ bool Game::CreateWindowAndScene(bool projectLoaded) {
   gameConfig.windowHeight = projectLoaded ? gameConfig.GetDefaultHeight() : Constants::kDefaultWindowHeight;
   const std::string title = projectLoaded
                                 ? gameConfig.GetGameTitle()
-                                : (gameConfig.IsEditorMode() ? "Octarine Engine - Editor" : "Octarine Engine");
+                                : (gameConfig.IsEditorMode() ? kDefaultEditorWindowTitle : kDefaultWindowTitle);
 
   const auto [initialWidth, initialHeight] = ResolveInitialWindowSize(*registry_, gameConfig, headless_);
   if (!runtime_.CreateWindow(title, initialWidth, initialHeight, headless_)) {
@@ -448,9 +547,9 @@ std::string Game::GetSaveDataPath() {
   }
 
   // Identity precedence: project.ini vendor/name > config.ini GameTitle > engine defaults.
-  // project.ini is read via SDL so it resolves inside an APK or .app bundle the same way
-  // config.ini does.
-  const auto [org, app] = ResolveSaveDataIdentity(registry_->TryGet<GameConfig>());
+  // project.ini is read from AssetPak when open, or via SDL so it resolves inside an APK or .app
+  // bundle the same way config.ini does.
+  const auto [org, app] = ResolveSaveDataIdentity(registry_->TryGet<GameConfig>(), registry_->TryGet<AssetPak>());
 
   if (char* prefPath = SDL_GetPrefPath(org.c_str(), app.c_str())) {
     save_data_path_ = prefPath;
@@ -537,7 +636,7 @@ bool Game::Bake(const std::string& assetPath, const std::string& scriptsOverride
   {
     Game game;  // SDL-free constructor — allocates Registry/EventBus/Renderer, opens no window.
     game.bake_mode_ = true;
-    game.startup_mode_ = "bake";
+    game.startup_mode_ = kStartupModeBake;
     ok = game.RunBakeValidation(assetPath, scriptsOverrideDir);
   }
 
@@ -604,7 +703,7 @@ bool Game::RunBakeValidation(const std::string& assetPath, const std::string& sc
     return false;
   }
 
-  const std::string manifestPath = (std::filesystem::path(assetPath) / "asset_manifest.lua").string();
+  const std::string manifestPath = (std::filesystem::path(assetPath) / AssetCatalog::kManifestFilename).string();
   const bool wrote = assetManager.GetCatalog().WriteManifest(manifestPath, assetPath);
   if (wrote) {
     Logger::Info("Bake: wrote " + std::to_string(assetManager.GetCatalog().Size()) + " entries to " + manifestPath);
@@ -617,7 +716,7 @@ bool Game::RunBakeValidation(const std::string& assetPath, const std::string& sc
   // SDL_Init(0) only — no video/audio subsystems).
   std::vector<std::string> atlasFiles;
   if (wrote && TTF_Init()) {
-    const std::filesystem::path atlasDir = std::filesystem::path(assetPath) / "atlases";
+    const std::filesystem::path atlasDir = std::filesystem::path(assetPath) / kAtlasesDirName;
     std::error_code ec;
     std::filesystem::create_directories(atlasDir, ec);
     const auto codepoints = AtlasBaker::DefaultAsciiPrintable();
@@ -629,8 +728,8 @@ bool Game::RunBakeValidation(const std::string& assetPath, const std::string& sc
                      " — skipping atlas.");
         continue;
       }
-      const std::string pngPath = (atlasDir / (id + ".atlas.png")).string();
-      const std::string luaPath = (atlasDir / (id + ".atlas.lua")).string();
+      const std::string pngPath = (atlasDir / (id + kAtlasPngSuffix)).string();
+      const std::string luaPath = (atlasDir / (id + kAtlasLuaSuffix)).string();
       if (AtlasBaker::Bake(font, entry.fontSize, codepoints, pngPath, luaPath)) {
         atlasFiles.push_back(pngPath);
         atlasFiles.push_back(luaPath);
@@ -647,7 +746,7 @@ bool Game::RunBakeValidation(const std::string& assetPath, const std::string& sc
   // builds carry the loudness-aligned audio while dev tree (and dev runs) stay untouched.
   std::map<std::string, std::string> audioOverrides;
   if (wrote) {
-    const std::filesystem::path normRoot = std::filesystem::path(assetPath) / "normalized";
+    const std::filesystem::path normRoot = std::filesystem::path(assetPath) / kNormalizedDirName;
     for (const auto& [id, entry] : assetManager.GetCatalog().Entries()) {
       if (entry.type != AssetType::Audio || !entry.normalize) continue;
       const std::filesystem::path src(entry.fullPath);
@@ -670,22 +769,31 @@ bool Game::RunBakeValidation(const std::string& assetPath, const std::string& sc
     std::vector<std::string> extraFiles = atlasFiles;
     std::map<std::string, std::string> pakOverrides = audioOverrides;
 
-    // Collect Lua scripts: root *.lua (excluding asset_manifest.lua) and scripts/**/*.lua.
+    // Collect Lua scripts: root *.lua (including asset_manifest.lua) and scripts/**/*.lua.
     std::error_code ec;
     for (const auto& entry : std::filesystem::directory_iterator(assetPath, ec)) {
-      if (entry.is_regular_file(ec) && entry.path().extension() == ".lua") {
-        if (entry.path().filename() != "asset_manifest.lua") {
+      if (entry.is_regular_file(ec) && entry.path().extension() == kLuaExtension) {
+        extraFiles.push_back(entry.path().lexically_normal().string());
+      }
+    }
+    const std::filesystem::path scriptsDir = std::filesystem::path(assetPath) / kScriptsDirName;
+    if (std::filesystem::is_directory(scriptsDir, ec)) {
+      for (const auto& entry : std::filesystem::recursive_directory_iterator(scriptsDir, ec)) {
+        if (entry.is_regular_file(ec) && entry.path().extension() == kLuaExtension) {
           extraFiles.push_back(entry.path().lexically_normal().string());
         }
       }
     }
-    const std::filesystem::path scriptsDir = std::filesystem::path(assetPath) / "scripts";
-    if (std::filesystem::is_directory(scriptsDir, ec)) {
-      for (const auto& entry : std::filesystem::recursive_directory_iterator(scriptsDir, ec)) {
-        if (entry.is_regular_file(ec) && entry.path().extension() == ".lua") {
-          extraFiles.push_back(entry.path().lexically_normal().string());
-        }
-      }
+
+    // Embed config.ini and project.ini into the pak so shipped builds need no loose config files.
+    const std::filesystem::path configFile = std::filesystem::path(assetPath) / GameConfig::kConfigFileName;
+    if (std::filesystem::is_regular_file(configFile, ec)) {
+      extraFiles.push_back(configFile.lexically_normal().string());
+    }
+    const std::filesystem::path projectIniFile =
+        std::filesystem::path(assetPath) / octarine::project::ProjectIni::kFilename;
+    if (std::filesystem::is_regular_file(projectIniFile, ec)) {
+      extraFiles.push_back(projectIniFile.lexically_normal().string());
     }
 
     // If an external scripts directory is provided (e.g. pre-compiled bytecode staged by CMake),
@@ -693,7 +801,7 @@ bool Game::RunBakeValidation(const std::string& assetPath, const std::string& sc
     if (!scriptsOverrideDir.empty()) {
       const std::filesystem::path overrideRoot(scriptsOverrideDir);
       for (const auto& file : extraFiles) {
-        if (std::filesystem::path(file).extension() == ".lua") {
+        if (std::filesystem::path(file).extension() == kLuaExtension) {
           const std::filesystem::path rel = std::filesystem::relative(file, assetPath, ec);
           if (!ec && !rel.empty()) {
             const std::filesystem::path staged = overrideRoot / rel;
@@ -705,7 +813,7 @@ bool Game::RunBakeValidation(const std::string& assetPath, const std::string& sc
       }
     }
 
-    const std::string pakPath = (std::filesystem::path(assetPath) / "asset_bundle.pak").string();
+    const std::string pakPath = (std::filesystem::path(assetPath) / AssetPak::kDefaultFilename).string();
     if (!AssetPak::Pack(assetManager.GetCatalog(), pakPath, assetPath, extraFiles, pakOverrides)) {
       Logger::Error("Bake: AssetPak::Pack failed for " + pakPath);
       return false;
@@ -793,29 +901,33 @@ void Game::Setup() {
   LuaSystemRegistry::clear();
   LuaSystemRegistry::registerSystem(inputSystem);
   engine_bootstrap::InstallLuaLibraries(lua);
+#ifndef OCTARINE_SHIPPED
   // Snapshot stdlib globals before binding so the API manifest can diff out everything the
   // engine adds. Cheap; the actual dump below only fires in editor mode or via env override.
   const auto preBindingGlobals = LuaApiManifest::SnapshotGlobals(lua);
+#endif
   engine_bootstrap::InstallPoolAndSingletons(*registry_);
   scriptSystem.Func().CreateLuaBindings(lua);
   engine_bootstrap::InstallLuaModules(lua, *this);
   LuaSystemRegistry::bindAll(lua);
   engine_bootstrap::SetCommonLuaGlobals(lua, gameConfig, startup_mode_);
 
+#ifndef OCTARINE_SHIPPED
   // Emit the EmmyLua API stub once per Setup, after the full surface — globals, modules,
   // system tables — is installed. OCTARINE_DUMP_LUA_API overrides the destination; otherwise
   // editor sessions refresh <project>/types/octarine_api.lua so IDE autocomplete (LuaLS
-  // workspace.library) tracks the live engine surface. Player builds never write it.
+  // workspace.library) tracks the live engine surface. Shipped builds compile this out.
   if (!LuaApiManifest::MaybeDumpFromEnv(lua, preBindingGlobals) &&
-      (gameConfig.IsEditorMode() || startup_mode_ == "editor")) {
+      (gameConfig.IsEditorMode() || startup_mode_ == kStartupModeEditor)) {
     LuaApiManifest::WriteProjectStub(lua, preBindingGlobals, gameConfig.GetAssetPath());
   }
+#endif
 
-  if (startup_mode_ == "editor") {
+  if (startup_mode_ == kStartupModeEditor) {
     gameConfig.SetIsEditorMode(true);
   }
 
-  if (IsBenchMode() && startup_mode_ != "editor") {
+  if (IsBenchMode() && startup_mode_ != kStartupModeEditor) {
     // Bench runs shouldn't pay for debug overlays. Force-zero every toggle that would add per-frame
     // work. These EngineOptions fields exist in every build (and read as no-ops without ImGui); the
     // editor-only window toggles move into EditorBootstrap (no-op in player builds).
@@ -830,37 +942,7 @@ void Game::Setup() {
 
   auto& assetManager = registry_->Get<AssetManager>();
   if (gameConfig.HasLoadedConfig()) {
-    assetManager.LoadGameConfig(gameConfig);
-
-    // Discover every available asset + its sidecar metadata up front. Loads nothing — the
-    // catalog is the index Acquire loads from. Built before LoadGame so the startup
-    // script and scene loads can resolve ids against it.
-    //
-    // Dev-vs-shipped gate: a shipped build (OCTARINE_SHIPPED) loads the baked manifest and skips
-    // the scan — required inside a read-only bundle. A dev build always scans (live files are the
-    // truth) unless --use-manifest is passed to exercise the manifest branch from a dev binary.
-    bool allowManifest = use_manifest_;
-#ifdef OCTARINE_SHIPPED
-    allowManifest = true;
-#endif
-    assetManager.GetCatalog().Build(assetManager.GetBasePath(), lua, gameConfig, allowManifest);
-    assetManager.GetCatalog().DumpToLog();
-
-    // Shipped builds (and a dev build with --use-manifest) probe for an asset_bundle.pak
-    // beside the manifest. When present, AssetManager reads every asset out of it instead of
-    // the loose tree — same code paths, different SDL_IOStream source. Absence is fine:
-    // dev/bootstrap projects haven't baked one yet.
-    if (allowManifest) {
-      const std::string pakPath = (std::filesystem::path(assetManager.GetBasePath()) / "asset_bundle.pak").string();
-      auto& pak = registry_->Set<AssetPak>(AssetPak());
-      if (pak.Open(pakPath)) {
-        assetManager.SetAssetPak(&pak);
-      }
-    }
-
-    // Expose the global `assets` table (id -> id, raises on typo) so scripts can reference
-    // ids safely before LoadGame runs the startup script.
-    assetManager.GetCatalog().InstallLuaIdTable(lua);
+    SetupAssetCatalogAndPak(*registry_, assetManager, lua, gameConfig, use_manifest_);
   }
 
   // Audio must be live before LoadGame: the startup script may call load_asset for audio_clip
