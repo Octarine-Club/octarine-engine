@@ -104,7 +104,7 @@ class RenderTextSystem {
     const float w = effectivelyFixed ? it->second.width : it->second.width * zoom;
     const float h = effectivelyFixed ? it->second.height : it->second.height * zoom;
 
-    auto& cmd = renderQueue.EmplaceText(static_cast<unsigned int>(renderLayer), text.position.y, it->second.texture);
+    auto& cmd = renderQueue.EmplaceText(static_cast<unsigned int>(renderLayer), origin.y, it->second.texture);
     cmd.destRect = {x, y, w, h};
     cmd.texture = it->second.texture;
   }
