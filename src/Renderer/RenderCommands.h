@@ -49,6 +49,7 @@ struct SquareCommand {
 struct TextCommand {
   SDL_FRect destRect{};
   SDL_Texture* texture{};
+  SDL_Color colorMod{Constants::kUint8Max, Constants::kUint8Max, Constants::kUint8Max, Constants::kUint8Max};
 };
 
 struct CircleCommand {

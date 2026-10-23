@@ -31,17 +31,28 @@ struct LuaBinding<UIButtonComponent> {
     }
     auto action = SafeGetOptionalValue<std::string>(t, "action", "");
 
-    return UIButtonComponent(isActive, isFixed, t, clickFn, std::move(key), std::move(controllerButton),
-                             std::move(action));
+    UIButtonComponent btn(isActive, isFixed, t, clickFn, std::move(key), std::move(controllerButton),
+                          std::move(action));
+    if (t["hover_color"].is<sol::table>()) {
+      btn.hasHoverColor = true;
+      btn.hoverColor = SafeGetColor(t, "hover_color", 255, 255, 255, 255);
+    }
+    if (t["press_color"].is<sol::table>()) {
+      btn.hasPressColor = true;
+      btn.pressColor = SafeGetColor(t, "press_color", 255, 255, 255, 255);
+    }
+    return btn;
   }
 
   static void bindUsertype(sol::state& lua) {
     lua.new_usertype<UIButtonComponent>(
-        kUsertypeName, "is_active", &UIButtonComponent::isActive, "is_fixed", &UIButtonComponent::isFixed, "key",
-        &UIButtonComponent::key, "input_key", &UIButtonComponent::key, "controller_button",
-        &UIButtonComponent::controllerButton, "gamepad_button", &UIButtonComponent::controllerButton, "action",
-        &UIButtonComponent::action, "on_click", &UIButtonComponent::clickFunction, "trigger",
-        [](UIButtonComponent& self, sol::optional<Entity> entity) {
+        kUsertypeName, "is_active", &UIButtonComponent::isActive, "is_fixed", &UIButtonComponent::isFixed, "is_hovered",
+        &UIButtonComponent::isHovered, "is_pressed", &UIButtonComponent::isPressed, "has_hover_color",
+        &UIButtonComponent::hasHoverColor, "has_press_color", &UIButtonComponent::hasPressColor, "hover_color",
+        &UIButtonComponent::hoverColor, "press_color", &UIButtonComponent::pressColor, "key", &UIButtonComponent::key,
+        "input_key", &UIButtonComponent::key, "controller_button", &UIButtonComponent::controllerButton,
+        "gamepad_button", &UIButtonComponent::controllerButton, "action", &UIButtonComponent::action, "on_click",
+        &UIButtonComponent::clickFunction, "trigger", [](UIButtonComponent& self, sol::optional<Entity> entity) {
           if (!self.isActive) return false;
           if (self.clickFunction != sol::lua_nil) {
             auto btnTable = self.buttonTable ? *self.buttonTable : sol::lua_nil;

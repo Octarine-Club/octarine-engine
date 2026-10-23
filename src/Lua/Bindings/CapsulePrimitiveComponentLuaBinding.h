@@ -26,6 +26,7 @@ struct LuaBinding<CapsulePrimitiveComponent> {
     const auto filled = SafeGetOptionalValue<bool>(t, "filled", true);
     CapsulePrimitiveComponent cap(start, end, layer, radius, color, fixed, filled, thickness);
     cap.blendMode = octarine::BlendModeFromString(SafeGetOptionalValue<std::string>(t, "blend_mode", "blend"));
+    cap.fillRatio = SafeGetOptionalValue<float>(t, "fill_ratio", 1.0f);
     return cap;
   }
 
@@ -34,7 +35,8 @@ struct LuaBinding<CapsulePrimitiveComponent> {
         kUsertypeName, "start", &CapsulePrimitiveComponent::start, "end", &CapsulePrimitiveComponent::end, "layer",
         &CapsulePrimitiveComponent::layer, "radius", &CapsulePrimitiveComponent::radius, "thickness",
         &CapsulePrimitiveComponent::thickness, "color", &CapsulePrimitiveComponent::color, "is_fixed",
-        &CapsulePrimitiveComponent::isFixed, "filled", &CapsulePrimitiveComponent::filled, "blend_mode",
+        &CapsulePrimitiveComponent::isFixed, "filled", &CapsulePrimitiveComponent::filled, "fill_ratio",
+        &CapsulePrimitiveComponent::fillRatio, "blend_mode",
         sol::property([](const CapsulePrimitiveComponent& cp) { return octarine::ToString(cp.blendMode); },
                       [](CapsulePrimitiveComponent& cp, const std::string_view mode) {
                         cp.blendMode = octarine::BlendModeFromString(mode, cp.blendMode);

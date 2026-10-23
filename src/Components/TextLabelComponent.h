@@ -21,6 +21,11 @@ struct TextLabelComponent {
   bool isFixed;
   TextAlign hAlign = TextAlign::Start;
   TextAlign vAlign = TextAlign::Start;
+  int wrapWidth =
+      0;  // <= 0 = single-line; > 0 = wrap at pixel width (or auto-wrap to UIRect width when wrapToRect is true)
+  bool wrapToRect = false;
+  glm::vec2 shadowOffset{0.0f, 0.0f};
+  octarine::Color shadowColor{0, 0, 0, 200};
 
   explicit TextLabelComponent(const glm::vec2 t_position = glm::vec2(0, 0), const int t_layer = 0,
                               std::string t_text = "", std::string t_fontId = "",

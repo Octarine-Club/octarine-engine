@@ -45,10 +45,6 @@ class UIButtonSystem {
   }
 
   void OnMouseInput(const MouseInputEvent& event) {
-    if (event.event.type != SDL_EVENT_MOUSE_BUTTON_DOWN || event.event.button != 1) {
-      return;
-    }
-
     const auto mousePos = GetTransformedMousePos(event);
     if (!mousePos || !EnsureMouseQuery()) {
       return;
@@ -57,6 +53,33 @@ class UIButtonSystem {
     const auto* cameraComp = registry_->TryGet<CameraComponent>();
     const octarine::Rect camera = cameraComp ? cameraComp->viewport : octarine::Rect{};
     const float zoom = (cameraComp && cameraComp->zoom > 0.001f) ? cameraComp->zoom : 1.0f;
+
+    if (event.event.type == SDL_EVENT_MOUSE_MOTION) {
+      mouseQuery_->ForEach([&](Entity entity, UIButtonComponent& button, const GlobalTransformComponent* transform,
+                               const BoxColliderComponent* collider) {
+        if (!button.isActive) {
+          button.isHovered = false;
+          button.isPressed = false;
+          return;
+        }
+        const bool hit = HitTest(entity, button, transform, collider, camera, zoom, mousePos->x, mousePos->y);
+        button.isHovered = hit;
+        if (!hit) button.isPressed = false;
+      });
+      return;
+    }
+
+    if (event.event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.event.button == 1) {
+      mouseQuery_->ForEach([&](Entity /*entity*/, UIButtonComponent& button,
+                               const GlobalTransformComponent* /*transform*/,
+                               const BoxColliderComponent* /*collider*/) { button.isPressed = false; });
+      return;
+    }
+
+    if (event.event.type != SDL_EVENT_MOUSE_BUTTON_DOWN || event.event.button != 1) {
+      return;
+    }
+
     auto handler = [&](Entity entity, UIButtonComponent& button, const GlobalTransformComponent* transform,
                        const BoxColliderComponent* collider) {
       if (!button.isActive) {
@@ -65,6 +88,8 @@ class UIButtonSystem {
       if (!HitTest(entity, button, transform, collider, camera, zoom, mousePos->x, mousePos->y)) {
         return;
       }
+      button.isHovered = true;
+      button.isPressed = true;
       TriggerButton(entity, button);
     };
     mouseQuery_->ForEach(handler);

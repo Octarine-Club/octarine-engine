@@ -21,9 +21,15 @@ struct LuaBinding<SquarePrimitiveComponent> {
     const auto width = SafeGetOptionalValue<float>(t, "width", 0.0f);
     const auto height = SafeGetOptionalValue<float>(t, "height", 0.0f);
     const octarine::Color color = SafeGetColor(t, "color");
-    const auto fixed = SafeGetOptionalValue<bool>(t, "fixed", false);
+    const auto fixed = SafeGetOptionalValue<bool>(t, "fixed", SafeGetOptionalValue<bool>(t, "is_fixed", false));
     SquarePrimitiveComponent square(position, layer, width, height, color, fixed);
     square.blendMode = octarine::BlendModeFromString(SafeGetOptionalValue<std::string>(t, "blend_mode", "blend"));
+    square.borderThickness = SafeGetOptionalValue<float>(t, "border_thickness", 0.0f);
+    if (t["border_color"].valid()) {
+      square.borderColor = SafeGetColor(t, "border_color", 255, 255, 255, 255);
+    }
+    square.cornerRadius = SafeGetOptionalValue<float>(t, "corner_radius", 0.0f);
+    square.fillRatio = SafeGetOptionalValue<float>(t, "fill_ratio", 1.0f);
     return square;
   }
 
@@ -31,7 +37,10 @@ struct LuaBinding<SquarePrimitiveComponent> {
     lua.new_usertype<SquarePrimitiveComponent>(
         kUsertypeName, "width", &SquarePrimitiveComponent::width, "height", &SquarePrimitiveComponent::height, "color",
         &SquarePrimitiveComponent::color, "position", &SquarePrimitiveComponent::position, "layer",
-        &SquarePrimitiveComponent::layer, "is_fixed", &SquarePrimitiveComponent::isFixed, "blend_mode",
+        &SquarePrimitiveComponent::layer, "is_fixed", &SquarePrimitiveComponent::isFixed, "border_thickness",
+        &SquarePrimitiveComponent::borderThickness, "border_color", &SquarePrimitiveComponent::borderColor,
+        "corner_radius", &SquarePrimitiveComponent::cornerRadius, "fill_ratio", &SquarePrimitiveComponent::fillRatio,
+        "blend_mode",
         sol::property([](const SquarePrimitiveComponent& s) { return octarine::ToString(s.blendMode); },
                       [](SquarePrimitiveComponent& s, const std::string_view mode) {
                         s.blendMode = octarine::BlendModeFromString(mode, s.blendMode);

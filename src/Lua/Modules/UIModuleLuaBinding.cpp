@@ -4,10 +4,12 @@
 
 #include "Components/UIAnchorComponent.h"
 #include "Components/UICanvasComponent.h"
+#include "Components/UIFlexComponent.h"
 #include "Components/UIRectComponent.h"
 #include "Components/UIZIndexComponent.h"
 #include "ECS/Registry.h"
 #include "General/Logger.h"
+#include "Lua/Bindings/UIFlexComponentLuaBinding.h"
 #include "Lua/LuaBindingContext.h"
 
 namespace {
@@ -99,9 +101,20 @@ void LuaModuleBinding<UIModule>::install(sol::state& lua, LuaBindingContext& ctx
     }
   });
 
-  // Phase 4 slot — warns and does nothing until flex containers are implemented.
-  ui.set_function("flex", [](const Entity /*entity*/, const sol::optional<sol::table>& /*opts*/) {
-    Logger::Warn("ui.flex: flex containers are not yet implemented. This call has no effect.");
+  ui.set_function("flex", [&ctx](const Entity entity, const sol::optional<sol::table>& opts) {
+    Registry* r = ctx.GetRegistry();
+    UIFlexComponent flex;
+    if (opts) {
+      flex = LuaBinding<UIFlexComponent>::fromLua(*opts);
+    }
+    if (r->HasComponent<UIFlexComponent>(entity)) {
+      r->GetComponent<UIFlexComponent>(entity) = flex;
+    } else {
+      r->AddComponent(entity, flex);
+    }
+    if (!r->HasComponent<UIRectComponent>(entity)) {
+      r->AddComponent(entity, UIRectComponent{});
+    }
   });
 
   lua["ui"] = ui;
