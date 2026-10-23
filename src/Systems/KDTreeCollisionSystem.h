@@ -43,6 +43,14 @@ enum class ColliderShape : uint8_t {
   Line = 4,
 };
 
+inline bool IsFiniteFloat(float f) noexcept {
+  volatile float vf = f;
+  uint32_t b;
+  float v = vf;
+  std::memcpy(&b, &v, sizeof(b));
+  return (b & 0x7F800000U) < 0x7F800000U;
+}
+
 namespace octarine::collision {
 
 [[nodiscard]] inline float Cross2D(const glm::vec2 u, const glm::vec2 v) { return u.x * v.y - u.y * v.x; }
@@ -511,17 +519,29 @@ class KDTreeCollisionSystem {
     if (q.GetCount() == 0) return;
     q.ForEach([&](Entity entity, const GlobalTransformComponent& transform, const auto& collider,
                   const EntityMaskComponent& entityMask) {
-      boxes.push_back(BuildBox(entity, transform, collider, entityMask));
+      Box b = BuildBox(entity, transform, collider, entityMask);
+      if (IsFiniteFloat(b.minX) && IsFiniteFloat(b.minY) && IsFiniteFloat(b.maxX) && IsFiniteFloat(b.maxY) &&
+          IsFiniteFloat(b.cx) && IsFiniteFloat(b.cy)) {
+        boxes.push_back(b);
+      }
     });
   }
 
   template <typename QueryT>
   static void AppendBoxesAsync(QueryT& q, std::vector<Box>& boxes, std::atomic<size_t>& nextIndex) {
     if (q.GetCount() == 0) return;
+    const size_t maxBoxes = boxes.size();
     q.ParallelForEach([&](Entity entity, const GlobalTransformComponent& transform, const auto& collider,
                           const EntityMaskComponent& entityMask) {
+      Box b = BuildBox(entity, transform, collider, entityMask);
+      if (!IsFiniteFloat(b.minX) || !IsFiniteFloat(b.minY) || !IsFiniteFloat(b.maxX) || !IsFiniteFloat(b.maxY) ||
+          !IsFiniteFloat(b.cx) || !IsFiniteFloat(b.cy)) {
+        return;
+      }
       const size_t idx = nextIndex.fetch_add(1, std::memory_order_relaxed);
-      boxes[idx] = BuildBox(entity, transform, collider, entityMask);
+      if (idx < maxBoxes) {
+        boxes[idx] = b;
+      }
     });
   }
 
@@ -567,7 +587,8 @@ class KDTreeCollisionSystem {
 
     PROFILE_NAMED_SCOPE("Gather Boxes");
     std::vector<Box> boxes = std::move(cachedBoxes_);
-    boxes.resize(TotalColliderCount());
+    const size_t totalColliders = TotalColliderCount();
+    boxes.resize(totalColliders);
     std::atomic<size_t> nextIndex{0};
 
     AppendBoxesAsync(*query_, boxes, nextIndex);
@@ -575,6 +596,9 @@ class KDTreeCollisionSystem {
     AppendBoxesAsync(*capsuleQuery_, boxes, nextIndex);
     AppendBoxesAsync(*triangleQuery_, boxes, nextIndex);
     AppendBoxesAsync(*lineQuery_, boxes, nextIndex);
+
+    const size_t gathered = nextIndex.load(std::memory_order_relaxed);
+    boxes.resize(std::min(gathered, totalColliders));
 
     PROFILE_COUNTER_SET("Collision: Box count", static_cast<long long>(boxes.size()));
 
@@ -832,15 +856,31 @@ class KDTreeCollisionSystem {
     {
       ACCUMULATE_PROFILE_SCOPE("Bipartite Sort Phase");
       if (dimension == 0) {
-        std::sort(boxes.begin() + begin1, boxes.begin() + end1,
-                  [](const Box& a, const Box& b) { return a.minX < b.minX; });
-        std::sort(boxes.begin() + begin2, boxes.begin() + end2,
-                  [](const Box& a, const Box& b) { return a.minX < b.minX; });
+        std::sort(boxes.begin() + begin1, boxes.begin() + end1, [](const Box& a, const Box& b) {
+          const bool aFin = IsFiniteFloat(a.minX);
+          const bool bFin = IsFiniteFloat(b.minX);
+          if (!aFin || !bFin) return aFin && !bFin;
+          return a.minX < b.minX;
+        });
+        std::sort(boxes.begin() + begin2, boxes.begin() + end2, [](const Box& a, const Box& b) {
+          const bool aFin = IsFiniteFloat(a.minX);
+          const bool bFin = IsFiniteFloat(b.minX);
+          if (!aFin || !bFin) return aFin && !bFin;
+          return a.minX < b.minX;
+        });
       } else {
-        std::sort(boxes.begin() + begin1, boxes.begin() + end1,
-                  [](const Box& a, const Box& b) { return a.minY < b.minY; });
-        std::sort(boxes.begin() + begin2, boxes.begin() + end2,
-                  [](const Box& a, const Box& b) { return a.minY < b.minY; });
+        std::sort(boxes.begin() + begin1, boxes.begin() + end1, [](const Box& a, const Box& b) {
+          const bool aFin = IsFiniteFloat(a.minY);
+          const bool bFin = IsFiniteFloat(b.minY);
+          if (!aFin || !bFin) return aFin && !bFin;
+          return a.minY < b.minY;
+        });
+        std::sort(boxes.begin() + begin2, boxes.begin() + end2, [](const Box& a, const Box& b) {
+          const bool aFin = IsFiniteFloat(a.minY);
+          const bool bFin = IsFiniteFloat(b.minY);
+          if (!aFin || !bFin) return aFin && !bFin;
+          return a.minY < b.minY;
+        });
       }
     }
 
@@ -937,12 +977,20 @@ class KDTreeCollisionSystem {
       ACCUMULATE_PROFILE_SCOPE("Find Median");
       std::nth_element(boxes.begin() + begin, boxes.begin() + mid, boxes.begin() + end,
                        [dimension](const Box& a, const Box& b) {
-                         if (dimension == 0) return a.maxX + a.minX < b.maxX + b.minX;
-                         return a.maxY + a.minY < b.maxY + b.minY;
+                         const float va = (dimension == 0) ? (a.maxX + a.minX) : (a.maxY + a.minY);
+                         const float vb = (dimension == 0) ? (b.maxX + b.minX) : (b.maxY + b.minY);
+                         const bool aFin = IsFiniteFloat(va);
+                         const bool bFin = IsFiniteFloat(vb);
+                         if (!aFin || !bFin) return aFin && !bFin;
+                         return va < vb;
                        });
       medianValue = (dimension == 0)
                         ? (boxes[static_cast<size_t>(mid)].minX + boxes[static_cast<size_t>(mid)].maxX) * kHalf
                         : (boxes[static_cast<size_t>(mid)].minY + boxes[static_cast<size_t>(mid)].maxY) * kHalf;
+      if (!IsFiniteFloat(medianValue)) {
+        FindIntersectionsBruteForce(boxes, begin, end, intersectingPairs);
+        return;
+      }
     }
 
     const auto [leftEnd, rightStart] = PartitionBoxes(boxes, begin, end, dimension, medianValue);
