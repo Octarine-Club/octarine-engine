@@ -168,10 +168,13 @@ Renders text using a loaded font.
 
 Attaches custom Lua behavior to an entity.
 
-| Field          | Type       | Description                                               |
-|----------------|------------|-----------------------------------------------------------|
-| `on_update`    | `function` | Called every frame: `function(self, entity, delta_time)`. |
-| `on_debug_gui` | `function` | Called during ImGui pass: `function(self, entity)`.       |
+| Field               | Type       | Description                                                            |
+|---------------------|------------|------------------------------------------------------------------------|
+| `on_update`         | `function` | Called every frame: `function(self, entity, delta_time)`.              |
+| `on_collision`      | `function` | Called on collision enter: `function(self, entity, other)`.            |
+| `on_collision_exit` | `function` | Called on collision exit: `function(self, entity, other)`.             |
+| `on_debug_gui`      | `function` | Called during ImGui pass: `function(self, entity)`.                    |
+| `source`            | `string`   | Optional project-relative script path returning the callback table (enables hot reload). |
 
 ### `box_collider`
 
@@ -184,25 +187,15 @@ Defines a rectangular area for collision detection.
 | `offset`         | `table {x, y}` | `{x=0, y=0}` | Offset from the entity's transform position. |
 | `collision_mask` | `number`       | `1`          | Bitmask for filtering collisions.            |
 
-### `projectile_emitter`
+### `circle_collider`
 
-Automatically spawns projectile entities at a set interval.
+Defines a circular area for collision detection.
 
-| Field                 | Type           | Default      | Description                             |
-|-----------------------|----------------|--------------|-----------------------------------------|
-| `projectile_velocity` | `table {x, y}` | `{x=0, y=0}` | Velocity of spawned projectiles.        |
-| `repeat_frequency`    | `number`       | `1.0`        | Time in seconds between spawns.         |
-| `projectile_duration` | `number`       | `1.0`        | Lifetime of projectiles in seconds.     |
-| `hit_damage`          | `number`       | `10`         | Damage value assigned to projectiles.   |
-| `collision_mask`      | `number`       | `1`          | Collision mask for spawned projectiles. |
-
-### `health`
-
-Tracks an entity's health.
-
-| Field        | Type     | Default | Description               |
-|--------------|----------|---------|---------------------------|
-| `max_health` | `number` | `100`   | The maximum health value. |
+| Field            | Type           | Default      | Description                                  |
+|------------------|----------------|--------------|----------------------------------------------|
+| `radius`         | `number`       | `0.5`        | Radius of the collider circle.               |
+| `offset`         | `table {x, y}` | `{x=0, y=0}` | Offset from the entity's transform position. |
+| `collision_mask` | `number`       | `1`          | Bitmask for filtering collisions.            |
 
 ### `camera_follow`
 
@@ -306,8 +299,8 @@ Components compose naturally. These combinations cover most game object archetyp
         transform      = { position = { x = 200, y = 300 } },
         sprite         = { texture_asset_id = "player", width = 32, height = 32, layer = 2 },
         rigidbody      = { velocity = { x = 0, y = 0 } },
-        box_collider   = { width = 32, height = 32 },
-        health         = { max_health = 100, current_health = 100 },
+        entity_mask    = { value = 1 },
+        box_collider   = { width = 32, height = 32, collision_mask = 2 },
         camera_follow  = {},
         audio_listener = {},
         script         = { speed = 100, on_update = player_update },
@@ -322,17 +315,17 @@ Components compose naturally. These combinations cover most game object archetyp
     tag  = "enemy",
     name = "Enemy",
     components = {
-        transform          = { position = { x = 600, y = 300 } },
-        sprite             = { texture_asset_id = "enemy", width = 32, height = 32, layer = 2 },
-        rigidbody          = { velocity = { x = 0, y = 0 } },
-        box_collider       = { width = 32, height = 32 },
-        health             = { max_health = 50, current_health = 50 },
-        projectile_emitter = {
-            projectile_velocity = { x = -150, y = 0 },
-            projectile_duration = 4.0,
-            repeat_frequency    = 2.0,
-            hit_damage          = 10,
-            friendly            = false,
+        transform    = { position = { x = 600, y = 300 } },
+        sprite       = { texture_asset_id = "enemy", width = 32, height = 32, layer = 2 },
+        rigidbody    = { velocity = { x = -60, y = 0 } },
+        entity_mask  = { value = 2 },
+        box_collider = { width = 32, height = 32, collision_mask = 1 },
+        script       = {
+            hp = 50,
+            on_collision = function(self, entity, other)
+                self.hp = self.hp - 10
+                if self.hp <= 0 then blam(entity) end
+            end,
         },
     }
 }

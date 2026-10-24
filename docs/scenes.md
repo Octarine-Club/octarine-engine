@@ -72,11 +72,11 @@ return {
         {
             tag = "player",
             components = {
-                transform = { position = { x = 100, y = 100 } },
-                sprite    = { texture_asset_id = assets.tank, width = 32, height = 32 },
-                rigidbody = { velocity = { x = 0, y = 0 } },
-                health    = { max_health = 100 },
-                script    = {
+                transform    = { position = { x = 100, y = 100 } },
+                sprite       = { texture_asset_id = assets.tank, width = 32, height = 32 },
+                rigidbody    = { velocity = { x = 0, y = 0 } },
+                box_collider = { width = 32, height = 32 },
+                script       = {
                     on_update = function(self, entity, delta_time)
                         -- per-entity per-frame
                     end,

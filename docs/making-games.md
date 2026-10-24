@@ -17,7 +17,7 @@ it alongside this guide whenever an example would help.
 3. [Configuration](#3-configuration)
 4. [Core Concepts](#4-core-concepts)
 5. [Your First Entity](#5-your-first-entity)
-6. [Collision and Damage](#6-collision-and-damage)
+6. [Collision and Callbacks](#6-collision-and-callbacks)
 7. [Scripting Entities](#7-scripting-entities)
 8. [Scenes](#8-scenes)
 9. [Assets](#9-assets)
@@ -25,7 +25,8 @@ it alongside this guide whenever an example would help.
 11. [Camera](#11-camera)
 12. [Using the Editor](#12-using-the-editor)
 13. [Game CI](#13-game-ci)
-14. [Further Reading](#14-further-reading)
+14. [Native C++ Game Modules](#14-native-c-game-modules)
+15. [Further Reading](#15-further-reading)
 
 ---
 
@@ -202,18 +203,19 @@ needs custom per-frame behaviour.
 All game logic lives in Lua. The engine exposes its entire surface through:
 
 - **Free globals** — `load_entity`, `load_scene`, `play_sound`, `get_position`,
-  `set_position`, `fire_projectile`, `log`, etc.
+  `set_position`, `blam`, `log`, etc.
 - **Namespace tables** — `input.*`, `ImGui.*`, `registry.*`
-- **The `script` component** — attach `on_update` and `on_debug_gui` callbacks
-  to any entity.
+- **The `script` component** — attach `on_update`, `on_collision`, `on_collision_exit`,
+  and `on_debug_gui` callbacks to any entity.
 
-You do not need to touch C++ to make a game.
+You do not need to touch C++ to make a game, though performance-critical games can
+optionally attach a [Native C++ Game Module](#14-native-c-game-modules).
 
 ### Scenes
 
 A scene is a Lua file. `load_scene("scenes/gameplay.lua")` replaces the current
 scene with a new one. Scenes can be declarative (return a table the engine
-processes) or procedural (build the scene themselves). See [Scenes](#7-scenes).
+processes) or procedural (build the scene themselves). See [Scenes](#8-scenes).
 
 ---
 
@@ -240,9 +242,9 @@ load_entity({
         rigidbody = {
             velocity = { x = 0, y = 0 },
         },
-        health = {
-            max_health     = 100,
-            current_health = 100,
+        box_collider = {
+            width  = 32,
+            height = 32,
         },
     }
 })
@@ -253,79 +255,77 @@ For the full list of available components and their fields see
 
 ---
 
-## 6. Collision and Damage
+## 6. Collision and Callbacks
 
-Add `box_collider` to any entity that should participate in collision detection.
-The engine resolves overlaps every frame and dispatches damage automatically —
-no script code required for the common case.
-
-### How damage works
-
-When a projectile hits an entity, the engine compares collision masks to decide
-whether the hit registers, then subtracts the projectile's `hit_damage` from the
-target's `health.current_health`. All three components must be present for the
-full chain:
-
-```lua
--- Shooter — emits projectiles
-load_entity({
-    components = {
-        transform          = { position = { x = 50, y = 300 } },
-        sprite             = { texture_asset_id = "tank", width = 32, height = 32, layer = 2 },
-        box_collider       = { width = 32, height = 32 },
-        projectile_emitter = {
-            projectile_velocity = { x = 200, y = 0 },
-            projectile_duration = 4.0,
-            repeat_frequency    = 0,       -- 0 = manual; call fire_projectile() from a script
-            hit_damage          = 25,
-            friendly            = false,   -- can hurt the player
-        },
-    }
-})
-
--- Target — takes damage automatically when hit
-load_entity({
-    components = {
-        transform    = { position = { x = 500, y = 300 } },
-        sprite       = { texture_asset_id = "enemy", width = 32, height = 32, layer = 2 },
-        box_collider = { width = 32, height = 32 },
-        health       = { max_health = 100, current_health = 100 },
-    }
-})
-```
+Add `box_collider` (or `circle_collider`) to any entity that should participate
+in collision detection. The engine resolves overlaps every frame using a
+median-cut broadphase and Separating Axis Theorem (SAT) narrowphase, then fires
+enter and exit events.
 
 ### Collision masks
 
 Masks let you control which entity groups can collide with each other. The engine
-performs a bitwise AND between the projectile's `collision_mask` and the target
-entity's `entity_mask`; a non-zero result means the hit registers.
+performs a bitwise AND between an entity's `collision_mask` (on `box_collider` or
+`circle_collider`) and the other entity's `entity_mask`; a non-zero result means
+the overlap registers.
 
 ```lua
 -- entity_mask groups the entity into one or more collision layers
-entity_mask = { value = 2 }     -- layer 2 = "enemies"
+entity_mask  = { value = 2 }                                          -- layer 2 = "enemies"
 
--- box_collider and projectile_emitter filter which layers they react to
-box_collider       = { width = 32, height = 32, collision_mask = 1 }  -- reacts to layer 1
-projectile_emitter = { ..., collision_mask = 2 }                       -- hits layer 2 only
+-- box_collider filters which layers this entity reacts to
+box_collider = { width = 32, height = 32, collision_mask = 1 }        -- reacts to layer 1 ("player")
 ```
 
-### Checking health in a script
+### Handling collisions in Lua (`on_collision` / `on_collision_exit`)
 
-If you need to react to damage (play a sound, spawn particles, change behaviour
-when low on health), poll the health component in `on_update`:
+`ScriptCollisionSystem` automatically forwards first-contact and separation events
+to the `on_collision` and `on_collision_exit` callbacks on an entity's `script`
+component:
 
 ```lua
-on_update = function(self, entity, dt)
-    if registry.has_health(entity) then
-        local hp = registry.get_health(entity)
-        if hp.current_health <= 0 then
-            blam(entity)    -- destroy when dead
-        elseif hp.current_health < hp.max_health * 0.25 then
-            play_sound("warning-beep")
-        end
-    end
-end
+-- Projectile that despawns on hit or after 4 seconds
+load_entity({
+    components = {
+        transform    = { position = { x = 50, y = 300 } },
+        sprite       = { texture_asset_id = "bullet", width = 8, height = 8, layer = 3 },
+        rigidbody    = { velocity = { x = 250, y = 0 } },
+        lifetime     = { duration = 4.0 },
+        entity_mask  = { value = 4 },
+        box_collider = { width = 8, height = 8, collision_mask = 2 },
+        script = {
+            damage = 25,
+            on_collision = function(self, entity, other)
+                blam(entity) -- destroy projectile on impact
+            end,
+        },
+    }
+})
+
+-- Target that tracks HP in its script table
+load_entity({
+    components = {
+        transform    = { position = { x = 500, y = 300 } },
+        sprite       = { texture_asset_id = "enemy", width = 32, height = 32, layer = 2 },
+        entity_mask  = { value = 2 },
+        box_collider = { width = 32, height = 32, collision_mask = 4 },
+        script = {
+            hp = 100,
+            on_collision = function(self, entity, other)
+                self.hp = self.hp - 25
+                if self.hp <= 0 then
+                    blam(entity)
+                end
+            end,
+        },
+    }
+})
 ```
+
+For high-entity-count games (such as bullet-heaven / horde-survival games with
+thousands of simultaneous projectiles and enemies), you can also handle collision
+batches and custom health/damage components natively in C++ via a
+[Native C++ Game Module](#14-native-c-game-modules).
 
 ---
 
@@ -519,7 +519,190 @@ steps:
 
 ---
 
-## 14. Further Reading
+## 14. Native C++ Game Modules
+
+While most games can be written entirely in Lua, games with heavy simulation
+workloads (e.g., thousands of agents with custom steering, spatial grids, or
+projectile/combat pipelines) can compile game-specific C++ components, systems,
+events, Lua bindings, unit tests, and benchmarks directly into the engine via
+`OCTARINE_GAME_MODULE_DIR` — without adding any game-specific code to the engine
+repository.
+
+### 1. Directory Layout in Your Game Project
+
+Place your C++ module in a subdirectory of your game repository (conventionally
+`native/`):
+
+```text
+MyGame/
+├── config.ini
+├── project.ini
+├── game.lua
+└── native/
+    ├── CMakeLists.txt              # Defines octarine_game_module
+    ├── GameModule.cpp              # Implements game_module::* hooks
+    ├── Components/
+    │   └── HealthComponent.h
+    ├── Systems/
+    │   ├── CombatSystem.h
+    │   └── CombatSystem.cpp
+    ├── Events/
+    │   └── DamageDealtEvent.h
+    ├── Lua/Bindings/
+    │   └── HealthComponentLuaBinding.h
+    ├── Editor/Inspectors/          # Optional editor component inspectors
+    │   └── HealthInspector.h
+    ├── tests/                      # Optional CTest suite
+    │   ├── CMakeLists.txt
+    │   └── CombatSystemTest.cpp
+    └── benchmarks/                 # Optional Google Benchmark suite
+        ├── CMakeLists.txt
+        └── SystemBenchmarks.cpp
+```
+
+### 2. Defining `octarine_game_module` (`native/CMakeLists.txt`)
+
+When CMake is invoked with `-DOCTARINE_GAME_MODULE_DIR=/path/to/MyGame/native`,
+the engine adds that directory to the build, defines `OCTARINE_HAS_GAME_MODULE`
+on `octarine_core`, and links `octarine_game_module` into `octarine_engine`:
+
+```cmake
+# MyGame/native/CMakeLists.txt
+octarine_library(octarine_game_module
+    GameModule.cpp
+    Systems/CombatSystem.cpp
+)
+
+target_include_directories(octarine_game_module PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+)
+
+target_link_libraries(octarine_game_module PUBLIC
+    octarine_core
+    octarine_assets
+    octarine_renderer
+    octarine_lua
+    octarine_systems
+)
+
+if (OCTARINE_WITH_EDITOR)
+    target_link_libraries(octarine_game_module PUBLIC octarine_editor)
+endif ()
+```
+
+### 3. Implementing the Game Module Hooks (`native/GameModule.cpp`)
+
+Implement the six entry points declared in `Engine/GameModuleHooks.h`:
+
+```cpp
+// MyGame/native/GameModule.cpp
+#include "Engine/GameModuleHooks.h"
+
+#include "Components/HealthComponent.h"
+#include "ECS/Registry.h"
+#include "EventBus/EventBus.h"
+#include "Lua/Bindings/ComponentBindingsRegistry.h"
+#include "Lua/Bindings/HealthComponentLuaBinding.h"
+#include "Lua/Bindings/LuaBindingContext.h"
+#include "Systems/CombatSystem.h"
+
+namespace game_module {
+
+void RegisterComponentBindings() {
+  ComponentBindingsRegistry::Instance().Register<HealthComponent>();
+}
+
+void RegisterComponentInspectors() {
+#ifdef OCTARINE_WITH_EDITOR
+  // Register custom ImGui component inspectors here if using OCTARINE_WITH_EDITOR
+#endif
+}
+
+void InstallSingletons(Registry& registry) {
+  // Set or initialize game-specific ECS singletons on the registry
+  (void)registry;
+}
+
+void RegisterSimulationSystems(Registry& registry, const std::unique_ptr<EventBus>& eventBus,
+                               SystemId velocityIntegration) {
+  (void)eventBus;
+  // Register per-frame simulation systems (Serial, Parallel, or Bulk).
+  // Use `registry.Order(velocityIntegration).After(mySystem);` if a system
+  // spawns entities or updates velocities before VelocityIntegrationSystem runs.
+  (void)registry;
+  (void)velocityIntegration;
+}
+
+void RegisterEventSystems(Registry& registry, const std::unique_ptr<EventBus>& eventBus) {
+  // Register event-driven systems (e.g., subscribing to CollisionBatchEvent)
+  registry.RegisterSystem<CombatSystem>(&registry, eventBus);
+}
+
+void InstallLuaFunctions(sol::state& lua, LuaBindingContext& ctx) {
+  // Expose custom Lua globals or system helper functions
+  (void)lua;
+  (void)ctx;
+}
+
+}  // namespace game_module
+```
+
+### 4. Adding Game Module Unit Tests (`native/tests/CMakeLists.txt`)
+
+When `OCTARINE_ENABLE_TESTS=ON` and `${OCTARINE_GAME_MODULE_DIR}/tests/CMakeLists.txt`
+exists, the engine automatically includes it and creates an aggregate build target
+named `octarine_game_module_tests`. You can use the engine's test helper macros
+(`octarine_add_engine_test`, `octarine_add_core_test`, `octarine_add_test`) and
+include `"TestHarness.h"`:
+
+```cmake
+# MyGame/native/tests/CMakeLists.txt
+octarine_add_engine_test(OctarineCombatSystemTest
+    CombatSystemTest.cpp
+)
+target_link_libraries(OctarineCombatSystemTest PRIVATE octarine_game_module)
+add_test(NAME CombatSystemTest COMMAND OctarineCombatSystemTest)
+```
+
+### 5. Adding Game Module Benchmarks (`native/benchmarks/CMakeLists.txt`)
+
+When `OCTARINE_ENABLE_BENCHMARKS=ON` and
+`${OCTARINE_GAME_MODULE_DIR}/benchmarks/CMakeLists.txt` exists, the engine
+includes it after defining `OctarineBenchmarks` so your game module can attach
+custom `Sys/`, `Pipeline/`, or `Frame/` benchmarks:
+
+```cmake
+# MyGame/native/benchmarks/CMakeLists.txt
+target_sources(OctarineBenchmarks PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/SystemBenchmarks.cpp"
+)
+target_include_directories(OctarineBenchmarks PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+)
+```
+
+### 6. Building, Testing, and Running with a Game Module
+
+```bash
+# Configure and build the engine with your game's native module
+cmake --preset player-debug \
+  -DOCTARINE_GAME_MODULE_DIR=/path/to/MyGame/native \
+  -DOCTARINE_ENABLE_TESTS=ON
+cmake --build build/player-debug
+
+# Run your game
+./build/player-debug/bin/debug/OctarineEngine /path/to/MyGame
+
+# Run all engine and game-module unit tests
+ctest --test-dir build/player-debug --output-on-failure
+
+# Or run the verification gate with your game module enabled
+OCTARINE_GAME_MODULE_DIR=/path/to/MyGame/native scripts/octarine-verify.sh --fast
+```
+
+---
+
+## 15. Further Reading
 
 ### Engine documentation
 

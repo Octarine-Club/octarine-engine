@@ -4,7 +4,7 @@
 #include <random>
 
 // Process-wide simulation RNG for engine systems that need randomness affecting gameplay state
-// (e.g. CullDistanceSystem perimeter repositioning). Seeded from std::random_device by default;
+// (e.g. deterministic spawning or repositioning). Seeded from std::random_device by default;
 // call Seed() (Lua: set_sim_seed) to make runs reproducible for deterministic bot simulations.
 // Not thread-safe: only call from systems that run on the main simulation thread.
 namespace sim_random {

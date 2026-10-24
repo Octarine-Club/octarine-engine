@@ -8,6 +8,10 @@ The shortest path from a fresh clone to a code change you can verify. For deeper
 # Player build (ImGui debug overlays + Lua ImGui debug tooling, debug).
 cmake --preset player-debug
 cmake --build build/player-debug
+
+# Optional: include a game project's native C++ module (components, systems, tests, benchmarks)
+cmake --preset player-debug -DOCTARINE_GAME_MODULE_DIR=/path/to/game/native
+cmake --build build/player-debug
 ```
 
 CMake presets live in `CMakePresets.json`. The common ones:
@@ -93,14 +97,17 @@ CI (`.github/workflows/build.yml`) runs both on the Linux player-debug leg on ev
 | `src/Renderer/` | SDL3 render path + render queue |
 | `src/EventBus/`, `src/Events/` | Type-erased pub/sub |
 | `src/AssetManager/` | Catalog, `.meta` sidecar parsing, bake/manifest |
-| `tests/` | `LuaApiSmokeTest.cpp`, `AssetPipelineTest.cpp` (off by default) |
+| `src/Engine/GameModuleHooks.h` | Hook interface for optional external native C++ game modules (`OCTARINE_GAME_MODULE_DIR`) |
+| `tests/` | Engine unit & integration test suites (`OCTARINE_ENABLE_TESTS=ON`) |
 | `cmake/`, `scripts/` | Packaging, license aggregation, icon generation |
 | `android/` | Gradle host app (multi-ABI, vcpkg android triplets) |
 | `lua_api.smoke.lua` | Auto-generated EmmyLua stub of the whole Lua surface |
 
 ## 5. Adding new code
 
-| To add… | Touch points |
+> **Game-specific C++ vs. Engine C++:** Game-specific components, systems, events, Lua bindings, unit tests, and benchmarks belong in the game project's native module directory (`-DOCTARINE_GAME_MODULE_DIR=/path/to/game/native`) rather than inside the engine repository. See [Native C++ Game Modules in `docs/making-games.md`](making-games.md#14-native-c-game-modules).
+
+| To add to the engine… | Touch points |
 |---------|--------------|
 | A **component** | `src/Components/X.h` + `src/Lua/Bindings/XLuaBinding.h` + a `registerComponent<X>()` line in `src/Lua/Bindings/RegisterAllBindings.cpp`. Header-only — no CMake edit. |
 | A **Lua module** (free-function globals) | `src/Lua/Modules/XModuleLuaBinding.{h,cpp}` + an `install` line in `src/Lua/Modules/RegisterAllModules.cpp` + add the `.cpp` to the `octarine_lua` list in `src/CMakeLists.txt`. |

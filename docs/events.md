@@ -5,12 +5,12 @@ collisions, and audio triggers flow through it rather than through direct calls 
 
 > **Lua game devs:** you do not call `SubscribeEvent` or `EmitEvent` from Lua. The event bus is an
 > internal C++ mechanism. Its results surface to scripts automatically:
-> - **Collision damage** — handled by `DamageSystem`; just add `box_collider` + `health` to your
->   entities and damage applies without any script code.
+> - **Collisions** — forwarded by `ScriptCollisionSystem` to `on_collision(self, entity, other)` and
+>   `on_collision_exit(self, entity, other)` on your entity's `script` component.
 > - **Input** — folded into the `input.*` table each frame; use `input.is_action_pressed` etc.
 > - **Audio** — triggered by `play_sound()`, which emits an `AudioPlayEvent` internally.
 >
-> This document is for engine contributors adding new C++ systems.
+> This document is for engine contributors and native C++ game module authors adding C++ systems.
 
 ## The bus
 
@@ -31,7 +31,8 @@ API:
 
 ```cpp
 // Subscribe (typically in a system's Init/SubscribeToEvents) — store the handle as a member:
-subscription_ = eventBus->SubscribeEvent<DamageSystem, CollisionBatchEvent>(this, &DamageSystem::OnCollisionBatch);
+subscription_ = eventBus->SubscribeEvent<ScriptCollisionSystem, CollisionBatchEvent>(
+    this, &ScriptCollisionSystem::OnCollisionBatch);
 // ...where the class declares:  EventBus::SubscriptionHandle subscription_;
 // (use a std::vector<EventBus::SubscriptionHandle> when a system subscribes to several events).
 
@@ -54,7 +55,8 @@ Subscriptions are wired once during startup (`Game::Setup`, each system's `Init`
 | Event | Payload | Emitted by | Subscribed by |
 |-------|---------|------------|---------------|
 | `AudioPlayEvent` | `clipId: string`, `volume: float` | Lua `play_sound()` (`AudioModuleLuaBinding.cpp`) | `AudioSystem::OnAudioPlay` |
-| `CollisionBatchEvent` | `pairs: const std::vector<std::pair<Entity, Entity>>&` (frame's *entering* pairs — first-contact overlaps not seen last frame) | `KDTreeCollisionSystem` (narrowphase) | `DamageSystem::OnCollisionBatch`, `ObstacleBounceSystem::OnCollisionBatch` |
+| `CollisionBatchEvent` | `pairs: const std::vector<std::pair<Entity, Entity>>&` (frame's *entering* pairs — first-contact overlaps not seen last frame) | `KDTreeCollisionSystem` (narrowphase) | `ScriptCollisionSystem::OnCollisionBatch` (plus optional native game module systems) |
+| `CollisionExitBatchEvent` | `pairs: const std::vector<std::pair<Entity, Entity>>&` (frame's *exiting* pairs — overlaps active last frame that separated this frame) | `KDTreeCollisionSystem` (narrowphase) | `ScriptCollisionSystem::OnCollisionExitBatch` |
 | `GamepadButtonEvent` | `which: SDL_JoystickID`, `button: SDL_GamepadButton`, `buttonName: string`, `isPressed: bool` | `Game::ProcessInput` / `FrameLoop` (SDL gamepad button events) | `InputSystem::OnGamepadButton`, `UIButtonSystem::OnGamepadButton` |
 | `KeyInputEvent` | `inputKey: SDL_Keycode`, `inputModifier: SDL_Keymod`, `isPressed: bool` | `Game::ProcessInput` (SDL key events) | `InputSystem::OnKeyInput`, `FrameLoop::OnKeyInputEvent`, `UIButtonSystem::OnKeyInput` |
 | `MouseInputEvent` | `event: SDL_MouseButtonEvent` | `Game::ProcessInput` (SDL mouse-button events) | `InputSystem::OnMouseInput`, `UIButtonSystem::OnMouseInput` |
@@ -68,10 +70,10 @@ Event types live in `src/Events/`.
   `MouseWheelEvent` / `GamepadButtonEvent` → `InputSystem` folds them into per-frame state (also `FrameLoop` for engine
   hotkeys, `UIButtonSystem` for mouse clicks and keyboard/gamepad/action bindings).
 - **Collision:** `KDTreeCollisionSystem` detects overlaps and emits a single `CollisionBatchEvent` carrying
-  the frame's *entering* pairs (first-contact overlaps not seen last frame) → `DamageSystem` and
-  `ObstacleBounceSystem` iterate the batch and react. (One batched event per frame rather than one
-  per pair keeps dispatch cost off the bus at high density; enter-only filtering avoids re-firing on
-  every frame of sustained contact.)
+  the frame's *entering* pairs (first-contact overlaps not seen last frame) and a `CollisionExitBatchEvent`
+  carrying separating pairs → `ScriptCollisionSystem` (and any subscribed native game module systems)
+  iterate the batches and react. (One batched event per frame rather than one per pair keeps dispatch cost
+  off the bus at high density; enter/exit filtering avoids re-firing on every frame of sustained contact.)
 - **Audio:** Lua `play_sound(clip, volume)` emits `AudioPlayEvent` → `AudioSystem` plays the clip.
 
 ## Adding an event

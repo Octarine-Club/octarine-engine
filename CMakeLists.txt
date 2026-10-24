@@ -311,15 +311,16 @@ if (OCTARINE_ENABLE_BENCHMARKS)
 
     add_executable(OctarineBenchmarks
             tests/benchmarks/BenchMain.cpp
-            tests/benchmarks/BenchWorld.cpp
             tests/benchmarks/EcsCoreBenchmark.cpp
             tests/benchmarks/EntityPoolBenchmark.cpp
             tests/benchmarks/KDTreeCollisionSystemBenchmark.cpp
-            tests/benchmarks/PipelineFrameBenchmarks.cpp
             tests/benchmarks/SpatialAudioBenchmark.cpp
-            tests/benchmarks/SystemBenchmarks.cpp
             tests/benchmarks/TextCacheBenchmark.cpp
     )
+    target_include_directories(OctarineBenchmarks PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmarks")
+    if (TARGET octarine_game_module AND EXISTS "${OCTARINE_GAME_MODULE_DIR}/benchmarks/CMakeLists.txt")
+        add_subdirectory("${OCTARINE_GAME_MODULE_DIR}/benchmarks" GameModuleBenchmarks)
+    endif ()
     set_target_properties(OctarineBenchmarks PROPERTIES
             CXX_STANDARD 20
             CXX_STANDARD_REQUIRED ON

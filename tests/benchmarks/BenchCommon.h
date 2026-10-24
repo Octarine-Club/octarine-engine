@@ -21,7 +21,7 @@
 //
 // Naming convention (filterable with --benchmark_filter):
 //   ECS/...       core registry primitives (iteration, transitions, churn, queries)
-//   Sys/...       one engine system in isolation on a dash-vs-shaped population
+//   Sys/...       one engine system in isolation
 //   Pipeline/...  a chain of systems run through Registry::Update
 //   Frame/...     the full headless simulation tier (RegisterSimulationSystems + render prep)
 //   Misc/...      peripheral subsystems (audio, text cache, pools)
@@ -43,7 +43,7 @@ inline double ElapsedNs(const Clock::time_point start) {
   return static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - start).count());
 }
 
-// Entity-count sweeps used across tiers. Upper end deliberately exceeds what dash-vs runs today so
+// Entity-count sweeps used across tiers. Upper end deliberately exceeds typical gameplay counts so
 // scaling cliffs show up before gameplay hits them.
 inline void EntitySweep(benchmark::Benchmark* b) {
   for (const int n : {1000, 5000, 10000, 25000, 50000, 100000}) b->Arg(n);
@@ -69,7 +69,7 @@ inline void ReportPerEntity(benchmark::State& state, const double entitiesPerIte
 }
 
 // typeid-derived system names can be raw manglings for wrapper types
-// (NSt3__117reference_wrapperI12CombatSystemEE) and carry namespaces; collapse them to the bare
+// (NSt3__117reference_wrapperI15TransformSystemEE) and carry namespaces; collapse them to the bare
 // class name for counter keys.
 inline std::string ShortSystemName(const std::string& raw) {
   std::string name = raw;

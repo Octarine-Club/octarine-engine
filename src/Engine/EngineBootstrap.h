@@ -15,7 +15,7 @@ struct EngineContext;
 // Shared boot-sequence phases used by both Game::Setup (full per-frame loop) and
 // Game::RunBakeValidation (headless asset bake). Each phase is independent — callers compose
 // the subset they need — but the *order* of phases follows the dependency rules baked into
-// the engine (e.g. EntityPoolManager must be Set before ProjectileEmitSystem::Init, Lua
+// the engine (e.g. EntityPoolManager must be Set before game module singletons initialize, Lua
 // libraries must be open before ScriptSystem::CreateLuaBindings, modules install after
 // component bindings).
 //
@@ -40,8 +40,8 @@ void InstallLuaLibraries(sol::state& lua);
 void InstallCoreSingletons(Registry& registry, EngineContext& context, int windowWidth, int windowHeight,
                            bool withFramePathCaches, sol::state* lua = nullptr);
 
-// EntityPoolManager + GameModule singletons (e.g. ProjectileEmitSystem). Both bind Lua
-// surfaces (fire_projectile), so registration must happen before InstallLuaModules.
+// EntityPoolManager + GameModule singletons. Both may bind Lua
+// surfaces, so registration must happen before InstallLuaModules.
 void InstallPoolAndSingletons(Registry& registry);
 
 // InputSystem owned by the Registry + subscribed to its three input events. The `input.*`
@@ -55,7 +55,7 @@ InputSystem& InstallInputSystem(Registry& registry, const std::unique_ptr<EventB
 void RegisterAllComponentBindings();
 
 // Invoke RegisterAllLuaModules — installs every free-function module global the startup
-// script and scenes reach (load_asset, fire_projectile, load_scene, play_sound, ...).
+// script and scenes reach (load_asset, load_scene, play_sound, ...).
 // Requires the singletons + InputSystem + Lua libs to be live.
 void InstallLuaModules(sol::state& lua, Game& game);
 
