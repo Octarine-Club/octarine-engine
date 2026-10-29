@@ -29,7 +29,7 @@ struct LuaBinding<UIFlexComponent> {
     UIFlexComponent flex;
     flex.direction = ParseDirection(SafeGetOptionalValue<std::string>(t, "direction", "row"));
     flex.gap = SafeGetOptionalValue<float>(t, "gap", 0.0f);
-    const float pad = SafeGetOptionalValue<float>(t, "padding", 0.0f);
+    const auto pad = SafeGetOptionalValue<float>(t, "padding", 0.0f);
     flex.paddingLeft = SafeGetOptionalValue<float>(t, "padding_left", pad);
     flex.paddingTop = SafeGetOptionalValue<float>(t, "padding_top", pad);
     flex.paddingRight = SafeGetOptionalValue<float>(t, "padding_right", pad);
