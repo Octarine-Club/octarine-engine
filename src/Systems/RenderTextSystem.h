@@ -59,23 +59,18 @@ class RenderTextSystem {
     TTF_Font* font = assetManager.GetFont(text.fontId);
     if (!font) return;
 
-    const auto packedColor = static_cast<Uint32>(text.color.r) << 24 | static_cast<Uint32>(text.color.g) << 16 |
-                             static_cast<Uint32>(text.color.b) << 8 | static_cast<Uint32>(text.color.a);
-
-    // Entity-keyed cache (mirrors Renderer/SpriteRenderCache): one rasterized texture per text
-    // entity, re-rasterized only when its (fontId, text, color) changes. Steady-state lookups do
-    // no heap allocation, and a label that updates every frame (score/timer) frees its old texture
-    // instead of leaking a fresh one per frame.
     const Entity entity = ctx.GetEntity();
+    const int effectiveWrapWidth = ResolveWrapWidth(registry, entity, text);
+
     auto it = text_cache_.find(entity.GetId());
-    const bool needsRaster = it == text_cache_.end() || it->second.color != packedColor ||
-                             it->second.fontId != text.fontId || it->second.text != text.text;
+    const bool needsRaster = it == text_cache_.end() || it->second.fontId != text.fontId ||
+                             it->second.text != text.text || it->second.wrapWidth != effectiveWrapWidth;
     if (needsRaster) {
       float w = 0;
       float h = 0;
-      SDL_Texture* texture = RasterizeLabel(assetManager, sdlRenderer, font, text, w, h);
+      SDL_Texture* texture = RasterizeLabel(assetManager, sdlRenderer, font, text, effectiveWrapWidth, w, h);
       if (texture == nullptr) return;
-      it = StoreEntry(it, entity, text, packedColor, texture, w, h);
+      it = StoreEntry(it, entity, text, effectiveWrapWidth, texture, w, h);
     }
 
     // UIRectComponent (written by UILayoutSystem) takes priority over GlobalTransform for position.
@@ -99,17 +94,42 @@ class RenderTextSystem {
     }
     PROFILE_COUNTER_INC(emplacedCounter);
 
+    const float scale = effectivelyFixed ? 1.0f : zoom;
     const float x = effectivelyFixed ? origin.x : (origin.x - camera.x) * zoom;
     const float y = effectivelyFixed ? origin.y : (origin.y - camera.y) * zoom;
-    const float w = effectivelyFixed ? it->second.width : it->second.width * zoom;
-    const float h = effectivelyFixed ? it->second.height : it->second.height * zoom;
+    const float w = it->second.width * scale;
+    const float h = it->second.height * scale;
 
-    auto& cmd = renderQueue.EmplaceText(static_cast<unsigned int>(renderLayer), text.position.y, it->second.texture);
+    EmitShadowIfAny(renderQueue, text, it->second.texture, renderLayer, origin.y, x, y, w, h, scale);
+
+    auto& cmd = renderQueue.EmplaceText(static_cast<unsigned int>(renderLayer), origin.y, it->second.texture);
     cmd.destRect = {x, y, w, h};
     cmd.texture = it->second.texture;
+    cmd.colorMod = SDL_Color{text.color.r, text.color.g, text.color.b, text.color.a};
   }
 
  private:
+  static int ResolveWrapWidth(Registry* registry, const Entity entity, const TextLabelComponent& text) {
+    if (text.wrapWidth > 0 || !text.wrapToRect || !registry->HasComponent<UIRectComponent>(entity)) {
+      return text.wrapWidth;
+    }
+    return std::max(0, static_cast<int>(registry->GetComponent<UIRectComponent>(entity).Width()));
+  }
+
+  static void EmitShadowIfAny(RenderQueue& renderQueue, const TextLabelComponent& text, SDL_Texture* texture,
+                              const int renderLayer, const float sortY, const float x, const float y, const float w,
+                              const float h, const float scale) {
+    if ((text.shadowOffset.x == 0.0f && text.shadowOffset.y == 0.0f) || text.shadowColor.a == 0 || text.color.a == 0) {
+      return;
+    }
+    const float sx = text.shadowOffset.x * scale;
+    const float sy = text.shadowOffset.y * scale;
+    const auto shadowAlpha = static_cast<Uint8>((static_cast<int>(text.shadowColor.a) * text.color.a) / 255);
+    auto& shadowCmd = renderQueue.EmplaceText(static_cast<unsigned int>(renderLayer), sortY - 0.01f, texture);
+    shadowCmd.destRect = {x + sx, y + sy, w, h};
+    shadowCmd.texture = texture;
+    shadowCmd.colorMod = SDL_Color{text.shadowColor.r, text.shadowColor.g, text.shadowColor.b, shadowAlpha};
+  }
   struct TextPlacement {
     glm::vec2 origin;
     bool effectivelyFixed;
@@ -145,49 +165,46 @@ class RenderTextSystem {
   struct TextCacheEntry {
     std::string fontId;
     std::string text;
-    Uint32 color = 0;
+    int wrapWidth = 0;
     SDL_Texture* texture = nullptr;
     float width = 0.0F;
     float height = 0.0F;
   };
 
-  // Entity → last-rasterized label. Re-rasterized only when (fontId, text, color) changes, so a
-  // label that updates every frame holds a single texture rather than leaking one per frame. Two
-  // entities with identical text no longer share a texture (entity-keyed, not content-keyed) —
-  // fine for typical UI label counts. Entries for despawned text entities persist until the system
-  // is destroyed (its destructor frees every cached texture).
   mutable std::unordered_map<EcsId, TextCacheEntry> text_cache_;
 
-  // Store the freshly rasterized texture as this entity's cache entry, freeing any texture it was
-  // previously holding, and return the iterator to the live entry. `it` is this entity's current
-  // slot (text_cache_.end() if it had none).
   std::unordered_map<EcsId, TextCacheEntry>::iterator StoreEntry(std::unordered_map<EcsId, TextCacheEntry>::iterator it,
                                                                  Entity entity, const TextLabelComponent& text,
-                                                                 Uint32 color, SDL_Texture* texture, float width,
+                                                                 int wrapWidth, SDL_Texture* texture, float width,
                                                                  float height) const {
     if (it != text_cache_.end()) {
       if (it->second.texture != nullptr) SDL_DestroyTexture(it->second.texture);
-      it->second = {text.fontId, text.text, color, texture, width, height};
+      it->second = {text.fontId, text.text, wrapWidth, texture, width, height};
       return it;
     }
-    return text_cache_.emplace(entity.GetId(), TextCacheEntry{text.fontId, text.text, color, texture, width, height})
+    return text_cache_
+        .emplace(entity.GetId(), TextCacheEntry{text.fontId, text.text, wrapWidth, texture, width, height})
         .first;
   }
 
-  // Rasterize `text` to a freshly created SDL_Texture, writing its size into outW/outH.
-  // The atlas fast path composes the surface by blitting resident glyphs from the font's GlyphAtlas
-  // and falls back to TTF_RenderText_Blended when no atlas is baked or the string hits an uncovered
-  // glyph. Returns nullptr on failure; caller owns the returned texture.
+  // Rasterize `text` in white (255,255,255,255) to a freshly created SDL_Texture, writing its size
+  // into outW/outH. Per-draw colorMod in TextCommand tints the texture (and its optional shadow pass)
+  // without re-rasterizing when color or alpha changes.
   static SDL_Texture* RasterizeLabel(const AssetManager& assetManager, SDL_Renderer* sdlRenderer, TTF_Font* font,
-                                     const TextLabelComponent& text, float& outW, float& outH) {
-    const SDL_Color sdlColor{text.color.r, text.color.g, text.color.b, text.color.a};
+                                     const TextLabelComponent& text, const int wrapWidth, float& outW, float& outH) {
+    const SDL_Color white{255, 255, 255, 255};
     SDL_Surface* surface = nullptr;
     const GlyphAtlas* atlas = assetManager.GetGlyphAtlas(text.fontId);
-    if (atlas != nullptr && atlas->IsLoaded()) {
-      surface = ComposeFromAtlas(*atlas, text.text, sdlColor);
+    const bool hasNewline = text.text.find('\n') != std::string::npos;
+    if (wrapWidth <= 0 && !hasNewline && atlas != nullptr && atlas->IsLoaded()) {
+      surface = ComposeFromAtlas(*atlas, text.text, white);
     }
     if (surface == nullptr) {
-      surface = TTF_RenderText_Blended(font, text.text.c_str(), 0, sdlColor);
+      if (wrapWidth > 0 || hasNewline) {
+        surface = TTF_RenderText_Blended_Wrapped(font, text.text.c_str(), 0, white, wrapWidth > 0 ? wrapWidth : 0);
+      } else {
+        surface = TTF_RenderText_Blended(font, text.text.c_str(), 0, white);
+      }
     }
     if (surface == nullptr) {
       Logger::Error("RenderText: surface compose failed: " + std::string(SDL_GetError()));

@@ -13,11 +13,10 @@
 #
 # Env:
 #   OCT_BENCH_GAME   Path to a game dir containing config.ini.
-#                    Default: ~/workspace/gh/dash-vs if present, else
-#                    <repo>/../Octarine-Engine-Example (auto-cloned when missing).
+#                    Default: <repo>/../Octarine-Engine-Example (auto-cloned when missing).
 #   OCT_BENCH_MODE   Startup mode passed to the game's Lua (selects which scene
-#                    to auto-load). Default: benchmark_10k for dash-vs, stress for
-#                    the example game (which also accepts main, map_editor, overlap).
+#                    to auto-load). Default: stress for the example game
+#                    (which also accepts main, map_editor, overlap).
 #
 # Exits 0 on the expected `timeout` kill (124) or a clean exit (0). Anything
 # else (build failure, missing config, segfault) propagates.
@@ -39,10 +38,6 @@ fi
 
 default_game="$repo_root/../Octarine-Engine-Example"
 default_mode="stress"
-if [[ -d "$HOME/workspace/gh/dash-vs" ]]; then
-  default_game="$HOME/workspace/gh/dash-vs"
-  default_mode="benchmark_10k"
-fi
 game_path="${OCT_BENCH_GAME:-$default_game}"
 if [[ ! -d "$game_path" ]]; then
   echo "Notice: Example game not found at $game_path." >&2

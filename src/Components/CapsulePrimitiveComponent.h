@@ -18,6 +18,7 @@ struct CapsulePrimitiveComponent {
   bool isFixed{true};
   bool filled{true};
   octarine::BlendMode blendMode{octarine::BlendMode::Blend};
+  float fillRatio{1.0f};
 
   explicit CapsulePrimitiveComponent(const glm::vec2 t_start = glm::vec2(0.0f, 0.0f),
                                      const glm::vec2 t_end = glm::vec2(0.0f, 0.0f), const int t_layer = 0,

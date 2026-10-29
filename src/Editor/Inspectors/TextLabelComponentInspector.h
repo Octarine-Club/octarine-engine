@@ -17,6 +17,12 @@ struct EditorInspector<TextLabelComponent> {
     octarine::editor::inspectors::InputTextString("Text", tl.text);
     ImGui::Text("Font ID: %s", tl.fontId.c_str());
     octarine::editor::inspectors::DrawColorEdit("Color", tl.color);
+    ImGui::DragInt("Wrap Width", &tl.wrapWidth, 1.0f, 0, 4096);
+    ImGui::Checkbox("Wrap To UIRect", &tl.wrapToRect);
+    ImGui::DragFloat2("Shadow Offset", &tl.shadowOffset.x, 0.25f, -16.0f, 16.0f);
+    if (tl.shadowOffset.x != 0.0f || tl.shadowOffset.y != 0.0f) {
+      octarine::editor::inspectors::DrawColorEdit("Shadow Color", tl.shadowColor);
+    }
     ImGui::Checkbox("Fixed", &tl.isFixed);
   }
   static std::optional<TextLabelComponent> makeDefault() { return TextLabelComponent{}; }

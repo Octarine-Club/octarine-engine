@@ -120,6 +120,8 @@ void DrawSquare(SDL_Renderer* renderer, const SquareCommand& cmd) {
 }
 
 void DrawText(SDL_Renderer* renderer, const TextCommand& cmd) {
+  SDL_SetTextureColorMod(cmd.texture, cmd.colorMod.r, cmd.colorMod.g, cmd.colorMod.b);
+  SDL_SetTextureAlphaMod(cmd.texture, cmd.colorMod.a);
   SDL_RenderTexture(renderer, cmd.texture, nullptr, &cmd.destRect);
 }
 

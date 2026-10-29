@@ -168,10 +168,10 @@ target_link_libraries(octarine_systems PUBLIC
 )
 
 # -----------------------------------------------------------------------------
-# Optional private GameModule (e.g. dash-vs native systems and components)
+# Optional private GameModule (native game systems and components)
 # -----------------------------------------------------------------------------
-set(OCTARINE_GAME_MODULE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/GameModule" CACHE PATH "Optional path to private game C++ module")
-if (EXISTS "${OCTARINE_GAME_MODULE_DIR}/CMakeLists.txt")
+set(OCTARINE_GAME_MODULE_DIR "" CACHE PATH "Optional path to private game C++ module")
+if (OCTARINE_GAME_MODULE_DIR AND EXISTS "${OCTARINE_GAME_MODULE_DIR}/CMakeLists.txt")
     message(STATUS "Octarine: Private GameModule FOUND at ${OCTARINE_GAME_MODULE_DIR}")
     add_subdirectory("${OCTARINE_GAME_MODULE_DIR}" GameModule)
     target_compile_definitions(octarine_core PUBLIC OCTARINE_HAS_GAME_MODULE)

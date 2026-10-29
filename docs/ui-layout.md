@@ -40,7 +40,7 @@ ui.canvas(screen, { fixed = true })
 
 local title = load_entity({
     components = {
-        text_label = { text = "GRAVEWARDEN", font_id = "ui-font" },
+        text_label = { text = "OCTARINE", font_id = "ui-font" },
     },
 })
 registry.set_parent(title, screen)        -- child first, parent second
@@ -147,7 +147,7 @@ ui.anchor(bg, "fill")
 -- Centered title.
 local title = load_entity({
     components = {
-        text_label = { text = "GRAVEWARDEN", font_id = "ui-font",
+        text_label = { text = "OCTARINE", font_id = "ui-font",
                        color = { r = 200, g = 160, b = 230, a = 255 }, is_fixed = true },
     },
 })
@@ -157,7 +157,7 @@ ui.anchor(title, "center", { width = 400, height = 40 })
 -- Subtitle, 40px below center (raw table so the offset applies).
 local sub = load_entity({
     components = {
-        text_label = { text = "Dash is a weapon. Survive.", font_id = "ui-font",
+        text_label = { text = "Press Start to Begin", font_id = "ui-font",
                        color = { r = 150, g = 140, b = 165, a = 255 }, is_fixed = true },
     },
 })

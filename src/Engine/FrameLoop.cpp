@@ -120,6 +120,14 @@ void FrameLoop::ProcessInput() {
         event_bus_->EmitEvent<MouseInputEvent>(mouseButtonEvent);
         break;
       }
+      case SDL_EVENT_MOUSE_MOTION: {
+        SDL_MouseButtonEvent motionAsMouse{};
+        motionAsMouse.type = SDL_EVENT_MOUSE_MOTION;
+        motionAsMouse.x = event.motion.x;
+        motionAsMouse.y = event.motion.y;
+        event_bus_->EmitEvent<MouseInputEvent>(motionAsMouse);
+        break;
+      }
       case SDL_EVENT_MOUSE_WHEEL: {
         event_bus_->EmitEvent<MouseWheelEvent>(event.wheel.x, event.wheel.y);
         break;

@@ -169,20 +169,17 @@ test_targets=(
   OctarineAssetRefcounterTest OctarineDevListenServerTest OctarineLuaBehaviorTest
   OctarineFileWatcherTest OctarineGameBakeTest OctarineFileSandboxTest
   OctarineRenderQueueTest OctarineAssetStoreTest
+  octarine_game_module_tests
 )
-
-# Optional game module test targets
-if [[ -f "$repo_root/src/GameModule/tests/ProjectileEmitSystemTest.cpp" || ( -n "${OCTARINE_GAME_MODULE_DIR:-}" && -f "${OCTARINE_GAME_MODULE_DIR}/tests/ProjectileEmitSystemTest.cpp" ) ]]; then
-  test_targets+=(OctarineProjectileEmitSystemTest)
-fi
-if [[ -f "$repo_root/src/GameModule/tests/CombatSystemTest.cpp" || ( -n "${OCTARINE_GAME_MODULE_DIR:-}" && -f "${OCTARINE_GAME_MODULE_DIR}/tests/CombatSystemTest.cpp" ) ]]; then
-  test_targets+=(OctarineCombatSystemTest)
-fi
 
 if [[ $do_build -eq 1 ]]; then
   if [[ ! -f "$build_dir/CMakeCache.txt" ]]; then
     echo "== configure ($preset) =="
-    if ! cmake --preset "$preset" -DOCTARINE_ENABLE_TESTS=ON; then
+    cmake_args=(--preset "$preset" -DOCTARINE_ENABLE_TESTS=ON)
+    if [[ -n "${OCTARINE_GAME_MODULE_DIR:-}" ]]; then
+      cmake_args+=(-DOCTARINE_GAME_MODULE_DIR="$OCTARINE_GAME_MODULE_DIR")
+    fi
+    if ! cmake "${cmake_args[@]}"; then
       fail 10 "configure"
     fi
   fi

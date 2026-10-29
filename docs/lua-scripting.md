@@ -56,6 +56,8 @@ engine calls two callbacks on it each frame:
 | Callback | When called |
 |---|---|
 | `on_update(self, entity, dt)` | Every frame, in system order |
+| `on_collision(self, entity, other)` | When this entity's collider enters contact with `other` |
+| `on_collision_exit(self, entity, other)` | When this entity's collider separates from `other` |
 | `on_debug_gui(self, entity)` | Every frame, but only when editor debug UI is visible |
 | `on_click(self, entity)` | When the entity has a `ui_button` component and is clicked or input-triggered |
 
@@ -100,9 +102,9 @@ local pos = registry.get_position(entity)
 pos.x = pos.x + 10
 
 -- Guard before accessing an optional component
-if registry.has_health(entity) then
-    local hp = registry.get_health(entity)
-    hp.current_health = hp.current_health - 1
+if registry.has_lifetime(entity) then
+    local lt = registry.get_lifetime(entity)
+    lt:extend(1.0)
 end
 
 -- Rigidbody velocity
@@ -143,7 +145,6 @@ These globals are shorthand for the most common reads and writes:
 | `load_asset(table)` | Load a texture, font, or sound |
 | `load_entity(table)` | Spawn a new entity; returns the root entity handle (or `nil` on an invalid table) |
 | `get_asset_path(path)` | Resolve a project-relative path to an absolute path |
-| `fire_projectile(entity, dx, dy)` | Spawn a projectile from the entity's emitter |
 | `play_sound(asset_id)` | Play a sound or music track |
 | `get_camera_position()` | Returns `{x, y}` of the camera viewport origin |
 | `get_game_map_dimensions()` | Returns `{w, h}` of the playable area |
@@ -265,9 +266,9 @@ load_entity({
                     if ImGui.Button("Spawn Enemy") then
                         load_entity({
                             components = {
-                                transform = { position = { x = self.spawn_x, y = self.spawn_y } },
-                                sprite    = { texture_asset_id = "enemy", width = 32, height = 32, layer = 2 },
-                                health    = { max_health = 50 },
+                                transform    = { position = { x = self.spawn_x, y = self.spawn_y } },
+                                sprite       = { texture_asset_id = "enemy", width = 32, height = 32, layer = 2 },
+                                box_collider = { width = 32, height = 32 },
                             }
                         })
                     end
@@ -287,18 +288,19 @@ generated Lua stub at
 
 ---
 
-## 7. Adding Component Methods (engine contributors)
+## 7. Adding Component Methods (engine contributors & native game modules)
 
-When you add a Lua binding for a component (`src/Lua/Bindings/<X>ComponentLuaBinding.h`),
-the `bindUsertype` call exposes both fields and **member functions** to scripts:
+When you add a Lua binding for an engine or native game-module component
+(`LuaBinding<X>`), the `bindUsertype` call exposes both fields and **member
+functions** to scripts:
 
 ```cpp
-lua.new_usertype<HealthComponent>(kUsertypeName,
-    "max_health", &HealthComponent::maxHealth,
-    "damage",     &HealthComponent::Damage,
-    "heal",       &HealthComponent::Heal,
-    "is_dead",    sol::property(&HealthComponent::IsDead),
-    "fraction",   sol::property(&HealthComponent::Fraction));
+lua.new_usertype<LifetimeComponent>(kUsertypeName,
+    "duration",           &LifetimeComponent::duration,
+    "remaining_duration", sol::readonly(&LifetimeComponent::remainingDuration),
+    "extend",             &LifetimeComponent::Extend,
+    "reset",              &LifetimeComponent::Reset,
+    "is_alive",           &LifetimeComponent::IsAlive);
 ```
 
 ### Hard rule

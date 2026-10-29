@@ -14,6 +14,10 @@ struct SquarePrimitiveComponent {
   octarine::Color color;  // a < 255 fades the square (with the default Blend mode)
   bool isFixed;
   octarine::BlendMode blendMode = octarine::BlendMode::Blend;
+  float borderThickness = 0.0f;
+  octarine::Color borderColor{Constants::kUint8Max, Constants::kUint8Max, Constants::kUint8Max, Constants::kUint8Max};
+  float cornerRadius = 0.0f;
+  float fillRatio = 1.0f;
 
   explicit SquarePrimitiveComponent(const glm::vec2 t_position = glm::vec2(0, 0), const int t_layer = 0,
                                     const float t_width = 0, const float t_height = 0,

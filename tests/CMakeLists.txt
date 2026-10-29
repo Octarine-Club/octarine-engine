@@ -35,6 +35,7 @@ function(octarine_add_engine_test TARGET CTEST_NAME SOURCE)
             LIBS octarine_engine
             ${ARGN}
     )
+    target_include_directories(${TARGET} PRIVATE "${CMAKE_SOURCE_DIR}/tests")
 endfunction()
 
 # Core ECS test helper (links ECS Registry and Logger only)
@@ -45,7 +46,8 @@ function(octarine_add_core_test EXE_NAME CTEST_NAME SOURCE)
     target_compile_definitions(${EXE_NAME} PRIVATE GLM_FORCE_INTRINSICS)
     target_include_directories(${EXE_NAME} PRIVATE
             "${CMAKE_SOURCE_DIR}/src"
-            "${CMAKE_SOURCE_DIR}/libs")
+            "${CMAKE_SOURCE_DIR}/libs"
+            "${CMAKE_SOURCE_DIR}/tests")
     target_link_libraries(${EXE_NAME} PRIVATE glm::glm spdlog::spdlog Threads::Threads octarine_lua)
     add_test(NAME ${CTEST_NAME} COMMAND ${EXE_NAME})
 endfunction()
@@ -60,16 +62,11 @@ octarine_add_core_test(OctarineSystemLogicTest SystemLogicTest SystemLogicTest.c
 octarine_add_core_test(OctarineCollisionResponseTest CollisionResponseTest CollisionResponseTest.cpp)
 octarine_add_core_test(OctarineKDTreeCollisionSystemTest KDTreeCollisionSystemTest KDTreeCollisionSystemTest.cpp)
 
-if (TARGET octarine_game_module)
-    if (EXISTS "${OCTARINE_GAME_MODULE_DIR}/tests/CombatSystemTest.cpp")
-        octarine_add_engine_test(OctarineCombatSystemTest CombatSystemTest "${OCTARINE_GAME_MODULE_DIR}/tests/CombatSystemTest.cpp")
-        target_link_libraries(OctarineCombatSystemTest PRIVATE octarine_game_module)
-        target_include_directories(OctarineCombatSystemTest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${OCTARINE_GAME_MODULE_DIR}")
-    endif ()
-    if (EXISTS "${OCTARINE_GAME_MODULE_DIR}/tests/ProjectileEmitSystemTest.cpp")
-        octarine_add_core_test(OctarineProjectileEmitSystemTest ProjectileEmitSystemTest "${OCTARINE_GAME_MODULE_DIR}/tests/ProjectileEmitSystemTest.cpp")
-        target_link_libraries(OctarineProjectileEmitSystemTest PRIVATE octarine_game_module)
-        target_include_directories(OctarineProjectileEmitSystemTest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${OCTARINE_GAME_MODULE_DIR}")
+if (TARGET octarine_game_module AND EXISTS "${OCTARINE_GAME_MODULE_DIR}/tests/CMakeLists.txt")
+    add_subdirectory("${OCTARINE_GAME_MODULE_DIR}/tests" GameModuleTests)
+    get_directory_property(_game_module_test_targets DIRECTORY "${OCTARINE_GAME_MODULE_DIR}/tests" BUILDSYSTEM_TARGETS)
+    if (_game_module_test_targets)
+        add_custom_target(octarine_game_module_tests DEPENDS ${_game_module_test_targets})
     endif ()
 endif ()
 octarine_add_test(OctarineStateInspectorTest StateInspectorTest

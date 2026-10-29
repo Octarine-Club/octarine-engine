@@ -31,6 +31,7 @@
 #include "Lua/Bindings/UIAnchorComponentLuaBinding.h"
 #include "Lua/Bindings/UIButtonComponentLuaBinding.h"
 #include "Lua/Bindings/UICanvasComponentLuaBinding.h"
+#include "Lua/Bindings/UIFlexComponentLuaBinding.h"
 #include "Lua/Bindings/UIRectComponentLuaBinding.h"
 #include "Lua/Bindings/UIZIndexComponentLuaBinding.h"
 
@@ -65,6 +66,7 @@ void RegisterAllLuaBindings(bool includeGameModule) {
   LuaComponentRegistry::registerComponent<PivotComponent>();
   LuaComponentRegistry::registerComponent<UICanvasComponent>();
   LuaComponentRegistry::registerComponent<UIAnchorComponent>();
+  LuaComponentRegistry::registerComponent<UIFlexComponent>();
   LuaComponentRegistry::registerComponent<UIRectComponent>();
   LuaComponentRegistry::registerComponent<UIZIndexComponent>();
 

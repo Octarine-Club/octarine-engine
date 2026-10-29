@@ -45,10 +45,6 @@ class UIButtonSystem {
   }
 
   void OnMouseInput(const MouseInputEvent& event) {
-    if (event.event.type != SDL_EVENT_MOUSE_BUTTON_DOWN || event.event.button != 1) {
-      return;
-    }
-
     const auto mousePos = GetTransformedMousePos(event);
     if (!mousePos || !EnsureMouseQuery()) {
       return;
@@ -57,17 +53,18 @@ class UIButtonSystem {
     const auto* cameraComp = registry_->TryGet<CameraComponent>();
     const octarine::Rect camera = cameraComp ? cameraComp->viewport : octarine::Rect{};
     const float zoom = (cameraComp && cameraComp->zoom > 0.001f) ? cameraComp->zoom : 1.0f;
-    auto handler = [&](Entity entity, UIButtonComponent& button, const GlobalTransformComponent* transform,
-                       const BoxColliderComponent* collider) {
-      if (!button.isActive) {
-        return;
-      }
-      if (!HitTest(entity, button, transform, collider, camera, zoom, mousePos->x, mousePos->y)) {
-        return;
-      }
-      TriggerButton(entity, button);
-    };
-    mouseQuery_->ForEach(handler);
+
+    if (event.event.type == SDL_EVENT_MOUSE_MOTION) {
+      UpdateMouseHover(camera, zoom, *mousePos);
+      return;
+    }
+    if (event.event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.event.button == 1) {
+      ClearPressedState();
+      return;
+    }
+    if (event.event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.event.button == 1) {
+      HandleMousePress(camera, zoom, *mousePos);
+    }
   }
 
   void OnKeyInput(const KeyInputEvent& event) {
@@ -160,6 +157,38 @@ class UIButtonSystem {
   }
 
  private:
+  void UpdateMouseHover(const octarine::Rect& camera, const float zoom, const glm::vec2 mousePos) {
+    mouseQuery_->ForEach([&](Entity entity, UIButtonComponent& button, const GlobalTransformComponent* transform,
+                             const BoxColliderComponent* collider) {
+      if (!button.isActive) {
+        button.isHovered = false;
+        button.isPressed = false;
+        return;
+      }
+      const bool hit = HitTest(entity, button, transform, collider, camera, zoom, mousePos.x, mousePos.y);
+      button.isHovered = hit;
+      if (!hit) button.isPressed = false;
+    });
+  }
+
+  void ClearPressedState() {
+    mouseQuery_->ForEach([&](Entity /*entity*/, UIButtonComponent& button,
+                             const GlobalTransformComponent* /*transform*/,
+                             const BoxColliderComponent* /*collider*/) { button.isPressed = false; });
+  }
+
+  void HandleMousePress(const octarine::Rect& camera, const float zoom, const glm::vec2 mousePos) {
+    mouseQuery_->ForEach([&](Entity entity, UIButtonComponent& button, const GlobalTransformComponent* transform,
+                             const BoxColliderComponent* collider) {
+      if (!button.isActive || !HitTest(entity, button, transform, collider, camera, zoom, mousePos.x, mousePos.y)) {
+        return;
+      }
+      button.isHovered = true;
+      button.isPressed = true;
+      TriggerButton(entity, button);
+    });
+  }
+
   [[nodiscard]] std::optional<glm::vec2> GetTransformedMousePos(const MouseInputEvent& event) const {
     if (!registry_) {
       return glm::vec2{event.event.x, event.event.y};

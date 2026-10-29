@@ -30,13 +30,27 @@ struct LuaBinding<TextLabelComponent> {
     const bool isFixed = SafeGetOptionalValue<bool>(t, "is_fixed", true);
     const TextAlign hAlign = ParseAlign(SafeGetOptionalValue<std::string>(t, "align", "left"));
     const TextAlign vAlign = ParseAlign(SafeGetOptionalValue<std::string>(t, "valign", "top"));
-    return TextLabelComponent(offsetPosition, layer, text, fontId, color, isFixed, hAlign, vAlign);
+    TextLabelComponent lbl(offsetPosition, layer, text, fontId, color, isFixed, hAlign, vAlign);
+    lbl.wrapWidth = SafeGetOptionalValue<int>(t, "wrap_width", 0);
+    lbl.wrapToRect = SafeGetOptionalValue<bool>(t, "wrap", false);
+    if (t["shadow"].is<bool>() && t["shadow"].get<bool>()) {
+      lbl.shadowOffset = glm::vec2(1.0f, 1.0f);
+    }
+    if (t["shadow_offset"].is<sol::table>()) {
+      lbl.shadowOffset = SafeGetVec2(t, "shadow_offset", 1.0f, 1.0f);
+    }
+    if (t["shadow_color"].is<sol::table>()) {
+      lbl.shadowColor = SafeGetColor(t, "shadow_color", 0, 0, 0, 200);
+    }
+    return lbl;
   }
 
   static void bindUsertype(sol::state& lua) {
     lua.new_usertype<TextLabelComponent>(
         kUsertypeName, "text", &TextLabelComponent::text, "color", &TextLabelComponent::color, "layer",
         &TextLabelComponent::layer, "position", &TextLabelComponent::position, "is_fixed", &TextLabelComponent::isFixed,
-        "h_align", &TextLabelComponent::hAlign, "v_align", &TextLabelComponent::vAlign);
+        "h_align", &TextLabelComponent::hAlign, "v_align", &TextLabelComponent::vAlign, "wrap_width",
+        &TextLabelComponent::wrapWidth, "wrap", &TextLabelComponent::wrapToRect, "shadow_offset",
+        &TextLabelComponent::shadowOffset, "shadow_color", &TextLabelComponent::shadowColor);
   }
 };

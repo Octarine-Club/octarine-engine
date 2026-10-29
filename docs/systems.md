@@ -33,7 +33,7 @@ sections).
 | 1 | `ScriptSystem` | serial · `ScriptComponent` | Runs each entity's Lua `on_update` (and `on_debug_gui`) callback. |
 | 2 | `AudioSystem` | serial · `AudioSourceComponent` | Drives the mixer / audio-track pool; also handles `AudioPlayEvent` (see below). |
 | 3 | `AnimationSystem` | parallel · `SpriteComponent, AnimationComponent` | Advances frame timers and updates the sprite source rect. |
-| 4 | `ProjectileLifecycleSystem` | parallel · `ProjectileComponent` | Counts down projectile lifetime and despawns on expiry. |
+| 4 | `LifetimeSystem` | bulk · `LifetimeComponent` | Counts down entity lifetime and despawns on expiry. |
 | 5 | `VelocityIntegrationSystem` | parallel · `PositionComponent, RigidBodyComponent` | Integrates velocity into local position. Runs **before** transform resolution. |
 | 6 | `OffScreenDespawnSystem` | parallel · `PositionComponent, SpriteComponent` | Despawns non-player entities that leave the playable bounds. |
 | 7 | `TransformSystem` | bulk · `GlobalTransformComponent` (+ optional position/scale/rotation/pivot/sprite/primitive/collider) | Resolves the entity hierarchy into world-space `GlobalTransformComponent`, resolving each entity's anchor against its own geometry on the way. Flat parallel pass for every entity, then a breadth-first depth-bucketed pass for hierarchy members only. |
@@ -65,8 +65,7 @@ events on the [event bus](events.md):
 
 | System | Reacts to | What it does |
 |--------|-----------|--------------|
-| `DamageSystem` | `CollisionBatchEvent` | Applies projectile damage / health deduction and despawns. |
-| `ObstacleBounceSystem` | `CollisionBatchEvent` | Bounces an entity off an obstacle and flips its sprite. |
+| `ScriptCollisionSystem` | `CollisionBatchEvent`, `CollisionExitBatchEvent` | Dispatches Lua `on_collision` and `on_collision_exit` callbacks. |
 | `UIButtonSystem` | `MouseInputEvent`, `KeyInputEvent`, `GamepadButtonEvent` | Hit-tests mouse clicks and handles keyboard, gamepad, and action bindings to trigger button callbacks. |
 
 ## Services and on-demand systems
@@ -76,8 +75,7 @@ Not per-frame query systems, but part of the engine:
 | System | How it's used | Lua surface |
 |--------|---------------|-------------|
 | `InputSystem` | Installed at boot; subscribes to the input events and tracks per-frame key/mouse/wheel state and action bindings. | `input.*` (held/pressed/released, actions) |
-| `EntityPoolManager` (`EntityPoolSystem.h`) | Object pool for recycling entities (e.g. projectiles); used by `ProjectileEmitSystem`. | — |
-| `ProjectileEmitSystem` | Installed at boot; spawns projectiles on demand, driven by the Lua `fire_projectile` global. | via `fire_projectile` |
+| `EntityPoolManager` (`EntityPoolSystem.h`) | Object pool for recycling entities across archetypes without fresh allocations. | — |
 | `DrawColliderSystem` | Instantiated per frame in `Game::Render` only when the `drawColliders` option is on. Draws collider wireframes. | debug (ImGui builds) |
 | `RenderDebugGUISystem` | Called from `Game::Render`; renders the ImGui editor/profiler/hierarchy. Compiled out unless `OCTARINE_WITH_IMGUI`. | editor UI |
 

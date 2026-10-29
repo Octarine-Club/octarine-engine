@@ -1,11 +1,14 @@
 #pragma once
 
+#include <algorithm>
 #include <memory>
 #include <utility>
 #include <vector>
 
+#include "Components/SquarePrimitiveComponent.h"
 #include "Components/UIAnchorComponent.h"
 #include "Components/UICanvasComponent.h"
+#include "Components/UIFlexComponent.h"
 #include "Components/UIRectComponent.h"
 #include "Components/UIZIndexComponent.h"
 #include "ECS/Query.h"
@@ -46,12 +49,145 @@ class UILayoutSystem {
     }
   }
 
+  static float DesiredCrossSize(Registry* registry, const Entity child, const bool isRow, const float availCross) {
+    if (registry->HasComponent<UIAnchorComponent>(child)) {
+      const auto& a = registry->GetComponent<UIAnchorComponent>(child);
+      const float span = isRow ? (a.offsetBottom - a.offsetTop) : (a.offsetRight - a.offsetLeft);
+      if (span > 0.0f) return span;
+    }
+    if (registry->HasComponent<SquarePrimitiveComponent>(child)) {
+      const auto& s = registry->GetComponent<SquarePrimitiveComponent>(child);
+      const float dim = isRow ? s.height : s.width;
+      if (dim > 0.0f) return dim;
+    }
+    return availCross;
+  }
+
+  static float DesiredMainSize(Registry* registry, const Entity child, const bool isRow) {
+    if (registry->HasComponent<UIAnchorComponent>(child)) {
+      const auto& a = registry->GetComponent<UIAnchorComponent>(child);
+      const float frac = isRow ? (a.anchorRight - a.anchorLeft) : (a.anchorBottom - a.anchorTop);
+      const float span = isRow ? (a.offsetRight - a.offsetLeft) : (a.offsetBottom - a.offsetTop);
+      if (frac == 0.0f && span > 0.0f) return span;
+    }
+    if (registry->HasComponent<SquarePrimitiveComponent>(child)) {
+      const auto& s = registry->GetComponent<SquarePrimitiveComponent>(child);
+      const float dim = isRow ? s.width : s.height;
+      if (dim > 0.0f) return dim;
+    }
+    return 0.0f;  // 0 indicates flexible item (shares remaining main-axis space equally)
+  }
+
+  static float AlignOffset(const FlexAlign align, const float slack) {
+    static constexpr float kHalf = 0.5f;
+    if (align == FlexAlign::Center) return slack * kHalf;
+    if (align == FlexAlign::End) return slack;
+    return 0.0f;
+  }
+
+  static std::pair<std::vector<float>, size_t> ComputeFlexMainSizes(Registry* registry,
+                                                                    const std::vector<Entity>& children,
+                                                                    const bool isRow, const float availMain,
+                                                                    const float totalGaps) {
+    const size_t n = children.size();
+    float fixedSum = 0.0f;
+    size_t flexCount = 0;
+    std::vector<float> mainSizes(n, 0.0f);
+    for (size_t i = 0; i < n; ++i) {
+      const float d = DesiredMainSize(registry, children[i], isRow);
+      if (d > 0.0f) {
+        mainSizes[i] = d;
+        fixedSum += d;
+      } else {
+        ++flexCount;
+      }
+    }
+
+    const float remaining = std::max(0.0f, availMain - fixedSum - totalGaps);
+    const float flexShare = (flexCount > 0) ? (remaining / static_cast<float>(flexCount)) : 0.0f;
+    for (float& s : mainSizes) {
+      if (s <= 0.0f) s = flexShare;
+    }
+    return {mainSizes, flexCount};
+  }
+
+  static UIRectComponent BuildFlexChildRect(Registry* registry, const Entity child, const UIRectComponent& parentRect,
+                                            const UIFlexComponent& flex, const bool isRow, const float cursor,
+                                            const float mainSpan, const float crossOrigin, const float availCross) {
+    float crossStart = crossOrigin;
+    float crossSpan = availCross;
+    if (flex.align != FlexAlign::Stretch) {
+      crossSpan = std::min(availCross, DesiredCrossSize(registry, child, isRow, availCross));
+      crossStart += AlignOffset(flex.align, availCross - crossSpan);
+    }
+
+    UIRectComponent childRect = parentRect;
+    if (isRow) {
+      childRect.left = cursor;
+      childRect.right = cursor + mainSpan;
+      childRect.top = crossStart;
+      childRect.bottom = crossStart + crossSpan;
+    } else {
+      childRect.top = cursor;
+      childRect.bottom = cursor + mainSpan;
+      childRect.left = crossStart;
+      childRect.right = crossStart + crossSpan;
+    }
+    if (registry->HasComponent<UIZIndexComponent>(child)) {
+      childRect.layer += registry->GetComponent<UIZIndexComponent>(child).z;
+    }
+    return childRect;
+  }
+
+  static void ResolveFlexChildren(Registry* registry, const Entity parent, const UIRectComponent& parentRect,
+                                  const UIFlexComponent& flex,
+                                  std::vector<std::pair<Entity, UIRectComponent>>& pending) {
+    std::vector<Entity> children;
+    registry->ForEachChild(parent, [&](const Entity child) { children.push_back(child); });
+    if (children.empty()) return;
+
+    const bool isRow = (flex.direction == FlexDirection::Row);
+    const float innerLeft = parentRect.left + flex.paddingLeft;
+    const float innerTop = parentRect.top + flex.paddingTop;
+    const float innerRight = std::max(innerLeft, parentRect.right - flex.paddingRight);
+    const float innerBottom = std::max(innerTop, parentRect.bottom - flex.paddingBottom);
+    const float availW = innerRight - innerLeft;
+    const float availH = innerBottom - innerTop;
+    const float availMain = isRow ? availW : availH;
+    const float availCross = isRow ? availH : availW;
+
+    const size_t n = children.size();
+    const float totalGaps = (n > 1) ? flex.gap * static_cast<float>(n - 1) : 0.0f;
+    const auto [mainSizes, flexCount] = ComputeFlexMainSizes(registry, children, isRow, availMain, totalGaps);
+
+    float usedMain = totalGaps;
+    for (const float s : mainSizes) usedMain += s;
+    float cursor = isRow ? innerLeft : innerTop;
+    if (flexCount == 0) {
+      cursor += AlignOffset(flex.justify, std::max(0.0f, availMain - usedMain));
+    }
+
+    const float crossOrigin = isRow ? innerTop : innerLeft;
+    for (size_t i = 0; i < n; ++i) {
+      const Entity child = children[i];
+      const UIRectComponent childRect =
+          BuildFlexChildRect(registry, child, parentRect, flex, isRow, cursor, mainSizes[i], crossOrigin, availCross);
+      WriteRect(registry, child, childRect);
+      pending.emplace_back(child, childRect);
+      cursor += mainSizes[i] + flex.gap;
+    }
+  }
+
   void ResolveChildren(Registry* registry, const Entity root, const UIRectComponent& rootRect) const {
     std::vector<std::pair<Entity, UIRectComponent>> pending;
     pending.emplace_back(root, rootRect);
     while (!pending.empty()) {
       auto [parent, parentRect] = pending.back();
       pending.pop_back();
+      if (registry->HasComponent<UIFlexComponent>(parent)) {
+        ResolveFlexChildren(registry, parent, parentRect, registry->GetComponent<UIFlexComponent>(parent), pending);
+        continue;
+      }
       registry->ForEachChild(parent, [&](const Entity child) {
         UIRectComponent childRect = parentRect;  // inherit layer from parent
         bool modified = false;
