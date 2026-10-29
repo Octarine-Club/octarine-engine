@@ -1819,6 +1819,8 @@ function registry.get_ui_button(...) end
 
 function registry.get_ui_canvas(...) end
 
+function registry.get_ui_flex(...) end
+
 function registry.get_ui_rect(...) end
 
 function registry.get_ui_z_index(...) end
@@ -1880,6 +1882,8 @@ function registry.has_ui_anchor(...) end
 function registry.has_ui_button(...) end
 
 function registry.has_ui_canvas(...) end
+
+function registry.has_ui_flex(...) end
 
 function registry.has_ui_rect(...) end
 
@@ -2050,6 +2054,10 @@ ui_button_component = {}
 
 ---@class ui_canvas_component
 ui_canvas_component = {}
+
+
+---@class ui_flex_component
+ui_flex_component = {}
 
 
 ---@class ui_rect_component

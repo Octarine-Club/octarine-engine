@@ -176,6 +176,12 @@
       "get_accessor": "registry.get_ui_canvas"
     },
     {
+      "lua_key": "ui_flex",
+      "usertype": "ui_flex_component",
+      "has_accessor": "registry.has_ui_flex",
+      "get_accessor": "registry.get_ui_flex"
+    },
+    {
       "lua_key": "ui_rect",
       "usertype": "ui_rect_component",
       "has_accessor": "registry.has_ui_rect",

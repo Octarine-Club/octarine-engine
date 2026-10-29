@@ -185,74 +185,82 @@ class RenderUIPrimitiveSystem {
     const float ratio = std::clamp(square.fillRatio, 0.0f, 1.0f);
     if (ratio <= 0.0f && square.borderThickness <= 0.0f) return;
 
+    EmplaceSquareFill(renderQueue, rect, square, activeColor, ratio);
+    EmplaceSquareBorder(renderQueue, rect, square);
+  }
+
+  static void EmplaceSquareFill(RenderQueue& renderQueue, const UIRectComponent& rect,
+                                const SquarePrimitiveComponent& square, const octarine::Color& activeColor,
+                                const float ratio) {
+    if (ratio <= 0.0f || activeColor.a == 0) return;
+
     const float fullW = rect.Width();
     const float fullH = rect.Height();
     const float fillW = fullW * ratio;
     const auto layer = static_cast<unsigned int>(rect.layer);
+    const float r = std::min(square.cornerRadius, std::min(fullW, fullH) * 0.5f);
 
-    if (square.cornerRadius > 0.0f) {
-      // Rounded rectangle via capsule / 2-rect+4-corner or capsule pill when cornerRadius >= half-height
+    if (square.cornerRadius > 0.0f && r >= fullH * 0.45f) {
+      UIRectComponent fillRect = rect;
+      fillRect.right = rect.left + fillW;
+      const auto resolved = octarine::ui::ResolveCapsule(fillRect, {0.0f, 0.0f}, {0.0f, 0.0f}, r);
+      auto& capCmd = renderQueue.EmplaceCapsule(layer, rect.top, nullptr, square.blendMode);
+      capCmd.start = {resolved.start.x, resolved.start.y};
+      capCmd.end = {resolved.end.x, resolved.end.y};
+      capCmd.radius = resolved.radius;
+      capCmd.thickness = 1.0f;
+      capCmd.color = SDL_Color{activeColor.r, activeColor.g, activeColor.b, activeColor.a};
+      capCmd.blendMode = octarine::ToSdlBlendMode(square.blendMode);
+      capCmd.filled = true;
+      return;
+    }
+
+    auto& cmd = renderQueue.EmplaceSquare(layer, rect.top, nullptr, square.blendMode);
+    cmd.destRect = {rect.left, rect.top, fillW, fullH};
+    cmd.color = SDL_Color{activeColor.r, activeColor.g, activeColor.b, activeColor.a};
+    cmd.rotation = 0.0f;
+    cmd.blendMode = octarine::ToSdlBlendMode(square.blendMode);
+  }
+
+  static void EmplaceSquareBorder(RenderQueue& renderQueue, const UIRectComponent& rect,
+                                  const SquarePrimitiveComponent& square) {
+    if (square.borderThickness <= 0.0f || square.borderColor.a == 0) return;
+
+    const float fullW = rect.Width();
+    const float fullH = rect.Height();
+    const auto layer = static_cast<unsigned int>(rect.layer);
+    const float bt = square.borderThickness;
+    const SDL_Color bcol{square.borderColor.r, square.borderColor.g, square.borderColor.b, square.borderColor.a};
+    const SDL_BlendMode bmode = octarine::ToSdlBlendMode(square.blendMode);
+
+    if (square.cornerRadius >= fullH * 0.45f && fullH > 0.0f) {
       const float r = std::min(square.cornerRadius, std::min(fullW, fullH) * 0.5f);
-      if (ratio > 0.0f && activeColor.a > 0) {
-        UIRectComponent fillRect = rect;
-        fillRect.right = rect.left + fillW;
-        if (r >= fullH * 0.45f) {
-          const auto resolved = octarine::ui::ResolveCapsule(fillRect, {0.0f, 0.0f}, {0.0f, 0.0f}, r);
-          auto& capCmd = renderQueue.EmplaceCapsule(layer, rect.top, nullptr, square.blendMode);
-          capCmd.start = {resolved.start.x, resolved.start.y};
-          capCmd.end = {resolved.end.x, resolved.end.y};
-          capCmd.radius = resolved.radius;
-          capCmd.thickness = 1.0f;
-          capCmd.color = SDL_Color{activeColor.r, activeColor.g, activeColor.b, activeColor.a};
-          capCmd.blendMode = octarine::ToSdlBlendMode(square.blendMode);
-          capCmd.filled = true;
-        } else {
-          auto& cmd = renderQueue.EmplaceSquare(layer, rect.top, nullptr, square.blendMode);
-          cmd.destRect = {rect.left, rect.top, fillW, fullH};
-          cmd.color = SDL_Color{activeColor.r, activeColor.g, activeColor.b, activeColor.a};
-          cmd.rotation = 0.0f;
-          cmd.blendMode = octarine::ToSdlBlendMode(square.blendMode);
-        }
-      }
-    } else if (ratio > 0.0f && activeColor.a > 0) {
-      auto& cmd = renderQueue.EmplaceSquare(layer, rect.top, nullptr, square.blendMode);
-      cmd.destRect = {rect.left, rect.top, fillW, fullH};
-      cmd.color = SDL_Color{activeColor.r, activeColor.g, activeColor.b, activeColor.a};
-      cmd.rotation = 0.0f;
-      cmd.blendMode = octarine::ToSdlBlendMode(square.blendMode);
+      const auto resolved = octarine::ui::ResolveCapsule(rect, {0.0f, 0.0f}, {0.0f, 0.0f}, r);
+      auto& capCmd = renderQueue.EmplaceCapsule(layer, rect.top + 0.01f, nullptr, square.blendMode);
+      capCmd.start = {resolved.start.x, resolved.start.y};
+      capCmd.end = {resolved.end.x, resolved.end.y};
+      capCmd.radius = resolved.radius;
+      capCmd.thickness = bt;
+      capCmd.color = bcol;
+      capCmd.blendMode = bmode;
+      capCmd.filled = false;
+      return;
     }
 
-    if (square.borderThickness > 0.0f && square.borderColor.a > 0) {
-      const float bt = square.borderThickness;
-      const SDL_Color bcol{square.borderColor.r, square.borderColor.g, square.borderColor.b, square.borderColor.a};
-      const SDL_BlendMode bmode = octarine::ToSdlBlendMode(square.blendMode);
-      if (square.cornerRadius >= fullH * 0.45f && fullH > 0.0f) {
-        const float r = std::min(square.cornerRadius, std::min(fullW, fullH) * 0.5f);
-        const auto resolved = octarine::ui::ResolveCapsule(rect, {0.0f, 0.0f}, {0.0f, 0.0f}, r);
-        auto& capCmd = renderQueue.EmplaceCapsule(layer, rect.top + 0.01f, nullptr, square.blendMode);
-        capCmd.start = {resolved.start.x, resolved.start.y};
-        capCmd.end = {resolved.end.x, resolved.end.y};
-        capCmd.radius = resolved.radius;
-        capCmd.thickness = bt;
-        capCmd.color = bcol;
-        capCmd.blendMode = bmode;
-        capCmd.filled = false;
-      } else {
-        // 4 crisp edge rectangles (top, bottom, left, right) drawn on top of the fill
-        auto emitEdge = [&](const float x, const float y, const float w, const float h) {
-          if (w <= 0.0f || h <= 0.0f) return;
-          auto& ecmd = renderQueue.EmplaceSquare(layer, rect.top + 0.01f, nullptr, square.blendMode);
-          ecmd.destRect = {x, y, w, h};
-          ecmd.color = bcol;
-          ecmd.rotation = 0.0f;
-          ecmd.blendMode = bmode;
-        };
-        emitEdge(rect.left, rect.top, fullW, bt);                                         // top
-        emitEdge(rect.left, rect.bottom - bt, fullW, bt);                                 // bottom
-        emitEdge(rect.left, rect.top + bt, bt, std::max(0.0f, fullH - 2.0f * bt));        // left
-        emitEdge(rect.right - bt, rect.top + bt, bt, std::max(0.0f, fullH - 2.0f * bt));  // right
-      }
-    }
+    // 4 crisp edge rectangles (top, bottom, left, right) drawn on top of the fill
+    auto emitEdge = [&](const float x, const float y, const float w, const float h) {
+      if (w <= 0.0f || h <= 0.0f) return;
+      auto& ecmd = renderQueue.EmplaceSquare(layer, rect.top + 0.01f, nullptr, square.blendMode);
+      ecmd.destRect = {x, y, w, h};
+      ecmd.color = bcol;
+      ecmd.rotation = 0.0f;
+      ecmd.blendMode = bmode;
+    };
+    const float sideH = std::max(0.0f, fullH - 2.0f * bt);
+    emitEdge(rect.left, rect.top, fullW, bt);
+    emitEdge(rect.left, rect.bottom - bt, fullW, bt);
+    emitEdge(rect.left, rect.top + bt, bt, sideH);
+    emitEdge(rect.right - bt, rect.top + bt, bt, sideH);
   }
 
   static void EmplaceCircle(RenderQueue& renderQueue, const UIRectComponent& rect,

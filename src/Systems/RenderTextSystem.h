@@ -60,10 +60,7 @@ class RenderTextSystem {
     if (!font) return;
 
     const Entity entity = ctx.GetEntity();
-    int effectiveWrapWidth = text.wrapWidth;
-    if (effectiveWrapWidth <= 0 && text.wrapToRect && registry->HasComponent<UIRectComponent>(entity)) {
-      effectiveWrapWidth = std::max(0, static_cast<int>(registry->GetComponent<UIRectComponent>(entity).Width()));
-    }
+    const int effectiveWrapWidth = ResolveWrapWidth(registry, entity, text);
 
     auto it = text_cache_.find(entity.GetId());
     const bool needsRaster = it == text_cache_.end() || it->second.fontId != text.fontId ||
@@ -97,21 +94,13 @@ class RenderTextSystem {
     }
     PROFILE_COUNTER_INC(emplacedCounter);
 
+    const float scale = effectivelyFixed ? 1.0f : zoom;
     const float x = effectivelyFixed ? origin.x : (origin.x - camera.x) * zoom;
     const float y = effectivelyFixed ? origin.y : (origin.y - camera.y) * zoom;
-    const float w = effectivelyFixed ? it->second.width : it->second.width * zoom;
-    const float h = effectivelyFixed ? it->second.height : it->second.height * zoom;
+    const float w = it->second.width * scale;
+    const float h = it->second.height * scale;
 
-    if ((text.shadowOffset.x != 0.0f || text.shadowOffset.y != 0.0f) && text.shadowColor.a > 0 && text.color.a > 0) {
-      const float sx = effectivelyFixed ? text.shadowOffset.x : text.shadowOffset.x * zoom;
-      const float sy = effectivelyFixed ? text.shadowOffset.y : text.shadowOffset.y * zoom;
-      const auto shadowAlpha = static_cast<Uint8>((static_cast<int>(text.shadowColor.a) * text.color.a) / 255);
-      auto& shadowCmd =
-          renderQueue.EmplaceText(static_cast<unsigned int>(renderLayer), origin.y - 0.01f, it->second.texture);
-      shadowCmd.destRect = {x + sx, y + sy, w, h};
-      shadowCmd.texture = it->second.texture;
-      shadowCmd.colorMod = SDL_Color{text.shadowColor.r, text.shadowColor.g, text.shadowColor.b, shadowAlpha};
-    }
+    EmitShadowIfAny(renderQueue, text, it->second.texture, renderLayer, origin.y, x, y, w, h, scale);
 
     auto& cmd = renderQueue.EmplaceText(static_cast<unsigned int>(renderLayer), origin.y, it->second.texture);
     cmd.destRect = {x, y, w, h};
@@ -120,6 +109,27 @@ class RenderTextSystem {
   }
 
  private:
+  static int ResolveWrapWidth(Registry* registry, const Entity entity, const TextLabelComponent& text) {
+    if (text.wrapWidth > 0 || !text.wrapToRect || !registry->HasComponent<UIRectComponent>(entity)) {
+      return text.wrapWidth;
+    }
+    return std::max(0, static_cast<int>(registry->GetComponent<UIRectComponent>(entity).Width()));
+  }
+
+  static void EmitShadowIfAny(RenderQueue& renderQueue, const TextLabelComponent& text, SDL_Texture* texture,
+                              const int renderLayer, const float sortY, const float x, const float y, const float w,
+                              const float h, const float scale) {
+    if ((text.shadowOffset.x == 0.0f && text.shadowOffset.y == 0.0f) || text.shadowColor.a == 0 || text.color.a == 0) {
+      return;
+    }
+    const float sx = text.shadowOffset.x * scale;
+    const float sy = text.shadowOffset.y * scale;
+    const auto shadowAlpha = static_cast<Uint8>((static_cast<int>(text.shadowColor.a) * text.color.a) / 255);
+    auto& shadowCmd = renderQueue.EmplaceText(static_cast<unsigned int>(renderLayer), sortY - 0.01f, texture);
+    shadowCmd.destRect = {x + sx, y + sy, w, h};
+    shadowCmd.texture = texture;
+    shadowCmd.colorMod = SDL_Color{text.shadowColor.r, text.shadowColor.g, text.shadowColor.b, shadowAlpha};
+  }
   struct TextPlacement {
     glm::vec2 origin;
     bool effectivelyFixed;
