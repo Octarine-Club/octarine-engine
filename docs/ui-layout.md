@@ -3,7 +3,7 @@
 How Octarine positions UI: a canvas root, anchored children, and the
 `UILayoutSystem` that resolves them into pixel rectangles every frame.
 
-Audience: project authors building menus, HUDs, and overlays in Lua. The
+Audience: project authors building menus, HUDs, and overlays in Lua. For the declarative `.oxml` + `.oss` UI framework (`ui.mount`, data binding, reactive MVVM, and reusable widgets), see [`docs/ui-framework.md`](ui-framework.md). The
 underlying scene/entity model is in [`docs/scenes.md`](scenes.md); the Lua
 surface as a whole is in [`docs/lua-scripting.md`](lua-scripting.md).
 
