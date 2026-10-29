@@ -41,74 +41,107 @@ class RenderQueue {
   // Hand-rolled move just snapshots the counter; only valid before any concurrent producer
   // attaches (i.e. registration time).
   RenderQueue(RenderQueue&& other) noexcept
-      : render_keys_(std::move(other.render_keys_)), count_(other.count_.load(std::memory_order_relaxed)) {}
+      : render_keys_(std::move(other.render_keys_)),
+        count_(other.count_.load(std::memory_order_relaxed)),
+        clip_rects_(std::move(other.clip_rects_)) {}
   RenderQueue& operator=(RenderQueue&& other) noexcept {
     render_keys_ = std::move(other.render_keys_);
     count_.store(other.count_.load(std::memory_order_relaxed), std::memory_order_relaxed);
+    clip_rects_ = std::move(other.clip_rects_);
     return *this;
   }
 
   SpriteCommand& EmplaceSprite(unsigned int layer, float depth, const void* batchKey = nullptr,
-                               octarine::BlendMode blendMode = octarine::BlendMode::Blend) {
+                               octarine::BlendMode blendMode = octarine::BlendMode::Blend, std::uint8_t clipId = 0) {
     auto& key = ClaimSlot();
     key.sortKey = RenderKey::ComputeSortKey(layer, depth, SPRITE, batchKey, static_cast<std::uint8_t>(blendMode));
     key.type = SPRITE;
+    key.clipId = clipId;
     return key.payload.sprite;
   }
 
   SquareCommand& EmplaceSquare(unsigned int layer, float depth, const void* batchKey = nullptr,
-                               octarine::BlendMode blendMode = octarine::BlendMode::Blend) {
+                               octarine::BlendMode blendMode = octarine::BlendMode::Blend, std::uint8_t clipId = 0) {
     auto& key = ClaimSlot();
     key.sortKey =
         RenderKey::ComputeSortKey(layer, depth, SQUARE_PRIMITIVE, batchKey, static_cast<std::uint8_t>(blendMode));
     key.type = SQUARE_PRIMITIVE;
+    key.clipId = clipId;
     return key.payload.square;
   }
 
-  TextCommand& EmplaceText(unsigned int layer, float depth, const void* batchKey = nullptr) {
+  TextCommand& EmplaceText(unsigned int layer, float depth, const void* batchKey = nullptr, std::uint8_t clipId = 0) {
     auto& key = ClaimSlot();
     key.sortKey = RenderKey::ComputeSortKey(layer, depth, TEXT, batchKey);
     key.type = TEXT;
+    key.clipId = clipId;
     return key.payload.text;
   }
 
   CircleCommand& EmplaceCircle(unsigned int layer, float depth, const void* batchKey = nullptr,
-                               octarine::BlendMode blendMode = octarine::BlendMode::Blend) {
+                               octarine::BlendMode blendMode = octarine::BlendMode::Blend, std::uint8_t clipId = 0) {
     auto& key = ClaimSlot();
     key.sortKey =
         RenderKey::ComputeSortKey(layer, depth, CIRCLE_PRIMITIVE, batchKey, static_cast<std::uint8_t>(blendMode));
     key.type = CIRCLE_PRIMITIVE;
+    key.clipId = clipId;
     return key.payload.circle;
   }
 
   LineCommand& EmplaceLine(unsigned int layer, float depth, const void* batchKey = nullptr,
-                           octarine::BlendMode blendMode = octarine::BlendMode::Blend) {
+                           octarine::BlendMode blendMode = octarine::BlendMode::Blend, std::uint8_t clipId = 0) {
     auto& key = ClaimSlot();
     key.sortKey =
         RenderKey::ComputeSortKey(layer, depth, LINE_PRIMITIVE, batchKey, static_cast<std::uint8_t>(blendMode));
     key.type = LINE_PRIMITIVE;
+    key.clipId = clipId;
     return key.payload.line;
   }
 
   TriangleCommand& EmplaceTriangle(unsigned int layer, float depth, const void* batchKey = nullptr,
-                                   octarine::BlendMode blendMode = octarine::BlendMode::Blend) {
+                                   octarine::BlendMode blendMode = octarine::BlendMode::Blend,
+                                   std::uint8_t clipId = 0) {
     auto& key = ClaimSlot();
     key.sortKey =
         RenderKey::ComputeSortKey(layer, depth, TRIANGLE_PRIMITIVE, batchKey, static_cast<std::uint8_t>(blendMode));
     key.type = TRIANGLE_PRIMITIVE;
+    key.clipId = clipId;
     return key.payload.triangle;
   }
 
   CapsuleCommand& EmplaceCapsule(unsigned int layer, float depth, const void* batchKey = nullptr,
-                                 octarine::BlendMode blendMode = octarine::BlendMode::Blend) {
+                                 octarine::BlendMode blendMode = octarine::BlendMode::Blend, std::uint8_t clipId = 0) {
     auto& key = ClaimSlot();
     key.sortKey =
         RenderKey::ComputeSortKey(layer, depth, CAPSULE_PRIMITIVE, batchKey, static_cast<std::uint8_t>(blendMode));
     key.type = CAPSULE_PRIMITIVE;
+    key.clipId = clipId;
     return key.payload.capsule;
   }
 
-  void Clear() { count_.store(0, std::memory_order_relaxed); }
+  std::uint8_t RegisterClipRect(const SDL_Rect& rect) {
+    for (size_t i = 0; i < clip_rects_.size(); ++i) {
+      const auto& existing = clip_rects_[i];
+      if (existing.x == rect.x && existing.y == rect.y && existing.w == rect.w && existing.h == rect.h) {
+        return static_cast<std::uint8_t>(i + 1);
+      }
+    }
+    if (clip_rects_.size() >= 255) {
+      return 255;
+    }
+    clip_rects_.push_back(rect);
+    return static_cast<std::uint8_t>(clip_rects_.size());
+  }
+
+  [[nodiscard]] const SDL_Rect* GetClipRect(const std::uint8_t clipId) const noexcept {
+    if (clipId == 0 || clipId > clip_rects_.size()) return nullptr;
+    return &clip_rects_[clipId - 1];
+  }
+
+  void Clear() {
+    count_.store(0, std::memory_order_relaxed);
+    clip_rects_.clear();
+  }
 
   void Sort() {
     const size_t n = std::min(count_.load(std::memory_order_relaxed), render_keys_.size());
@@ -251,4 +284,5 @@ class RenderQueue {
   std::vector<SortEntry> sort_entries_;
   std::vector<SortEntry> radix_scratch_;
   std::vector<RenderKey> permute_scratch_;  // Gather output buffer, kept alive to avoid re-alloc.
+  std::vector<SDL_Rect> clip_rects_;
 };

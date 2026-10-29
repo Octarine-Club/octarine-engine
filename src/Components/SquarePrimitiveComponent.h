@@ -16,6 +16,7 @@ struct SquarePrimitiveComponent {
   octarine::BlendMode blendMode = octarine::BlendMode::Blend;
   float borderThickness = 0.0f;
   octarine::Color borderColor{Constants::kUint8Max, Constants::kUint8Max, Constants::kUint8Max, Constants::kUint8Max};
+  octarine::Color trackColor{0, 0, 0, 0};
   float cornerRadius = 0.0f;
   float fillRatio = 1.0f;
 

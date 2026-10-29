@@ -4,13 +4,27 @@
 
 #include "Components/UIAnchorComponent.h"
 #include "Components/UICanvasComponent.h"
+#include "Components/UIClipComponent.h"
 #include "Components/UIFlexComponent.h"
+#include "Components/UIFocusComponent.h"
+#include "Components/UILayoutBoxComponent.h"
+#include "Components/UINineSliceComponent.h"
 #include "Components/UIRectComponent.h"
+#include "Components/UIScrollComponent.h"
+#include "Components/UIStyleStateComponent.h"
 #include "Components/UIZIndexComponent.h"
 #include "ECS/Registry.h"
 #include "General/Logger.h"
+#include "Lua/Bindings/UIClipComponentLuaBinding.h"
 #include "Lua/Bindings/UIFlexComponentLuaBinding.h"
+#include "Lua/Bindings/UIFocusComponentLuaBinding.h"
+#include "Lua/Bindings/UILayoutBoxComponentLuaBinding.h"
+#include "Lua/Bindings/UINineSliceComponentLuaBinding.h"
+#include "Lua/Bindings/UIScrollComponentLuaBinding.h"
+#include "Lua/Bindings/UIStyleStateComponentLuaBinding.h"
 #include "Lua/LuaBindingContext.h"
+#include "Systems/UIButtonSystem.h"
+#include "UI/UIRuntime.h"
 
 namespace {
 
@@ -90,43 +104,130 @@ void ApplyFlex(Registry* r, const Entity entity, const sol::optional<sol::table>
   }
 }
 
+void ApplyCanvas(Registry* r, const Entity entity, const sol::optional<sol::table>& opts) {
+  UICanvasComponent canvas;
+  if (opts) {
+    canvas.isFixed = (*opts)["fixed"].get_or(true);
+    canvas.width = static_cast<float>((*opts)["width"].get_or(0.0));
+    canvas.height = static_cast<float>((*opts)["height"].get_or(0.0));
+    canvas.baseLayer = (*opts)["base_layer"].get_or(0);
+  }
+  r->AddComponent(entity, canvas);
+  if (!r->HasComponent<UIRectComponent>(entity)) {
+    r->AddComponent(entity, UIRectComponent{});
+  }
+}
+
+void ApplyZIndex(Registry* r, const Entity entity, const int z) {
+  if (r->HasComponent<UIZIndexComponent>(entity)) {
+    r->GetComponent<UIZIndexComponent>(entity).z = z;
+  } else {
+    r->AddComponent(entity, UIZIndexComponent{z});
+  }
+}
+
+void ApplyBox(Registry* r, const Entity entity, const sol::optional<sol::table>& opts) {
+  const UILayoutBoxComponent box = opts ? LuaBinding<UILayoutBoxComponent>::fromLua(*opts) : UILayoutBoxComponent{};
+  if (r->HasComponent<UILayoutBoxComponent>(entity)) {
+    r->GetComponent<UILayoutBoxComponent>(entity) = box;
+  } else {
+    r->AddComponent(entity, box);
+  }
+  if (!r->HasComponent<UIRectComponent>(entity)) {
+    r->AddComponent(entity, UIRectComponent{});
+  }
+}
+
+void ApplyClip(Registry* r, const Entity entity, const sol::optional<sol::object>& opts) {
+  const UIClipComponent clip = opts ? LuaBinding<UIClipComponent>::fromLua(*opts) : UIClipComponent{};
+  if (r->HasComponent<UIClipComponent>(entity)) {
+    r->GetComponent<UIClipComponent>(entity) = clip;
+  } else {
+    r->AddComponent(entity, clip);
+  }
+  if (!r->HasComponent<UIRectComponent>(entity)) {
+    r->AddComponent(entity, UIRectComponent{});
+  }
+}
+
+void ApplyNineSlice(Registry* r, const Entity entity, const sol::object& opts) {
+  const UINineSliceComponent nine = LuaBinding<UINineSliceComponent>::fromLua(opts);
+  if (r->HasComponent<UINineSliceComponent>(entity)) {
+    r->GetComponent<UINineSliceComponent>(entity) = nine;
+  } else {
+    r->AddComponent(entity, nine);
+  }
+}
+
+void ApplyScroll(Registry* r, const Entity entity, const sol::optional<sol::table>& opts) {
+  const UIScrollComponent scroll = opts ? LuaBinding<UIScrollComponent>::fromLua(*opts) : UIScrollComponent{};
+  if (r->HasComponent<UIScrollComponent>(entity)) {
+    r->GetComponent<UIScrollComponent>(entity) = scroll;
+  } else {
+    r->AddComponent(entity, scroll);
+  }
+  if (!r->HasComponent<UIClipComponent>(entity)) {
+    r->AddComponent(entity, UIClipComponent{});
+  }
+  if (!r->HasComponent<UIRectComponent>(entity)) {
+    r->AddComponent(entity, UIRectComponent{});
+  }
+}
+
+void ApplyFocus(Registry* r, const Entity entity) {
+  if (!r->HasComponent<UIFocusComponent>(entity)) {
+    r->AddComponent(entity, UIFocusComponent{});
+  }
+  if (auto* btnSys = r->TryGet<UIButtonSystem>()) {
+    btnSys->SetFocus(entity);
+  } else {
+    r->GetComponent<UIFocusComponent>(entity).isFocused = true;
+  }
+}
+
+sol::optional<Entity> GetFocusedEntity(Registry* r) {
+  if (auto* btnSys = r->TryGet<UIButtonSystem>()) {
+    const Entity focused = btnSys->GetFocusedEntity();
+    if (focused.GetId() != static_cast<std::uint32_t>(-1)) return focused;
+  }
+  return sol::nullopt;
+}
+
 }  // namespace
 
 void LuaModuleBinding<UIModule>::install(sol::state& lua, LuaBindingContext& ctx) {
   sol::table ui = lua.create_table();
 
-  ui.set_function("canvas", [&ctx](const Entity entity, sol::optional<sol::table> opts) {
-    Registry* r = ctx.GetRegistry();
-    UICanvasComponent canvas;
-    if (opts) {
-      canvas.isFixed = (*opts)["fixed"].get_or(true);
-      canvas.width = static_cast<float>((*opts)["width"].get_or(0.0));
-      canvas.height = static_cast<float>((*opts)["height"].get_or(0.0));
-      canvas.baseLayer = (*opts)["base_layer"].get_or(0);
-    }
-    r->AddComponent(entity, canvas);
-    if (!r->HasComponent<UIRectComponent>(entity)) {
-      r->AddComponent(entity, UIRectComponent{});
-    }
+  ui.set_function("canvas", [&ctx](const Entity entity, const sol::optional<sol::table>& opts) {
+    ApplyCanvas(ctx.GetRegistry(), entity, opts);
   });
-
   ui.set_function("anchor",
                   [&ctx](const Entity entity, const sol::object& preset_or_table, sol::optional<sol::table> opts) {
                     ApplyAnchor(ctx.GetRegistry(), entity, preset_or_table, opts);
                   });
-
-  ui.set_function("z_index", [&ctx](const Entity entity, const int z) {
-    Registry* r = ctx.GetRegistry();
-    if (r->HasComponent<UIZIndexComponent>(entity)) {
-      r->GetComponent<UIZIndexComponent>(entity).z = z;
-    } else {
-      r->AddComponent(entity, UIZIndexComponent{z});
-    }
-  });
-
+  ui.set_function("z_index", [&ctx](const Entity entity, const int z) { ApplyZIndex(ctx.GetRegistry(), entity, z); });
   ui.set_function("flex", [&ctx](const Entity entity, const sol::optional<sol::table>& opts) {
     ApplyFlex(ctx.GetRegistry(), entity, opts);
   });
+  ui.set_function("box", [&ctx](const Entity entity, const sol::optional<sol::table>& opts) {
+    ApplyBox(ctx.GetRegistry(), entity, opts);
+  });
+  ui.set_function("clip", [&ctx](const Entity entity, const sol::optional<sol::object>& opts) {
+    ApplyClip(ctx.GetRegistry(), entity, opts);
+  });
+  ui.set_function("nine_slice", [&ctx](const Entity entity, const sol::object& opts) {
+    ApplyNineSlice(ctx.GetRegistry(), entity, opts);
+  });
+  ui.set_function("scroll", [&ctx](const Entity entity, const sol::optional<sol::table>& opts) {
+    ApplyScroll(ctx.GetRegistry(), entity, opts);
+  });
+  ui.set_function("focus", [&ctx](const Entity entity) { ApplyFocus(ctx.GetRegistry(), entity); });
+  ui.set_function("get_focused", [&ctx]() { return GetFocusedEntity(ctx.GetRegistry()); });
+
+  if (Registry* r = ctx.GetRegistry(); r != nullptr) {
+    auto& runtime = r->Set<UIRuntime>(UIRuntime(&lua, r, nullptr));
+    runtime.InstallLuaFunctions(ui);
+  }
 
   lua["ui"] = ui;
 }

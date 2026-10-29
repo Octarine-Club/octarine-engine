@@ -57,6 +57,7 @@
 #include "Renderer/RenderQueue.h"
 #include "Renderer/Renderer.h"
 #include "Renderer/SpriteRenderCache.h"
+#include "UI/UIRuntime.h"
 // InputSystemLuaBinding specializes LuaSystemBinding<InputSystem> — needed below where
 // LuaSystemRegistry::registerSystem(inputSystem) instantiates the lookup. Don't drop.
 #include "Components/AudioActiveTag.h"
@@ -690,6 +691,7 @@ bool Game::RunBakeValidation(const std::string& assetPath, const std::string& sc
     return false;
   }
   assetManager.GetCatalog().InstallLuaIdTable(lua);
+  bake_validation_failures_ += UIRuntime::ValidateCatalogUI(assetManager);
 
   // Run the startup script. Its scene loads call acquire_scene_assets / load_asset, which in bake
   // mode validate every referenced id against the catalog and tally failures on this Game instead
@@ -998,9 +1000,12 @@ void Game::Setup() {
 
   // Render queue producers
   registry_->RegisterParallelSystem<GlobalTransformComponent, SpriteComponent>(RenderSpriteSystem());
-  registry_->RegisterSystem<UIRectComponent, SpriteComponent>(RenderUISpriteSystem());
-  registry_->RegisterBulkSystem(RenderUIPrimitiveSystem());
-  registry_->RegisterSystem<TextLabelComponent>(RenderTextSystem());
+  auto renderUISprite = registry_->RegisterSystem<UIRectComponent, SpriteComponent>(RenderUISpriteSystem());
+  auto renderUIPrimitive = registry_->RegisterBulkSystem(RenderUIPrimitiveSystem());
+  auto renderText = registry_->RegisterSystem<TextLabelComponent>(RenderTextSystem());
+  registry_->Order(renderUISprite).After(uiLayout);
+  registry_->Order(renderUIPrimitive).After(uiLayout);
+  registry_->Order(renderText).After(uiLayout);
   registry_->RegisterParallelSystem<SquarePrimitiveComponent, GlobalTransformComponent>(RenderPrimitiveSystem());
   registry_->RegisterParallelSystem<CirclePrimitiveComponent, GlobalTransformComponent>(RenderCirclePrimitiveSystem());
   registry_->RegisterParallelSystem<LinePrimitiveComponent, GlobalTransformComponent>(RenderLinePrimitiveSystem());

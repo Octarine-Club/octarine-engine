@@ -27,6 +27,7 @@
 #include "Renderer/RenderCommands.h"
 #include "Renderer/RenderCulling.h"
 #include "Renderer/RenderQueue.h"
+#include "Systems/UILayoutMetrics.h"
 
 class RenderTextSystem {
  public:
@@ -75,8 +76,13 @@ class RenderTextSystem {
 
     // UIRectComponent (written by UILayoutSystem) takes priority over GlobalTransform for position.
     // text.position acts as a local pixel offset within the rect (e.g., padding).
-    const auto [origin, effectivelyFixed, renderLayer] =
-        ResolvePlacement(registry, entity, text, it->second.width, it->second.height);
+    const auto placement = ResolvePlacement(registry, entity, text, it->second.width, it->second.height);
+    if (!placement.visible) return;
+    const auto& origin = placement.origin;
+    const bool effectivelyFixed = placement.effectivelyFixed;
+    const int renderLayer = placement.renderLayer;
+    const float sortY = placement.sortY;
+    const std::uint8_t clipId = placement.clipId;
 
     const auto& gameConfig = registry->Get<GameConfig>();
     const bool isOutsideCamera = IsRenderableOutsideViewport(
@@ -99,13 +105,16 @@ class RenderTextSystem {
     const float y = effectivelyFixed ? origin.y : (origin.y - camera.y) * zoom;
     const float w = it->second.width * scale;
     const float h = it->second.height * scale;
+    const octarine::Color activeTextColor =
+        octarine::ui::ResolveVisualState(registry, entity, text.color, text.color, text.color).text;
 
-    EmitShadowIfAny(renderQueue, text, it->second.texture, renderLayer, origin.y, x, y, w, h, scale);
+    EmitShadowIfAny(renderQueue, text, activeTextColor, it->second.texture, renderLayer, sortY, x, y, w, h, scale,
+                    clipId);
 
-    auto& cmd = renderQueue.EmplaceText(static_cast<unsigned int>(renderLayer), origin.y, it->second.texture);
+    auto& cmd = renderQueue.EmplaceText(static_cast<unsigned int>(renderLayer), sortY, it->second.texture, clipId);
     cmd.destRect = {x, y, w, h};
     cmd.texture = it->second.texture;
-    cmd.colorMod = SDL_Color{text.color.r, text.color.g, text.color.b, text.color.a};
+    cmd.colorMod = SDL_Color{activeTextColor.r, activeTextColor.g, activeTextColor.b, activeTextColor.a};
   }
 
  private:
@@ -116,33 +125,43 @@ class RenderTextSystem {
     return std::max(0, static_cast<int>(registry->GetComponent<UIRectComponent>(entity).Width()));
   }
 
-  static void EmitShadowIfAny(RenderQueue& renderQueue, const TextLabelComponent& text, SDL_Texture* texture,
-                              const int renderLayer, const float sortY, const float x, const float y, const float w,
-                              const float h, const float scale) {
-    if ((text.shadowOffset.x == 0.0f && text.shadowOffset.y == 0.0f) || text.shadowColor.a == 0 || text.color.a == 0) {
+  static void EmitShadowIfAny(RenderQueue& renderQueue, const TextLabelComponent& text,
+                              const octarine::Color& activeTextColor, SDL_Texture* texture, const int renderLayer,
+                              const float sortY, const float x, const float y, const float w, const float h,
+                              const float scale, const std::uint8_t clipId) {
+    if ((text.shadowOffset.x == 0.0f && text.shadowOffset.y == 0.0f) || text.shadowColor.a == 0 ||
+        activeTextColor.a == 0) {
       return;
     }
     const float sx = text.shadowOffset.x * scale;
     const float sy = text.shadowOffset.y * scale;
-    const auto shadowAlpha = static_cast<Uint8>((static_cast<int>(text.shadowColor.a) * text.color.a) / 255);
-    auto& shadowCmd = renderQueue.EmplaceText(static_cast<unsigned int>(renderLayer), sortY - 0.01f, texture);
+    const auto shadowAlpha = static_cast<Uint8>((static_cast<int>(text.shadowColor.a) * activeTextColor.a) / 255);
+    auto& shadowCmd = renderQueue.EmplaceText(static_cast<unsigned int>(renderLayer), sortY, texture, clipId);
     shadowCmd.destRect = {x + sx, y + sy, w, h};
     shadowCmd.texture = texture;
     shadowCmd.colorMod = SDL_Color{text.shadowColor.r, text.shadowColor.g, text.shadowColor.b, shadowAlpha};
   }
   struct TextPlacement {
     glm::vec2 origin;
+    float sortY;
     bool effectivelyFixed;
+    bool visible;
     int renderLayer;
+    std::uint8_t clipId;
   };
 
   static TextPlacement ResolvePlacement(Registry* registry, const Entity entity, const TextLabelComponent& text,
                                         const float textWidth, const float textHeight) {
     glm::vec2 origin = text.position;
+    float sortY = origin.y;
     bool effectivelyFixed = text.isFixed;
+    bool visible = true;
     int renderLayer = text.layer;
+    std::uint8_t clipId = 0;
     if (registry->HasComponent<UIRectComponent>(entity)) {
       const auto& rect = registry->GetComponent<UIRectComponent>(entity);
+      visible = rect.visible;
+      clipId = rect.clipId;
       const float slackX = rect.Width() - textWidth;
       const float slackY = rect.Height() - textHeight;
       const auto offsetFor = [](const TextAlign align, const float slack) {
@@ -153,18 +172,20 @@ class RenderTextSystem {
       };
       origin = glm::vec2(rect.left + offsetFor(text.hAlign, slackX), rect.top + offsetFor(text.vAlign, slackY)) +
                text.position;
+      sortY = rect.top;
       effectivelyFixed = true;
       renderLayer = rect.layer;
     } else if (registry->HasComponent<GlobalTransformComponent>(entity)) {
       const auto& transform = registry->GetComponent<GlobalTransformComponent>(entity);
       origin += transform.position;
+      sortY = origin.y;
     }
-    return {origin, effectivelyFixed, renderLayer};
+    return {origin, sortY, effectivelyFixed, visible, renderLayer, clipId};
   }
 
   struct TextCacheEntry {
-    std::string fontId;
-    std::string text;
+    std::string fontId{};
+    std::string text{};
     int wrapWidth = 0;
     SDL_Texture* texture = nullptr;
     float width = 0.0F;

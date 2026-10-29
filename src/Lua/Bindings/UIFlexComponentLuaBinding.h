@@ -20,6 +20,8 @@ struct LuaBinding<UIFlexComponent> {
     if (s == "start" || s == "left" || s == "top") return FlexAlign::Start;
     if (s == "center" || s == "middle") return FlexAlign::Center;
     if (s == "end" || s == "right" || s == "bottom") return FlexAlign::End;
+    if (s == "space_between" || s == "space-between") return FlexAlign::SpaceBetween;
+    if (s == "space_around" || s == "space-around") return FlexAlign::SpaceAround;
     return FlexAlign::Stretch;
   }
 

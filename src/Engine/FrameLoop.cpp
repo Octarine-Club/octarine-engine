@@ -29,6 +29,7 @@
 #include "Systems/DrawColliderSystem.h"
 #include "Systems/InputSystem.h"
 #include "Systems/PerfOverlaySystem.h"
+#include "UI/UIRuntime.h"
 
 #ifndef OCTARINE_SHIPPED
 #include "Dev/DevListenServer.h"
@@ -208,6 +209,9 @@ void FrameLoop::PollHotReload([[maybe_unused]] const EngineOptions& options, [[m
       auto& ctx = registry_->Get<EngineContext>();
       assetReload->Tick(registry_->Get<AssetManager>(), ctx.sdlRenderer, ctx.mixer, deltaTime,
                         options.hotReloadPollSeconds);
+    }
+    if (auto* uiRuntime = registry_->TryGet<UIRuntime>()) {
+      uiRuntime->PollHotReload();
     }
   }
 #endif

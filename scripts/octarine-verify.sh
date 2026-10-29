@@ -168,7 +168,7 @@ test_targets=(
   OctarineStateInspectorTest OctarineGoldenPathIntegrationTest OctarineSimulationFuzzTest OctarineScenarioRunnerTest
   OctarineAssetRefcounterTest OctarineDevListenServerTest OctarineLuaBehaviorTest
   OctarineFileWatcherTest OctarineGameBakeTest OctarineFileSandboxTest
-  OctarineRenderQueueTest OctarineAssetStoreTest
+  OctarineRenderQueueTest OctarineAssetStoreTest OctarineUserSettingsTest OctarineUILayoutTest
   octarine_game_module_tests
 )
 

@@ -30,6 +30,7 @@
 struct RenderKey {
   std::uint64_t sortKey{};
   RenderableType type{};
+  std::uint8_t clipId{0};
 
   union Payload {
     SpriteCommand sprite;

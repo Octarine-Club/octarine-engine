@@ -382,14 +382,28 @@
       "queried_components": [
         "UIButtonComponent",
         "GlobalTransformComponent",
-        "BoxColliderComponent"
+        "BoxColliderComponent",
+        "UIFocusComponent",
+        "UIRectComponent",
+        "UIScrollComponent"
       ],
       "emits": [],
       "subscribes": [
         "GamepadButtonEvent",
         "KeyInputEvent",
-        "MouseInputEvent"
+        "MouseInputEvent",
+        "MouseWheelEvent"
       ],
+      "lua_surface": false
+    },
+    {
+      "name": "UILayoutMetrics",
+      "source": "src/Systems/UILayoutMetrics.h",
+      "tier": null,
+      "setup_order": null,
+      "queried_components": [],
+      "emits": [],
+      "subscribes": [],
       "lua_surface": false
     },
     {

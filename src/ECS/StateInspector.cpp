@@ -15,7 +15,10 @@
 #include "Components/PositionComponent.h"
 #include "Components/RigidBodyComponent.h"
 #include "Components/TriangleColliderComponent.h"
+#include "Components/UIFocusComponent.h"
+#include "Components/UILayoutBoxComponent.h"
 #include "Components/UIRectComponent.h"
+#include "Components/UIScrollComponent.h"
 #include "ECS/Registry.h"
 
 namespace octarine::inspect {
@@ -191,7 +194,37 @@ void AppendUIRectJson(const Registry& registry, Entity entity, const InspectOpti
   std::ostringstream ss;
   ss << R"("UIRectComponent": {"left": )" << FormatFloat(rect.left, opts) << R"(, "top": )"
      << FormatFloat(rect.top, opts) << R"(, "right": )" << FormatFloat(rect.right, opts) << R"(, "bottom": )"
-     << FormatFloat(rect.bottom, opts) << R"(, "layer": )" << rect.layer << "}";
+     << FormatFloat(rect.bottom, opts) << R"(, "layer": )" << rect.layer << R"(, "visible": )"
+     << (rect.visible ? "true" : "false") << "}";
+  comps.push_back(ss.str());
+}
+
+void AppendUILayoutBoxJson(const Registry& registry, Entity entity, const InspectOptions& opts,
+                           std::vector<std::string>& comps) {
+  if (!registry.HasComponent<UILayoutBoxComponent>(entity)) return;
+  const auto& box = registry.GetComponent<UILayoutBoxComponent>(entity);
+  std::ostringstream ss;
+  ss << R"("UILayoutBoxComponent": {"width": )" << FormatFloat(box.width, opts) << R"(, "height": )"
+     << FormatFloat(box.height, opts) << R"(, "visible": )" << (box.visible ? "true" : "false") << "}";
+  comps.push_back(ss.str());
+}
+
+void AppendUIScrollJson(const Registry& registry, Entity entity, const InspectOptions& opts,
+                        std::vector<std::string>& comps) {
+  if (!registry.HasComponent<UIScrollComponent>(entity)) return;
+  const auto& sc = registry.GetComponent<UIScrollComponent>(entity);
+  std::ostringstream ss;
+  ss << R"("UIScrollComponent": {"scrollX": )" << FormatFloat(sc.scrollX, opts) << R"(, "scrollY": )"
+     << FormatFloat(sc.scrollY, opts) << R"(, "contentHeight": )" << FormatFloat(sc.contentHeight, opts) << "}";
+  comps.push_back(ss.str());
+}
+
+void AppendUIFocusJson(const Registry& registry, Entity entity, std::vector<std::string>& comps) {
+  if (!registry.HasComponent<UIFocusComponent>(entity)) return;
+  const auto& fc = registry.GetComponent<UIFocusComponent>(entity);
+  std::ostringstream ss;
+  ss << R"("UIFocusComponent": {"tabIndex": )" << fc.tabIndex << R"(, "isFocused": )"
+     << (fc.isFocused ? "true" : "false") << "}";
   comps.push_back(ss.str());
 }
 
@@ -256,6 +289,9 @@ std::string StateInspector::DumpEntity(const Registry& registry, Entity entity, 
 
   AppendLifetimeJson(registry, entity, opts, comps);
   AppendUIRectJson(registry, entity, opts, comps);
+  AppendUILayoutBoxJson(registry, entity, opts, comps);
+  AppendUIScrollJson(registry, entity, opts, comps);
+  AppendUIFocusJson(registry, entity, comps);
 
   std::ostringstream ss;
   ss << "{\n";

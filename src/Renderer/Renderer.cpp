@@ -381,7 +381,12 @@ void DrawCapsule(SDL_Renderer* renderer, const CapsuleCommand& cmd) {
 }  // namespace
 
 void Renderer::DrawQueue(const RenderQueue& renderQueue, SDL_Renderer* renderer) const {
+  std::uint8_t activeClipId = 0;
   for (const RenderKey& key : renderQueue) {
+    if (key.clipId != activeClipId) {
+      activeClipId = key.clipId;
+      SDL_SetRenderClipRect(renderer, renderQueue.GetClipRect(activeClipId));
+    }
     switch (key.type) {
       case SPRITE:
         DrawSprite(renderer, key.payload.sprite);
@@ -408,5 +413,8 @@ void Renderer::DrawQueue(const RenderQueue& renderQueue, SDL_Renderer* renderer)
         Logger::Error("Unknown renderable type");
         break;
     }
+  }
+  if (activeClipId != 0) {
+    SDL_SetRenderClipRect(renderer, nullptr);
   }
 }

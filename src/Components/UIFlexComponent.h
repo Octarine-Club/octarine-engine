@@ -3,7 +3,7 @@
 #include <cstdint>
 
 enum class FlexDirection : std::uint8_t { Row = 0, Column = 1 };
-enum class FlexAlign : std::uint8_t { Stretch = 0, Start = 1, Center = 2, End = 3 };
+enum class FlexAlign : std::uint8_t { Stretch = 0, Start = 1, Center = 2, End = 3, SpaceBetween = 4, SpaceAround = 5 };
 
 struct UIFlexComponent {
   FlexDirection direction = FlexDirection::Row;

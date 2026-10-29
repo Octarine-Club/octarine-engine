@@ -2,17 +2,23 @@
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <sol/sol.hpp>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "Components/BoxColliderComponent.h"
 #include "Components/CameraComponents.h"
 #include "Components/GlobalTransformComponent.h"
 #include "Components/UIButtonComponent.h"
+#include "Components/UIFocusComponent.h"
 #include "Components/UIRectComponent.h"
+#include "Components/UIScrollComponent.h"
 #include "Components/ViewportInfo.h"
 #include "ECS/Query.h"
 #include "ECS/Registry.h"
@@ -20,8 +26,10 @@
 #include "Events/GamepadButtonEvent.h"
 #include "Events/KeyInputEvent.h"
 #include "Events/MouseInputEvent.h"
+#include "Events/MouseWheelEvent.h"
 #include "Game/GameConfig.h"
 #include "General/Logger.h"
+#include "Renderer/RenderQueue.h"
 #include "Systems/InputSystem.h"
 #include "Systems/KDTreeCollisionSystem.h"
 #include "Systems/RenderUIPrimitiveSystem.h"
@@ -34,6 +42,8 @@ class UIButtonSystem {
       mouseQuery_ =
           registry_->CreateQuery<UIButtonComponent, Opt<GlobalTransformComponent>, Opt<BoxColliderComponent>>();
       buttonQuery_ = registry_->CreateQuery<UIButtonComponent>();
+      focusQuery_ = registry_->CreateQuery<UIFocusComponent>();
+      scrollQuery_ = registry_->CreateQuery<UIRectComponent, UIScrollComponent>();
     }
     subscriptions_.clear();
     subscriptions_.push_back(
@@ -42,6 +52,8 @@ class UIButtonSystem {
         eventBus->SubscribeEvent<UIButtonSystem, KeyInputEvent>(this, &UIButtonSystem::OnKeyInput));
     subscriptions_.push_back(
         eventBus->SubscribeEvent<UIButtonSystem, GamepadButtonEvent>(this, &UIButtonSystem::OnGamepadButton));
+    subscriptions_.push_back(
+        eventBus->SubscribeEvent<UIButtonSystem, MouseWheelEvent>(this, &UIButtonSystem::OnMouseWheel));
   }
 
   void OnMouseInput(const MouseInputEvent& event) {
@@ -49,6 +61,7 @@ class UIButtonSystem {
     if (!mousePos || !EnsureMouseQuery()) {
       return;
     }
+    lastMousePos_ = *mousePos;
 
     const auto* cameraComp = registry_->TryGet<CameraComponent>();
     const octarine::Rect camera = cameraComp ? cameraComp->viewport : octarine::Rect{};
@@ -67,6 +80,33 @@ class UIButtonSystem {
     }
   }
 
+  void OnMouseWheel(const MouseWheelEvent& event) {
+    if (!registry_) return;
+    const auto* viewport = registry_->TryGet<ViewportInfo>();
+    if (viewport && !viewport->isHovered) return;
+    if (!scrollQuery_) {
+      scrollQuery_ = registry_->CreateQuery<UIRectComponent, UIScrollComponent>();
+    }
+    scrollQuery_->Update();
+
+    Entity bestEntity{static_cast<EcsId>(-1)};
+    int bestLayer = std::numeric_limits<int>::min();
+    scrollQuery_->ForEach([&](const Entity entity, const UIRectComponent& rect, UIScrollComponent& /*scroll*/) {
+      if (!rect.visible || !ContainsPointInRect(rect, lastMousePos_)) return;
+      if (rect.layer >= bestLayer) {
+        bestLayer = rect.layer;
+        bestEntity = entity;
+      }
+    });
+    if (bestEntity.GetId() != static_cast<std::uint32_t>(-1) && registry_->IsAlive(bestEntity)) {
+      auto& scroll = registry_->GetComponent<UIScrollComponent>(bestEntity);
+      const auto& rect = registry_->GetComponent<UIRectComponent>(bestEntity);
+      if (scroll.scrollVertical) scroll.scrollY -= event.dy * scroll.wheelStep;
+      if (scroll.scrollHorizontal) scroll.scrollX -= event.dx * scroll.wheelStep;
+      scroll.ClampToViewport(rect.Width(), rect.Height());
+    }
+  }
+
   void OnKeyInput(const KeyInputEvent& event) {
     if (!event.isPressed || !registry_) {
       return;
@@ -74,6 +114,10 @@ class UIButtonSystem {
 
     const auto* viewport = registry_->TryGet<ViewportInfo>();
     if (viewport && !viewport->isFocused) {
+      return;
+    }
+
+    if (HandleFocusKeyNavigation(event.inputKey, event.inputModifier)) {
       return;
     }
 
@@ -91,12 +135,12 @@ class UIButtonSystem {
     auto* inputSystem = registry_->TryGet<InputSystem>();
 
     auto handler = [&](Entity entity, UIButtonComponent& button) {
-      if (!button.isActive) {
+      if (!button.isActive || !IsButtonVisible(entity)) {
         return;
       }
 
-      bool matchedKey = MatchesKeyString(button.key, key, inputSystem);
-      bool matchedAction = MatchesActionKey(button.action, key, inputSystem);
+      const bool matchedKey = MatchesKeyString(button.key, key, inputSystem);
+      const bool matchedAction = MatchesActionKey(button.action, key, inputSystem);
 
       if (matchedKey || matchedAction) {
         TriggerButton(entity, button);
@@ -115,6 +159,10 @@ class UIButtonSystem {
       return;
     }
 
+    if (HandleFocusGamepadNavigation(event.button)) {
+      return;
+    }
+
     const std::string& buttonName = event.buttonName;
     if (buttonName.empty()) {
       return;
@@ -129,12 +177,12 @@ class UIButtonSystem {
     auto* inputSystem = registry_->TryGet<InputSystem>();
 
     auto handler = [&](Entity entity, UIButtonComponent& button) {
-      if (!button.isActive) {
+      if (!button.isActive || !IsButtonVisible(entity)) {
         return;
       }
 
-      bool matchedController = MatchesGamepadString(button.controllerButton, buttonName, inputSystem);
-      bool matchedAction = MatchesActionGamepad(button.action, buttonName, inputSystem);
+      const bool matchedController = MatchesGamepadString(button.controllerButton, buttonName, inputSystem);
+      const bool matchedAction = MatchesActionGamepad(button.action, buttonName, inputSystem);
 
       if (matchedController || matchedAction) {
         TriggerButton(entity, button);
@@ -156,16 +204,134 @@ class UIButtonSystem {
     }
   }
 
+  void SetFocus(const Entity target) {
+    if (!EnsureFocusQuery()) return;
+    focusQuery_->ForEach([&](const Entity entity, UIFocusComponent& focus) {
+      focus.isFocused = (entity == target && focus.isFocusable && !focus.isDisabled);
+    });
+  }
+
+  [[nodiscard]] Entity GetFocusedEntity() {
+    if (!EnsureFocusQuery()) return Entity(static_cast<EcsId>(-1));
+    Entity current{static_cast<EcsId>(-1)};
+    focusQuery_->ForEach([&](const Entity entity, const UIFocusComponent& focus) {
+      if (focus.isFocused && focus.isFocusable && !focus.isDisabled && IsButtonVisible(entity)) {
+        current = entity;
+      }
+    });
+    return current;
+  }
+
+  bool NavigateDirection(const glm::vec2 dir) {
+    if (!EnsureFocusQuery()) return false;
+    const Entity current = GetFocusedEntity();
+    if (current.GetId() == static_cast<std::uint32_t>(-1)) {
+      return CycleFocusTab(false);
+    }
+
+    const auto& curFocus = registry_->GetComponent<UIFocusComponent>(current);
+    Entity explicitNext{static_cast<EcsId>(-1)};
+    if (dir.y < -0.5f) explicitNext = curFocus.navUp;
+    if (dir.y > 0.5f) explicitNext = curFocus.navDown;
+    if (dir.x < -0.5f) explicitNext = curFocus.navLeft;
+    if (dir.x > 0.5f) explicitNext = curFocus.navRight;
+    if (explicitNext.GetId() != static_cast<std::uint32_t>(-1) && registry_->IsAlive(explicitNext)) {
+      SetFocus(explicitNext);
+      return true;
+    }
+
+    if (!registry_->HasComponent<UIRectComponent>(current)) return false;
+    const glm::vec2 curCenter = registry_->GetComponent<UIRectComponent>(current).Center();
+
+    Entity best{static_cast<EcsId>(-1)};
+    float bestScore = std::numeric_limits<float>::max();
+    focusQuery_->ForEach([&](const Entity candidate, const UIFocusComponent& foc) {
+      if (candidate == current || !foc.isFocusable || foc.isDisabled || !IsButtonVisible(candidate)) return;
+      if (!registry_->HasComponent<UIRectComponent>(candidate)) return;
+      const glm::vec2 delta = registry_->GetComponent<UIRectComponent>(candidate).Center() - curCenter;
+      const float proj = delta.x * dir.x + delta.y * dir.y;
+      if (proj <= 1.0f) return;
+      const float perp = std::abs(delta.x * dir.y - delta.y * dir.x);
+      const float score = proj + perp * 2.5f;
+      if (score < bestScore) {
+        bestScore = score;
+        best = candidate;
+      }
+    });
+
+    if (best.GetId() != static_cast<std::uint32_t>(-1)) {
+      SetFocus(best);
+      return true;
+    }
+    return false;
+  }
+
+  bool CycleFocusTab(const bool reverse) {
+    if (!EnsureFocusQuery()) return false;
+    std::vector<std::pair<std::int32_t, Entity>> candidates;
+    focusQuery_->ForEach([&](const Entity entity, const UIFocusComponent& foc) {
+      if (foc.isFocusable && !foc.isDisabled && IsButtonVisible(entity)) {
+        candidates.emplace_back(foc.tabIndex, entity);
+      }
+    });
+    if (candidates.empty()) return false;
+    std::stable_sort(candidates.begin(), candidates.end(),
+                     [](const auto& a, const auto& b) { return a.first < b.first; });
+
+    const Entity current = GetFocusedEntity();
+    size_t nextIdx = 0;
+    for (size_t i = 0; i < candidates.size(); ++i) {
+      if (candidates[i].second == current) {
+        nextIdx = reverse ? ((i + candidates.size() - 1) % candidates.size()) : ((i + 1) % candidates.size());
+        break;
+      }
+    }
+    SetFocus(candidates[nextIdx].second);
+    return true;
+  }
+
  private:
-  void UpdateMouseHover(const octarine::Rect& camera, const float zoom, const glm::vec2 mousePos) {
-    mouseQuery_->ForEach([&](Entity entity, UIButtonComponent& button, const GlobalTransformComponent* transform,
+  [[nodiscard]] bool IsButtonVisible(const Entity entity) const {
+    if (!registry_ || !registry_->IsAlive(entity)) return false;
+    if (registry_->HasComponent<UIRectComponent>(entity)) {
+      return registry_->GetComponent<UIRectComponent>(entity).visible;
+    }
+    return true;
+  }
+
+  [[nodiscard]] int ComputeEntitySortLayer(const Entity entity) const {
+    if (registry_ && registry_->HasComponent<UIRectComponent>(entity)) {
+      return registry_->GetComponent<UIRectComponent>(entity).layer;
+    }
+    return 0;
+  }
+
+  [[nodiscard]] Entity FindTopmostHit(const octarine::Rect& camera, const float zoom, const glm::vec2 mousePos) {
+    Entity topEntity{static_cast<EcsId>(-1)};
+    int topLayer = std::numeric_limits<int>::min();
+    mouseQuery_->ForEach([&](const Entity entity, UIButtonComponent& button, const GlobalTransformComponent* transform,
                              const BoxColliderComponent* collider) {
-      if (!button.isActive) {
+      if (!button.isActive || !IsButtonVisible(entity)) return;
+      if (!HitTest(entity, button, transform, collider, camera, zoom, mousePos.x, mousePos.y)) return;
+      const int layer = ComputeEntitySortLayer(entity);
+      if (layer >= topLayer) {
+        topLayer = layer;
+        topEntity = entity;
+      }
+    });
+    return topEntity;
+  }
+
+  void UpdateMouseHover(const octarine::Rect& camera, const float zoom, const glm::vec2 mousePos) {
+    const Entity topHit = FindTopmostHit(camera, zoom, mousePos);
+    mouseQuery_->ForEach([&](const Entity entity, UIButtonComponent& button,
+                             const GlobalTransformComponent* /*transform*/, const BoxColliderComponent* /*collider*/) {
+      if (!button.isActive || !IsButtonVisible(entity)) {
         button.isHovered = false;
         button.isPressed = false;
         return;
       }
-      const bool hit = HitTest(entity, button, transform, collider, camera, zoom, mousePos.x, mousePos.y);
+      const bool hit = (entity == topHit);
       button.isHovered = hit;
       if (!hit) button.isPressed = false;
     });
@@ -178,15 +344,71 @@ class UIButtonSystem {
   }
 
   void HandleMousePress(const octarine::Rect& camera, const float zoom, const glm::vec2 mousePos) {
-    mouseQuery_->ForEach([&](Entity entity, UIButtonComponent& button, const GlobalTransformComponent* transform,
-                             const BoxColliderComponent* collider) {
-      if (!button.isActive || !HitTest(entity, button, transform, collider, camera, zoom, mousePos.x, mousePos.y)) {
-        return;
-      }
-      button.isHovered = true;
-      button.isPressed = true;
-      TriggerButton(entity, button);
+    const Entity topHit = FindTopmostHit(camera, zoom, mousePos);
+    if (topHit.GetId() == static_cast<std::uint32_t>(-1) || !registry_->IsAlive(topHit)) return;
+    if (registry_->HasComponent<UIFocusComponent>(topHit)) {
+      SetFocus(topHit);
+    }
+    auto& button = registry_->GetComponent<UIButtonComponent>(topHit);
+    button.isHovered = true;
+    button.isPressed = true;
+    TriggerButton(topHit, button);
+  }
+
+  bool TriggerFocusedButton(const bool requireNoKeyBinding, const bool requireNoControllerBinding) {
+    const Entity focused = GetFocusedEntity();
+    if (focused.GetId() == static_cast<std::uint32_t>(-1) || !registry_->HasComponent<UIButtonComponent>(focused)) {
+      return false;
+    }
+    auto& btn = registry_->GetComponent<UIButtonComponent>(focused);
+    if (!btn.action.empty()) return false;
+    if (requireNoKeyBinding && !btn.key.empty()) return false;
+    if (requireNoControllerBinding && !btn.controllerButton.empty()) return false;
+    TriggerButton(focused, btn);
+    return true;
+  }
+
+  bool HandleFocusKeyNavigation(const SDL_Keycode keycode, const SDL_Keymod mod) {
+    if (!EnsureFocusQuery() || !HasAnyFocusable()) return false;
+    if (keycode == SDLK_TAB) return CycleFocusTab((mod & SDL_KMOD_SHIFT) != 0);
+    if (keycode == SDLK_UP) return NavigateDirection({0.0f, -1.0f});
+    if (keycode == SDLK_DOWN) return NavigateDirection({0.0f, 1.0f});
+    if (keycode == SDLK_LEFT) return NavigateDirection({-1.0f, 0.0f});
+    if (keycode == SDLK_RIGHT) return NavigateDirection({1.0f, 0.0f});
+    if (keycode == SDLK_RETURN || keycode == SDLK_SPACE) {
+      return TriggerFocusedButton(true, false);
+    }
+    return false;
+  }
+
+  bool HandleFocusGamepadNavigation(const SDL_GamepadButton btn) {
+    if (!EnsureFocusQuery() || !HasAnyFocusable()) return false;
+    if (btn == SDL_GAMEPAD_BUTTON_DPAD_UP) return NavigateDirection({0.0f, -1.0f});
+    if (btn == SDL_GAMEPAD_BUTTON_DPAD_DOWN) return NavigateDirection({0.0f, 1.0f});
+    if (btn == SDL_GAMEPAD_BUTTON_DPAD_LEFT) return NavigateDirection({-1.0f, 0.0f});
+    if (btn == SDL_GAMEPAD_BUTTON_DPAD_RIGHT) return NavigateDirection({1.0f, 0.0f});
+    if (btn == SDL_GAMEPAD_BUTTON_SOUTH) {
+      return TriggerFocusedButton(false, true);
+    }
+    return false;
+  }
+
+  bool EnsureFocusQuery() {
+    if (!focusQuery_ && registry_) {
+      focusQuery_ = registry_->CreateQuery<UIFocusComponent>();
+    }
+    if (!focusQuery_) return false;
+    focusQuery_->Update();
+    return true;
+  }
+
+  [[nodiscard]] bool HasAnyFocusable() const {
+    bool any = false;
+    if (!focusQuery_) return false;
+    focusQuery_->ForEach([&](const Entity /*e*/, const UIFocusComponent& f) {
+      if (f.isFocusable && !f.isDisabled) any = true;
     });
+    return any;
   }
 
   [[nodiscard]] std::optional<glm::vec2> GetTransformedMousePos(const MouseInputEvent& event) const {
@@ -289,6 +511,16 @@ class UIButtonSystem {
     return pt.x >= rect.left && pt.x <= rect.right && pt.y >= rect.top && pt.y <= rect.bottom;
   }
 
+  [[nodiscard]] bool IsInsideActiveClip(const UIRectComponent& rect, const glm::vec2 mouse) const {
+    if (rect.clipId == 0 || !registry_) return true;
+    const auto* rq = registry_->TryGet<RenderQueue>();
+    if (!rq) return true;
+    const SDL_Rect* clip = rq->GetClipRect(rect.clipId);
+    if (!clip) return true;
+    return mouse.x >= static_cast<float>(clip->x) && mouse.x <= static_cast<float>(clip->x + clip->w) &&
+           mouse.y >= static_cast<float>(clip->y) && mouse.y <= static_cast<float>(clip->y + clip->h);
+  }
+
   [[nodiscard]] static bool HitTestUIRectBoxCollider(const UIRectComponent& rect, const BoxColliderComponent& box,
                                                      const glm::vec2 mouse) {
     if (box.width <= 0 && box.height <= 0) {
@@ -328,6 +560,9 @@ class UIButtonSystem {
 
   [[nodiscard]] bool HitTestUIRect(const Entity entity, const UIRectComponent& rect,
                                    const BoxColliderComponent* boxCollider, const glm::vec2 mouse) const {
+    if (!rect.visible || !IsInsideActiveClip(rect, mouse)) {
+      return false;
+    }
     if (HasAnyCollider(entity, boxCollider)) {
       return HitTestUIRectCollider(entity, rect, boxCollider, mouse);
     }
@@ -411,9 +646,14 @@ class UIButtonSystem {
 
   using MouseQuery = ComponentQuery<UIButtonComponent, Opt<GlobalTransformComponent>, Opt<BoxColliderComponent>>;
   using ButtonQuery = ComponentQuery<UIButtonComponent>;
+  using FocusQuery = ComponentQuery<UIFocusComponent>;
+  using ScrollQuery = ComponentQuery<UIRectComponent, UIScrollComponent>;
 
   Registry* registry_ = nullptr;
   std::unique_ptr<MouseQuery> mouseQuery_ = nullptr;
   std::unique_ptr<ButtonQuery> buttonQuery_ = nullptr;
-  std::vector<EventBus::SubscriptionHandle> subscriptions_;
+  std::unique_ptr<FocusQuery> focusQuery_ = nullptr;
+  std::unique_ptr<ScrollQuery> scrollQuery_ = nullptr;
+  glm::vec2 lastMousePos_{0.0f, 0.0f};
+  std::vector<EventBus::SubscriptionHandle> subscriptions_{};
 };

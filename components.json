@@ -176,16 +176,52 @@
       "get_accessor": "registry.get_ui_canvas"
     },
     {
+      "lua_key": "ui_clip",
+      "usertype": "ui_clip_component",
+      "has_accessor": "registry.has_ui_clip",
+      "get_accessor": "registry.get_ui_clip"
+    },
+    {
       "lua_key": "ui_flex",
       "usertype": "ui_flex_component",
       "has_accessor": "registry.has_ui_flex",
       "get_accessor": "registry.get_ui_flex"
     },
     {
+      "lua_key": "ui_focus",
+      "usertype": "ui_focus_component",
+      "has_accessor": "registry.has_ui_focus",
+      "get_accessor": "registry.get_ui_focus"
+    },
+    {
+      "lua_key": "ui_layout_box",
+      "usertype": "ui_layout_box_component",
+      "has_accessor": "registry.has_ui_layout_box",
+      "get_accessor": "registry.get_ui_layout_box"
+    },
+    {
+      "lua_key": "ui_nine_slice",
+      "usertype": "ui_nine_slice_component",
+      "has_accessor": "registry.has_ui_nine_slice",
+      "get_accessor": "registry.get_ui_nine_slice"
+    },
+    {
       "lua_key": "ui_rect",
       "usertype": "ui_rect_component",
       "has_accessor": "registry.has_ui_rect",
       "get_accessor": "registry.get_ui_rect"
+    },
+    {
+      "lua_key": "ui_scroll",
+      "usertype": "ui_scroll_component",
+      "has_accessor": "registry.has_ui_scroll",
+      "get_accessor": "registry.get_ui_scroll"
+    },
+    {
+      "lua_key": "ui_style_state",
+      "usertype": "ui_style_state_component",
+      "has_accessor": "registry.has_ui_style_state",
+      "get_accessor": "registry.get_ui_style_state"
     },
     {
       "lua_key": "ui_z_index",

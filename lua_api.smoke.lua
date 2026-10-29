@@ -1819,9 +1819,21 @@ function registry.get_ui_button(...) end
 
 function registry.get_ui_canvas(...) end
 
+function registry.get_ui_clip(...) end
+
 function registry.get_ui_flex(...) end
 
+function registry.get_ui_focus(...) end
+
+function registry.get_ui_layout_box(...) end
+
+function registry.get_ui_nine_slice(...) end
+
 function registry.get_ui_rect(...) end
+
+function registry.get_ui_scroll(...) end
+
+function registry.get_ui_style_state(...) end
 
 function registry.get_ui_z_index(...) end
 
@@ -1883,9 +1895,21 @@ function registry.has_ui_button(...) end
 
 function registry.has_ui_canvas(...) end
 
+function registry.has_ui_clip(...) end
+
 function registry.has_ui_flex(...) end
 
+function registry.has_ui_focus(...) end
+
+function registry.has_ui_layout_box(...) end
+
+function registry.has_ui_nine_slice(...) end
+
 function registry.has_ui_rect(...) end
+
+function registry.has_ui_scroll(...) end
+
+function registry.has_ui_style_state(...) end
 
 function registry.has_ui_z_index(...) end
 
@@ -2037,9 +2061,27 @@ ui = {}
 
 function ui.anchor(...) end
 
+function ui.box(...) end
+
 function ui.canvas(...) end
 
+function ui.clip(...) end
+
 function ui.flex(...) end
+
+function ui.focus(...) end
+
+function ui.get_focused(...) end
+
+function ui.mount(...) end
+
+function ui.nine_slice(...) end
+
+function ui.observable(...) end
+
+function ui.register_widget(...) end
+
+function ui.scroll(...) end
 
 function ui.z_index(...) end
 
@@ -2056,12 +2098,40 @@ ui_button_component = {}
 ui_canvas_component = {}
 
 
+---@class ui_clip_component
+ui_clip_component = {}
+
+
 ---@class ui_flex_component
 ui_flex_component = {}
 
 
+---@class ui_focus_component
+ui_focus_component = {}
+
+
+---@class ui_layout_box_component
+ui_layout_box_component = {}
+
+
+---@class ui_nine_slice_component
+ui_nine_slice_component = {}
+
+
 ---@class ui_rect_component
 ui_rect_component = {}
+
+
+---@class ui_scroll_component
+ui_scroll_component = {}
+
+
+---@class ui_style_patch
+ui_style_patch = {}
+
+
+---@class ui_style_state_component
+ui_style_state_component = {}
 
 
 ---@class ui_z_index_component

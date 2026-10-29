@@ -34,6 +34,8 @@ set(OCTARINE_CORE_SOURCES
         Deploy/Adb.cpp
         Process/Process.cpp
         Project/ProjectIni.cpp
+        UI/OxmlParser.cpp
+        UI/OssParser.cpp
 )
 if (NOT OCTARINE_SHIPPED)
     list(APPEND OCTARINE_CORE_SOURCES Editor/EditorPersistence.cpp)
@@ -143,6 +145,7 @@ octarine_library(octarine_lua
         Lua/Modules/SceneModuleLuaBinding.cpp
         Lua/Modules/StorageModuleLuaBinding.cpp
         Lua/Modules/UIModuleLuaBinding.cpp
+        UI/UIRuntime.cpp
 )
 target_link_libraries(octarine_lua PUBLIC
         octarine_core

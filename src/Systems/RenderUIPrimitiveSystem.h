@@ -16,6 +16,7 @@
 #include "ECS/Registry.h"
 #include "General/BlendMode.h"
 #include "Renderer/RenderQueue.h"
+#include "Systems/UILayoutMetrics.h"
 
 namespace octarine::ui {
 
@@ -122,7 +123,9 @@ class RenderUIPrimitiveSystem {
     auto& renderQueue = registry->Get<RenderQueue>();
     squareQuery_->ForEach(
         [&](const Entity entity, const UIRectComponent& rect, const SquarePrimitiveComponent& square) {
-          EmplaceSquare(renderQueue, rect, square, ResolveColor(registry, entity, square.color));
+          const auto colors =
+              octarine::ui::ResolveVisualState(registry, entity, square.color, square.borderColor, square.color);
+          EmplaceSquare(renderQueue, rect, square, colors.bg, colors.border);
         });
     circleQuery_->ForEach(
         [&](const Entity entity, const UIRectComponent& rect, const CirclePrimitiveComponent& circle) {
@@ -142,8 +145,9 @@ class RenderUIPrimitiveSystem {
   }
 
   void operator()(const ContextFacade& ctx, const UIRectComponent& rect, const SquarePrimitiveComponent& square) const {
-    EmplaceSquare(ctx.GetRegistry()->Get<RenderQueue>(), rect, square,
-                  ResolveColor(ctx.GetRegistry(), ctx.GetEntity(), square.color));
+    const auto colors = octarine::ui::ResolveVisualState(ctx.GetRegistry(), ctx.GetEntity(), square.color,
+                                                         square.borderColor, square.color);
+    EmplaceSquare(ctx.GetRegistry()->Get<RenderQueue>(), rect, square, colors.bg, colors.border);
   }
 
   void operator()(const ContextFacade& ctx, const UIRectComponent& rect, const CirclePrimitiveComponent& circle) const {
@@ -170,23 +174,48 @@ class RenderUIPrimitiveSystem {
 
  private:
   static octarine::Color ResolveColor(Registry* registry, const Entity entity, const octarine::Color& baseColor) {
-    if (registry && registry->IsAlive(entity) && registry->HasComponent<UIButtonComponent>(entity)) {
-      const auto& btn = registry->GetComponent<UIButtonComponent>(entity);
-      if (btn.isActive) {
-        if (btn.isPressed && btn.hasPressColor) return btn.pressColor;
-        if (btn.isHovered && btn.hasHoverColor) return btn.hoverColor;
-      }
-    }
-    return baseColor;
+    return octarine::ui::ResolveVisualState(registry, entity, baseColor, baseColor, baseColor).bg;
   }
 
   static void EmplaceSquare(RenderQueue& renderQueue, const UIRectComponent& rect,
-                            const SquarePrimitiveComponent& square, const octarine::Color& activeColor) {
+                            const SquarePrimitiveComponent& square, const octarine::Color& activeColor,
+                            const octarine::Color& activeBorderColor) {
+    if (!rect.visible) return;
     const float ratio = std::clamp(square.fillRatio, 0.0f, 1.0f);
-    if (ratio <= 0.0f && square.borderThickness <= 0.0f) return;
+    if (ratio <= 0.0f && square.borderThickness <= 0.0f && square.trackColor.a == 0) return;
 
+    EmplaceSquareTrack(renderQueue, rect, square, ratio);
     EmplaceSquareFill(renderQueue, rect, square, activeColor, ratio);
-    EmplaceSquareBorder(renderQueue, rect, square);
+    EmplaceSquareBorder(renderQueue, rect, square, activeBorderColor);
+  }
+
+  static void EmplaceSquareTrack(RenderQueue& renderQueue, const UIRectComponent& rect,
+                                 const SquarePrimitiveComponent& square, const float ratio) {
+    if (ratio >= 1.0f || square.trackColor.a == 0) return;
+    const float fullW = rect.Width();
+    const float fullH = rect.Height();
+    const auto layer = static_cast<unsigned int>(rect.layer);
+    const float r = std::min(square.cornerRadius, std::min(fullW, fullH) * 0.5f);
+    const SDL_Color tcol{square.trackColor.r, square.trackColor.g, square.trackColor.b, square.trackColor.a};
+
+    if (square.cornerRadius > 0.0f && r >= fullH * 0.45f) {
+      const auto resolved = octarine::ui::ResolveCapsule(rect, {0.0f, 0.0f}, {0.0f, 0.0f}, r);
+      auto& capCmd = renderQueue.EmplaceCapsule(layer, rect.top, nullptr, square.blendMode, rect.clipId);
+      capCmd.start = {resolved.start.x, resolved.start.y};
+      capCmd.end = {resolved.end.x, resolved.end.y};
+      capCmd.radius = resolved.radius;
+      capCmd.thickness = 1.0f;
+      capCmd.color = tcol;
+      capCmd.blendMode = octarine::ToSdlBlendMode(square.blendMode);
+      capCmd.filled = true;
+      return;
+    }
+
+    auto& cmd = renderQueue.EmplaceSquare(layer, rect.top, nullptr, square.blendMode, rect.clipId);
+    cmd.destRect = {rect.left, rect.top, fullW, fullH};
+    cmd.color = tcol;
+    cmd.rotation = 0.0f;
+    cmd.blendMode = octarine::ToSdlBlendMode(square.blendMode);
   }
 
   static void EmplaceSquareFill(RenderQueue& renderQueue, const UIRectComponent& rect,
@@ -199,12 +228,13 @@ class RenderUIPrimitiveSystem {
     const float fillW = fullW * ratio;
     const auto layer = static_cast<unsigned int>(rect.layer);
     const float r = std::min(square.cornerRadius, std::min(fullW, fullH) * 0.5f);
+    const float depth = rect.top + (square.trackColor.a > 0 ? 0.005f : 0.0f);
 
     if (square.cornerRadius > 0.0f && r >= fullH * 0.45f) {
       UIRectComponent fillRect = rect;
       fillRect.right = rect.left + fillW;
       const auto resolved = octarine::ui::ResolveCapsule(fillRect, {0.0f, 0.0f}, {0.0f, 0.0f}, r);
-      auto& capCmd = renderQueue.EmplaceCapsule(layer, rect.top, nullptr, square.blendMode);
+      auto& capCmd = renderQueue.EmplaceCapsule(layer, depth, nullptr, square.blendMode, rect.clipId);
       capCmd.start = {resolved.start.x, resolved.start.y};
       capCmd.end = {resolved.end.x, resolved.end.y};
       capCmd.radius = resolved.radius;
@@ -215,7 +245,7 @@ class RenderUIPrimitiveSystem {
       return;
     }
 
-    auto& cmd = renderQueue.EmplaceSquare(layer, rect.top, nullptr, square.blendMode);
+    auto& cmd = renderQueue.EmplaceSquare(layer, depth, nullptr, square.blendMode, rect.clipId);
     cmd.destRect = {rect.left, rect.top, fillW, fullH};
     cmd.color = SDL_Color{activeColor.r, activeColor.g, activeColor.b, activeColor.a};
     cmd.rotation = 0.0f;
@@ -223,20 +253,20 @@ class RenderUIPrimitiveSystem {
   }
 
   static void EmplaceSquareBorder(RenderQueue& renderQueue, const UIRectComponent& rect,
-                                  const SquarePrimitiveComponent& square) {
-    if (square.borderThickness <= 0.0f || square.borderColor.a == 0) return;
+                                  const SquarePrimitiveComponent& square, const octarine::Color& borderColor) {
+    if (square.borderThickness <= 0.0f || borderColor.a == 0) return;
 
     const float fullW = rect.Width();
     const float fullH = rect.Height();
     const auto layer = static_cast<unsigned int>(rect.layer);
     const float bt = square.borderThickness;
-    const SDL_Color bcol{square.borderColor.r, square.borderColor.g, square.borderColor.b, square.borderColor.a};
+    const SDL_Color bcol{borderColor.r, borderColor.g, borderColor.b, borderColor.a};
     const SDL_BlendMode bmode = octarine::ToSdlBlendMode(square.blendMode);
 
     if (square.cornerRadius >= fullH * 0.45f && fullH > 0.0f) {
       const float r = std::min(square.cornerRadius, std::min(fullW, fullH) * 0.5f);
       const auto resolved = octarine::ui::ResolveCapsule(rect, {0.0f, 0.0f}, {0.0f, 0.0f}, r);
-      auto& capCmd = renderQueue.EmplaceCapsule(layer, rect.top + 0.01f, nullptr, square.blendMode);
+      auto& capCmd = renderQueue.EmplaceCapsule(layer, rect.top + 0.01f, nullptr, square.blendMode, rect.clipId);
       capCmd.start = {resolved.start.x, resolved.start.y};
       capCmd.end = {resolved.end.x, resolved.end.y};
       capCmd.radius = resolved.radius;
@@ -250,7 +280,7 @@ class RenderUIPrimitiveSystem {
     // 4 crisp edge rectangles (top, bottom, left, right) drawn on top of the fill
     auto emitEdge = [&](const float x, const float y, const float w, const float h) {
       if (w <= 0.0f || h <= 0.0f) return;
-      auto& ecmd = renderQueue.EmplaceSquare(layer, rect.top + 0.01f, nullptr, square.blendMode);
+      auto& ecmd = renderQueue.EmplaceSquare(layer, rect.top + 0.01f, nullptr, square.blendMode, rect.clipId);
       ecmd.destRect = {x, y, w, h};
       ecmd.color = bcol;
       ecmd.rotation = 0.0f;
@@ -265,8 +295,10 @@ class RenderUIPrimitiveSystem {
 
   static void EmplaceCircle(RenderQueue& renderQueue, const UIRectComponent& rect,
                             const CirclePrimitiveComponent& circle, const octarine::Color& activeColor) {
+    if (!rect.visible) return;
     const auto resolved = octarine::ui::ResolveCircle(rect, circle.position, circle.radius);
-    auto& cmd = renderQueue.EmplaceCircle(static_cast<unsigned int>(rect.layer), rect.top, nullptr, circle.blendMode);
+    auto& cmd = renderQueue.EmplaceCircle(static_cast<unsigned int>(rect.layer), rect.top, nullptr, circle.blendMode,
+                                          rect.clipId);
     cmd.center = {resolved.center.x, resolved.center.y};
     cmd.radiusX = resolved.radiusX;
     cmd.radiusY = resolved.radiusY;
@@ -279,6 +311,7 @@ class RenderUIPrimitiveSystem {
 
   static void EmplaceCapsule(RenderQueue& renderQueue, const UIRectComponent& rect,
                              const CapsulePrimitiveComponent& capsule, const octarine::Color& activeColor) {
+    if (!rect.visible) return;
     const float ratio = std::clamp(capsule.fillRatio, 0.0f, 1.0f);
     if (ratio <= 0.0f) return;
     UIRectComponent effectiveRect = rect;
@@ -286,7 +319,8 @@ class RenderUIPrimitiveSystem {
       effectiveRect.right = rect.left + rect.Width() * ratio;
     }
     const auto resolved = octarine::ui::ResolveCapsule(effectiveRect, capsule.start, capsule.end, capsule.radius);
-    auto& cmd = renderQueue.EmplaceCapsule(static_cast<unsigned int>(rect.layer), rect.top, nullptr, capsule.blendMode);
+    auto& cmd = renderQueue.EmplaceCapsule(static_cast<unsigned int>(rect.layer), rect.top, nullptr, capsule.blendMode,
+                                           rect.clipId);
     cmd.start = {resolved.start.x, resolved.start.y};
     cmd.end = {resolved.end.x, resolved.end.y};
     cmd.radius = resolved.radius;
@@ -298,9 +332,10 @@ class RenderUIPrimitiveSystem {
 
   static void EmplaceTriangle(RenderQueue& renderQueue, const UIRectComponent& rect,
                               const TrianglePrimitiveComponent& triangle, const octarine::Color& activeColor) {
+    if (!rect.visible) return;
     const auto resolved = octarine::ui::ResolveTriangle(rect, triangle.p1, triangle.p2, triangle.p3);
-    auto& cmd =
-        renderQueue.EmplaceTriangle(static_cast<unsigned int>(rect.layer), rect.top, nullptr, triangle.blendMode);
+    auto& cmd = renderQueue.EmplaceTriangle(static_cast<unsigned int>(rect.layer), rect.top, nullptr,
+                                            triangle.blendMode, rect.clipId);
     cmd.p1 = {resolved.p1.x, resolved.p1.y};
     cmd.p2 = {resolved.p2.x, resolved.p2.y};
     cmd.p3 = {resolved.p3.x, resolved.p3.y};
@@ -312,8 +347,10 @@ class RenderUIPrimitiveSystem {
 
   static void EmplaceLine(RenderQueue& renderQueue, const UIRectComponent& rect, const LinePrimitiveComponent& line,
                           const octarine::Color& activeColor) {
+    if (!rect.visible) return;
     const auto resolved = octarine::ui::ResolveLine(rect, line.start, line.end);
-    auto& cmd = renderQueue.EmplaceLine(static_cast<unsigned int>(rect.layer), rect.top, nullptr, line.blendMode);
+    auto& cmd =
+        renderQueue.EmplaceLine(static_cast<unsigned int>(rect.layer), rect.top, nullptr, line.blendMode, rect.clipId);
     cmd.start = {resolved.start.x, resolved.start.y};
     cmd.end = {resolved.end.x, resolved.end.y};
     cmd.thickness = line.thickness;
@@ -330,9 +367,9 @@ class RenderUIPrimitiveSystem {
     lineQuery_ = registry->CreateQuery<UIRectComponent, LinePrimitiveComponent>();
   }
 
-  std::unique_ptr<ComponentQuery<UIRectComponent, SquarePrimitiveComponent>> squareQuery_;
-  std::unique_ptr<ComponentQuery<UIRectComponent, CirclePrimitiveComponent>> circleQuery_;
-  std::unique_ptr<ComponentQuery<UIRectComponent, CapsulePrimitiveComponent>> capsuleQuery_;
-  std::unique_ptr<ComponentQuery<UIRectComponent, TrianglePrimitiveComponent>> triangleQuery_;
-  std::unique_ptr<ComponentQuery<UIRectComponent, LinePrimitiveComponent>> lineQuery_;
+  std::unique_ptr<ComponentQuery<UIRectComponent, SquarePrimitiveComponent>> squareQuery_{};
+  std::unique_ptr<ComponentQuery<UIRectComponent, CirclePrimitiveComponent>> circleQuery_{};
+  std::unique_ptr<ComponentQuery<UIRectComponent, CapsulePrimitiveComponent>> capsuleQuery_{};
+  std::unique_ptr<ComponentQuery<UIRectComponent, TrianglePrimitiveComponent>> triangleQuery_{};
+  std::unique_ptr<ComponentQuery<UIRectComponent, LinePrimitiveComponent>> lineQuery_{};
 };

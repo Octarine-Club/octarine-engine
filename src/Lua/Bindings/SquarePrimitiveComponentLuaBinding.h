@@ -28,6 +28,9 @@ struct LuaBinding<SquarePrimitiveComponent> {
     if (t["border_color"].valid()) {
       square.borderColor = SafeGetColor(t, "border_color", 255, 255, 255, 255);
     }
+    if (t["track_color"].valid()) {
+      square.trackColor = SafeGetColor(t, "track_color", 0, 0, 0, 0);
+    }
     square.cornerRadius = SafeGetOptionalValue<float>(t, "corner_radius", 0.0f);
     square.fillRatio = SafeGetOptionalValue<float>(t, "fill_ratio", 1.0f);
     return square;
@@ -39,8 +42,8 @@ struct LuaBinding<SquarePrimitiveComponent> {
         &SquarePrimitiveComponent::color, "position", &SquarePrimitiveComponent::position, "layer",
         &SquarePrimitiveComponent::layer, "is_fixed", &SquarePrimitiveComponent::isFixed, "border_thickness",
         &SquarePrimitiveComponent::borderThickness, "border_color", &SquarePrimitiveComponent::borderColor,
-        "corner_radius", &SquarePrimitiveComponent::cornerRadius, "fill_ratio", &SquarePrimitiveComponent::fillRatio,
-        "blend_mode",
+        "track_color", &SquarePrimitiveComponent::trackColor, "corner_radius", &SquarePrimitiveComponent::cornerRadius,
+        "fill_ratio", &SquarePrimitiveComponent::fillRatio, "blend_mode",
         sol::property([](const SquarePrimitiveComponent& s) { return octarine::ToString(s.blendMode); },
                       [](SquarePrimitiveComponent& s, const std::string_view mode) {
                         s.blendMode = octarine::BlendModeFromString(mode, s.blendMode);

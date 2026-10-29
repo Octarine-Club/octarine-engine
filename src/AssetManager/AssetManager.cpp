@@ -122,6 +122,9 @@ bool AssetManager::LoadFromCatalog(const CatalogEntry& entry, const std::string&
       }
       AddAudioClip(mixer, assetId, entry.fullPath, entry.stream);
       return audio_store_.Contains(assetId);
+    case AssetType::UIView:
+    case AssetType::UIStyle:
+      return true;
   }
   return false;
 }
