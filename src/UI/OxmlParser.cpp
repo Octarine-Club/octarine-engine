@@ -318,10 +318,15 @@ bool ExtractHeaderNode(const OxmlNode& node, OxmlDocument& doc, std::string& out
   return true;
 }
 
-void AddUniqueRef(std::vector<std::string>& vec, const std::string& value) {
-  if (value.empty() || OxmlParser::ContainsBinding(value)) {
+void AddUniqueRef(std::vector<std::string>& vec, std::string_view rawVal) {
+  std::string_view v = TrimView(rawVal);
+  if (v.size() >= 2 && ((v.front() == '"' && v.back() == '"') || (v.front() == '\'' && v.back() == '\''))) {
+    v = TrimView(v.substr(1, v.size() - 2));
+  }
+  if (v.empty() || OxmlParser::ContainsBinding(v)) {
     return;
   }
+  const std::string value(v);
   if (std::find(vec.begin(), vec.end(), value) == vec.end()) {
     vec.push_back(value);
   }
@@ -332,6 +337,10 @@ void WalkStaticNodeRefs(const OxmlNode& node, OxmlAssetRefs& refs) {
   AddUniqueRef(refs.spriteIds, node.GetAttr("sprite"));
   AddUniqueRef(refs.spriteIds, node.GetAttr("icon"));
   AddUniqueRef(refs.fontIds, node.GetAttr("font"));
+  AddUniqueRef(refs.audioIds, node.GetAttr("sound-hover"));
+  AddUniqueRef(refs.audioIds, node.GetAttr("sound-click"));
+  AddUniqueRef(refs.audioIds, node.GetAttr("sound-press"));
+  AddUniqueRef(refs.audioIds, node.GetAttr("sound-focus"));
   for (const auto& child : node.children) {
     WalkStaticNodeRefs(child, refs);
   }

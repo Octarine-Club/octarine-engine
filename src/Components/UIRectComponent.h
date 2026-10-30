@@ -23,3 +23,7 @@ struct UIRectComponent {
     return {(left + right) * kHalf, (top + bottom) * kHalf};
   }
 };
+
+struct UIDebugConfig {
+  bool enabled = false;
+};

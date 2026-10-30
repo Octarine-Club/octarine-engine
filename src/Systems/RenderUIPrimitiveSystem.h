@@ -11,6 +11,9 @@
 #include "Components/SquarePrimitiveComponent.h"
 #include "Components/TrianglePrimitiveComponent.h"
 #include "Components/UIButtonComponent.h"
+#include "Components/UIClipComponent.h"
+#include "Components/UIFlexComponent.h"
+#include "Components/UIFocusComponent.h"
 #include "Components/UIRectComponent.h"
 #include "ECS/Query.h"
 #include "ECS/Registry.h"
@@ -142,6 +145,7 @@ class RenderUIPrimitiveSystem {
     lineQuery_->ForEach([&](const Entity entity, const UIRectComponent& rect, const LinePrimitiveComponent& line) {
       EmplaceLine(renderQueue, rect, line, ResolveColor(registry, entity, line.color));
     });
+    EmitDebugWireframes(registry, renderQueue);
   }
 
   void operator()(const ContextFacade& ctx, const UIRectComponent& rect, const SquarePrimitiveComponent& square) const {
@@ -358,6 +362,45 @@ class RenderUIPrimitiveSystem {
     cmd.blendMode = octarine::ToSdlBlendMode(line.blendMode);
   }
 
+  static octarine::Color ResolveDebugWireframeColor(Registry* registry, const Entity entity, float& outThickness) {
+    outThickness = 1.0f;
+    if (registry->HasComponent<UIFocusComponent>(entity) &&
+        registry->GetComponent<UIFocusComponent>(entity).isFocused) {
+      outThickness = 2.0f;
+      return {0xFF, 0xCC, 0x00, 0xFF};
+    }
+    if (registry->HasComponent<UIButtonComponent>(entity)) {
+      return {0x44, 0xD0, 0x60, 0xDC};
+    }
+    if (registry->HasComponent<UIClipComponent>(entity)) {
+      return {0xFF, 0x40, 0xFF, 0xDC};
+    }
+    if (registry->HasComponent<UIFlexComponent>(entity)) {
+      return {0x00, 0xE5, 0xFF, 0xB4};
+    }
+    return {0x88, 0x70, 0xA0, 0xB4};
+  }
+
+  void EmitDebugWireframes(Registry* registry, RenderQueue& renderQueue) {
+    const auto* dbg = registry->TryGet<UIDebugConfig>();
+    if (!dbg || !dbg->enabled) return;
+    if (!rectQuery_) {
+      rectQuery_ = registry->CreateQuery<UIRectComponent>();
+    }
+    rectQuery_->Update();
+    static constexpr int kDebugLayerOffset = 1000;
+    rectQuery_->ForEach([&](const Entity entity, const UIRectComponent& rect) {
+      if (!rect.visible || rect.Width() <= 0.0f || rect.Height() <= 0.0f) return;
+      float thickness = 1.0f;
+      const octarine::Color color = ResolveDebugWireframeColor(registry, entity, thickness);
+      UIRectComponent dbgRect = rect;
+      dbgRect.layer = rect.layer + kDebugLayerOffset;
+      SquarePrimitiveComponent sq;
+      sq.borderThickness = thickness;
+      EmplaceSquareBorder(renderQueue, dbgRect, sq, color);
+    });
+  }
+
   void EnsureQueries(Registry* registry) {
     if (squareQuery_) return;
     squareQuery_ = registry->CreateQuery<UIRectComponent, SquarePrimitiveComponent>();
@@ -365,6 +408,7 @@ class RenderUIPrimitiveSystem {
     capsuleQuery_ = registry->CreateQuery<UIRectComponent, CapsulePrimitiveComponent>();
     triangleQuery_ = registry->CreateQuery<UIRectComponent, TrianglePrimitiveComponent>();
     lineQuery_ = registry->CreateQuery<UIRectComponent, LinePrimitiveComponent>();
+    rectQuery_ = registry->CreateQuery<UIRectComponent>();
   }
 
   std::unique_ptr<ComponentQuery<UIRectComponent, SquarePrimitiveComponent>> squareQuery_{};
@@ -372,4 +416,5 @@ class RenderUIPrimitiveSystem {
   std::unique_ptr<ComponentQuery<UIRectComponent, CapsulePrimitiveComponent>> capsuleQuery_{};
   std::unique_ptr<ComponentQuery<UIRectComponent, TrianglePrimitiveComponent>> triangleQuery_{};
   std::unique_ptr<ComponentQuery<UIRectComponent, LinePrimitiveComponent>> lineQuery_{};
+  std::unique_ptr<ComponentQuery<UIRectComponent>> rectQuery_{};
 };

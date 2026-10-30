@@ -120,16 +120,20 @@ class UILayoutSystem {
     return 0.0f;
   }
 
+  static float KnownElementWidthPx(Registry* registry, const Entity entity) {
+    if (registry->HasComponent<UIRectComponent>(entity)) {
+      const float rw = registry->GetComponent<UIRectComponent>(entity).Width();
+      if (rw > 0.0f) return rw;
+    }
+    return ExplicitBoxWidthPx(registry, entity);
+  }
+
   static int ResolveLabelWrapWidth(Registry* registry, const Entity entity, const TextLabelComponent& lbl) {
     if (lbl.wrapWidth > 0) return lbl.wrapWidth;
     if (!lbl.wrapToRect) return 0;
 
-    const float ownW = ExplicitBoxWidthPx(registry, entity);
+    const float ownW = KnownElementWidthPx(registry, entity);
     if (ownW > 0.0f) return static_cast<int>(ownW);
-    if (registry->HasComponent<UIRectComponent>(entity)) {
-      const float rw = registry->GetComponent<UIRectComponent>(entity).Width();
-      if (rw > 0.0f) return static_cast<int>(rw);
-    }
 
     float horizInset = MarginMain(registry, entity, true);
     std::optional<Entity> cur = registry->GetParent(entity);
@@ -138,12 +142,8 @@ class UILayoutSystem {
         const auto& fl = registry->GetComponent<UIFlexComponent>(*cur);
         horizInset += fl.paddingLeft + fl.paddingRight;
       }
-      if (registry->HasComponent<UIRectComponent>(*cur)) {
-        const float rw = registry->GetComponent<UIRectComponent>(*cur).Width();
-        if (rw > 0.0f) return std::max(1, static_cast<int>(rw - horizInset));
-      }
-      const float boxW = ExplicitBoxWidthPx(registry, *cur);
-      if (boxW > 0.0f) return std::max(1, static_cast<int>(boxW - horizInset));
+      const float ancW = KnownElementWidthPx(registry, *cur);
+      if (ancW > 0.0f) return std::max(1, static_cast<int>(ancW - horizInset));
       horizInset += MarginMain(registry, *cur, true);
       cur = registry->GetParent(*cur);
     }
@@ -170,9 +170,89 @@ class UILayoutSystem {
     return 0.0f;
   }
 
+  static float ResolveWrapContainerMain(Registry* registry, const Entity entity, const UIFlexComponent& flex,
+                                        const bool isRow) {
+    const float pad = isRow ? (flex.paddingLeft + flex.paddingRight) : (flex.paddingTop + flex.paddingBottom);
+    if (registry->HasComponent<UIRectComponent>(entity)) {
+      const float rSpan = isRow ? registry->GetComponent<UIRectComponent>(entity).Width()
+                                : registry->GetComponent<UIRectComponent>(entity).Height();
+      if (rSpan > pad) return rSpan - pad;
+    }
+    if (registry->HasComponent<UILayoutBoxComponent>(entity)) {
+      const auto& box = registry->GetComponent<UILayoutBoxComponent>(entity);
+      const UIUnit unit = isRow ? box.widthUnit : box.heightUnit;
+      const float val = isRow ? box.width : box.height;
+      if (unit == UIUnit::Px && val > pad) return val - pad;
+    }
+    return 0.0f;
+  }
+
+  // Recursive traversal over shallow UI element trees during intrinsic auto-sizing.
+  // NOLINTNEXTLINE(misc-no-recursion)
+  static float MeasureWrappedCrossIntrinsic(Registry* registry, const Entity entity, const UIFlexComponent& flex,
+                                            const bool isRow, size_t& outVisCount) {
+    std::vector<Entity> children;
+    registry->ForEachChild(entity, [&](const Entity child) {
+      if (IsEntityVisible(registry, child)) children.push_back(child);
+    });
+    outVisCount = children.size();
+    if (children.empty()) return 0.0f;
+
+    const float crossGap = flex.EffectiveCrossGap();
+    if (flex.columns > 0) {
+      const auto cols = static_cast<size_t>(flex.columns);
+      float totalCross = 0.0f;
+      size_t lines = 0;
+      for (size_t i = 0; i < children.size(); i += cols) {
+        float lineMax = 0.0f;
+        const size_t end = std::min(children.size(), i + cols);
+        for (size_t j = i; j < end; ++j) {
+          const float cCross =
+              MeasureNodeNaturalAxis(registry, children[j], !isRow) + MarginCross(registry, children[j], isRow);
+          lineMax = std::max(lineMax, cCross);
+        }
+        totalCross += lineMax;
+        ++lines;
+      }
+      if (lines > 1) totalCross += crossGap * static_cast<float>(lines - 1);
+      return totalCross;
+    }
+
+    const float availMain = ResolveWrapContainerMain(registry, entity, flex, isRow);
+    float totalCross = 0.0f;
+    float curMain = 0.0f;
+    float lineMaxCross = 0.0f;
+    size_t lines = 0;
+    for (const Entity child : children) {
+      const float cMain = MeasureNodeNaturalAxis(registry, child, isRow) + MarginMain(registry, child, isRow);
+      const float cCross = MeasureNodeNaturalAxis(registry, child, !isRow) + MarginCross(registry, child, isRow);
+      const float needed = (curMain > 0.0f) ? (curMain + flex.gap + cMain) : cMain;
+      if (availMain > 0.0f && curMain > 0.0f && needed > availMain) {
+        totalCross += lineMaxCross;
+        ++lines;
+        curMain = cMain;
+        lineMaxCross = cCross;
+      } else {
+        curMain = needed;
+        lineMaxCross = std::max(lineMaxCross, cCross);
+      }
+    }
+    if (lineMaxCross > 0.0f || curMain > 0.0f) {
+      totalCross += lineMaxCross;
+      ++lines;
+    }
+    if (lines > 1) totalCross += crossGap * static_cast<float>(lines - 1);
+    return totalCross;
+  }
+
+  // NOLINTNEXTLINE(misc-no-recursion)
   static float MeasureFlexChildrenIntrinsic(Registry* registry, const Entity entity, const UIFlexComponent& flex,
                                             const bool isHorizontal, size_t& outVisCount) {
-    const bool sameAxis = (flex.direction == FlexDirection::Row) == isHorizontal;
+    const bool isRow = (flex.direction == FlexDirection::Row);
+    const bool sameAxis = (isRow == isHorizontal);
+    if (!sameAxis && (flex.wrap || flex.columns > 0)) {
+      return MeasureWrappedCrossIntrinsic(registry, entity, flex, isRow, outVisCount);
+    }
     float accum = 0.0f;
     outVisCount = 0;
     registry->ForEachChild(entity, [&](const Entity child) {
@@ -188,6 +268,7 @@ class UILayoutSystem {
     return accum;
   }
 
+  // NOLINTNEXTLINE(misc-no-recursion)
   static float MeasureIntrinsicAxis(Registry* registry, const Entity entity, const bool isHorizontal) {
     float pad = 0.0f;
     if (registry->HasComponent<UIFlexComponent>(entity)) {
@@ -215,6 +296,7 @@ class UILayoutSystem {
     return 0.0f;
   }
 
+  // NOLINTNEXTLINE(misc-no-recursion)
   static float MeasureNodeNaturalAxis(Registry* registry, const Entity entity, const bool isHorizontal) {
     if (registry->HasComponent<UILayoutBoxComponent>(entity)) {
       const auto& box = registry->GetComponent<UILayoutBoxComponent>(entity);
@@ -426,6 +508,139 @@ class UILayoutSystem {
     scrollOffsetY = scroll.scrollVertical ? scroll.scrollY : 0.0f;
   }
 
+  struct WrappedChildPlacement {
+    Entity child{};
+    float mainStart = 0.0f;
+    float mainSpan = 0.0f;
+    float crossStart = 0.0f;
+    float lineCrossSpan = 0.0f;
+  };
+
+  static float ResolveWrappedChildCrossSpan(Registry* registry, const Entity child, const bool isRow,
+                                            const float availCross) {
+    const float natural = MeasureNodeNaturalAxis(registry, child, !isRow);
+    if (natural > 0.0f) return natural;
+    return DesiredCrossSize(registry, child, isRow, availCross);
+  }
+
+  static void BuildGridPlacements(Registry* registry, const std::vector<Entity>& children, const UIFlexComponent& flex,
+                                  const bool isRow, const float availMain, const float availCross,
+                                  std::vector<WrappedChildPlacement>& outPlacements, float& outTotalCross) {
+    const auto cols = static_cast<size_t>(std::max<std::uint16_t>(1, flex.columns));
+    const float totalMainGaps = (cols > 1) ? flex.gap * static_cast<float>(cols - 1) : 0.0f;
+    const float cellMain = std::max(0.0f, (availMain - totalMainGaps) / static_cast<float>(cols));
+    const float crossGap = flex.EffectiveCrossGap();
+
+    float crossCursor = 0.0f;
+    for (size_t i = 0; i < children.size(); i += cols) {
+      const size_t end = std::min(children.size(), i + cols);
+      float lineMaxCross = 0.0f;
+      for (size_t j = i; j < end; ++j) {
+        const float cCross = ResolveWrappedChildCrossSpan(registry, children[j], isRow, availCross) +
+                             MarginCross(registry, children[j], isRow);
+        lineMaxCross = std::max(lineMaxCross, cCross);
+      }
+      for (size_t j = i; j < end; ++j) {
+        const size_t colIdx = j - i;
+        const Entity child = children[j];
+        const float mSpan = MarginMain(registry, child, isRow);
+        const float desired = DesiredMainSize(registry, child, isRow, cellMain);
+        const float childMain = (desired > 0.0f) ? desired : std::max(0.0f, cellMain - mSpan);
+        const float mainPos = static_cast<float>(colIdx) * (cellMain + flex.gap);
+        outPlacements.push_back(WrappedChildPlacement{child, mainPos, childMain, crossCursor, lineMaxCross});
+      }
+      crossCursor += lineMaxCross;
+      if (end < children.size()) crossCursor += crossGap;
+    }
+    outTotalCross = crossCursor;
+  }
+
+  static void BuildFlexWrapPlacements(Registry* registry, const std::vector<Entity>& children,
+                                      const UIFlexComponent& flex, const bool isRow, const float availMain,
+                                      const float availCross, std::vector<WrappedChildPlacement>& outPlacements,
+                                      float& outTotalCross) {
+    const float crossGap = flex.EffectiveCrossGap();
+    float crossCursor = 0.0f;
+    size_t idx = 0;
+    while (idx < children.size()) {
+      size_t lineEnd = idx;
+      float lineMain = 0.0f;
+      float lineMaxCross = 0.0f;
+      while (lineEnd < children.size()) {
+        const Entity ch = children[lineEnd];
+        const float cMain = DesiredMainSize(registry, ch, isRow, availMain);
+        const float mMain = MarginMain(registry, ch, isRow);
+        const float step = (lineEnd > idx ? flex.gap : 0.0f) + cMain + mMain;
+        if (lineEnd > idx && availMain > 0.0f && (lineMain + step) > availMain) {
+          break;
+        }
+        lineMain += step;
+        const float cCross =
+            ResolveWrappedChildCrossSpan(registry, ch, isRow, availCross) + MarginCross(registry, ch, isRow);
+        lineMaxCross = std::max(lineMaxCross, cCross);
+        ++lineEnd;
+      }
+
+      float mainCursor = 0.0f;
+      float stepGap = flex.gap;
+      ComputeMainStartAndStep(flex, lineEnd - idx, availMain, lineMain, 0.0f, false, mainCursor, stepGap);
+      for (size_t j = idx; j < lineEnd; ++j) {
+        const Entity ch = children[j];
+        const float cMain = DesiredMainSize(registry, ch, isRow, availMain);
+        outPlacements.push_back(WrappedChildPlacement{ch, mainCursor, cMain, crossCursor, lineMaxCross});
+        mainCursor += cMain + MarginMain(registry, ch, isRow) + stepGap;
+      }
+      crossCursor += lineMaxCross;
+      if (lineEnd < children.size()) crossCursor += crossGap;
+      idx = lineEnd;
+    }
+    outTotalCross = crossCursor;
+  }
+
+  static void ResolveWrappedOrGridChildren(Registry* registry, const Entity parent, const UIRectComponent& parentRect,
+                                           const UIFlexComponent& flex, const std::vector<Entity>& children,
+                                           std::vector<std::pair<Entity, UIRectComponent>>& pending) {
+    const bool isRow = (flex.direction == FlexDirection::Row);
+    const float innerLeft = parentRect.left + flex.paddingLeft;
+    const float innerTop = parentRect.top + flex.paddingTop;
+    const float innerRight = std::max(innerLeft, parentRect.right - flex.paddingRight);
+    const float innerBottom = std::max(innerTop, parentRect.bottom - flex.paddingBottom);
+    const float vpW = innerRight - innerLeft;
+    const float vpH = innerBottom - innerTop;
+    const float availMain = isRow ? vpW : vpH;
+    const float availCross = isRow ? vpH : vpW;
+
+    std::vector<WrappedChildPlacement> placements;
+    placements.reserve(children.size());
+    float totalCross = 0.0f;
+    if (flex.columns > 0) {
+      BuildGridPlacements(registry, children, flex, isRow, availMain, availCross, placements, totalCross);
+    } else {
+      BuildFlexWrapPlacements(registry, children, flex, isRow, availMain, availCross, placements, totalCross);
+    }
+
+    float scrollOffsetX = 0.0f;
+    float scrollOffsetY = 0.0f;
+    if (registry->HasComponent<UIScrollComponent>(parent)) {
+      auto& scroll = registry->GetComponent<UIScrollComponent>(parent);
+      scroll.contentWidth = isRow ? vpW : totalCross;
+      scroll.contentHeight = isRow ? totalCross : vpH;
+      scroll.ClampToViewport(vpW, vpH);
+      scrollOffsetX = scroll.scrollHorizontal ? scroll.scrollX : 0.0f;
+      scrollOffsetY = scroll.scrollVertical ? scroll.scrollY : 0.0f;
+    }
+
+    const float mainOrigin = (isRow ? innerLeft : innerTop) - (isRow ? scrollOffsetX : scrollOffsetY);
+    const float crossOrigin = (isRow ? innerTop : innerLeft) - (isRow ? scrollOffsetY : scrollOffsetX);
+    for (const auto& pl : placements) {
+      const UIRectComponent childRect =
+          BuildFlexChildRect(registry, pl.child, parentRect, flex, isRow, mainOrigin + pl.mainStart, pl.mainSpan,
+                             crossOrigin + pl.crossStart, pl.lineCrossSpan);
+      WriteRect(registry, pl.child, childRect);
+      pending.emplace_back(pl.child, childRect);
+    }
+  }
+
   static void ResolveFlexChildren(Registry* registry, const Entity parent, const UIRectComponent& parentRect,
                                   const UIFlexComponent& flex,
                                   std::vector<std::pair<Entity, UIRectComponent>>& pending) {
@@ -438,6 +653,10 @@ class UILayoutSystem {
       }
     });
     if (children.empty()) return;
+    if (flex.wrap || flex.columns > 0) {
+      ResolveWrappedOrGridChildren(registry, parent, parentRect, flex, children, pending);
+      return;
+    }
 
     const bool isRow = (flex.direction == FlexDirection::Row);
     const float innerLeft = parentRect.left + flex.paddingLeft;

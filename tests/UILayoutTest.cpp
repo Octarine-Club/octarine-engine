@@ -17,6 +17,7 @@
 #include "Components/UIZIndexComponent.h"
 #include "ECS/Registry.h"
 #include "EventBus/EventBus.h"
+#include "Events/AudioPlayEvent.h"
 #include "Events/KeyInputEvent.h"
 #include "Events/MouseInputEvent.h"
 #include "Events/MouseWheelEvent.h"
@@ -779,6 +780,255 @@ void TestFieldReportRegressionsAndWrapping() {
   lua.script("fview:unmount()");
 }
 
+struct AudioListener {
+  std::vector<std::string> clips{};
+  void OnAudioPlay(const AudioPlayEvent& ev) { clips.push_back(ev.clipId); }
+};
+
+void TestQ1DebugWireframeAndAudioHooks() {
+  std::cout << "[q1] Slice 1 (ui.debug_draw wireframe overlay) and Slice 2 (sound-hover/click/focus audio hooks)\n";
+  Registry registry;
+  GameConfig cfg{};
+  cfg.windowWidth = 800;
+  cfg.windowHeight = 600;
+  registry.Set<GameConfig>(cfg);
+  registry.Set<RenderQueue>(RenderQueue(128));
+  auto eventBus = std::make_unique<EventBus>();
+  auto& btnSys = registry.Set<UIButtonSystem>(UIButtonSystem());
+  btnSys.Init(&registry, eventBus);
+  registry.RegisterBulkSystem(UILayoutSystem());
+  registry.RegisterBulkSystem(RenderUIPrimitiveSystem());
+
+  AudioListener audioListener;
+  auto sub = eventBus->SubscribeEvent<AudioListener, AudioPlayEvent>(&audioListener, &AudioListener::OnAudioPlay);
+
+  sol::state lua;
+  lua.open_libraries(sol::lib::base, sol::lib::math, sol::lib::string, sol::lib::table);
+  UIRuntime uiRuntime(&lua, &registry, nullptr);
+  sol::table uiTbl = lua.create_table();
+  uiRuntime.InstallLuaFunctions(uiTbl);
+  lua["ui"] = uiTbl;
+
+  const char* xml = R"(
+    <OXML>
+      <Canvas width="800px" height="600px" base-layer="2">
+        <Row width="300px" height="100px" gap="10">
+          <Button ref="btn1" text="One" width="120px" height="40px" sound-focus="sfx_focus_attr" />
+          <Button ref="btn2" text="Two" width="120px" height="40px" />
+        </Row>
+      </Canvas>
+    </OXML>
+  )";
+
+  lua["q1_xml"] = xml;
+  lua.script(R"(
+    q1_view = ui.mount(q1_xml, {
+      styles = {
+        [[
+          Button {
+            sound-hover: "sfx_hover_oss";
+            sound-click: "sfx_click_oss";
+          }
+          Button:focus {
+            sound: "sfx_focus_oss";
+          }
+        ]]
+      }
+    })
+  )");
+
+  // Verify static audio ref collection for -m bake
+  const OxmlParseResult parsed = OxmlParser::Parse(xml);
+  const OxmlAssetRefs refs = OxmlParser::CollectStaticAssetRefs(parsed.document);
+  CheckEq(refs.audioIds.size(), static_cast<size_t>(1), "CollectStaticAssetRefs captures static sound-* attribute");
+  CheckEq(refs.audioIds[0], std::string("sfx_focus_attr"), "Captured audio ref matches sfx_focus_attr");
+
+  // Run layout + primitive render with debug_draw disabled first
+  registry.Get<RenderQueue>().Clear();
+  registry.Update(0.016f);
+  const size_t normalCmdCount = registry.Get<RenderQueue>().Size();
+  Check(normalCmdCount > 0, "Normal UI pass emits button primitives");
+
+  // Enable ui.debug_draw(true) and verify wireframe borders emitted at layer >= 1000
+  lua.script("dbg_on = ui.debug_draw(true)");
+  Check(lua.get<bool>("dbg_on"), "ui.debug_draw(true) returns true");
+  registry.Get<RenderQueue>().Clear();
+  registry.Update(0.016f);
+  const size_t debugCmdCount = registry.Get<RenderQueue>().Size();
+  Check(debugCmdCount > normalCmdCount, "ui.debug_draw(true) emits additional wireframe border commands");
+
+  // Toggle ui.debug_draw() with no args -> false
+  lua.script("dbg_off = ui.debug_draw()");
+  Check(!lua.get<bool>("dbg_off"), "ui.debug_draw() toggles back to false");
+
+  // Test Slice 2 audio events: hover enter on btn1 (at 60, 20)
+  SDL_MouseButtonEvent moveEv{};
+  moveEv.type = SDL_EVENT_MOUSE_MOTION;
+  moveEv.x = 60.0f;
+  moveEv.y = 20.0f;
+  eventBus->EmitEvent<MouseInputEvent>(moveEv);
+  CheckEq(audioListener.clips.size(), static_cast<size_t>(1), "Hover enter emits 1 AudioPlayEvent");
+  if (!audioListener.clips.empty()) {
+    CheckEq(audioListener.clips.back(), std::string("sfx_hover_oss"), "Hover sound resolved from .oss Button rule");
+  }
+
+  // Moving within the same button must NOT re-trigger hover sound
+  moveEv.x = 65.0f;
+  eventBus->EmitEvent<MouseInputEvent>(moveEv);
+  CheckEq(audioListener.clips.size(), static_cast<size_t>(1), "Staying hovered does not re-emit hover sound");
+
+  // Clicking btn1 sets focus (sfx_focus_attr) and triggers click (sfx_click_oss)
+  SDL_MouseButtonEvent clickEv{};
+  clickEv.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+  clickEv.button = 1;
+  clickEv.x = 65.0f;
+  clickEv.y = 20.0f;
+  eventBus->EmitEvent<MouseInputEvent>(clickEv);
+  CheckEq(audioListener.clips.size(), static_cast<size_t>(3), "Click emits focus sound + click sound");
+  if (audioListener.clips.size() >= 3) {
+    CheckEq(audioListener.clips[1], std::string("sfx_focus_attr"), "Focus sound resolved from inline sound-focus attr");
+    CheckEq(audioListener.clips[2], std::string("sfx_click_oss"), "Click sound resolved from .oss sound-click");
+  }
+
+  // Tab to btn2 -> emits sfx_focus_oss from Button:focus pseudo-rule
+  eventBus->EmitEvent<KeyInputEvent>(SDLK_TAB, SDL_KMOD_NONE, true);
+  CheckEq(audioListener.clips.size(), static_cast<size_t>(4), "Tab focus change to btn2 emits focus sound");
+  if (audioListener.clips.size() >= 4) {
+    CheckEq(audioListener.clips[3], std::string("sfx_focus_oss"), "btn2 focus sound resolved from Button:focus rule");
+  }
+
+  lua.script("q1_view:unmount()");
+}
+
+void TestQ1GridAndFlexWrapAndSlots() {
+  std::cout << "[q1] Slice 3 (<Grid columns> & flex-wrap) and Slice 4 (named <Slot> + caller scope in each)\n";
+  Registry registry;
+  GameConfig cfg{};
+  cfg.windowWidth = 800;
+  cfg.windowHeight = 600;
+  registry.Set<GameConfig>(cfg);
+  registry.RegisterBulkSystem(UILayoutSystem());
+
+  sol::state lua;
+  lua.open_libraries(sol::lib::base, sol::lib::math, sol::lib::string, sol::lib::table);
+  UIRuntime uiRuntime(&lua, &registry, nullptr);
+  sol::table uiTbl = lua.create_table();
+  uiRuntime.InstallLuaFunctions(uiTbl);
+  lua["ui"] = uiTbl;
+
+  const char* xml = R"(
+    <OXML>
+      <Use name="ItemSlotCard" src="&lt;OXML&gt;&lt;Param name='frame_title' default='Slot' /&gt;&lt;Column width='100%' height='50px'&gt;&lt;Slot name='header'&gt;&lt;Label text='{frame_title}' height='16px' /&gt;&lt;/Slot&gt;&lt;Slot /&gt;&lt;/Column&gt;&lt;/OXML&gt;" />
+      <Canvas width="800px" height="600px">
+        <Column width="400px" height="auto" gap="12">
+          <Grid ref="invGrid" columns="3" gap="10" cross-gap="8" width="320px" height="auto">
+            <ItemSlotCard each="item, idx in {items}">
+              <Label text="{item.name} #{idx}" height="20px" />
+            </ItemSlotCard>
+          </Grid>
+          <Row ref="tagCloud" wrap="true" gap="6" cross-gap="4" width="180px" height="auto">
+            <Box width="80px" height="24px" />
+            <Box width="80px" height="24px" />
+            <Box width="80px" height="24px" />
+          </Row>
+          <ItemSlotCard ref="customHeaderCard" frame_title="IgnoredDefault">
+            <Label slot="header" ref="customHdrLbl" text="Custom Header!" height="16px" />
+            <Label ref="customBodyLbl" text="Custom Body!" height="20px" />
+          </ItemSlotCard>
+        </Column>
+      </Canvas>
+    </OXML>
+  )";
+
+  lua["grid_xml"] = xml;
+  lua.script(R"(
+    gstate = ui.observable({
+      items = {
+        { name = "Sword" },
+        { name = "Shield" },
+        { name = "Potion" },
+        { name = "Bow" },
+        { name = "Ring" },
+        { name = "Helm" }
+      }
+    })
+    gview = ui.mount(grid_xml, { context = gstate })
+  )");
+
+  registry.Update(0.016f);
+  registry.ValidateInvariants();
+
+  sol::table gview = lua.get<sol::table>("gview");
+  sol::table refs = gview.get<sol::table>("refs");
+  auto refEnt = [&](const char* id) -> Entity { return refs.get<sol::table>(id).get<Entity>("entity"); };
+
+  // 1. Verify <Grid columns="3" gap="10" cross-gap="8" width="320px"> with 6 items (50px tall each)
+  // Cell width = (320 - 2*10) / 3 = 100px.
+  // Row 0 at top=0..50, Row 1 at top=58..108. Auto height of invGrid = 50 + 8 + 50 = 108px.
+  const Entity gridEnt = refEnt("invGrid");
+  const auto& gridRect = registry.GetComponent<UIRectComponent>(gridEnt);
+  CheckEq(gridRect.Width(), 320.0f, "Grid width == 320px");
+  CheckEq(gridRect.Height(), 108.0f, "Grid auto height == 2 rows * 50px + 8px cross-gap = 108px");
+
+  const auto gridChildren = registry.GetChildren(gridEnt);
+  CheckEq(gridChildren.size(), static_cast<size_t>(6), "Grid spawned 6 ItemSlotCard children");
+  if (gridChildren.size() == 6) {
+    const auto& c0 = registry.GetComponent<UIRectComponent>(gridChildren[0]);
+    const auto& c1 = registry.GetComponent<UIRectComponent>(gridChildren[1]);
+    const auto& c2 = registry.GetComponent<UIRectComponent>(gridChildren[2]);
+    const auto& c3 = registry.GetComponent<UIRectComponent>(gridChildren[3]);
+    CheckEq(c0.left, 0.0f, "Grid item 0 col 0 left == 0");
+    CheckEq(c0.Width(), 100.0f, "Grid item 0 width == 100px");
+    CheckEq(c1.left, 110.0f, "Grid item 1 col 1 left == 110");
+    CheckEq(c2.left, 220.0f, "Grid item 2 col 2 left == 220");
+    CheckEq(c3.left, 0.0f, "Grid item 3 wraps to col 0 on row 1");
+    CheckEq(c3.top, 58.0f, "Grid item 3 row 1 top == 50 + 8 = 58");
+
+    // Verify Slice 4: inside ItemSlotCard, child[0] is default fallback <Slot name='header'> ("Slot")
+    // and child[1] is projected <Slot /> body evaluated against caller repeater scope ("{item.name} #{idx}")
+    const auto card0Kids = registry.GetChildren(gridChildren[0]);
+    CheckEq(card0Kids.size(), static_cast<size_t>(2), "ItemSlotCard has fallback header + projected body child");
+    if (card0Kids.size() == 2) {
+      CheckEq(registry.GetComponent<TextLabelComponent>(card0Kids[0]).text, std::string("Slot"),
+              "Unfilled named <Slot name='header'> renders its default fallback child");
+      CheckEq(registry.GetComponent<TextLabelComponent>(card0Kids[1]).text, std::string("Sword #1"),
+              "Projected <Slot /> child resolves caller repeater scope variables {item.name} and {idx}");
+    }
+    const auto card5Kids = registry.GetChildren(gridChildren[5]);
+    if (card5Kids.size() == 2) {
+      CheckEq(registry.GetComponent<TextLabelComponent>(card5Kids[1]).text, std::string("Helm #6"),
+              "6th projected <Slot /> child resolves 'Helm #6'");
+    }
+  }
+
+  // 2. Verify <Row wrap="true" gap="6" cross-gap="4" width="180px"> with three 80px boxes:
+  // Line 0 fits 2 boxes (80 + 6 + 80 = 166 <= 180), 3rd box wraps to Line 1 (top = 24 + 4 = 28).
+  const Entity cloudEnt = refEnt("tagCloud");
+  const auto& cloudRect = registry.GetComponent<UIRectComponent>(cloudEnt);
+  CheckEq(cloudRect.Height(), 52.0f, "Wrapped Row auto height == 24 + 4 + 24 = 52px");
+  const auto cloudKids = registry.GetChildren(cloudEnt);
+  if (cloudKids.size() == 3) {
+    const float cloudTop = cloudRect.top;
+    CheckEq(registry.GetComponent<UIRectComponent>(cloudKids[0]).top - cloudTop, 0.0f, "Box 0 on line 0");
+    CheckEq(registry.GetComponent<UIRectComponent>(cloudKids[1]).left, 86.0f, "Box 1 at 80 + 6 = 86");
+    CheckEq(registry.GetComponent<UIRectComponent>(cloudKids[2]).left, 0.0f, "Box 2 wraps to left = 0");
+    CheckEq(registry.GetComponent<UIRectComponent>(cloudKids[2]).top - cloudTop, 28.0f, "Box 2 wraps to top = 28");
+  }
+
+  // 3. Verify named slot override on customHeaderCard (<Label slot="header">)
+  const Entity customCardEnt = refEnt("customHeaderCard");
+  const auto customCardKids = registry.GetChildren(customCardEnt);
+  CheckEq(customCardKids.size(), static_cast<size_t>(2), "customHeaderCard has 2 children (named header + default)");
+  if (customCardKids.size() == 2) {
+    CheckEq(registry.GetComponent<TextLabelComponent>(customCardKids[0]).text, std::string("Custom Header!"),
+            "slot='header' child overrides <Slot name='header'> fallback");
+    CheckEq(registry.GetComponent<TextLabelComponent>(customCardKids[1]).text, std::string("Custom Body!"),
+            "Unnamed child projects into default <Slot />");
+  }
+
+  lua.script("gview:unmount()");
+}
+
 }  // namespace
 
 int main() {
@@ -791,5 +1041,7 @@ int main() {
   TestPhase3OxmlAndOssParsers();
   TestPhase4UnifiedSpineMountBindingsAndWidgets();
   TestFieldReportRegressionsAndWrapping();
+  TestQ1DebugWireframeAndAudioHooks();
+  TestQ1GridAndFlexWrapAndSlots();
   return octarine::test::ReportSummary("UILayoutTest");
 }

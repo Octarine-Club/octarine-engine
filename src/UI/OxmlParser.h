@@ -63,6 +63,7 @@ struct OxmlAssetRefs {
   std::vector<std::string> useSources{};
   std::vector<std::string> spriteIds{};
   std::vector<std::string> fontIds{};
+  std::vector<std::string> audioIds{};
 };
 
 class OxmlParser {

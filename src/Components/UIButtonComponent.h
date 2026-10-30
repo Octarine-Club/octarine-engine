@@ -12,6 +12,9 @@ struct UIButtonComponent {
   std::string key;
   std::string controllerButton;
   std::string action;
+  std::string hoverSound{};
+  std::string clickSound{};
+  std::string focusSound{};
   bool isActive;
   bool isFixed;
   bool isHovered = false;

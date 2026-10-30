@@ -387,7 +387,9 @@
         "UIRectComponent",
         "UIScrollComponent"
       ],
-      "emits": [],
+      "emits": [
+        "AudioPlayEvent"
+      ],
       "subscribes": [
         "GamepadButtonEvent",
         "KeyInputEvent",

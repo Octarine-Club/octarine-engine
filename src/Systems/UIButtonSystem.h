@@ -23,6 +23,7 @@
 #include "ECS/Query.h"
 #include "ECS/Registry.h"
 #include "EventBus/EventBus.h"
+#include "Events/AudioPlayEvent.h"
 #include "Events/GamepadButtonEvent.h"
 #include "Events/KeyInputEvent.h"
 #include "Events/MouseInputEvent.h"
@@ -38,6 +39,7 @@ class UIButtonSystem {
  public:
   void Init(Registry* registry, const std::unique_ptr<EventBus>& eventBus) {
     registry_ = registry;
+    event_bus_ = eventBus.get();
     if (registry_) {
       mouseQuery_ =
           registry_->CreateQuery<UIButtonComponent, Opt<GlobalTransformComponent>, Opt<BoxColliderComponent>>();
@@ -194,6 +196,7 @@ class UIButtonSystem {
   void TriggerButton(Entity entity, UIButtonComponent& button) {
     if (!button.isActive) return;
 
+    EmitButtonSound(button.clickSound);
     if (button.clickFunction != sol::lua_nil) {
       sol::protected_function clickFn = button.clickFunction;
       sol::object btnTable = button.buttonTable ? sol::object(*button.buttonTable) : sol::object(sol::lua_nil);
@@ -207,9 +210,16 @@ class UIButtonSystem {
 
   void SetFocus(const Entity target) {
     if (!EnsureFocusQuery()) return;
+    const Entity prevFocused = GetFocusedEntity();
     focusQuery_->ForEach([&](const Entity entity, UIFocusComponent& focus) {
       focus.isFocused = (entity == target && focus.isFocusable && !focus.isDisabled);
     });
+    if (target != prevFocused && registry_ && registry_->IsAlive(target) &&
+        registry_->HasComponent<UIFocusComponent>(target) &&
+        registry_->GetComponent<UIFocusComponent>(target).isFocused &&
+        registry_->HasComponent<UIButtonComponent>(target)) {
+      EmitButtonSound(registry_->GetComponent<UIButtonComponent>(target).focusSound);
+    }
   }
 
   [[nodiscard]] Entity GetFocusedEntity() {
@@ -323,6 +333,11 @@ class UIButtonSystem {
     return topEntity;
   }
 
+  void EmitButtonSound(const std::string& clipId) const {
+    if (!event_bus_ || clipId.empty()) return;
+    event_bus_->EmitEvent<AudioPlayEvent>(clipId, 1.0f);
+  }
+
   void UpdateMouseHover(const octarine::Rect& camera, const float zoom, const glm::vec2 mousePos) {
     const Entity topHit = FindTopmostHit(camera, zoom, mousePos);
     mouseQuery_->ForEach([&](const Entity entity, UIButtonComponent& button,
@@ -332,8 +347,12 @@ class UIButtonSystem {
         button.isPressed = false;
         return;
       }
+      const bool wasHovered = button.isHovered;
       const bool hit = (entity == topHit);
       button.isHovered = hit;
+      if (!wasHovered && hit) {
+        EmitButtonSound(button.hoverSound);
+      }
       if (!hit) button.isPressed = false;
     });
   }
@@ -651,6 +670,7 @@ class UIButtonSystem {
   using ScrollQuery = ComponentQuery<UIRectComponent, UIScrollComponent>;
 
   Registry* registry_ = nullptr;
+  EventBus* event_bus_ = nullptr;
   std::unique_ptr<MouseQuery> mouseQuery_ = nullptr;
   std::unique_ptr<ButtonQuery> buttonQuery_ = nullptr;
   std::unique_ptr<FocusQuery> focusQuery_ = nullptr;

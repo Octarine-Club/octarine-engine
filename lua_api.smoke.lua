@@ -2067,6 +2067,8 @@ function ui.canvas(...) end
 
 function ui.clip(...) end
 
+function ui.debug_draw(...) end
+
 function ui.flex(...) end
 
 function ui.focus(...) end

@@ -193,6 +193,16 @@ sol::optional<Entity> GetFocusedEntity(Registry* r) {
   return sol::nullopt;
 }
 
+bool ApplyDebugDraw(Registry* r, const sol::optional<bool>& enabled) {
+  if (!r) return false;
+  auto* cfg = r->TryGet<UIDebugConfig>();
+  if (!cfg) {
+    cfg = &r->Set<UIDebugConfig>(UIDebugConfig{});
+  }
+  cfg->enabled = enabled.has_value() ? *enabled : !cfg->enabled;
+  return cfg->enabled;
+}
+
 }  // namespace
 
 void LuaModuleBinding<UIModule>::install(sol::state& lua, LuaBindingContext& ctx) {
@@ -223,6 +233,8 @@ void LuaModuleBinding<UIModule>::install(sol::state& lua, LuaBindingContext& ctx
   });
   ui.set_function("focus", [&ctx](const Entity entity) { ApplyFocus(ctx.GetRegistry(), entity); });
   ui.set_function("get_focused", [&ctx]() { return GetFocusedEntity(ctx.GetRegistry()); });
+  ui.set_function("debug_draw",
+                  [&ctx](const sol::optional<bool>& enabled) { return ApplyDebugDraw(ctx.GetRegistry(), enabled); });
 
   if (Registry* r = ctx.GetRegistry(); r != nullptr) {
     auto& runtime = r->Set<UIRuntime>(UIRuntime(&lua, r, nullptr));

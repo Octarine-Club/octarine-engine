@@ -275,20 +275,48 @@ UILayoutBoxComponent BuildLayoutBoxFromStyle(const std::map<std::string, std::st
   return box;
 }
 
-UIFlexComponent BuildFlexFromStyle(const std::map<std::string, std::string>& props, FlexDirection defaultDir) {
+void ApplyFirstMatchingFloatProp(const std::map<std::string, std::string>& props,
+                                 std::initializer_list<const char*> keys, float& target) {
+  for (const char* key : keys) {
+    if (const auto it = props.find(key); it != props.end()) {
+      OssParser::ParseFloat(it->second, target);
+      return;
+    }
+  }
+}
+
+void ApplyFlexWrapAndColumnsProps(const std::map<std::string, std::string>& props, UIFlexComponent& flex) {
+  float colsF = 0.0f;
+  ApplyFirstMatchingFloatProp(props, {"columns", "grid-columns"}, colsF);
+  if (colsF > 0.0f) {
+    flex.columns = static_cast<std::uint16_t>(colsF);
+    flex.wrap = true;
+  }
+  if (const auto it = props.find("flex-wrap"); it != props.end()) {
+    const std::string_view fw = TrimSv(it->second);
+    flex.wrap = (fw == "wrap" || ParseBoolStr(fw, flex.wrap));
+  } else if (const auto wIt = props.find("wrap"); wIt != props.end()) {
+    const std::string_view wv = TrimSv(wIt->second);
+    if (wv == "wrap" || wv == "nowrap" || wv == "true" || wv == "false") {
+      flex.wrap = (wv == "wrap" || wv == "true");
+    }
+  }
+}
+
+UIFlexComponent BuildFlexFromStyle(const std::map<std::string, std::string>& props, FlexDirection defaultDir,
+                                   bool isGrid = false) {
   UIFlexComponent flex;
   flex.direction = defaultDir;
+  flex.wrap = isGrid;
   if (const auto it = props.find("flex-direction"); it != props.end()) {
     flex.direction = ParseFlexDirStr(it->second, defaultDir);
   } else if (const auto dirIt = props.find("direction"); dirIt != props.end()) {
     flex.direction = ParseFlexDirStr(dirIt->second, defaultDir);
   }
 
-  if (const auto it = props.find("gap"); it != props.end()) {
-    OssParser::ParseFloat(it->second, flex.gap);
-  } else if (const auto spIt = props.find("spacing"); spIt != props.end()) {
-    OssParser::ParseFloat(spIt->second, flex.gap);
-  }
+  ApplyFirstMatchingFloatProp(props, {"gap", "spacing"}, flex.gap);
+  ApplyFirstMatchingFloatProp(props, {"cross-gap", "row-gap", "column-gap"}, flex.crossGap);
+  ApplyFlexWrapAndColumnsProps(props, flex);
 
   if (const auto it = props.find("padding"); it != props.end()) {
     OssParser::ParseEdges(it->second, flex.paddingTop, flex.paddingRight, flex.paddingBottom, flex.paddingLeft);
@@ -465,7 +493,7 @@ struct UIViewInstance : std::enable_shared_from_this<UIViewInstance> {
   }
 };
 
-static constexpr const char* kStyleAttrs[] = {
+constexpr const char* kStyleAttrs[] = {
     "width",
     "height",
     "min-width",
@@ -484,6 +512,12 @@ static constexpr const char* kStyleAttrs[] = {
     "margin-left",
     "gap",
     "spacing",
+    "cross-gap",
+    "row-gap",
+    "column-gap",
+    "columns",
+    "grid-columns",
+    "flex-wrap",
     "direction",
     "flex-direction",
     "align",
@@ -508,6 +542,10 @@ static constexpr const char* kStyleAttrs[] = {
     "text-wrap",
     "white-space",
     "wrap-width",
+    "sound-hover",
+    "sound-click",
+    "sound-press",
+    "sound-focus",
 };
 
 std::vector<std::string> ResolveNodeClasses(const OxmlNode& node, const sol::table& scope, sol::state& lua) {
@@ -659,6 +697,39 @@ void ConfigureLabelEntity(Registry* reg, Entity entity, const OxmlNode& node, co
   reg->AddComponent(entity, lbl);
 }
 
+std::string StripStyleQuotes(std::string_view raw) {
+  std::string_view v = TrimSv(raw);
+  if (v.size() >= 2 && ((v.front() == '"' && v.back() == '"') || (v.front() == '\'' && v.back() == '\''))) {
+    v = TrimSv(v.substr(1, v.size() - 2));
+  }
+  return std::string(v);
+}
+
+std::string LookupStyleProp(const std::map<std::string, std::string>& props, const std::string& key) {
+  const auto it = props.find(key);
+  return it != props.end() ? StripStyleQuotes(it->second) : "";
+}
+
+void ApplyButtonSounds(const OxmlNode& node, const OssResolvedStyle& resolved, UIButtonComponent& btn) {
+  std::string hover = StripStyleQuotes(node.GetAttr("sound-hover", resolved.Get("sound-hover")));
+  if (hover.empty()) hover = LookupStyleProp(resolved.hover, "sound-hover");
+  if (hover.empty()) hover = LookupStyleProp(resolved.hover, "sound");
+
+  std::string click = StripStyleQuotes(node.GetAttr(
+      "sound-click", node.GetAttr("sound-press", resolved.Get("sound-click", resolved.Get("sound-press")))));
+  if (click.empty()) click = LookupStyleProp(resolved.press, "sound-click");
+  if (click.empty()) click = LookupStyleProp(resolved.press, "sound-press");
+  if (click.empty()) click = LookupStyleProp(resolved.press, "sound");
+
+  std::string focus = StripStyleQuotes(node.GetAttr("sound-focus", resolved.Get("sound-focus")));
+  if (focus.empty()) focus = LookupStyleProp(resolved.focus, "sound-focus");
+  if (focus.empty()) focus = LookupStyleProp(resolved.focus, "sound");
+
+  btn.hoverSound = std::move(hover);
+  btn.clickSound = std::move(click);
+  btn.focusSound = std::move(focus);
+}
+
 void ConfigureInteractiveFocus(Registry* reg, Entity entity, const OxmlNode& node, const OssResolvedStyle& resolved) {
   UIFocusComponent focus;
   if (reg->HasComponent<UIFocusComponent>(entity)) {
@@ -679,18 +750,25 @@ void ConfigureButtonEntity(const std::shared_ptr<UIViewInstance>& view, Entity e
   Registry* reg = view->runtime->GetRegistry();
   sol::state& lua = *view->runtime->GetLua();
 
+  octarine::Color bg{42, 34, 62, 255};
+  ExtractBgColor(resolved.base, bg);
+  octarine::Color border{90, 75, 130, 255};
+  OssParser::ParseColor(resolved.Get("border-color"), border);
+  float bw = 1.0f;
+  OssParser::ParseFloat(resolved.Get("border-width", "1"), bw);
   if (!reg->HasComponent<SquarePrimitiveComponent>(entity)) {
-    octarine::Color bg{42, 34, 62, 255};
-    ExtractBgColor(resolved.base, bg);
-    octarine::Color border{90, 75, 130, 255};
-    OssParser::ParseColor(resolved.Get("border-color"), border);
-    float bw = 1.0f;
-    OssParser::ParseFloat(resolved.Get("border-width", "1"), bw);
     SquarePrimitiveComponent sq;
     sq.color = bg;
     sq.borderColor = border;
     sq.borderThickness = bw;
     reg->AddComponent(entity, sq);
+  } else {
+    auto& sq = reg->GetComponent<SquarePrimitiveComponent>(entity);
+    if (sq.color.a == 0 && sq.borderThickness <= 0.0f) {
+      sq.color = bg;
+      sq.borderColor = border;
+      sq.borderThickness = bw;
+    }
   }
   if (node.HasAttr("text") || !node.innerText.empty()) {
     ConfigureLabelEntity(reg, entity, node, resolved, scope, lua);
@@ -714,6 +792,7 @@ void ConfigureButtonEntity(const std::shared_ptr<UIViewInstance>& view, Entity e
     }
   })["fn"];
 
+  ApplyButtonSounds(node, resolved, btn);
   reg->AddComponent(entity, btn);
   ConfigureInteractiveFocus(reg, entity, node, resolved);
   SetEntityDisabled(reg, entity, isDisabled);
@@ -772,16 +851,23 @@ void EnsureDefaultCheckedStyle(Registry* reg, Entity entity) {
 
 void EnsureToggleBaseVisuals(Registry* reg, Entity entity, const OxmlNode& node, const OssResolvedStyle& resolved,
                              const sol::table& scope, sol::state& lua) {
+  octarine::Color bg{38, 32, 54, 255};
+  ExtractBgColor(resolved.base, bg);
+  octarine::Color border{100, 90, 140, 255};
+  OssParser::ParseColor(resolved.Get("border-color"), border);
   if (!reg->HasComponent<SquarePrimitiveComponent>(entity)) {
-    octarine::Color bg{38, 32, 54, 255};
-    ExtractBgColor(resolved.base, bg);
-    octarine::Color border{100, 90, 140, 255};
-    OssParser::ParseColor(resolved.Get("border-color"), border);
     SquarePrimitiveComponent sq;
     sq.color = bg;
     sq.borderColor = border;
     sq.borderThickness = 1.0f;
     reg->AddComponent(entity, sq);
+  } else {
+    auto& sq = reg->GetComponent<SquarePrimitiveComponent>(entity);
+    if (sq.color.a == 0 && sq.borderThickness <= 0.0f) {
+      sq.color = bg;
+      sq.borderColor = border;
+      sq.borderThickness = 1.0f;
+    }
   }
   if (node.HasAttr("text") || !node.innerText.empty()) {
     ConfigureLabelEntity(reg, entity, node, resolved, scope, lua);
@@ -845,6 +931,7 @@ void ConfigureToggleEntity(const std::shared_ptr<UIViewInstance>& view, Entity e
     }
   })["fn"];
 
+  ApplyButtonSounds(node, resolved, btn);
   reg->AddComponent(entity, btn);
   SetEntityDisabled(reg, entity, isDisabled);
 
@@ -911,6 +998,7 @@ void ConfigureRadioButtonEntity(const std::shared_ptr<UIViewInstance>& view, Ent
     }
   })["fn"];
 
+  ApplyButtonSounds(node, resolved, btn);
   reg->AddComponent(entity, btn);
   SetEntityDisabled(reg, entity, isDisabled);
 }
@@ -1021,6 +1109,7 @@ void ConfigureSliderEntity(const std::shared_ptr<UIViewInstance>& view, Entity e
     }
   })["fn"];
 
+  ApplyButtonSounds(node, resolved, btn);
   reg->AddComponent(entity, btn);
   ConfigureInteractiveFocus(reg, entity, node, resolved);
   SetEntityDisabled(reg, entity, isDisabled);
@@ -1114,20 +1203,24 @@ void ApplyResolvedBoxAndFlexUpdate(Registry* r, Entity entity, const OxmlNode& n
     r->GetComponent<UILayoutBoxComponent>(entity) = box;
   }
   if (r->HasComponent<UIFlexComponent>(entity)) {
-    const FlexDirection defaultDir = (node.tag == "Row") ? FlexDirection::Row : FlexDirection::Column;
-    r->GetComponent<UIFlexComponent>(entity) = BuildFlexFromStyle(resolved.base, defaultDir);
+    const bool isGrid = (node.tag == "Grid");
+    const FlexDirection defaultDir = (node.tag == "Row" || isGrid) ? FlexDirection::Row : FlexDirection::Column;
+    r->GetComponent<UIFlexComponent>(entity) = BuildFlexFromStyle(resolved.base, defaultDir, isGrid);
   }
+}
+
+void ApplyProgressBarSquareUpdate(SquarePrimitiveComponent& sq, const OssResolvedStyle& resolved) {
+  if (!OssParser::ParseColor(resolved.Get("color"), sq.color)) {
+    ExtractBgColor(resolved.base, sq.color);
+  }
+  OssParser::ParseColor(resolved.Get("track-color"), sq.trackColor);
+  OssParser::ParseColor(resolved.Get("border-color"), sq.borderColor);
+  OssParser::ParseFloat(resolved.Get("border-width", "1"), sq.borderThickness);
 }
 
 void ApplyResolvedSquareUpdate(Registry* r, Entity entity, const OxmlNode& node, const OssResolvedStyle& resolved) {
   if (node.tag == "ProgressBar" && r->HasComponent<SquarePrimitiveComponent>(entity)) {
-    auto& sq = r->GetComponent<SquarePrimitiveComponent>(entity);
-    if (!OssParser::ParseColor(resolved.Get("color"), sq.color)) {
-      ExtractBgColor(resolved.base, sq.color);
-    }
-    OssParser::ParseColor(resolved.Get("track-color"), sq.trackColor);
-    OssParser::ParseColor(resolved.Get("border-color"), sq.borderColor);
-    OssParser::ParseFloat(resolved.Get("border-width", "1"), sq.borderThickness);
+    ApplyProgressBarSquareUpdate(r->GetComponent<SquarePrimitiveComponent>(entity), resolved);
     return;
   }
 
@@ -1354,13 +1447,18 @@ sol::table CreateRefHandle(const std::shared_ptr<UIViewInstance>& view, Entity e
   return h;
 }
 
+struct SlotProjection {
+  const std::vector<OxmlNode>* nodes{nullptr};
+  sol::table callerScope{};
+};
+
 // Forward declaration for recursive node instantiation.
 Entity InstantiateNode(const std::shared_ptr<UIViewInstance>& view, const OxmlNode& node, std::optional<Entity> parent,
-                       const sol::table& scope, const std::vector<OxmlNode>* slotChildren,
+                       const sol::table& scope, const SlotProjection* slotProjection,
                        const std::shared_ptr<RadioGroupState>& activeRadioGroup);
 
 void MountRepeaterNode(const std::shared_ptr<UIViewInstance>& view, const OxmlNode& node, Entity parentEntity,
-                       const sol::table& scope, const std::vector<OxmlNode>* slotChildren,
+                       const sol::table& scope, const SlotProjection* slotProjection,
                        const std::shared_ptr<RadioGroupState>& activeRadioGroup) {
   const OxmlEachClause clause = OxmlParser::ParseEachClause(node.GetAttr("each"));
   if (!clause.valid) {
@@ -1378,9 +1476,12 @@ void MountRepeaterNode(const std::shared_ptr<UIViewInstance>& view, const OxmlNo
   rec->clause = clause;
 
   std::weak_ptr<UIViewInstance> weakView = view;
-  const std::vector<OxmlNode> savedSlots = slotChildren != nullptr ? *slotChildren : std::vector<OxmlNode>{};
+  const std::vector<OxmlNode> savedSlots = (slotProjection != nullptr && slotProjection->nodes != nullptr)
+                                               ? *slotProjection->nodes
+                                               : std::vector<OxmlNode>{};
+  const sol::table savedCallerScope = slotProjection != nullptr ? slotProjection->callerScope : sol::table{};
 
-  auto rebuild = [weakView, rec, scope, savedSlots, activeRadioGroup]() {
+  auto rebuild = [weakView, rec, scope, savedSlots, savedCallerScope, activeRadioGroup]() {
     auto v = weakView.lock();
     if (!v) return;
     Registry* r = v->runtime->GetRegistry();
@@ -1397,6 +1498,9 @@ void MountRepeaterNode(const std::shared_ptr<UIViewInstance>& view, const OxmlNo
     const sol::object listObj = EvalBindingExpr(lua, rec->clause.listExpr, scope);
     if (!listObj.is<sol::table>()) return;
 
+    const SlotProjection savedProj{&savedSlots, savedCallerScope};
+    const SlotProjection* projPtr = savedSlots.empty() && !savedCallerScope.valid() ? nullptr : &savedProj;
+
     const sol::table listTbl = listObj.as<sol::table>();
     const std::size_t len = listTbl.size();
     for (std::size_t idx = 1; idx <= len; ++idx) {
@@ -1410,7 +1514,7 @@ void MountRepeaterNode(const std::shared_ptr<UIViewInstance>& view, const OxmlNo
       }
       sol::table childScope = v->MakeScope(itemVars);
       const Entity spawned =
-          InstantiateNode(v, rec->itemTemplate, rec->parentEntity, childScope, &savedSlots, activeRadioGroup);
+          InstantiateNode(v, rec->itemTemplate, rec->parentEntity, childScope, projPtr, activeRadioGroup);
       rec->spawnedEntities.push_back(spawned);
     }
   };
@@ -1419,7 +1523,9 @@ void MountRepeaterNode(const std::shared_ptr<UIViewInstance>& view, const OxmlNo
   view->refreshFns.push_back(rebuild);
 }
 
-bool IsReservedCallSiteAttr(const std::string& key) { return key == "if" || key == "visible" || key == "ref"; }
+bool IsReservedCallSiteAttr(const std::string& key) {
+  return key == "if" || key == "visible" || key == "ref" || key == "slot";
+}
 
 sol::object EvalBoundAttrValue(sol::state& lua, const std::string& rawVal, const sol::table& scope) {
   std::string pureExpr;
@@ -1476,7 +1582,8 @@ Entity InstantiateImportedUse(const std::shared_ptr<UIViewInstance>& view, const
   if (importedDoc.roots.empty()) {
     rootEnt = view->runtime->GetRegistry()->CreateEntity();
   } else {
-    rootEnt = InstantiateNode(view, importedDoc.roots.front(), parent, templateScope, &node.children, activeRadioGroup);
+    const SlotProjection proj{&node.children, scope};
+    rootEnt = InstantiateNode(view, importedDoc.roots.front(), parent, templateScope, &proj, activeRadioGroup);
   }
   ApplyCompositeNodeBindings(view, rootEnt, node, scope);
   return rootEnt;
@@ -1522,8 +1629,8 @@ Entity InstantiateCustomLuaWidget(const std::shared_ptr<UIViewInstance>& view, c
     const OxmlParseResult parsed = OxmlParser::Parse(*tplStr);
     if (parsed.ok && !parsed.document.roots.empty()) {
       sol::table tplScope = view->MakeScope(props);
-      rootEnt =
-          InstantiateNode(view, parsed.document.roots.front(), parent, tplScope, &node.children, activeRadioGroup);
+      const SlotProjection proj{&node.children, scope};
+      rootEnt = InstantiateNode(view, parsed.document.roots.front(), parent, tplScope, &proj, activeRadioGroup);
       createdFromTemplate = true;
     }
   }
@@ -1550,8 +1657,8 @@ Entity InstantiateCustomLuaWidget(const std::shared_ptr<UIViewInstance>& view, c
 }
 
 bool IsContainerTag(const std::string& tag) {
-  return tag == "Canvas" || tag == "Panel" || tag == "Box" || tag == "Row" || tag == "Column" || tag == "ScrollView" ||
-         tag == "RadioGroup";
+  return tag == "Canvas" || tag == "Panel" || tag == "Box" || tag == "Row" || tag == "Column" || tag == "Grid" ||
+         tag == "ScrollView" || tag == "RadioGroup";
 }
 
 std::string ResolveInitialRadioValue(const std::shared_ptr<UIViewInstance>& view, const OxmlNode& node,
@@ -1591,8 +1698,9 @@ void ConfigureContainerEntity(const std::shared_ptr<UIViewInstance>& view, Entit
                               std::shared_ptr<RadioGroupState>& currentRadioGroup) {
   Registry* reg = view->runtime->GetRegistry();
   sol::state& lua = *view->runtime->GetLua();
-  const FlexDirection defaultDir = (node.tag == "Row") ? FlexDirection::Row : FlexDirection::Column;
-  reg->AddComponent(entity, BuildFlexFromStyle(resolved.base, defaultDir));
+  const bool isGrid = (node.tag == "Grid");
+  const FlexDirection defaultDir = (node.tag == "Row" || isGrid) ? FlexDirection::Row : FlexDirection::Column;
+  reg->AddComponent(entity, BuildFlexFromStyle(resolved.base, defaultDir, isGrid));
   AttachVisualBackground(reg, entity, node, resolved);
   if (node.tag == "ScrollView") {
     UIScrollComponent scroll;
@@ -1625,6 +1733,7 @@ void ConfigureContainerEntity(const std::shared_ptr<UIViewInstance>& view, Entit
         v->InvokeController(onClickMethod, itemArg);
       }
     })["fn"];
+    ApplyButtonSounds(node, resolved, btn);
     reg->AddComponent(entity, btn);
     SetEntityDisabled(reg, entity, isDisabled);
   }
@@ -1659,19 +1768,41 @@ void ConfigureWidgetByTag(const std::shared_ptr<UIViewInstance>& view, Entity en
 
 // NOLINTNEXTLINE(misc-no-recursion)
 void InstantiateSingleOrRepeater(const std::shared_ptr<UIViewInstance>& view, const OxmlNode& child,
-                                 Entity parentEntity, const sol::table& scope,
-                                 const std::vector<OxmlNode>* slotChildren,
+                                 Entity parentEntity, const sol::table& scope, const SlotProjection* slotProjection,
                                  const std::shared_ptr<RadioGroupState>& currentRadioGroup) {
   if (child.HasAttr("each")) {
-    MountRepeaterNode(view, child, parentEntity, scope, slotChildren, currentRadioGroup);
+    MountRepeaterNode(view, child, parentEntity, scope, slotProjection, currentRadioGroup);
   } else {
-    InstantiateNode(view, child, parentEntity, scope, slotChildren, currentRadioGroup);
+    InstantiateNode(view, child, parentEntity, scope, slotProjection, currentRadioGroup);
+  }
+}
+
+// NOLINTNEXTLINE(misc-no-recursion)
+void InstantiateSlotProjection(const std::shared_ptr<UIViewInstance>& view, const OxmlNode& slotNode,
+                               Entity parentEntity, const sol::table& templateScope,
+                               const SlotProjection* slotProjection,
+                               const std::shared_ptr<RadioGroupState>& currentRadioGroup) {
+  const std::string slotName = slotNode.GetAttr("name");
+  bool matchedAny = false;
+  if (slotProjection != nullptr && slotProjection->nodes != nullptr) {
+    const sol::table& effScope = slotProjection->callerScope.valid() ? slotProjection->callerScope : templateScope;
+    for (const auto& candidate : *slotProjection->nodes) {
+      if (candidate.GetAttr("slot") == slotName) {
+        InstantiateSingleOrRepeater(view, candidate, parentEntity, effScope, nullptr, currentRadioGroup);
+        matchedAny = true;
+      }
+    }
+  }
+  if (!matchedAny) {
+    for (const auto& fallbackChild : slotNode.children) {
+      InstantiateSingleOrRepeater(view, fallbackChild, parentEntity, templateScope, slotProjection, currentRadioGroup);
+    }
   }
 }
 
 // NOLINTNEXTLINE(misc-no-recursion)
 Entity InstantiateNode(const std::shared_ptr<UIViewInstance>& view, const OxmlNode& node, std::optional<Entity> parent,
-                       const sol::table& scope, const std::vector<OxmlNode>* slotChildren,
+                       const sol::table& scope, const SlotProjection* slotProjection,
                        const std::shared_ptr<RadioGroupState>& activeRadioGroup) {
   Registry* reg = view->runtime->GetRegistry();
   sol::state& lua = *view->runtime->GetLua();
@@ -1714,14 +1845,10 @@ Entity InstantiateNode(const std::shared_ptr<UIViewInstance>& view, const OxmlNo
 
   for (const auto& child : node.children) {
     if (child.tag == "Slot") {
-      if (slotChildren != nullptr) {
-        for (const auto& slotChild : *slotChildren) {
-          InstantiateSingleOrRepeater(view, slotChild, entity, scope, nullptr, currentRadioGroup);
-        }
-      }
+      InstantiateSlotProjection(view, child, entity, scope, slotProjection, currentRadioGroup);
       continue;
     }
-    InstantiateSingleOrRepeater(view, child, entity, scope, slotChildren, currentRadioGroup);
+    InstantiateSingleOrRepeater(view, child, entity, scope, slotProjection, currentRadioGroup);
   }
 
   return entity;
@@ -1857,6 +1984,16 @@ void UIRuntime::InstallLuaFunctions(sol::table& uiTable) {
 
   uiTable.set_function("register_widget", [this](const std::string& name, const sol::table& descriptor) {
     RegisterWidget(name, descriptor);
+  });
+
+  uiTable.set_function("debug_draw", [this](const sol::optional<bool>& enabled) -> bool {
+    if (registry_ == nullptr) return false;
+    auto* cfg = registry_->TryGet<UIDebugConfig>();
+    if (cfg == nullptr) {
+      cfg = &registry_->Set<UIDebugConfig>(UIDebugConfig{});
+    }
+    cfg->enabled = enabled.has_value() ? *enabled : !cfg->enabled;
+    return cfg->enabled;
   });
 }
 
@@ -2099,6 +2236,12 @@ int UIRuntime::ValidateCatalogUI(const AssetManager& assetManager) {
     for (const auto& fnt : refs.fontIds) {
       if (fnt != "default-16" && !assetManager.GetCatalog().Contains(fnt)) {
         Logger::Error("Bake UI validation: OXML '" + id + "' references unknown font '" + fnt + "'");
+        ++failures;
+      }
+    }
+    for (const auto& aud : refs.audioIds) {
+      if (!assetManager.GetCatalog().Contains(aud)) {
+        Logger::Error("Bake UI validation: OXML '" + id + "' references unknown audio '" + aud + "'");
         ++failures;
       }
     }

@@ -38,13 +38,17 @@ struct LuaBinding<UIFlexComponent> {
     flex.paddingBottom = SafeGetOptionalValue<float>(t, "padding_bottom", pad);
     flex.align = ParseAlign(SafeGetOptionalValue<std::string>(t, "align", "stretch"));
     flex.justify = ParseAlign(SafeGetOptionalValue<std::string>(t, "justify", "stretch"));
+    flex.wrap = SafeGetOptionalValue<bool>(t, "wrap", false);
+    flex.columns = static_cast<std::uint16_t>(std::max(0, SafeGetOptionalValue<int>(t, "columns", 0)));
+    flex.crossGap = SafeGetOptionalValue<float>(t, "cross_gap", -1.0f);
     return flex;
   }
 
   static void bindUsertype(sol::state& lua) {
     lua.new_usertype<UIFlexComponent>(
-        kUsertypeName, "gap", &UIFlexComponent::gap, "padding_left", &UIFlexComponent::paddingLeft, "padding_top",
-        &UIFlexComponent::paddingTop, "padding_right", &UIFlexComponent::paddingRight, "padding_bottom",
+        kUsertypeName, "gap", &UIFlexComponent::gap, "cross_gap", &UIFlexComponent::crossGap, "wrap",
+        &UIFlexComponent::wrap, "columns", &UIFlexComponent::columns, "padding_left", &UIFlexComponent::paddingLeft,
+        "padding_top", &UIFlexComponent::paddingTop, "padding_right", &UIFlexComponent::paddingRight, "padding_bottom",
         &UIFlexComponent::paddingBottom, "direction",
         sol::property([](const UIFlexComponent& f) { return f.direction == FlexDirection::Column ? "column" : "row"; },
                       [](UIFlexComponent& f, const std::string& s) { f.direction = ParseDirection(s); }));
