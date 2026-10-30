@@ -55,8 +55,9 @@ struct LuaBinding<UIButtonComponent> {
         &UIButtonComponent::clickFunction, "trigger", [](UIButtonComponent& self, sol::optional<Entity> entity) {
           if (!self.isActive) return false;
           if (self.clickFunction != sol::lua_nil) {
-            auto btnTable = self.buttonTable ? *self.buttonTable : sol::lua_nil;
-            auto result = entity ? self.clickFunction(btnTable, *entity) : self.clickFunction(btnTable);
+            sol::protected_function clickFn = self.clickFunction;
+            sol::object btnTable = self.buttonTable ? sol::object(*self.buttonTable) : sol::object(sol::lua_nil);
+            auto result = entity ? clickFn(btnTable, *entity) : clickFn(btnTable);
             if (!result.valid()) {
               const sol::error err = result;
               Logger::ErrorLua(std::string(err.what()));

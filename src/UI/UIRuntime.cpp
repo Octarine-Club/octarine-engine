@@ -442,9 +442,9 @@ struct UIViewInstance : std::enable_shared_from_this<UIViewInstance> {
   void Refresh() {
     if (!isMounted || isRefreshing) return;
     isRefreshing = true;
-    const std::size_t count = refreshFns.size();
-    for (std::size_t i = 0; i < count; ++i) {
-      refreshFns[i]();
+    const auto fns = refreshFns;
+    for (const auto& fn : fns) {
+      fn();
     }
     isRefreshing = false;
   }
@@ -706,7 +706,10 @@ void ConfigureButtonEntity(const std::shared_ptr<UIViewInstance>& view, Entity e
   std::weak_ptr<UIViewInstance> weakView = view;
   btn.clickFunction = lua.create_table_with("fn", [weakView, onClickMethod, localScope]() {
     if (auto v = weakView.lock()) {
-      sol::object itemArg = localScope.valid() ? localScope["item"] : sol::lua_nil;
+      sol::object itemArg = LookupKeyInTable(localScope, "item");
+      if (itemArg == sol::lua_nil) {
+        itemArg = LookupKeyInTable(localScope, "__item");
+      }
       v->InvokeController(onClickMethod, itemArg);
     }
   })["fn"];
@@ -1401,6 +1404,7 @@ void MountRepeaterNode(const std::shared_ptr<UIViewInstance>& view, const OxmlNo
       if (!itemVal.valid() || itemVal == sol::lua_nil) continue;
       sol::table itemVars = lua.create_table();
       itemVars[rec->clause.itemVar] = itemVal;
+      itemVars["__item"] = itemVal;
       if (!rec->clause.indexVar.empty()) {
         itemVars[rec->clause.indexVar] = static_cast<int>(idx);
       }
@@ -1603,6 +1607,26 @@ void ConfigureContainerEntity(const std::shared_ptr<UIViewInstance>& view, Entit
   }
   if (node.tag == "RadioGroup") {
     currentRadioGroup = CreateRadioGroupState(view, node, scope, lua);
+  }
+  if (node.HasAttr("on-click")) {
+    const bool isDisabled = ParseBoolStr(node.GetAttr("disabled", resolved.Get("disabled", "false")), false);
+    UIButtonComponent btn;
+    btn.isActive = !isDisabled;
+    btn.key = node.GetAttr("key");
+    const std::string onClickMethod = node.GetAttr("on-click");
+    sol::table localScope = scope;
+    std::weak_ptr<UIViewInstance> weakView = view;
+    btn.clickFunction = lua.create_table_with("fn", [weakView, onClickMethod, localScope]() {
+      if (auto v = weakView.lock()) {
+        sol::object itemArg = LookupKeyInTable(localScope, "item");
+        if (itemArg == sol::lua_nil) {
+          itemArg = LookupKeyInTable(localScope, "__item");
+        }
+        v->InvokeController(onClickMethod, itemArg);
+      }
+    })["fn"];
+    reg->AddComponent(entity, btn);
+    SetEntityDisabled(reg, entity, isDisabled);
   }
 }
 

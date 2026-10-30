@@ -195,8 +195,9 @@ class UIButtonSystem {
     if (!button.isActive) return;
 
     if (button.clickFunction != sol::lua_nil) {
-      auto btnTable = button.buttonTable ? *button.buttonTable : sol::lua_nil;
-      auto result = button.clickFunction(btnTable, entity);
+      sol::protected_function clickFn = button.clickFunction;
+      sol::object btnTable = button.buttonTable ? sol::object(*button.buttonTable) : sol::object(sol::lua_nil);
+      auto result = clickFn(btnTable, entity);
       if (!result.valid()) {
         const sol::error err = result;
         Logger::ErrorLua(std::string(err.what()));
