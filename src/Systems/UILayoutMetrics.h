@@ -42,22 +42,51 @@ inline float ParseFontPixelSize(const std::string& fontId) {
   return (endPtr != fontId.c_str() + dash + 1 && parsed > 0.0f) ? parsed : kDefaultFontSize;
 }
 
-inline glm::vec2 MeasureFallbackText(const std::string& text, const float fontSize) {
+inline bool IsUtf8ContinuationByte(const char c) {
+  static constexpr unsigned char kUtf8ContMask = 0xC0u;
+  static constexpr unsigned char kUtf8ContTag = 0x80u;
+  return (static_cast<unsigned char>(c) & kUtf8ContMask) == kUtf8ContTag;
+}
+
+inline void FlushWordToWrappedLine(const float wordW, const float spaceW, const float maxW, float& currentLineW,
+                                   float& maxLineW, int& lines) {
+  if (wordW <= 0.0f) return;
+  const float neededSpace = (currentLineW > 0.0f) ? spaceW : 0.0f;
+  if (maxW > 0.0f && currentLineW > 0.0f && (currentLineW + neededSpace + wordW) > maxW) {
+    maxLineW = std::max(maxLineW, currentLineW);
+    currentLineW = wordW;
+    ++lines;
+  } else {
+    currentLineW += neededSpace + wordW;
+  }
+}
+
+inline glm::vec2 MeasureFallbackText(const std::string& text, const float fontSize, const int wrapWidth = 0) {
   static constexpr float kCharWidthFactor = 0.55f;
   const float charW = fontSize * kCharWidthFactor;
+  const float maxW = wrapWidth > 0 ? static_cast<float>(wrapWidth) : 0.0f;
   float maxLineW = 0.0f;
   float currentLineW = 0.0f;
+  float wordW = 0.0f;
   int lines = 1;
   for (const char c : text) {
+    if (IsUtf8ContinuationByte(c)) continue;
     if (c == '\n') {
+      FlushWordToWrappedLine(wordW, charW, maxW, currentLineW, maxLineW, lines);
+      wordW = 0.0f;
       maxLineW = std::max(maxLineW, currentLineW);
       currentLineW = 0.0f;
       ++lines;
+    } else if (c == ' ' || c == '\t') {
+      FlushWordToWrappedLine(wordW, charW, maxW, currentLineW, maxLineW, lines);
+      wordW = 0.0f;
     } else {
-      currentLineW += charW;
+      wordW += charW;
     }
   }
+  FlushWordToWrappedLine(wordW, charW, maxW, currentLineW, maxLineW, lines);
   maxLineW = std::max(maxLineW, currentLineW);
+  if (maxW > 0.0f) maxLineW = std::min(maxLineW, maxW);
   return {std::ceil(maxLineW), std::ceil(static_cast<float>(lines) * fontSize)};
 }
 
@@ -72,25 +101,28 @@ inline glm::vec2 MeasureFromAtlas(const GlyphAtlas& atlas, const std::string& te
   return {std::ceil(totalW), static_cast<float>(std::max(1, atlas.LineSkip()))};
 }
 
-inline glm::vec2 MeasureTtfFontText(TTF_Font* font, const TextLabelComponent& label, const bool hasNewline) {
+inline glm::vec2 MeasureTtfFontText(TTF_Font* font, const TextLabelComponent& label, const bool hasNewline,
+                                    const int effWrapWidth) {
   int w = 0;
   int h = 0;
-  const bool wrapped = label.wrapWidth > 0 || hasNewline;
-  const int wrapLen = label.wrapWidth > 0 ? label.wrapWidth : 0;
+  const bool wrapped = effWrapWidth > 0 || hasNewline;
+  const int wrapLen = effWrapWidth > 0 ? effWrapWidth : 0;
   const bool ok = wrapped ? TTF_GetStringSizeWrapped(font, label.text.c_str(), 0, wrapLen, &w, &h)
                           : TTF_GetStringSize(font, label.text.c_str(), 0, &w, &h);
   if (!ok) return {-1.0f, -1.0f};
   return {static_cast<float>(w), static_cast<float>(h)};
 }
 
-inline glm::vec2 MeasureTextLabel(Registry* registry, const TextLabelComponent& label) {
+inline glm::vec2 MeasureTextLabel(Registry* registry, const TextLabelComponent& label,
+                                  const int wrapWidthOverride = 0) {
   if (label.text.empty()) return {0.0f, 0.0f};
+  const int effWrap = label.wrapWidth > 0 ? label.wrapWidth : wrapWidthOverride;
   const auto* assetMgr = registry->TryGet<AssetManager>();
   if (assetMgr == nullptr) {
-    return MeasureFallbackText(label.text, ParseFontPixelSize(label.fontId));
+    return MeasureFallbackText(label.text, ParseFontPixelSize(label.fontId), effWrap);
   }
   const bool hasNewline = label.text.find('\n') != std::string::npos;
-  if (label.wrapWidth <= 0 && !hasNewline) {
+  if (effWrap <= 0 && !hasNewline) {
     const GlyphAtlas* atlas = assetMgr->GetGlyphAtlas(label.fontId);
     if (atlas != nullptr && atlas->IsLoaded()) {
       const glm::vec2 atlasSize = MeasureFromAtlas(*atlas, label.text);
@@ -98,10 +130,10 @@ inline glm::vec2 MeasureTextLabel(Registry* registry, const TextLabelComponent& 
     }
   }
   if (TTF_Font* font = assetMgr->GetFont(label.fontId)) {
-    const glm::vec2 ttfSize = MeasureTtfFontText(font, label, hasNewline);
+    const glm::vec2 ttfSize = MeasureTtfFontText(font, label, hasNewline, effWrap);
     if (ttfSize.x >= 0.0f) return ttfSize;
   }
-  return MeasureFallbackText(label.text, ParseFontPixelSize(label.fontId));
+  return MeasureFallbackText(label.text, ParseFontPixelSize(label.fontId), effWrap);
 }
 
 inline SDL_Rect IntersectRects(const SDL_Rect& a, const SDL_Rect& b) {

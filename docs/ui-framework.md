@@ -241,7 +241,7 @@ Unlike manual multi-entity setups that require separate background and text enti
 | `<Row>` | Horizontal flex container (`direction="row"`). | `gap`, `padding`, `justify`, `align` |
 | `<Column>` | Vertical flex container (`direction="column"`). | `gap`, `padding`, `justify`, `align` |
 | `<Box>` | Non-flex container or spacer with explicit sizing. | `width`, `height`, `anchor` |
-| `<Label>` | Text display (`TextLabelComponent`). Supports `{...}` interpolation in `text="..."` or inner text. | `text`, `font`, `color`, `text-align`, `text-valign`, `text-wrap="true\|false"` |
+| `<Label>` | Text display (`TextLabelComponent`). Supports `{...}` interpolation and multi-line word wrapping (`wrap="true"`). | `text`, `font`, `color`, `text-align`, `wrap="true\|false\|<px>"`, `max-width` |
 | `<Image>` | Texture / atlas region (`SpriteComponent`). Supports 9-slice borders. | `src="asset_id"`, `slice="l,t,r,b"` (or `"all"`), `color` |
 | `<Button>` | Interactive button (`UIButtonComponent` + background + label + focus/style state). | `text`, `on-click`, `key`, `gamepad`, `action`, `disabled`, `focusable` |
 | `<ProgressBar>` | Fill bar (`SquarePrimitiveComponent.fillRatio`). | `value="{0..1}"`, `fill-color`, `background-color` |

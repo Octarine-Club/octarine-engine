@@ -37,7 +37,18 @@ class UILayoutSystem {
     canvasQuery_ = registry->CreateQuery<UICanvasComponent>();
   }
 
+  static bool IsUILayoutParticipant(Registry* registry, const Entity entity) {
+    return registry->HasComponent<UILayoutBoxComponent>(entity) || registry->HasComponent<UIAnchorComponent>(entity) ||
+           registry->HasComponent<UIFlexComponent>(entity) || registry->HasComponent<TextLabelComponent>(entity) ||
+           registry->HasComponent<SquarePrimitiveComponent>(entity) ||
+           registry->HasComponent<SpriteComponent>(entity) || registry->HasComponent<UIButtonComponent>(entity) ||
+           registry->HasComponent<UICanvasComponent>(entity);
+  }
+
   static bool IsEntityVisible(Registry* registry, const Entity entity) {
+    if (!IsUILayoutParticipant(registry, entity)) {
+      return false;
+    }
     if (registry->HasComponent<UILayoutBoxComponent>(entity)) {
       return registry->GetComponent<UILayoutBoxComponent>(entity).visible;
     }
@@ -53,10 +64,12 @@ class UILayoutSystem {
   }
 
   static void MarkSubtreeHidden(Registry* registry, const Entity root) {
+    if (!IsUILayoutParticipant(registry, root)) return;
     std::vector<Entity> stack{root};
     while (!stack.empty()) {
       const Entity current = stack.back();
       stack.pop_back();
+      if (!IsUILayoutParticipant(registry, current)) continue;
       UIRectComponent hiddenRect{};
       hiddenRect.visible = false;
       WriteRect(registry, current, hiddenRect);
@@ -95,10 +108,53 @@ class UILayoutSystem {
     return isRow ? (b.marginTop + b.marginBottom) : (b.marginLeft + b.marginRight);
   }
 
+  static float ExplicitBoxWidthPx(Registry* registry, const Entity entity) {
+    if (!registry->HasComponent<UILayoutBoxComponent>(entity)) return 0.0f;
+    const auto& box = registry->GetComponent<UILayoutBoxComponent>(entity);
+    if (box.widthUnit == UIUnit::Px && box.width > 0.0f) {
+      return ClampBoxAxis(registry, entity, true, box.width, box.width);
+    }
+    if (box.maxWidthUnit == UIUnit::Px && box.maxWidth > 0.0f) {
+      return box.maxWidth;
+    }
+    return 0.0f;
+  }
+
+  static int ResolveLabelWrapWidth(Registry* registry, const Entity entity, const TextLabelComponent& lbl) {
+    if (lbl.wrapWidth > 0) return lbl.wrapWidth;
+    if (!lbl.wrapToRect) return 0;
+
+    const float ownW = ExplicitBoxWidthPx(registry, entity);
+    if (ownW > 0.0f) return static_cast<int>(ownW);
+    if (registry->HasComponent<UIRectComponent>(entity)) {
+      const float rw = registry->GetComponent<UIRectComponent>(entity).Width();
+      if (rw > 0.0f) return static_cast<int>(rw);
+    }
+
+    float horizInset = MarginMain(registry, entity, true);
+    std::optional<Entity> cur = registry->GetParent(entity);
+    while (cur.has_value() && registry->IsAlive(*cur)) {
+      if (registry->HasComponent<UIFlexComponent>(*cur)) {
+        const auto& fl = registry->GetComponent<UIFlexComponent>(*cur);
+        horizInset += fl.paddingLeft + fl.paddingRight;
+      }
+      if (registry->HasComponent<UIRectComponent>(*cur)) {
+        const float rw = registry->GetComponent<UIRectComponent>(*cur).Width();
+        if (rw > 0.0f) return std::max(1, static_cast<int>(rw - horizInset));
+      }
+      const float boxW = ExplicitBoxWidthPx(registry, *cur);
+      if (boxW > 0.0f) return std::max(1, static_cast<int>(boxW - horizInset));
+      horizInset += MarginMain(registry, *cur, true);
+      cur = registry->GetParent(*cur);
+    }
+    return 0;
+  }
+
   static float MeasureLeafIntrinsicAxis(Registry* registry, const Entity entity, const bool isHorizontal) {
     if (registry->HasComponent<TextLabelComponent>(entity)) {
-      const glm::vec2 textSz =
-          octarine::ui::MeasureTextLabel(registry, registry->GetComponent<TextLabelComponent>(entity));
+      const auto& lbl = registry->GetComponent<TextLabelComponent>(entity);
+      const int wrapW = ResolveLabelWrapWidth(registry, entity, lbl);
+      const glm::vec2 textSz = octarine::ui::MeasureTextLabel(registry, lbl, wrapW);
       return isHorizontal ? textSz.x : textSz.y;
     }
     if (registry->HasComponent<SpriteComponent>(entity)) {
@@ -270,6 +326,13 @@ class UILayoutSystem {
     }
   }
 
+  static bool HasExplicitCrossSize(Registry* registry, const Entity child, const bool isRow) {
+    if (!registry->HasComponent<UILayoutBoxComponent>(child)) return false;
+    const auto& box = registry->GetComponent<UILayoutBoxComponent>(child);
+    const UIUnit unit = isRow ? box.heightUnit : box.widthUnit;
+    return unit == UIUnit::Px || unit == UIUnit::Percent;
+  }
+
   static UIRectComponent BuildFlexChildRect(Registry* registry, const Entity child, const UIRectComponent& parentRect,
                                             const UIFlexComponent& flex, const bool isRow, const float cursor,
                                             const float mainSpan, const float crossOrigin, const float availCross) {
@@ -298,6 +361,8 @@ class UILayoutSystem {
       } else if (flex.align == FlexAlign::End) {
         crossStart += slack;
       }
+    } else if (HasExplicitCrossSize(registry, child, isRow)) {
+      crossSpan = DesiredCrossSize(registry, child, isRow, effAvailCross);
     } else {
       crossSpan = ClampBoxAxis(registry, child, !isRow, effAvailCross, effAvailCross);
     }

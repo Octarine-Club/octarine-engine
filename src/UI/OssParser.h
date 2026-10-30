@@ -30,7 +30,12 @@ struct OssSelector {
   [[nodiscard]] int Specificity() const {
     int score = 0;
     if (!id.empty()) score += 100;
-    if (!className.empty()) score += 10;
+    if (!className.empty()) {
+      score += 10;
+      for (const char c : className) {
+        if (c == '.') score += 10;
+      }
+    }
     if (!tag.empty()) score += 1;
     return score;
   }

@@ -339,8 +339,11 @@ bool OssSelector::MatchesElement(std::string_view elemTag, const std::vector<std
     return false;
   }
   if (!className.empty()) {
-    if (std::find(elemClasses.begin(), elemClasses.end(), className) == elemClasses.end()) {
-      return false;
+    for (const std::string_view reqCls : SplitByChar(className, '.')) {
+      if (reqCls.empty()) continue;
+      if (std::find(elemClasses.begin(), elemClasses.end(), reqCls) == elemClasses.end()) {
+        return false;
+      }
     }
   }
   return true;

@@ -465,22 +465,80 @@ struct UIViewInstance : std::enable_shared_from_this<UIViewInstance> {
   }
 };
 
+static constexpr const char* kStyleAttrs[] = {
+    "width",
+    "height",
+    "min-width",
+    "min-height",
+    "max-width",
+    "max-height",
+    "padding",
+    "padding-top",
+    "padding-right",
+    "padding-bottom",
+    "padding-left",
+    "margin",
+    "margin-top",
+    "margin-right",
+    "margin-bottom",
+    "margin-left",
+    "gap",
+    "spacing",
+    "direction",
+    "flex-direction",
+    "align",
+    "align-items",
+    "justify",
+    "justify-content",
+    "background-color",
+    "bg-color",
+    "background",
+    "border-color",
+    "border-width",
+    "text-color",
+    "color",
+    "track-color",
+    "font",
+    "slice",
+    "overflow",
+    "clip",
+    "flex-grow",
+    "text-align",
+    "wrap",
+    "text-wrap",
+    "white-space",
+    "wrap-width",
+};
+
+std::vector<std::string> ResolveNodeClasses(const OxmlNode& node, const sol::table& scope, sol::state& lua) {
+  const std::string rawClass = node.GetAttr("class");
+  const std::string evalClass =
+      OxmlParser::ContainsBinding(rawClass) ? EvalInterpolatedString(lua, rawClass, scope) : rawClass;
+  return OssParser::SplitClassList(evalClass);
+}
+
+bool HasDynamicStyleOrClassBinding(const OxmlNode& node) {
+  if (OxmlParser::ContainsBinding(node.GetAttr("class")) || OxmlParser::ContainsBinding(node.GetAttr("style"))) {
+    return true;
+  }
+  for (const char* key : kStyleAttrs) {
+    const auto it = node.attributes.find(key);
+    if (it != node.attributes.end() && OxmlParser::ContainsBinding(it->second)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 std::map<std::string, std::string> CollectInlineStyleProps(const OxmlNode& node, const sol::table& scope,
                                                            sol::state& lua) {
   std::map<std::string, std::string> props;
   if (node.HasAttr("style")) {
-    props = OssParser::ParseInlineStyle(node.GetAttr("style"));
+    const std::string rawStyle = node.GetAttr("style");
+    const std::string evalStyle =
+        OxmlParser::ContainsBinding(rawStyle) ? EvalInterpolatedString(lua, rawStyle, scope) : rawStyle;
+    props = OssParser::ParseInlineStyle(evalStyle);
   }
-  static constexpr const char* kStyleAttrs[] = {
-      "width",        "height",      "min-width",    "min-height",      "max-width",
-      "max-height",   "padding",     "padding-top",  "padding-right",   "padding-bottom",
-      "padding-left", "margin",      "margin-top",   "margin-right",    "margin-bottom",
-      "margin-left",  "gap",         "spacing",      "direction",       "flex-direction",
-      "align",        "align-items", "justify",      "justify-content", "background-color",
-      "bg-color",     "background",  "border-color", "border-width",    "text-color",
-      "color",        "track-color", "font",         "slice",           "overflow",
-      "clip",         "flex-grow",
-  };
   for (const char* key : kStyleAttrs) {
     const auto it = node.attributes.find(key);
     if (it == node.attributes.end()) continue;
@@ -548,6 +606,42 @@ void AttachVisualBackground(Registry* reg, Entity entity, const OxmlNode& node, 
   }
 }
 
+void ConfigureLabelWrapping(const OxmlNode& node, const OssResolvedStyle& resolved, TextLabelComponent& lbl) {
+  const std::string wrapStr = node.GetAttr("wrap", resolved.Get("wrap", resolved.Get("text-wrap")));
+  const std::string wsStr = resolved.Get("white-space");
+  const std::string wrapWStr = node.GetAttr("wrap-width", resolved.Get("wrap-width"));
+
+  if (wrapStr == "false" || wrapStr == "0" || wrapStr == "nowrap" || wsStr == "nowrap") {
+    lbl.wrapToRect = false;
+    lbl.wrapWidth = 0;
+    return;
+  }
+
+  float explicitWrapPx = 0.0f;
+  if (!wrapWStr.empty() && OssParser::ParseFloat(wrapWStr, explicitWrapPx) && explicitWrapPx > 0.0f) {
+    lbl.wrapWidth = static_cast<int>(explicitWrapPx);
+    lbl.wrapToRect = true;
+    return;
+  }
+  if (!wrapStr.empty() && OssParser::ParseFloat(wrapStr, explicitWrapPx) && explicitWrapPx > 0.0f && wrapStr != "1") {
+    lbl.wrapWidth = static_cast<int>(explicitWrapPx);
+    lbl.wrapToRect = true;
+    return;
+  }
+  if (ParseBoolStr(wrapStr, false) || wrapStr == "wrap" || wsStr == "normal" || wsStr == "pre-wrap") {
+    lbl.wrapToRect = true;
+  }
+  if (node.tag == "Label") {
+    float maxVal = 0.0f;
+    UIUnit maxUnit = UIUnit::Auto;
+    if (OssParser::ParseDimension(resolved.Get("max-width"), maxVal, maxUnit) && maxUnit == UIUnit::Px &&
+        maxVal > 0.0f) {
+      lbl.wrapToRect = true;
+      if (lbl.wrapWidth <= 0) lbl.wrapWidth = static_cast<int>(maxVal);
+    }
+  }
+}
+
 void ConfigureLabelEntity(Registry* reg, Entity entity, const OxmlNode& node, const OssResolvedStyle& resolved,
                           const sol::table& scope, sol::state& lua) {
   const std::string rawText = node.GetAttr("text");
@@ -561,6 +655,7 @@ void ConfigureLabelEntity(Registry* reg, Entity entity, const OxmlNode& node, co
   const TextAlign hAlign = centered ? TextAlign::Center : TextAlign::Start;
   const TextAlign vAlign = centered ? TextAlign::Center : TextAlign::Start;
   TextLabelComponent lbl({0.0f, 0.0f}, 0, initialText, fontId, textColor, true, hAlign, vAlign);
+  ConfigureLabelWrapping(node, resolved, lbl);
   reg->AddComponent(entity, lbl);
 }
 
@@ -1002,6 +1097,95 @@ void BindSpriteAttribute(const std::shared_ptr<UIViewInstance>& view, Entity ent
   view->refreshFns.push_back(applySprite);
 }
 
+void ApplyResolvedBoxAndFlexUpdate(Registry* r, Entity entity, const OxmlNode& node, const OssResolvedStyle& resolved) {
+  if (r->HasComponent<UILayoutBoxComponent>(entity)) {
+    const bool prevVis = r->GetComponent<UILayoutBoxComponent>(entity).visible;
+    UILayoutBoxComponent box = BuildLayoutBoxFromStyle(resolved.base);
+    if (node.tag == "Canvas" && !resolved.Has("width") && !node.HasAttr("width")) {
+      box.SetWidthPercent(100.0f);
+    }
+    if (node.tag == "Canvas" && !resolved.Has("height") && !node.HasAttr("height")) {
+      box.SetHeightPercent(100.0f);
+    }
+    box.visible = prevVis;
+    r->GetComponent<UILayoutBoxComponent>(entity) = box;
+  }
+  if (r->HasComponent<UIFlexComponent>(entity)) {
+    const FlexDirection defaultDir = (node.tag == "Row") ? FlexDirection::Row : FlexDirection::Column;
+    r->GetComponent<UIFlexComponent>(entity) = BuildFlexFromStyle(resolved.base, defaultDir);
+  }
+}
+
+void ApplyResolvedSquareUpdate(Registry* r, Entity entity, const OxmlNode& node, const OssResolvedStyle& resolved) {
+  if (node.tag == "ProgressBar" && r->HasComponent<SquarePrimitiveComponent>(entity)) {
+    auto& sq = r->GetComponent<SquarePrimitiveComponent>(entity);
+    if (!OssParser::ParseColor(resolved.Get("color"), sq.color)) {
+      ExtractBgColor(resolved.base, sq.color);
+    }
+    OssParser::ParseColor(resolved.Get("track-color"), sq.trackColor);
+    OssParser::ParseColor(resolved.Get("border-color"), sq.borderColor);
+    OssParser::ParseFloat(resolved.Get("border-width", "1"), sq.borderThickness);
+    return;
+  }
+
+  octarine::Color bg{0, 0, 0, 0};
+  const bool hasBg = ExtractBgColor(resolved.base, bg);
+  octarine::Color border{0, 0, 0, 0};
+  const bool hasBorder = OssParser::ParseColor(resolved.Get("border-color"), border);
+  float borderWidth = 0.0f;
+  const bool hasBw = OssParser::ParseFloat(resolved.Get("border-width"), borderWidth);
+
+  if (r->HasComponent<SquarePrimitiveComponent>(entity)) {
+    auto& sq = r->GetComponent<SquarePrimitiveComponent>(entity);
+    if (hasBg) sq.color = bg;
+    if (hasBorder) sq.borderColor = border;
+    if (hasBw) sq.borderThickness = borderWidth;
+  } else if (hasBg || hasBorder || borderWidth > 0.0f) {
+    SquarePrimitiveComponent sq;
+    sq.color = hasBg ? bg : octarine::Color{0, 0, 0, 0};
+    sq.borderColor = hasBorder ? border : sq.color;
+    sq.borderThickness = borderWidth;
+    r->AddComponent(entity, sq);
+  }
+}
+
+void ApplyResolvedVisualUpdate(Registry* r, Entity entity, const OxmlNode& node, const OssResolvedStyle& resolved) {
+  ApplyResolvedSquareUpdate(r, entity, node, resolved);
+  if (r->HasComponent<TextLabelComponent>(entity)) {
+    auto& lbl = r->GetComponent<TextLabelComponent>(entity);
+    ExtractTextColor(resolved.base, lbl.color);
+    if (resolved.Has("font")) {
+      lbl.fontId = resolved.Get("font", lbl.fontId);
+    }
+    ConfigureLabelWrapping(node, resolved, lbl);
+  }
+  if (resolved.HasPseudoStates()) {
+    if (r->HasComponent<UIStyleStateComponent>(entity)) {
+      r->GetComponent<UIStyleStateComponent>(entity) = resolved.BuildStyleStateComponent();
+    } else {
+      r->AddComponent(entity, resolved.BuildStyleStateComponent());
+    }
+  }
+}
+
+void BindDynamicStyleAttributes(const std::shared_ptr<UIViewInstance>& view, Entity entity, const OxmlNode& node,
+                                const sol::table& scope) {
+  if (!HasDynamicStyleOrClassBinding(node)) return;
+  std::weak_ptr<UIViewInstance> weakView = view;
+  view->refreshFns.push_back([weakView, entity, node, scope]() {
+    auto v = weakView.lock();
+    if (!v) return;
+    Registry* r = v->runtime->GetRegistry();
+    if (!r->IsAlive(entity)) return;
+    sol::state& l = *v->runtime->GetLua();
+    const auto classes = ResolveNodeClasses(node, scope, l);
+    const auto inlineProps = CollectInlineStyleProps(node, scope, l);
+    const OssResolvedStyle resolved = v->stylesheet.Resolve(node.tag, classes, node.GetAttr("id"), inlineProps);
+    ApplyResolvedBoxAndFlexUpdate(r, entity, node, resolved);
+    ApplyResolvedVisualUpdate(r, entity, node, resolved);
+  });
+}
+
 void RegisterAttributeBindings(const std::shared_ptr<UIViewInstance>& view, Entity entity, const OxmlNode& node,
                                const sol::table& scope) {
   std::weak_ptr<UIViewInstance> weakView = view;
@@ -1009,8 +1193,13 @@ void RegisterAttributeBindings(const std::shared_ptr<UIViewInstance>& view, Enti
   if (node.HasAttr("if")) {
     BindVisibilityAttribute(view, entity, node.GetAttr("if"), scope);
   }
-  if (node.HasAttr("visible") && OxmlParser::ContainsBinding(node.GetAttr("visible"))) {
-    BindVisibilityAttribute(view, entity, node.GetAttr("visible"), scope);
+  if (node.HasAttr("visible")) {
+    const std::string rawVis = node.GetAttr("visible");
+    if (OxmlParser::ContainsBinding(rawVis)) {
+      BindVisibilityAttribute(view, entity, rawVis, scope);
+    } else {
+      SetEntityVisibility(view->runtime->GetRegistry(), entity, ParseBoolStr(rawVis, true));
+    }
   }
   if (node.HasAttr("text") && OxmlParser::ContainsBinding(node.GetAttr("text"))) {
     const std::string rawText = node.GetAttr("text");
@@ -1040,6 +1229,7 @@ void RegisterAttributeBindings(const std::shared_ptr<UIViewInstance>& view, Enti
   if (node.HasAttr("sprite") && OxmlParser::ContainsBinding(node.GetAttr("sprite"))) {
     BindSpriteAttribute(view, entity, node.GetAttr("sprite"), scope);
   }
+  BindDynamicStyleAttributes(view, entity, node, scope);
 }
 
 void AttachRefTextAndValueMethods(sol::table& h, const std::weak_ptr<UIViewInstance>& weakView, Entity entity) {
@@ -1225,6 +1415,34 @@ void MountRepeaterNode(const std::shared_ptr<UIViewInstance>& view, const OxmlNo
   view->refreshFns.push_back(rebuild);
 }
 
+bool IsReservedCallSiteAttr(const std::string& key) { return key == "if" || key == "visible" || key == "ref"; }
+
+sol::object EvalBoundAttrValue(sol::state& lua, const std::string& rawVal, const sol::table& scope) {
+  std::string pureExpr;
+  if (OxmlParser::IsPureBinding(rawVal, pureExpr)) {
+    return EvalBindingExpr(lua, pureExpr, scope);
+  }
+  return sol::make_object(lua, EvalInterpolatedString(lua, rawVal, scope));
+}
+
+void ApplyCompositeNodeBindings(const std::shared_ptr<UIViewInstance>& view, Entity rootEnt, const OxmlNode& node,
+                                const sol::table& scope) {
+  if (node.HasAttr("ref")) {
+    view->refsTable.set(node.GetAttr("ref"), CreateRefHandle(view, rootEnt));
+  }
+  if (node.HasAttr("if")) {
+    BindVisibilityAttribute(view, rootEnt, node.GetAttr("if"), scope);
+  }
+  if (node.HasAttr("visible")) {
+    const std::string rawVis = node.GetAttr("visible");
+    if (OxmlParser::ContainsBinding(rawVis)) {
+      BindVisibilityAttribute(view, rootEnt, rawVis, scope);
+    } else {
+      SetEntityVisibility(view->runtime->GetRegistry(), rootEnt, ParseBoolStr(rawVis, true));
+    }
+  }
+}
+
 Entity InstantiateImportedUse(const std::shared_ptr<UIViewInstance>& view, const OxmlNode& node,
                               const OxmlDocument& importedDoc, std::optional<Entity> parent, const sol::table& scope,
                               const std::shared_ptr<RadioGroupState>& activeRadioGroup) {
@@ -1233,23 +1451,31 @@ Entity InstantiateImportedUse(const std::shared_ptr<UIViewInstance>& view, const
   for (const auto& p : importedDoc.params) {
     paramVars[p.name] = p.defaultValue;
   }
+  std::weak_ptr<UIViewInstance> weakView = view;
   for (const auto& [k, rawVal] : node.attributes) {
+    if (IsReservedCallSiteAttr(k)) continue;
     if (OxmlParser::ContainsBinding(rawVal)) {
-      std::string pureExpr;
-      if (OxmlParser::IsPureBinding(rawVal, pureExpr)) {
-        paramVars[k] = EvalBindingExpr(lua, pureExpr, scope);
-      } else {
-        paramVars[k] = EvalInterpolatedString(lua, rawVal, scope);
-      }
+      paramVars[k] = EvalBoundAttrValue(lua, rawVal, scope);
+      const std::string key = k;
+      const std::string valStr = rawVal;
+      view->refreshFns.push_back([weakView, paramVars, key, valStr, scope]() mutable {
+        auto v = weakView.lock();
+        if (!v) return;
+        paramVars[key] = EvalBoundAttrValue(*v->runtime->GetLua(), valStr, scope);
+      });
     } else {
       paramVars[k] = rawVal;
     }
   }
   sol::table templateScope = view->MakeScope(paramVars);
+  Entity rootEnt{};
   if (importedDoc.roots.empty()) {
-    return view->runtime->GetRegistry()->CreateEntity();
+    rootEnt = view->runtime->GetRegistry()->CreateEntity();
+  } else {
+    rootEnt = InstantiateNode(view, importedDoc.roots.front(), parent, templateScope, &node.children, activeRadioGroup);
   }
-  return InstantiateNode(view, importedDoc.roots.front(), parent, templateScope, &node.children, activeRadioGroup);
+  ApplyCompositeNodeBindings(view, rootEnt, node, scope);
+  return rootEnt;
 }
 
 Entity InstantiateCustomLuaWidget(const std::shared_ptr<UIViewInstance>& view, const OxmlNode& node,
@@ -1262,14 +1488,25 @@ Entity InstantiateCustomLuaWidget(const std::shared_ptr<UIViewInstance>& view, c
       props[k] = v;
     }
   }
+  sol::table instanceCtx = lua.create_table();
+  const sol::optional<sol::protected_function> onPropChanged = descriptor["on_prop_changed"];
+  std::weak_ptr<UIViewInstance> weakView = view;
+
   for (const auto& [k, rawVal] : node.attributes) {
+    if (IsReservedCallSiteAttr(k)) continue;
     if (OxmlParser::ContainsBinding(rawVal)) {
-      std::string pureExpr;
-      if (OxmlParser::IsPureBinding(rawVal, pureExpr)) {
-        props[k] = EvalBindingExpr(lua, pureExpr, scope);
-      } else {
-        props[k] = EvalInterpolatedString(lua, rawVal, scope);
-      }
+      props[k] = EvalBoundAttrValue(lua, rawVal, scope);
+      const std::string key = k;
+      const std::string valStr = rawVal;
+      view->refreshFns.push_back([weakView, instanceCtx, props, key, valStr, scope, onPropChanged]() mutable {
+        auto v = weakView.lock();
+        if (!v) return;
+        sol::object nextVal = EvalBoundAttrValue(*v->runtime->GetLua(), valStr, scope);
+        props[key] = nextVal;
+        if (onPropChanged.has_value()) {
+          (*onPropChanged)(instanceCtx, key, nextVal);
+        }
+      });
     } else {
       props[k] = rawVal;
     }
@@ -1291,8 +1528,8 @@ Entity InstantiateCustomLuaWidget(const std::shared_ptr<UIViewInstance>& view, c
     panelNode.tag = "Panel";
     rootEnt = InstantiateNode(view, panelNode, parent, scope, nullptr, activeRadioGroup);
   }
+  ApplyCompositeNodeBindings(view, rootEnt, node, scope);
 
-  sol::table instanceCtx = lua.create_table();
   instanceCtx.set("entity", rootEnt);
   instanceCtx.set("props", props);
   instanceCtx.set("refs", view->refsTable);
@@ -1300,26 +1537,6 @@ Entity InstantiateCustomLuaWidget(const std::shared_ptr<UIViewInstance>& view, c
 
   if (const sol::optional<sol::protected_function> onMount = descriptor["on_mount"]; onMount) {
     (*onMount)(instanceCtx);
-  }
-  if (const sol::optional<sol::protected_function> onPropChanged = descriptor["on_prop_changed"]; onPropChanged) {
-    for (const auto& [k, rawVal] : node.attributes) {
-      if (!OxmlParser::ContainsBinding(rawVal)) continue;
-      const std::string key = k;
-      const std::string valStr = rawVal;
-      sol::protected_function cb = *onPropChanged;
-      std::weak_ptr<UIViewInstance> weakView = view;
-      view->refreshFns.push_back([weakView, instanceCtx, props, key, valStr, scope, cb]() mutable {
-        auto v = weakView.lock();
-        if (!v) return;
-        sol::state& l = *v->runtime->GetLua();
-        std::string pureExpr;
-        sol::object nextVal = OxmlParser::IsPureBinding(valStr, pureExpr)
-                                  ? EvalBindingExpr(l, pureExpr, scope)
-                                  : sol::make_object(l, EvalInterpolatedString(l, valStr, scope));
-        props[key] = nextVal;
-        cb(instanceCtx, key, nextVal);
-      });
-    }
   }
   if (const sol::optional<sol::protected_function> onUnmount = descriptor["on_unmount"]; onUnmount) {
     sol::protected_function cb = *onUnmount;
@@ -1447,7 +1664,7 @@ Entity InstantiateNode(const std::shared_ptr<UIViewInstance>& view, const OxmlNo
     reg->SetParent(entity, *parent);
   }
 
-  const auto classes = OssParser::SplitClassList(node.GetAttr("class"));
+  const auto classes = ResolveNodeClasses(node, scope, lua);
   const auto inlineProps = CollectInlineStyleProps(node, scope, lua);
   const OssResolvedStyle resolved = view->stylesheet.Resolve(node.tag, classes, node.GetAttr("id"), inlineProps);
 
@@ -1531,7 +1748,10 @@ void LoadStylesAndUsesForView(UIRuntime* runtime, const OxmlDocument& doc, const
 
   for (const auto& useImp : doc.uses) {
     std::string useDiskPath;
-    if (const auto useText = runtime->ReadTextAsset(useImp.src, &useDiskPath); useText.has_value()) {
+    const auto useText = (!useImp.src.empty() && useImp.src.front() == '<')
+                             ? std::optional<std::string>(useImp.src)
+                             : runtime->ReadTextAsset(useImp.src, &useDiskPath);
+    if (useText.has_value()) {
       const OxmlParseResult useParsed = OxmlParser::Parse(*useText);
       if (useParsed.ok) {
         view->importedUses[useImp.name] = useParsed.document;

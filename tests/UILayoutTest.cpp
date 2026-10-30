@@ -605,6 +605,180 @@ void TestPhase4UnifiedSpineMountBindingsAndWidgets() {
   registry.ValidateInvariants();
 }
 
+void TestFieldReportRegressionsAndWrapping() {
+  std::cout << "[phase5] Field report regressions: non-UI children, <Use> if/ref/reactive params, dynamic class/style, "
+               "and Label wrapping\n";
+  Registry registry;
+  GameConfig cfg{};
+  cfg.windowWidth = 800;
+  cfg.windowHeight = 600;
+  registry.Set<GameConfig>(cfg);
+  registry.RegisterBulkSystem(UILayoutSystem());
+
+  sol::state lua;
+  lua.open_libraries(sol::lib::base, sol::lib::math, sol::lib::string, sol::lib::table);
+
+  UIRuntime uiRuntime(&lua, &registry, nullptr);
+  sol::table uiTbl = lua.create_table();
+  uiRuntime.InstallLuaFunctions(uiTbl);
+  lua["ui"] = uiTbl;
+
+  // 1. Register a custom widget to test if/visible/ref on custom widget tags
+  lua.script(R"(
+    ui.register_widget("PillBadge", {
+      props = { badge = "" },
+      template = [[
+        <Row width="80px" height="24px">
+          <Label text="{badge}" />
+        </Row>
+      ]]
+    })
+  )");
+
+  const char* xml = R"(
+    <OXML>
+      <Use name="ScreenHeader" src="&lt;OXML&gt;&lt;Param name='right_top' default='0' /&gt;&lt;Row width='200px' height='24px'&gt;&lt;Label text='{right_top}' /&gt;&lt;/Row&gt;&lt;/OXML&gt;" />
+      <Canvas ref="rootCanvas" width="800px" height="600px" justify="center" align="center">
+        <Column ref="card" width="240px" height="auto" padding="10" gap="8"
+                background-color="{card_bg}" border-color="{card_border}" border-width="2">
+          <ScreenHeader ref="hdrRef" if="{show_hdr}" right_top="{bone_text}" />
+          <Button ref="tabBtn" class="tab-btn {tab_class}" text="Tab" width="100px" height="30px" />
+          <Label ref="statusLbl" text="Status" text-color="{status_color}" width="{status_w}" height="20px" />
+          <PillBadge ref="pillRef" if="{badge ~= ''}" badge="{badge}" />
+          <Label ref="wrappedLbl" wrap="true" font="default-20"
+                 text="Alpha Beta Gamma Delta Epsilon Zeta Eta Theta" />
+        </Column>
+      </Canvas>
+    </OXML>
+  )";
+
+  lua["test_xml"] = xml;
+  lua.script(R"(
+    state = ui.observable({
+      card_bg = "#102030",
+      card_border = "#304050",
+      tab_class = "",
+      status_color = "#00FF00",
+      status_w = "120px",
+      badge = "",
+      show_hdr = true,
+      bone_text = "10 BONES"
+    })
+    fview = ui.mount(test_xml, {
+      context = state,
+      styles = {
+        [[
+          .tab-btn {
+            background-color: #202030;
+            border-color: #404050;
+            color: #AAAAAA;
+          }
+          .tab-btn.active {
+            background-color: #FFD166;
+            border-color: #FFFFFF;
+            color: #1A162B;
+          }
+        ]]
+      }
+    })
+  )");
+
+  // Attach a non-UI helper/controller entity (no UI components) to fview.root
+  sol::table fview = lua.get<sol::table>("fview");
+  const Entity rootEnt = fview.get<Entity>("root");
+  const Entity helperScriptEnt = registry.CreateEntity();
+  registry.SetParent(helperScriptEnt, rootEnt);
+
+  registry.Update(0.016f);
+  registry.ValidateInvariants();
+
+  sol::table refs = fview.get<sol::table>("refs");
+  auto refEnt = [&](const char* id) -> Entity { return refs.get<sol::table>(id).get<Entity>("entity"); };
+  auto callRefBool = [&](const char* id, const char* fn) -> bool {
+    sol::table h = refs.get<sol::table>(id);
+    return h.get<sol::protected_function>(fn)(h).get<bool>();
+  };
+
+  // Bug 1 check: helperScriptEnt must not steal 1fr or break justify="center" on rootCanvas
+  Check(!registry.HasComponent<UIRectComponent>(helperScriptEnt),
+        "Non-UI entity parented to Canvas does not receive UIRectComponent");
+  const Entity cardEnt = refEnt("card");
+  const auto& cardRect = registry.GetComponent<UIRectComponent>(cardEnt);
+  Check(cardRect.top > 100.0f, "Card remains vertically centered on Canvas despite non-UI child entity");
+
+  // Bug 2 check: ref and if="{badge ~= ''}" on custom widget <PillBadge>
+  const sol::object pillRefObj = refs["pillRef"];
+  Check(pillRefObj.valid() && pillRefObj != sol::lua_nil, "ref='pillRef' registered on custom widget tag");
+  if (pillRefObj.valid() && pillRefObj != sol::lua_nil) {
+    Check(!callRefBool("pillRef", "is_visible"), "PillBadge hidden when badge == ''");
+  }
+
+  // Bug 4 check: initial dynamic class & inline style bindings, then reactive update outside each
+  const Entity tabBtnEnt = refEnt("tabBtn");
+  const Entity statusLblEnt = refEnt("statusLbl");
+  CheckEq(registry.GetComponent<SquarePrimitiveComponent>(tabBtnEnt).color.r, static_cast<uint8_t>(0x20),
+          "tabBtn initial background R from .tab-btn");
+  CheckEq(registry.GetComponent<TextLabelComponent>(statusLblEnt).color.g, static_cast<uint8_t>(0xFF),
+          "statusLbl initial text-color G == 0xFF");
+  CheckEq(registry.GetComponent<UIRectComponent>(statusLblEnt).Width(), 120.0f, "statusLbl initial width == 120px");
+
+  // Bug 5 check: wrappedLbl inside 240px card (20px horizontal padding -> 220px content width)
+  // "Alpha Beta Gamma Delta Epsilon Zeta Eta Theta" is 45 chars; at default-20 (11px/char = 495px unwrapped),
+  // wrapping at 220px produces multiple lines (> 20px height).
+  const Entity wrappedLblEnt = refEnt("wrappedLbl");
+  const auto& wrappedRect = registry.GetComponent<UIRectComponent>(wrappedLblEnt);
+  Check(wrappedRect.Height() >= 40.0f, "Wrapped Label measures multi-line height (>= 40px)");
+
+  // Mutate observable state to verify reactivity for Bug 2, Bug 3, and Bug 4
+  lua.script(R"(
+    state.tab_class = "active"
+    state.card_bg = "#AA1122"
+    state.card_border = "#BB3344"
+    state.status_color = "#FF0055"
+    state.status_w = "180px"
+    state.badge = "NEW"
+    state.bone_text = "99 BONES"
+    state.show_hdr = false
+  )");
+  registry.Update(0.016f);
+
+  const sol::object hdrRefObj = refs["hdrRef"];
+  Check(hdrRefObj.valid() && hdrRefObj != sol::lua_nil, "ref='hdrRef' registered on <Use> tag");
+  if (hdrRefObj.valid() && hdrRefObj != sol::lua_nil) {
+    Check(!callRefBool("hdrRef", "is_visible"), "<Use> ScreenHeader hidden when state.show_hdr mutates to false");
+    const Entity hdrEnt = refEnt("hdrRef");
+    const auto hdrChildren = registry.GetChildren(hdrEnt);
+    if (!hdrChildren.empty()) {
+      CheckEq(registry.GetComponent<TextLabelComponent>(hdrChildren[0]).text, std::string("99 BONES"),
+              "<Use> ScreenHeader <Param name='right_top'> updated reactively to '99 BONES'");
+    }
+  }
+
+  if (pillRefObj.valid() && pillRefObj != sol::lua_nil) {
+    Check(callRefBool("pillRef", "is_visible"), "PillBadge becomes visible when state.badge mutates to 'NEW'");
+    const Entity pillEnt = refEnt("pillRef");
+    const auto pillChildren = registry.GetChildren(pillEnt);
+    if (!pillChildren.empty()) {
+      CheckEq(registry.GetComponent<TextLabelComponent>(pillChildren[0]).text, std::string("NEW"),
+              "PillBadge internal template label updated reactively to 'NEW'");
+    }
+  }
+  CheckEq(registry.GetComponent<SquarePrimitiveComponent>(tabBtnEnt).color.r, static_cast<uint8_t>(0xFF),
+          "tabBtn reactive class='tab-btn {tab_class}' updates background R to 0xFF (.active)");
+  CheckEq(registry.GetComponent<SquarePrimitiveComponent>(cardEnt).color.r, static_cast<uint8_t>(0xAA),
+          "card reactive background-color='{card_bg}' updates R to 0xAA");
+  CheckEq(registry.GetComponent<SquarePrimitiveComponent>(cardEnt).borderColor.r, static_cast<uint8_t>(0xBB),
+          "card reactive border-color='{card_border}' updates R to 0xBB");
+  CheckEq(registry.GetComponent<TextLabelComponent>(statusLblEnt).color.r, static_cast<uint8_t>(0xFF),
+          "statusLbl reactive text-color='{status_color}' updates R to 0xFF");
+  CheckEq(registry.GetComponent<TextLabelComponent>(statusLblEnt).color.g, static_cast<uint8_t>(0x00),
+          "statusLbl reactive text-color='{status_color}' updates G to 0x00");
+  CheckEq(registry.GetComponent<UIRectComponent>(statusLblEnt).Width(), 180.0f,
+          "statusLbl reactive width='{status_w}' updates width to 180px");
+
+  lua.script("fview:unmount()");
+}
+
 }  // namespace
 
 int main() {
@@ -616,5 +790,6 @@ int main() {
   TestPhase2FocusZOrderClipAndStyleStates();
   TestPhase3OxmlAndOssParsers();
   TestPhase4UnifiedSpineMountBindingsAndWidgets();
+  TestFieldReportRegressionsAndWrapping();
   return octarine::test::ReportSummary("UILayoutTest");
 }
