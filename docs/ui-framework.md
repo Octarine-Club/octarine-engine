@@ -17,19 +17,21 @@ Every `.oxml` view compiles directly into standard Octarine ECS entities and dat
    - [Paradigm C: Reactive MVVM (`ui.observable` + `bind-value`)](#paradigm-c-reactive-mvvm-uiobservable--bind-value)
 3. [`.oxml` Markup Reference](#3-oxml-markup-reference)
    - [Built-In Primitives](#built-in-primitives)
+   - [Flex-Wrap & Grid Layout (`<Grid>`, `wrap`, `cross-gap`)](#flex-wrap--grid-layout-grid-wrap-cross-gap)
    - [Bindings, Conditionals (`if`), and Repeaters (`each`)](#bindings-conditionals-if-and-repeaters-each)
-   - [Events & Input Shortcuts](#events--input-shortcuts)
+   - [Events, Input Shortcuts & Audio Feedback](#events-input-shortcuts--audio-feedback)
 4. [`.oss` Stylesheet Reference](#4-oss-stylesheet-reference)
    - [Selectors, Specificity, and Pseudo-States](#selectors-specificity-and-pseudo-states)
    - [Variables (`--var`)](#variables---var)
    - [Sizing Units (`px`, `%`, `fr`, `auto`) & Box Properties](#sizing-units-px--fr-auto--box-properties)
-   - [Visual, Text, & 9-Slice Properties](#visual-text--9-slice-properties)
+   - [Visual, Text, Audio & 9-Slice Properties](#visual-text-audio--9-slice-properties)
 5. [Custom Reusable Widgets](#5-custom-reusable-widgets)
-   - [Declarative `.oxml` Templates (`<Use>`, `<Param>`, `<Slot />`)](#declarative-oxml-templates-use-param-slot-)
+   - [Declarative `.oxml` Templates (`<Use>`, `<Param>`, Named `<Slot />`)](#declarative-oxml-templates-use-param-named-slot-)
    - [Programmatic Lua Widgets (`ui.register_widget`)](#programmatic-lua-widgets-uiregister_widget)
 6. [Focus Navigation, Z-Order Hit Testing & Scrolling](#6-focus-navigation-z-order-hit-testing--scrolling)
-7. [Lifecycle, Hot Reload & Asset Baking](#7-lifecycle-hot-reload--asset-baking)
-8. [Lua API Reference (`ui.*` & `view` Handle)](#8-lua-api-reference-ui--view-handle)
+7. [UI Debug Wireframe Overlay (`ui.debug_draw`)](#7-ui-debug-wireframe-overlay-uidebug_draw)
+8. [Lifecycle, Hot Reload & Asset Baking](#8-lifecycle-hot-reload--asset-baking)
+9. [Lua API Reference (`ui.*` & `view` Handle)](#9-lua-api-reference-ui--view-handle)
 
 ---
 
@@ -237,19 +239,55 @@ Unlike manual multi-entity setups that require separate background and text enti
 | Tag | Description | Key Attributes |
 |---|---|---|
 | `<Canvas>` | Root coordinate space (`UICanvasComponent`). | `fixed="true\|false"`, `width`, `height`, `base-layer="0"` |
-| `<Panel>` | Styled container (`UIFlexComponent` + background/border/9-slice). Defaults to column direction. | `direction="row\|column"`, `gap`, `padding`, `slice="l,t,r,b"` |
-| `<Row>` | Horizontal flex container (`direction="row"`). | `gap`, `padding`, `justify`, `align` |
-| `<Column>` | Vertical flex container (`direction="column"`). | `gap`, `padding`, `justify`, `align` |
+| `<Panel>` | Styled container (`UIFlexComponent` + background/border/9-slice). Defaults to column direction. Supports flex-wrap. | `direction="row\|column"`, `wrap="true\|false"`, `gap`, `cross-gap`, `padding`, `slice="l,t,r,b"` |
+| `<Row>` | Horizontal flex container (`direction="row"`). Supports flex-wrap. | `gap`, `cross-gap`, `wrap="true\|false"`, `padding`, `justify`, `align` |
+| `<Column>` | Vertical flex container (`direction="column"`). Supports flex-wrap. | `gap`, `cross-gap`, `wrap="true\|false"`, `padding`, `justify`, `align` |
+| `<Grid>` | Fixed-column grid container (`direction="row"`, `wrap="true"`). Partitions children into $N$ equal-width columns. | `columns="N"`, `gap`, `cross-gap`, `padding`, `justify`, `align` |
 | `<Box>` | Non-flex container or spacer with explicit sizing. | `width`, `height`, `anchor` |
 | `<Label>` | Text display (`TextLabelComponent`). Supports `{...}` interpolation and multi-line word wrapping (`wrap="true"`). | `text`, `font`, `color`, `text-align`, `wrap="true\|false\|<px>"`, `max-width` |
 | `<Image>` | Texture / atlas region (`SpriteComponent`). Supports 9-slice borders. | `src="asset_id"`, `slice="l,t,r,b"` (or `"all"`), `color` |
-| `<Button>` | Interactive button (`UIButtonComponent` + background + label + focus/style state). | `text`, `on-click`, `key`, `gamepad`, `action`, `disabled`, `focusable` |
+| `<Button>` | Interactive button (`UIButtonComponent` + background + label + focus/style state). | `text`, `on-click`, `key`, `gamepad`, `action`, `sound-hover`, `sound-click`, `sound-focus`, `disabled`, `focusable` |
 | `<ProgressBar>` | Fill bar (`SquarePrimitiveComponent.fillRatio`). | `value="{0..1}"`, `fill-color`, `background-color` |
-| `<Toggle>` | Boolean checkbox / switch with `:checked` state and two-way binding. | `checked="{bool}"`, `bind-value="field"`, `on-change="fn"`, `text` |
+| `<Toggle>` | Boolean checkbox / switch with `:checked` state and two-way binding. | `checked="{bool}"`, `bind-value="field"`, `on-change="fn"`, `sound-hover`, `sound-click`, `text` |
 | `<RadioGroup>` | Mutual-exclusion container for `<RadioButton>` children. | `value="{val}"`, `bind-value="field"`, `on-change="fn"`, `direction="row\|column"` |
-| `<RadioButton>` | Selectable option inside a `<RadioGroup>`. | `value="option_id"`, `text`, `disabled` |
-| `<Slider>` | Numeric range control (`0..1` normalized fill + keyboard/click step adjustment). | `min="0"`, `max="100"`, `step="5"`, `value="{num}"`, `bind-value="field"`, `on-change="fn"` |
+| `<RadioButton>` | Selectable option inside a `<RadioGroup>`. | `value="option_id"`, `text`, `sound-hover`, `sound-click`, `disabled` |
+| `<Slider>` | Numeric range control (`0..1` normalized fill + keyboard/click step adjustment). | `min="0"`, `max="100"`, `step="5"`, `value="{num}"`, `bind-value="field"`, `on-change="fn"`, `sound-focus` |
 | `<ScrollView>` | Clipped scroll container (`UIScrollComponent` + `UIClipComponent`). Responds to mouse wheel. | `scroll-x="true\|false"`, `scroll-y="true\|false"`, `wheel-step="32"` |
+
+### Flex-Wrap & Grid Layout (`<Grid>`, `wrap`, `cross-gap`)
+
+Octarine supports multi-line flex wrapping and fixed-column grids directly in `.oxml` and `.oss`:
+
+#### 1. `<Grid columns="N">` Container
+`<Grid>` is a specialized row flex container (`direction="row"`, `wrap="true"`) that partitions available width evenly across `columns` slots:
+- **Equal Column Sizing**: Each column cell is automatically assigned width:
+  $$\text{cellWidth} = \frac{\text{availWidth} - \text{gap} \times (\text{columns} - 1)}{\text{columns}}$$
+- **Automatic Wrapping & Row Advancement**: After every $N$ items, the layout wraps to a new row, advancing by the tallest item in the previous row plus `cross-gap`.
+- **Intrinsic Auto Height (`height="auto"`)**: Wrapped containers and grids compute their total height dynamically based on the number of wrapped lines and cross gaps.
+
+```xml
+<Grid ref="invGrid" columns="4" gap="10px" cross-gap="8px" width="400px" height="auto">
+  <Panel each="item in {inventory}" height="64px" class="slot-card">
+    <Image src="{item.icon}" width="32px" height="32px" />
+    <Label text="{item.name}" font="ui-font" />
+  </Panel>
+</Grid>
+```
+
+#### 2. Flex Wrapping on `<Row>` & `<Column>` (`wrap="true"`)
+Any flex container can wrap its children by setting `wrap="true"` (or `flex-wrap: wrap;` in `.oss`):
+- Items fit on the current line as long as `lineMain + gap + itemMain <= availMain`.
+- When an item overflows, it wraps to a new line spaced by `cross-gap` (which falls back to `gap` if omitted).
+- Cross-axis lines support `cross-gap` (aliases `row-gap` or `column-gap` in `.oss`).
+
+```xml
+<Row wrap="true" gap="6px" cross-gap="4px" width="240px" height="auto">
+  <Box width="70px" height="24px" background-color="#302040" />
+  <Box width="70px" height="24px" background-color="#302040" />
+  <Box width="70px" height="24px" background-color="#302040" />
+  <Box width="70px" height="24px" background-color="#302040" />
+</Row>
+```
 
 ### Bindings, Conditionals (`if`), and Repeaters (`each`)
 
@@ -293,7 +331,7 @@ Attaching `each="item in {expr}"` (or `each="item, index in {expr}"`) repeats th
 </ScrollView>
 ```
 
-### Events & Input Shortcuts
+### Events, Input Shortcuts & Audio Feedback
 
 Interactive widgets dispatch events to functions on the `controller` table passed to `ui.mount(src, { controller = ... })`:
 
@@ -306,6 +344,24 @@ Every interactive element also supports direct keyboard, gamepad, and input-acti
 - `key="return, space"` — Comma-separated keyboard key names.
 - `gamepad="a, south"` — Comma-separated controller button names.
 - `action="ui_confirm"` — Input action name from your project configuration.
+
+#### Declarative Audio Feedback Hooks (`sound-*`)
+Interactive elements emit `AudioPlayEvent` sounds through the engine's `EventBus` without writing manual audio callbacks in Lua:
+- `sound-hover="clip_id"` — Played when the pointer enters the element's bounding rect (automatically debounced so moving within the element does not re-fire).
+- `sound-click="clip_id"` (alias `sound-press`) — Played when the button or control is activated via mouse click, keyboard shortcut (`key`), gamepad shortcut (`gamepad`), or mapped `action`.
+- `sound-focus="clip_id"` — Played when the element gains keyboard/gamepad focus (via `Tab`, directional arrows/D-Pad, or click).
+
+```xml
+<Button text="Launch Mission"
+        sound-hover="sfx_hover"
+        sound-click="sfx_confirm"
+        sound-focus="sfx_focus"
+        key="return, space"
+        on-click="onLaunch" />
+```
+
+> [!NOTE]
+> Audio IDs referenced in `sound-*` attributes are statically validated during headless bake (`-m bake`). Unknown clip IDs produce CI build failures before broken assets can reach production.
 
 ---
 
@@ -321,16 +377,18 @@ Every interactive element also supports direct keyboard, gamepad, and input-acti
 - **Cascade order**: Inline `.oxml` attributes override `#id`, which overrides `.class`, which overrides `Tag` rules.
 
 #### Supported Pseudo-States
-Pseudo-states are evaluated every frame by `UIButtonSystem` in priority order (`:disabled` > `:active` > `:hover` > `:focus` > `:checked` > normal):
+Pseudo-states are evaluated every frame by `UIButtonSystem` in priority order (`:disabled` > `:active` > `:hover` > `:focus` > `:checked` > normal). Pseudo-states can also attach sound cues (`sound: "clip_id"`):
 ```css
 .slot-btn {
   background-color: #261c35;
   border-width: 1px;
   border-color: #554070;
+  sound-hover: "sfx_hover";
+  sound-click: "sfx_click";
 }
-.slot-btn:hover    { background-color: #38284e; border-color: #b088ff; }
-.slot-btn:active   { background-color: #1b1226; }
-.slot-btn:focus    { border-width: 2px; border-color: #ffcc00; }
+.slot-btn:hover    { background-color: #38284e; border-color: #b088ff; sound: "sfx_hover"; }
+.slot-btn:active   { background-color: #1b1226; sound: "sfx_click"; }
+.slot-btn:focus    { border-width: 2px; border-color: #ffcc00; sound: "sfx_focus"; }
 .slot-btn:checked  { background-color: #4a3268; border-color: #ffcc00; }
 .slot-btn:disabled { background-color: #18141d; color: #666070; }
 ```
@@ -370,15 +428,18 @@ Octarine supports four sizing units on `width` and `height` (`UILayoutBoxCompone
 | `max-width`, `max-height` | `600px`, `80%` | Upper bound clamp on resolved size (`0` = unconstrained). |
 | `padding` | `12px`, `8px 16px`, `4px 8px 4px 8px` | Inner inset (`padding-left`, `padding-top`, `padding-right`, `padding-bottom`). |
 | `margin` | `10px`, `4px 12px`, `4px 8px 4px 8px` | Outer spacing (`margin-left`, `margin-top`, `margin-right`, `margin-bottom`). |
-| `flex-direction` (or `direction`) | `row`, `column` | Main axis for `<Panel>`, `<Row>`, `<Column>`, `<RadioGroup>`. |
-| `gap` | `8px` | Spacing in pixels between visible flex children. |
+| `flex-direction` (or `direction`) | `row`, `column` | Main axis for `<Panel>`, `<Row>`, `<Column>`, `<Grid>`, `<RadioGroup>`. |
+| `gap` (or `spacing`) | `8px` | Spacing in pixels between visible flex children along the main axis. |
+| `cross-gap` (or `row-gap`, `column-gap`) | `8px` | Spacing in pixels between wrapped lines or rows/columns. Defaults to `gap`. |
+| `flex-wrap` (or `wrap`) | `wrap`, `nowrap` (or `true`, `false`) | Wraps flex children onto additional lines when exceeding container bounds. |
+| `columns` (or `grid-columns`) | `1`, `2`, `4` | Fixed number of grid columns. Partitions width into equal slots and enables wrapping. |
 | `justify-content` (or `justify`) | `start`, `center`, `end`, `space-between`, `space-around` | Main-axis distribution when flex children do not consume all space. |
 | `align-items` (or `align`) | `stretch`, `start`, `center`, `end` | Cross-axis alignment of flex children. |
 | `flex-grow` | `0`, `1`, `2` | Flex expansion weight along the parent's main axis. |
 | `overflow` | `visible`, `hidden`, `clip` | Enables hardware scissor clipping (`UIClipComponent`) for the element and all descendants. |
 | `z-index` | `1`, `10` | Relative render layer offset (`UIZIndexComponent`), accumulated down the hierarchy. |
 
-### Visual, Text, & 9-Slice Properties
+### Visual, Text, Audio & 9-Slice Properties
 
 | Property | Values / Examples | Description |
 |---|---|---|
@@ -394,6 +455,9 @@ Octarine supports four sizing units on `width` and `height` (`UILayoutBoxCompone
 | `text-wrap` | `true`, `false` | Word-wraps text to the element's resolved pixel width. |
 | `shadow-color` | `#000000aa` | Text drop-shadow color. |
 | `shadow-offset` | `2px 2px` | Text drop-shadow `(x, y)` offset in pixels (`shadow-offset-x`, `shadow-offset-y`). |
+| `sound-hover` | `sfx_hover` | Audio clip ID played on pointer hover enter. |
+| `sound-click` (or `sound-press`) | `sfx_confirm` | Audio clip ID played on button activation / click. |
+| `sound-focus` | `sfx_focus` | Audio clip ID played on gaining keyboard/gamepad focus. |
 | `slice` | `8` or `8, 8, 8, 8` | 9-slice border insets `(left, top, right, bottom)` in source texels (`UINineSliceComponent`). |
 | `opacity` | `0.0` .. `1.0` | Multiplies the alpha channel of backgrounds, borders, and text. |
 | `visible` | `true`, `false` | Initial visibility (`UIRectComponent.visible`). |
@@ -404,37 +468,58 @@ Octarine supports four sizing units on `width` and `height` (`UILayoutBoxCompone
 
 Projects can package their own custom primitives and share them across screens or repositories in two ways.
 
-### Declarative `.oxml` Templates (`<Use>`, `<Param>`, `<Slot />`)
+### Declarative `.oxml` Templates (`<Use>`, `<Param>`, Named `<Slot />`)
 
-Define a reusable widget in its own `.oxml` file using `<Param>` defaults and an optional `<Slot />` insertion point for nested children:
+Define reusable UI components in dedicated `.oxml` files using `<Param>` declarations and `<Slot />` projection points:
 
-#### `assets/ui/widgets/stat_row.oxml`
+#### `assets/ui/widgets/item_slot_card.oxml`
 ```xml
 <OXML>
-  <Param name="label" default="Stat" />
-  <Param name="value" default="0" />
+  <Param name="frame_title" default="Slot" />
+  <Param name="rarity" default="common" />
 
-  <Row width="100%" height="28px" justify="space-between" align="center" padding="4px 8px">
-    <Label text="{label}" color="#b8a8d0" />
-    <Label text="{value}" color="#ffcc00" text-align="right" />
+  <Column class="card {rarity}" width="100%" height="auto" padding="8px" gap="4px">
+    <!-- Named slot with default fallback content -->
+    <Slot name="header">
+      <Label text="{frame_title}" font="ui-font" color="#ffcc00" height="18px" />
+    </Slot>
+
+    <!-- Default unnamed slot for body content -->
     <Slot />
-  </Row>
+  </Column>
 </OXML>
 ```
 
-Import it into any `.oxml` file with `<Use name="StatRow" src="assets/ui/widgets/stat_row.oxml" />`:
+Import the widget with `<Use name="ItemSlotCard" src="assets/ui/widgets/item_slot_card.oxml" />`. Callers can override named slots, inject body content, and project inside `each` repeaters:
+
 ```xml
 <OXML>
-  <Use name="StatRow" src="assets/ui/widgets/stat_row.oxml" />
+  <Use name="ItemSlotCard" src="assets/ui/widgets/item_slot_card.oxml" />
 
-  <Canvas>
-    <Column width="280px" padding="12px" gap="4px">
-      <StatRow label="Attack Power" value="{atk}" />
-      <StatRow label="Crit Chance" value="{crit}%" />
-    </Column>
+  <Canvas width="800px" height="600px">
+    <Grid columns="3" gap="10px" cross-gap="8px" width="360px">
+      <!-- Projected children evaluate expressions in the caller's repeater scope -->
+      <ItemSlotCard each="item, idx in {inventory}" rarity="{item.rarity}">
+        <!-- Targeted slot override -->
+        <Label slot="header" text="Item #{idx}: {item.title}" color="#ffd700" />
+        <!-- Default slot content -->
+        <Label text="{item.description}" font="ui-font" />
+      </ItemSlotCard>
+
+      <!-- Using fallback header without slot="header" -->
+      <ItemSlotCard frame_title="Empty Slot">
+        <Label text="No item equipped" color="#666070" />
+      </ItemSlotCard>
+    </Grid>
   </Canvas>
 </OXML>
 ```
+
+#### Slot Features & Invariants
+- **Default Slot (`<Slot />`)**: Receives all call-site children that do not specify a `slot` attribute.
+- **Named Slots (`<Slot name="slotName">`)**: Matches call-site children specifying `slot="slotName"`.
+- **Fallback Content**: If a caller does not provide children targeting a slot, any inner children authored inside `<Slot name="...">Fallback</Slot>` are instantiated instead.
+- **Scope Preservation in `each` Repeaters**: Projected slot children are evaluated against the caller's outer scope and loop iteration variables (`{item.*}`, `{idx}`), not the template's internal scope.
 
 ### Programmatic Lua Widgets (`ui.register_widget`)
 
@@ -487,7 +572,32 @@ A `<ScrollView>` attaches both `UIScrollComponent` and `UIClipComponent`. Moving
 
 ---
 
-## 7. Lifecycle, Hot Reload & Asset Baking
+## 7. UI Debug Wireframe Overlay (`ui.debug_draw`)
+
+For layout debugging, alignment tuning, and verifying hierarchy bounding boxes at runtime, Octarine provides a built-in wireframe debug overlay driven by `RenderUIPrimitiveSystem` and `UIDebugConfig`:
+
+```lua
+-- Toggle overlay on/off
+local is_active = ui.debug_draw()
+
+-- Explicitly enable or disable
+ui.debug_draw(true)
+ui.debug_draw(false)
+```
+
+When enabled, wireframe bounding boxes are rendered for all visible `UIRectComponent` entities with positive dimensions at a high layer offset (`rect.layer + 1000`) so they sit cleanly on top of existing UI:
+
+| Color | Thickness | Entity Archetype / Component |
+|---|---|---|
+| **Gold / Yellow** (`#ffcc00`) | `2.0px` | Currently focused element (`UIFocusComponent.isFocused == true`). |
+| **Green** (`#44d060`) | `1.0px` | Interactive clickable button (`UIButtonComponent`). |
+| **Magenta** (`#ff40ff`) | `1.0px` | Scissor clip container (`UIClipComponent`). |
+| **Cyan** (`#00e5ff`) | `1.0px` | Flex or Grid container (`UIFlexComponent`). |
+| **Lavender / Purple** (`#8870a0`) | `1.0px` | Other UI elements (`UIRectComponent` labels, images, non-flex containers). |
+
+---
+
+## 8. Lifecycle, Hot Reload & Asset Baking
 
 ### Construction & Teardown
 - **`ui.mount(path_or_xml, opts?)`** spawns the ECS entity tree for the view and returns a `view` handle.
@@ -500,11 +610,13 @@ When running a development build (`player-debug` or `player-release`), `FrameLoo
 
 ### Headless Bake Validation (`-m bake`)
 `.oxml` (`AssetType::UIView`) and `.oss` (`AssetType::UIStyle`) files under `assets/` are discovered by `AssetCatalog` and validated during `./OctarineEngine <game_dir> -m bake`:
-- Malformed XML tags, invalid `.oss` syntax, missing `<Style src="..." />` or `<Use src="..." />` files, and broken `<Image src="..." />` or `font` asset IDs fail the bake gate in CI before a broken UI can ship.
+- **Syntax & Schema**: Malformed XML tags, missing closing tags, invalid `.oss` properties.
+- **File Inclusions**: Missing `<Style src="..." />` stylesheets or `<Use src="..." />` widget template files.
+- **Asset Integrity**: Broken `<Image src="..." />` textures, invalid `font` asset IDs, and missing `sound-hover`, `sound-click`, `sound-press`, or `sound-focus` audio clip references fail the bake gate in CI before broken UI can ship.
 
 ---
 
-## 8. Lua API Reference (`ui.*` & `view` Handle)
+## 9. Lua API Reference (`ui.*` & `view` Handle)
 
 ### High-Level Declarative API
 
@@ -513,6 +625,7 @@ When running a development build (`player-debug` or `player-release`), `FrameLoo
 | `ui.mount(source, opts?) -> view` | Mounts an `.oxml` asset path (e.g. `"assets/ui/hud.oxml"`) or inline `<OXML>...</OXML>` string. `opts`: `{ context = tbl, controller = tbl, parent = entity }`. |
 | `ui.observable(tbl) -> proxy` | Wraps a Lua table in a reactive observable proxy that notifies mounted views when keys are mutated. |
 | `ui.register_widget(name, descriptor)` | Registers a custom tag usable in `.oxml`. `descriptor`: `{ defaults, render, on_mount, on_prop_changed, on_unmount }`. |
+| `ui.debug_draw(enabled?) -> bool` | Toggles (when called with no arguments) or explicitly sets (`true`/`false`) the UI wireframe debug overlay. Returns the updated boolean state. |
 | `ui.focus(entity)` | Moves keyboard/gamepad UI focus to `entity`. |
 | `ui.get_focused() -> entity?` | Returns the currently focused UI `Entity`, or `nil` if none. |
 
@@ -547,9 +660,10 @@ Every element with `ref="id"` exposes both its raw ECS `Entity` (`ref.entity`) a
 All declarative primitives map to low-level helpers that remain available for procedural Lua scripts:
 - `ui.canvas(entity, opts?)` — Attaches `UICanvasComponent`.
 - `ui.anchor(entity, preset_or_table, opts?)` — Attaches `UIAnchorComponent`.
-- `ui.flex(entity, opts?)` — Attaches `UIFlexComponent` (`direction`, `gap`, `padding`, `justify`, `align`).
+- `ui.flex(entity, opts?)` — Attaches `UIFlexComponent` (`direction`, `gap`, `cross_gap`, `wrap`, `columns`, `padding`, `padding_left`, `padding_top`, `padding_right`, `padding_bottom`, `justify`, `align`).
 - `ui.box(entity, opts?)` — Attaches `UILayoutBoxComponent` (`width`, `height`, `min_width`, `max_width`, `margin`, `flex_grow`).
 - `ui.clip(entity, enabled_or_table?)` — Attaches `UIClipComponent` hardware scissor clipping.
 - `ui.nine_slice(entity, slice_or_table)` — Attaches `UINineSliceComponent` 9-patch border slicing.
 - `ui.scroll(entity, opts?)` — Attaches `UIScrollComponent` + `UIClipComponent`.
 - `ui.z_index(entity, z)` — Attaches `UIZIndexComponent`.
+- `ui.debug_draw(enabled?)` — Toggles or sets wireframe overlay visualization.

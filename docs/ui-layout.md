@@ -55,7 +55,7 @@ hierarchy-cycle errors.
 
 ## The API
 
-All four live on the global `ui` table, installed by the UI Lua module.
+Procedural layout helpers live on the global `ui` table, installed by the UI Lua module:
 
 ### `ui.canvas(entity, opts?)`
 
@@ -126,6 +126,31 @@ Adds `z` to the entity's render layer. Layers **accumulate down the hierarchy**:
 a child's final layer is `canvas.base_layer` + the sum of every `z_index` on the
 path from the canvas to that child. Use it to lift a panel and its contents
 above the background in one place.
+
+### `ui.flex(entity, opts?)`
+
+Attaches or configures `UIFlexComponent` on `entity` for flexbox or grid layout. `opts` (optional):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `direction` | `"row"` | `"row"` or `"column"`. |
+| `gap` | `0.0` | Spacing in pixels between children along the main axis. |
+| `cross_gap` | `-1.0` (uses `gap`) | Spacing in pixels between wrapped lines or rows/columns. |
+| `wrap` | `false` | When `true`, children that exceed container extent wrap onto new lines. |
+| `columns` | `0` | When `> 0`, enables fixed-column grid partitioning into $N$ equal-width columns. |
+| `padding` | `0.0` | Shorthand padding applied to all four edges. |
+| `padding_left`, `padding_top`, `padding_right`, `padding_bottom` | `padding` | Explicit per-edge padding in pixels. |
+| `justify` | `"stretch"` | Main-axis distribution (`"start"`, `"center"`, `"end"`, `"space_between"`, `"space_around"`, `"stretch"`). |
+| `align` | `"stretch"` | Cross-axis alignment (`"start"`, `"center"`, `"end"`, `"stretch"`). |
+
+### `ui.debug_draw(enabled?)`
+
+Toggles or explicitly sets (`true`/`false`) the engine's built-in UI wireframe debug overlay. Returns the updated boolean status. When enabled, bounding box wireframes are drawn on top of the UI (`rect.layer + 1000`):
+- **Gold / Yellow** (`#ffcc00`, 2px): Currently focused element (`UIFocusComponent.isFocused`).
+- **Green** (`#44d060`, 1px): Interactive buttons (`UIButtonComponent`).
+- **Magenta** (`#ff40ff`, 1px): Hardware scissor clip viewports (`UIClipComponent`).
+- **Cyan** (`#00e5ff`, 1px): Flex or Grid containers (`UIFlexComponent`).
+- **Lavender / Purple** (`#8870a0`, 1px): Other UI rects (`UIRectComponent`).
 
 ---
 
@@ -251,6 +276,7 @@ ui.z_index(label, 1)                                      -- draw the text above
 |--------------|-----------------------------|---------------------------------------------------|
 | `ui_canvas`  | `ui.canvas`                 | Canvas flags + size + base layer.                 |
 | `ui_anchor`  | `ui.anchor`                 | The four anchors and four offsets.                |
+| `ui_flex`    | `ui.flex`                   | Flex direction, gap, cross gap, wrap, columns, padding, alignment. |
 | `ui_rect`    | `UILayoutSystem` (computed) | Resolved `left/top/right/bottom/layer` in pixels. |
 | `ui_z_index` | `ui.z_index`                | Per-entity layer delta.                           |
 | `ui_button`  | project scripts             | Interactive state (`registry.get_ui_button`).     |
