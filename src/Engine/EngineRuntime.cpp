@@ -34,8 +34,14 @@ bool EngineRuntime::InitSubsystems(const bool headless) {
   return true;
 }
 
-bool EngineRuntime::CreateWindow(const std::string& title, int width, int height, const bool headless) {
-  const SDL_WindowFlags windowFlags = headless ? SDL_WINDOW_HIDDEN : SDL_WINDOW_RESIZABLE;
+bool EngineRuntime::CreateWindow(const std::string& title, int width, int height, const bool headless,
+                                 const bool resizable) {
+  SDL_WindowFlags windowFlags = 0;
+  if (headless) {
+    windowFlags = SDL_WINDOW_HIDDEN;
+  } else if (resizable) {
+    windowFlags = SDL_WINDOW_RESIZABLE;
+  }
   SDL_CreateWindowAndRenderer(title.c_str(), width, height, windowFlags, &window_, &sdl_renderer_);
 
   if (!window_) {

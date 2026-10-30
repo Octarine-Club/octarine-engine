@@ -312,6 +312,16 @@ SDL_Window* TryGetWindow(LuaBindingContext& ctx) {
   return nullptr;
 }
 
+SDL_Renderer* TryGetRenderer(LuaBindingContext& ctx) {
+  if (auto* r = ctx.GetRenderer()) return r;
+  auto* registry = ctx.GetRegistry();
+  if (registry == nullptr) return nullptr;
+  if (const auto* engineCtx = registry->TryGet<EngineContext>()) {
+    return engineCtx->sdlRenderer;
+  }
+  return nullptr;
+}
+
 bool MoveWindowToDisplay([[maybe_unused]] SDL_Window* window, [[maybe_unused]] int displayIndex) {
 #ifdef OCTARINE_PLATFORM_MOBILE
   return false;
@@ -352,21 +362,182 @@ bool GetFullscreenState(LuaBindingContext& ctx) {
     return (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
   }
   if (const auto* settings = GetOrCreateUserSettings(ctx)) {
-    return settings->fullscreen;
+    return settings->GetEffectiveWindowMode() != WindowMode::Windowed;
   }
   return false;
 }
 
-void SetFullscreenState(LuaBindingContext& ctx, const bool enabled) {
+WindowMode GetWindowModeState(LuaBindingContext& ctx) {
+#ifndef OCTARINE_PLATFORM_MOBILE
+  if (auto* window = TryGetWindow(ctx)) {
+    const SDL_WindowFlags flags = SDL_GetWindowFlags(window);
+    if ((flags & SDL_WINDOW_FULLSCREEN) == 0) {
+      return WindowMode::Windowed;
+    }
+    return SDL_GetWindowFullscreenMode(window) != nullptr ? WindowMode::ExclusiveFullscreen
+                                                          : WindowMode::BorderlessFullscreen;
+  }
+#endif
+  if (const auto* settings = GetOrCreateUserSettings(ctx)) {
+    return settings->GetEffectiveWindowMode();
+  }
+  if (const auto* config = ctx.GetRegistry()->TryGet<GameConfig>()) {
+    return config->GetEngineOptions().windowMode;
+  }
+  return WindowMode::Windowed;
+}
+
+void ApplyLiveWindowMode([[maybe_unused]] LuaBindingContext& ctx, [[maybe_unused]] const WindowMode mode) {
+#ifndef OCTARINE_PLATFORM_MOBILE
+  auto* window = TryGetWindow(ctx);
+  if (window == nullptr) return;
+  const auto* settings = GetOrCreateUserSettings(ctx);
+  const auto* config = ctx.GetRegistry()->TryGet<GameConfig>();
+  const int defW = config ? config->windowWidth : Constants::kDefaultWindowWidth;
+  const int defH = config ? config->windowHeight : Constants::kDefaultWindowHeight;
+  if (settings != nullptr) {
+    settings->ApplyToWindow(window, defW, defH);
+  } else {
+    SDL_SetWindowFullscreen(window, mode != WindowMode::Windowed);
+  }
+  if (auto* s = GetOrCreateUserSettings(ctx)) {
+    s->CaptureWindow(window);
+    s->SetWindowMode(mode);
+  }
+#endif
+}
+
+bool SetWindowModeState(LuaBindingContext& ctx, const std::string_view modeStr) {
+  const auto parsed = ParseWindowMode(modeStr);
+  if (!parsed.has_value()) {
+    Logger::Warn("set_window_mode: unknown mode '" + std::string(modeStr) +
+                 "' (expected windowed|borderless|exclusive)");
+    return false;
+  }
+  if (auto* config = ctx.GetRegistry()->TryGet<GameConfig>()) {
+    config->GetEngineOptions().windowMode = *parsed;
+  }
   if (auto* settings = GetOrCreateUserSettings(ctx)) {
-    settings->fullscreen = enabled;
+    settings->SetWindowMode(*parsed);
+  }
+  ApplyLiveWindowMode(ctx, *parsed);
+  return true;
+}
+
+void SetFullscreenState(LuaBindingContext& ctx, const bool enabled) {
+  const WindowMode targetMode = enabled ? WindowMode::BorderlessFullscreen : WindowMode::Windowed;
+  if (auto* config = ctx.GetRegistry()->TryGet<GameConfig>()) {
+    config->GetEngineOptions().windowMode = targetMode;
+  }
+  if (auto* settings = GetOrCreateUserSettings(ctx)) {
+    settings->SetWindowMode(targetMode);
+  }
+  ApplyLiveWindowMode(ctx, targetMode);
+}
+
+std::tuple<int, int, double> GetFullscreenResolutionState(LuaBindingContext& ctx) {
+  if (const auto* settings = GetOrCreateUserSettings(ctx)) {
+    if (settings->fullscreenWidth > 0 && settings->fullscreenHeight > 0) {
+      return {settings->fullscreenWidth, settings->fullscreenHeight,
+              static_cast<double>(settings->fullscreenRefreshRate)};
+    }
+  }
+  if (const auto* config = ctx.GetRegistry()->TryGet<GameConfig>()) {
+    const int defW = config->HasLoadedConfig() ? config->GetDefaultWidth() : Constants::kDefaultWindowWidth;
+    const int defH = config->HasLoadedConfig() ? config->GetDefaultHeight() : Constants::kDefaultWindowHeight;
+    return {config->windowWidth > 0 ? config->windowWidth : defW,
+            config->windowHeight > 0 ? config->windowHeight : defH, 0.0};
+  }
+  return {Constants::kDefaultWindowWidth, Constants::kDefaultWindowHeight, 0.0};
+}
+
+bool SetFullscreenResolutionState(LuaBindingContext& ctx, const int w, const int h, const float refreshRate) {
+  if (w <= 0 || h <= 0) return false;
+  if (auto* settings = GetOrCreateUserSettings(ctx)) {
+    settings->fullscreenWidth = w;
+    settings->fullscreenHeight = h;
+    settings->fullscreenRefreshRate = std::max(0.0F, refreshRate);
+    if (settings->GetEffectiveWindowMode() == WindowMode::ExclusiveFullscreen) {
+      ApplyLiveWindowMode(ctx, WindowMode::ExclusiveFullscreen);
+    }
+  }
+  return true;
+}
+
+PresentationMode GetPresentationModeState(LuaBindingContext& ctx) {
+  if (const auto* config = ctx.GetRegistry()->TryGet<GameConfig>()) {
+    return config->GetEngineOptions().presentationMode;
+  }
+  if (const auto* settings = GetOrCreateUserSettings(ctx); settings && settings->presentationMode.has_value()) {
+    return *settings->presentationMode;
+  }
+  return PresentationMode::Letterbox;
+}
+
+bool SetPresentationModeState(LuaBindingContext& ctx, const std::string_view modeStr) {
+  const auto parsed = ParsePresentationMode(modeStr);
+  if (!parsed.has_value()) {
+    Logger::Warn("set_presentation_mode: unknown mode '" + std::string(modeStr) +
+                 "' (expected letterbox|integer_scale|stretch)");
+    return false;
+  }
+  if (auto* config = ctx.GetRegistry()->TryGet<GameConfig>()) {
+    config->GetEngineOptions().presentationMode = *parsed;
+  }
+  if (auto* settings = GetOrCreateUserSettings(ctx)) {
+    settings->presentationMode = *parsed;
+  }
+  return true;
+}
+
+bool GetVSyncState(LuaBindingContext& ctx) {
+  if (const auto* config = ctx.GetRegistry()->TryGet<GameConfig>()) {
+    return config->GetEngineOptions().vsync;
+  }
+  if (const auto* settings = GetOrCreateUserSettings(ctx); settings && settings->vsync.has_value()) {
+    return *settings->vsync;
+  }
+  return false;
+}
+
+bool SetVSyncState(LuaBindingContext& ctx, const bool enabled) {
+  if (auto* config = ctx.GetRegistry()->TryGet<GameConfig>()) {
+    config->GetEngineOptions().vsync = enabled;
+  }
+  if (auto* settings = GetOrCreateUserSettings(ctx)) {
+    settings->vsync = enabled;
+  }
+  if (auto* renderer = TryGetRenderer(ctx)) {
+    SDL_SetRenderVSync(renderer, enabled ? 1 : 0);
+  }
+  return true;
+}
+
+bool GetWindowResizableState(LuaBindingContext& ctx) {
+#ifndef OCTARINE_PLATFORM_MOBILE
+  if (auto* window = TryGetWindow(ctx)) {
+    return (SDL_GetWindowFlags(window) & SDL_WINDOW_RESIZABLE) != 0;
+  }
+#endif
+  if (const auto* config = ctx.GetRegistry()->TryGet<GameConfig>()) {
+    return config->GetEngineOptions().windowResizable;
+  }
+  if (const auto* settings = GetOrCreateUserSettings(ctx); settings && settings->windowResizable.has_value()) {
+    return *settings->windowResizable;
+  }
+  return true;
+}
+
+void SetWindowResizableState(LuaBindingContext& ctx, const bool resizable) {
+  if (auto* config = ctx.GetRegistry()->TryGet<GameConfig>()) {
+    config->GetEngineOptions().windowResizable = resizable;
+  }
+  if (auto* settings = GetOrCreateUserSettings(ctx)) {
+    settings->windowResizable = resizable;
   }
 #ifndef OCTARINE_PLATFORM_MOBILE
   if (auto* window = TryGetWindow(ctx)) {
-    SDL_SetWindowFullscreen(window, enabled);
-    if (auto* settings = GetOrCreateUserSettings(ctx)) {
-      settings->CaptureWindow(window);
-    }
+    SDL_SetWindowResizable(window, resizable);
   }
 #endif
 }
@@ -407,9 +578,11 @@ std::tuple<int, int> GetWindowSizeState(LuaBindingContext& ctx) {
     return {w, h};
   }
   if (const auto* settings = GetOrCreateUserSettings(ctx)) {
-    return {settings->windowWidth, settings->windowHeight};
+    const int w = settings->windowWidth > 0 ? settings->windowWidth : settings->builtInDefaults.windowWidth;
+    const int h = settings->windowHeight > 0 ? settings->windowHeight : settings->builtInDefaults.windowHeight;
+    return {w, h};
   }
-  return {0, 0};
+  return {Constants::kDefaultWindowWidth, Constants::kDefaultWindowHeight};
 }
 
 void SetWindowSizeState(LuaBindingContext& ctx, const int w, const int h) {
@@ -607,23 +780,80 @@ std::optional<octarine::UserSettings::SettingValue> LuaObjectToSettingValue(cons
 }
 
 std::string NormalizeBuiltInKey(std::string_view key) {
-  if (key == "window.fullscreen") return "fullscreen";
-  if (key == "window.maximized") return "maximized";
-  if (key == "window.width") return "window_width";
-  if (key == "window.height") return "window_height";
-  if (key == "window.x") return "window_x";
-  if (key == "window.y") return "window_y";
-  if (key == "window.display_index") return "display_index";
-  if (key == "window.display_name") return "display_name";
-  if (key == "audio.master_volume") return "master_volume";
-  if (key == "audio.muted" || key == "audio.audio_muted" || key == "muted") return "audio_muted";
-  if (key == "engine.fps_target") return "fps_target";
-  if (key == "engine.perf_overlay") return "perf_overlay";
+  static constexpr std::array<std::pair<std::string_view, std::string_view>, 28> kAliases = {{
+      {"window.fullscreen", "fullscreen"},
+      {"window.mode", "window_mode"},
+      {"window.window_mode", "window_mode"},
+      {"mode", "window_mode"},
+      {"window.maximized", "maximized"},
+      {"window.width", "window_width"},
+      {"window.height", "window_height"},
+      {"window.x", "window_x"},
+      {"window.y", "window_y"},
+      {"window.fullscreen_width", "fullscreen_width"},
+      {"window.fullscreen_height", "fullscreen_height"},
+      {"window.fullscreen_refresh_rate", "fullscreen_refresh_rate"},
+      {"window.refresh_rate", "fullscreen_refresh_rate"},
+      {"window.presentation_mode", "presentation_mode"},
+      {"engine.presentation_mode", "presentation_mode"},
+      {"window.vsync", "vsync"},
+      {"engine.vsync", "vsync"},
+      {"window.resizable", "window_resizable"},
+      {"window.window_resizable", "window_resizable"},
+      {"resizable", "window_resizable"},
+      {"window.display_index", "display_index"},
+      {"window.display_name", "display_name"},
+      {"audio.master_volume", "master_volume"},
+      {"audio.muted", "audio_muted"},
+      {"audio.audio_muted", "audio_muted"},
+      {"muted", "audio_muted"},
+      {"engine.fps_target", "fps_target"},
+      {"engine.perf_overlay", "perf_overlay"},
+  }};
+  for (const auto& [alias, canonical] : kAliases) {
+    if (key == alias) return std::string(canonical);
+  }
   return std::string(key);
+}
+
+bool TryGetBuiltInFullscreenAndPresentation(LuaBindingContext& ctx, const std::string& key, const sol::state_view& lua,
+                                            sol::object& out) {
+  if (key == "window_mode") {
+    out = sol::make_object(lua, std::string(WindowModeToString(GetWindowModeState(ctx))));
+    return true;
+  }
+  if (key == "fullscreen_width") {
+    out = sol::make_object(lua, std::get<0>(GetFullscreenResolutionState(ctx)));
+    return true;
+  }
+  if (key == "fullscreen_height") {
+    out = sol::make_object(lua, std::get<1>(GetFullscreenResolutionState(ctx)));
+    return true;
+  }
+  if (key == "fullscreen_refresh_rate") {
+    out = sol::make_object(lua, std::get<2>(GetFullscreenResolutionState(ctx)));
+    return true;
+  }
+  if (key == "presentation_mode") {
+    out = sol::make_object(lua, std::string(PresentationModeToString(GetPresentationModeState(ctx))));
+    return true;
+  }
+  if (key == "vsync") {
+    out = sol::make_object(lua, GetVSyncState(ctx));
+    return true;
+  }
+  if (key == "window_resizable") {
+    out = sol::make_object(lua, GetWindowResizableState(ctx));
+    return true;
+  }
+  return false;
 }
 
 bool TryGetBuiltInWindowSetting(LuaBindingContext& ctx, const std::string& key, const sol::state_view& lua,
                                 sol::object& out) {
+  if (TryGetBuiltInFullscreenAndPresentation(ctx, key, lua, out)) {
+    return true;
+  }
   if (key == "fullscreen") {
     out = sol::make_object(lua, GetFullscreenState(ctx));
     return true;
@@ -695,7 +925,8 @@ bool TryGetBuiltInSetting(LuaBindingContext& ctx, std::string_view rawKey, const
 }
 
 bool TrySetBuiltInBool(LuaBindingContext& ctx, const std::string& key, const sol::object& val, bool& handled) {
-  if (key != "fullscreen" && key != "maximized" && key != "audio_muted" && key != "perf_overlay") {
+  if (key != "fullscreen" && key != "maximized" && key != "audio_muted" && key != "perf_overlay" && key != "vsync" &&
+      key != "window_resizable") {
     handled = false;
     return false;
   }
@@ -706,15 +937,39 @@ bool TrySetBuiltInBool(LuaBindingContext& ctx, const std::string& key, const sol
   if (key == "maximized") SetMaximizedState(ctx, b);
   if (key == "audio_muted") SetAudioMutedState(ctx, b);
   if (key == "perf_overlay") SetPerfOverlayValue(ctx, b);
+  if (key == "vsync") SetVSyncState(ctx, b);
+  if (key == "window_resizable") SetWindowResizableState(ctx, b);
   return true;
+}
+
+bool TrySetBuiltInString(LuaBindingContext& ctx, const std::string& key, const sol::object& val, bool& handled) {
+  if (key != "window_mode" && key != "presentation_mode") {
+    handled = false;
+    return false;
+  }
+  handled = true;
+  if (val.get_type() != sol::type::string) return false;
+  const std::string s = val.as<std::string>();
+  if (key == "window_mode") return SetWindowModeState(ctx, s);
+  return SetPresentationModeState(ctx, s);
+}
+
+void ApplyFullscreenDimensionSetting(LuaBindingContext& ctx, const std::string& key, const int intVal) {
+  auto [curW, curH, curHz] = GetFullscreenResolutionState(ctx);
+  SetFullscreenResolutionState(ctx, key == "fullscreen_width" ? intVal : curW,
+                               key == "fullscreen_height" ? intVal : curH, static_cast<float>(curHz));
 }
 
 void ApplyWindowDimensionOrPosSetting(LuaBindingContext& ctx, const std::string& key, const int intVal) {
   if (key == "window_width" || key == "window_height") {
     auto [curW, curH] = GetWindowSizeState(ctx);
-    if (curW <= 0) curW = 1280;
-    if (curH <= 0) curH = 720;
-    SetWindowSizeState(ctx, key == "window_width" ? intVal : curW, key == "window_height" ? intVal : curH);
+    const int safeW = curW > 0 ? curW : 1280;
+    const int safeH = curH > 0 ? curH : 720;
+    SetWindowSizeState(ctx, key == "window_width" ? intVal : safeW, key == "window_height" ? intVal : safeH);
+    return;
+  }
+  if (key == "fullscreen_width" || key == "fullscreen_height") {
+    ApplyFullscreenDimensionSetting(ctx, key, intVal);
     return;
   }
   auto [curX, curY] = GetWindowPositionState(ctx);
@@ -723,7 +978,8 @@ void ApplyWindowDimensionOrPosSetting(LuaBindingContext& ctx, const std::string&
 
 bool TrySetBuiltInNumber(LuaBindingContext& ctx, const std::string& key, const sol::object& val, bool& handled) {
   if (key != "master_volume" && key != "fps_target" && key != "display_index" && key != "window_width" &&
-      key != "window_height" && key != "window_x" && key != "window_y") {
+      key != "window_height" && key != "window_x" && key != "window_y" && key != "fullscreen_width" &&
+      key != "fullscreen_height" && key != "fullscreen_refresh_rate") {
     handled = false;
     return false;
   }
@@ -732,6 +988,10 @@ bool TrySetBuiltInNumber(LuaBindingContext& ctx, const std::string& key, const s
   if (key == "master_volume") {
     SetMasterVolumeState(ctx, static_cast<float>(val.as<double>()));
     return true;
+  }
+  if (key == "fullscreen_refresh_rate") {
+    auto [curW, curH, _] = GetFullscreenResolutionState(ctx);
+    return SetFullscreenResolutionState(ctx, curW, curH, static_cast<float>(val.as<double>()));
   }
   const int intVal = static_cast<int>(val.as<int64_t>());
   if (key == "fps_target") {
@@ -745,12 +1005,112 @@ bool TrySetBuiltInNumber(LuaBindingContext& ctx, const std::string& key, const s
   return true;
 }
 
+constexpr std::array<std::string_view, 19> kBuiltInSettingKeys = {
+    "fullscreen",        "window_mode", "maximized",        "window_width",      "window_height",
+    "window_x",          "window_y",    "fullscreen_width", "fullscreen_height", "fullscreen_refresh_rate",
+    "presentation_mode", "vsync",       "window_resizable", "display_index",     "display_name",
+    "master_volume",     "audio_muted", "fps_target",       "perf_overlay"};
+
 bool IsBuiltInSettingKey(std::string_view rawKey) {
   const std::string key = NormalizeBuiltInKey(rawKey);
-  constexpr std::array<std::string_view, 12> kBuiltIns = {
-      "fullscreen",    "maximized",    "window_width",  "window_height", "window_x",   "window_y",
-      "display_index", "display_name", "master_volume", "audio_muted",   "fps_target", "perf_overlay"};
-  return std::find(kBuiltIns.begin(), kBuiltIns.end(), key) != kBuiltIns.end();
+  return std::find(kBuiltInSettingKeys.begin(), kBuiltInSettingKeys.end(), key) != kBuiltInSettingKeys.end();
+}
+
+bool TryGetBuiltInDefaultWindow(const octarine::UserSettings::BuiltInDefaults& d, const std::string& key,
+                                const sol::state_view& lua, sol::object& out) {
+  if (key == "fullscreen") {
+    out = sol::make_object(lua, d.windowMode != WindowMode::Windowed);
+    return true;
+  }
+  if (key == "window_mode") {
+    out = sol::make_object(lua, std::string(WindowModeToString(d.windowMode)));
+    return true;
+  }
+  if (key == "maximized") {
+    out = sol::make_object(lua, false);
+    return true;
+  }
+  if (key == "window_width" || key == "fullscreen_width") {
+    out = sol::make_object(lua, d.windowWidth);
+    return true;
+  }
+  if (key == "window_height" || key == "fullscreen_height") {
+    out = sol::make_object(lua, d.windowHeight);
+    return true;
+  }
+  if (key == "fullscreen_refresh_rate") {
+    out = sol::make_object(lua, 0.0);
+    return true;
+  }
+  if (key == "presentation_mode") {
+    out = sol::make_object(lua, std::string(PresentationModeToString(d.presentationMode)));
+    return true;
+  }
+  if (key == "vsync") {
+    out = sol::make_object(lua, d.vsync);
+    return true;
+  }
+  if (key == "window_resizable") {
+    out = sol::make_object(lua, d.windowResizable);
+    return true;
+  }
+  return false;
+}
+
+bool TryGetBuiltInDefault(LuaBindingContext& ctx, std::string_view rawKey, const sol::state_view& lua,
+                          sol::object& out) {
+  const auto* settings = GetOrCreateUserSettings(ctx);
+  if (settings == nullptr) return false;
+  const auto& d = settings->builtInDefaults;
+  const std::string key = NormalizeBuiltInKey(rawKey);
+  if (TryGetBuiltInDefaultWindow(d, key, lua, out)) {
+    return true;
+  }
+  if (key == "master_volume") {
+    out = sol::make_object(lua, static_cast<double>(d.masterVolume));
+    return true;
+  }
+  if (key == "audio_muted") {
+    out = sol::make_object(lua, d.audioMuted);
+    return true;
+  }
+  if (key == "fps_target") {
+    out = sol::make_object(lua, d.fpsTarget);
+    return true;
+  }
+  if (key == "perf_overlay") {
+    out = sol::make_object(lua, d.showPerfOverlay);
+    return true;
+  }
+  return false;
+}
+
+void CopySettingsToEngineOptions(const octarine::UserSettings& settings, EngineOptions& opts) {
+  opts.windowMode = settings.GetEffectiveWindowMode();
+  opts.presentationMode = settings.presentationMode.value_or(settings.builtInDefaults.presentationMode);
+  opts.vsync = settings.vsync.value_or(settings.builtInDefaults.vsync);
+  opts.windowResizable = settings.windowResizable.value_or(settings.builtInDefaults.windowResizable);
+  opts.masterVolume = settings.masterVolume;
+  opts.audioEnabled = !settings.audioMuted;
+  opts.fpsTarget = settings.fpsTarget.value_or(settings.builtInDefaults.fpsTarget);
+  opts.showPerfOverlay = settings.showPerfOverlay.value_or(settings.builtInDefaults.showPerfOverlay);
+}
+
+void SyncEngineOptionsFromSettings(LuaBindingContext& ctx) {
+  const auto* settings = GetOrCreateUserSettings(ctx);
+  if (settings == nullptr) return;
+  if (auto* config = ctx.GetRegistry()->TryGet<GameConfig>()) {
+    CopySettingsToEngineOptions(*settings, config->GetEngineOptions());
+  }
+  if (auto* renderer = TryGetRenderer(ctx)) {
+    SDL_SetRenderVSync(renderer, GetVSyncState(ctx) ? 1 : 0);
+  }
+  if (auto* window = TryGetWindow(ctx)) {
+    const auto* config = ctx.GetRegistry()->TryGet<GameConfig>();
+    const int defW = config ? config->windowWidth : Constants::kDefaultWindowWidth;
+    const int defH = config ? config->windowHeight : Constants::kDefaultWindowHeight;
+    settings->ApplyToWindow(window, defW, defH);
+  }
 }
 
 // NOLINTNEXTLINE(misc-no-recursion)
@@ -819,6 +1179,11 @@ bool HandleSettingsSet(LuaBindingContext& ctx, const std::string& key, const sol
     Logger::Warn("settings.set: expected boolean for built-in key '" + key + "'");
     return false;
   }
+  if (TrySetBuiltInString(ctx, normKey, value, handled)) return true;
+  if (handled) {
+    Logger::Warn("settings.set: expected valid string for built-in key '" + key + "'");
+    return false;
+  }
   if (TrySetBuiltInNumber(ctx, normKey, value, handled)) return true;
   if (handled) {
     Logger::Warn("settings.set: expected number for built-in key '" + key + "'");
@@ -839,10 +1204,7 @@ sol::table HandleSettingsGetAll(LuaBindingContext& ctx, sol::this_state s) {
   sol::state_view lua(s);
   sol::table out = lua.create_table();
 
-  constexpr std::array<std::string_view, 12> kBuiltIns = {
-      "fullscreen",    "maximized",    "window_width",  "window_height", "window_x",   "window_y",
-      "display_index", "display_name", "master_volume", "audio_muted",   "fps_target", "perf_overlay"};
-  for (const auto k : kBuiltIns) {
+  for (const auto k : kBuiltInSettingKeys) {
     sol::object val = sol::lua_nil;
     if (TryGetBuiltInSetting(ctx, k, lua, val)) {
       out[std::string(k)] = val;
@@ -858,6 +1220,20 @@ sol::table HandleSettingsGetAll(LuaBindingContext& ctx, sol::this_state s) {
     }
   }
   return out;
+}
+
+sol::object HandleSettingsGetDefault(LuaBindingContext& ctx, const std::string& key, sol::this_state s) {
+  sol::state_view luaView(s);
+  sol::object builtInDef = sol::lua_nil;
+  if (TryGetBuiltInDefault(ctx, key, luaView, builtInDef)) {
+    return builtInDef;
+  }
+  if (const auto* settings = GetOrCreateUserSettings(ctx)) {
+    if (const auto defVal = settings->GetDefaultSetting(key)) {
+      return SettingValueToLuaObject(luaView, *defVal);
+    }
+  }
+  return sol::make_object(luaView, sol::lua_nil);
 }
 
 void BindUserSettings(sol::state& lua, LuaBindingContext& ctx) {
@@ -883,18 +1259,13 @@ void BindUserSettings(sol::state& lua, LuaBindingContext& ctx) {
   });
 
   settingsTbl.set_function("get_default", [&ctx](const std::string& key, sol::this_state s) -> sol::object {
-    sol::state_view luaView(s);
-    if (const auto* settings = GetOrCreateUserSettings(ctx)) {
-      if (const auto defVal = settings->GetDefaultSetting(key)) {
-        return SettingValueToLuaObject(luaView, *defVal);
-      }
-    }
-    return sol::make_object(luaView, sol::lua_nil);
+    return HandleSettingsGetDefault(ctx, key, s);
   });
 
   settingsTbl.set_function("reset", [&ctx](const std::string& key, sol::this_state s) -> sol::object {
     if (auto* settings = GetOrCreateUserSettings(ctx)) {
       static_cast<void>(settings->ResetSetting(key));
+      SyncEngineOptionsFromSettings(ctx);
     }
     return HandleSettingsGet(ctx, key, sol::lua_nil, s);
   });
@@ -902,6 +1273,7 @@ void BindUserSettings(sol::state& lua, LuaBindingContext& ctx) {
   settingsTbl.set_function("reset_all", [&ctx]() {
     if (auto* settings = GetOrCreateUserSettings(ctx)) {
       settings->ResetAllSettings();
+      SyncEngineOptionsFromSettings(ctx);
     }
   });
 
@@ -925,9 +1297,165 @@ void BindUserSettings(sol::state& lua, LuaBindingContext& ctx) {
   lua.set_function("save_user_settings", [&ctx]() -> bool { return SaveSettingsToDisk(ctx); });
 }
 
+sol::table BuildDisplayEntryTable(sol::state_view& lua, const SDL_DisplayID dispID, const int index,
+                                  const SDL_DisplayID primaryID) {
+  sol::table entry = lua.create_table();
+  entry["index"] = index;
+  const char* name = SDL_GetDisplayName(dispID);
+  entry["name"] = (name != nullptr && name[0] != '\0') ? std::string(name) : ("Display " + std::to_string(index));
+
+  SDL_Rect bounds{0, 0, 1920, 1080};
+  SDL_GetDisplayBounds(dispID, &bounds);
+  SDL_Rect usable{0, 0, bounds.w, bounds.h};
+  if (!SDL_GetDisplayUsableBounds(dispID, &usable)) {
+    usable = bounds;
+  }
+  entry["x"] = bounds.x;
+  entry["y"] = bounds.y;
+  entry["width"] = bounds.w;
+  entry["height"] = bounds.h;
+  entry["usable_width"] = usable.w;
+  entry["usable_height"] = usable.h;
+
+  const SDL_DisplayMode* curMode = SDL_GetCurrentDisplayMode(dispID);
+  if (curMode == nullptr) {
+    curMode = SDL_GetDesktopDisplayMode(dispID);
+  }
+  entry["refresh_rate"] = (curMode != nullptr && curMode->refresh_rate > 0.0F) ? curMode->refresh_rate : 60.0F;
+  const float scale = SDL_GetDisplayContentScale(dispID);
+  entry["content_scale"] = scale > 0.0F ? scale : 1.0F;
+  entry["is_primary"] = (dispID == primaryID);
+  return entry;
+}
+
+sol::table GetDisplaysLuaTable(sol::this_state s) {
+  sol::state_view lua(s);
+  sol::table out = lua.create_table();
+  int count = 0;
+  SDL_DisplayID* displays = SDL_GetDisplays(&count);
+  if (displays != nullptr && count > 0) {
+    const SDL_DisplayID primaryID = SDL_GetPrimaryDisplay();
+    for (int i = 0; i < count; ++i) {
+      out[i + 1] = BuildDisplayEntryTable(lua, displays[i], i, primaryID != 0 ? primaryID : displays[0]);
+    }
+    SDL_free(displays);
+    return out;
+  }
+  if (displays != nullptr) SDL_free(displays);
+
+  // Fallback synthetic primary display for headless / uninitialized test environments.
+  sol::table fallback = lua.create_table();
+  fallback["index"] = 0;
+  fallback["name"] = "Primary Display";
+  fallback["x"] = 0;
+  fallback["y"] = 0;
+  fallback["width"] = 1920;
+  fallback["height"] = 1080;
+  fallback["usable_width"] = 1920;
+  fallback["usable_height"] = 1080;
+  fallback["refresh_rate"] = 60.0;
+  fallback["content_scale"] = 1.0;
+  fallback["is_primary"] = true;
+  out[1] = fallback;
+  return out;
+}
+
+struct DisplayModeRecord {
+  int width = 0;
+  int height = 0;
+  int refreshHzRounded = 60;
+  float refreshRate = 60.0F;
+  float pixelDensity = 1.0F;
+};
+
+void AppendUniqueDisplayMode(std::vector<DisplayModeRecord>& records, const SDL_DisplayMode* m) {
+  if (m == nullptr || m->w <= 0 || m->h <= 0) return;
+  const float hz = m->refresh_rate > 0.0F ? m->refresh_rate : 60.0F;
+  const int hzInt = static_cast<int>(std::lround(hz));
+  const bool duplicate = std::any_of(records.begin(), records.end(), [&](const DisplayModeRecord& r) {
+    return r.width == m->w && r.height == m->h && r.refreshHzRounded == hzInt;
+  });
+  if (!duplicate) {
+    records.push_back({m->w, m->h, hzInt, hz, m->pixel_density > 0.0F ? m->pixel_density : 1.0F});
+  }
+}
+
+void SortDisplayModesDescending(std::vector<DisplayModeRecord>& records) {
+  std::sort(records.begin(), records.end(), [](const DisplayModeRecord& a, const DisplayModeRecord& b) {
+    if (a.width != b.width) return a.width > b.width;
+    if (a.height != b.height) return a.height > b.height;
+    return a.refreshRate > b.refreshRate;
+  });
+}
+
+std::vector<DisplayModeRecord> QuerySdlDisplayModes(const int displayIndex) {
+  std::vector<DisplayModeRecord> records;
+  int dispCount = 0;
+  SDL_DisplayID* displays = SDL_GetDisplays(&dispCount);
+  if (displays == nullptr || dispCount <= 0) {
+    SDL_free(displays);
+    return records;
+  }
+  const SDL_DisplayID targetDisp = displays[std::clamp(displayIndex, 0, dispCount - 1)];
+  SDL_free(displays);
+
+  int modeCount = 0;
+  SDL_DisplayMode** modes = SDL_GetFullscreenDisplayModes(targetDisp, &modeCount);
+  if (modes == nullptr) return records;
+
+  for (int i = 0; i < modeCount; ++i) {
+    AppendUniqueDisplayMode(records, modes[i]);
+  }
+  SDL_free(modes);
+  SortDisplayModesDescending(records);
+  return records;
+}
+
+sol::table GetDisplayModesLuaTable(LuaBindingContext& ctx, const sol::optional<int>& displayIndexOpt,
+                                   sol::this_state s) {
+  sol::state_view lua(s);
+  const int displayIndex = displayIndexOpt.value_or(GetCurrentDisplayIndexState(ctx));
+  auto records = QuerySdlDisplayModes(displayIndex);
+  if (records.empty()) {
+    records = {
+        {3840, 2160, 60, 60.0F, 1.0F}, {2560, 1440, 60, 60.0F, 1.0F}, {1920, 1080, 60, 60.0F, 1.0F},
+        {1600, 900, 60, 60.0F, 1.0F},  {1280, 720, 60, 60.0F, 1.0F},
+    };
+  }
+  sol::table out = lua.create_table();
+  for (size_t i = 0; i < records.size(); ++i) {
+    sol::table entry = lua.create_table();
+    entry["width"] = records[i].width;
+    entry["height"] = records[i].height;
+    entry["refresh_rate"] = static_cast<double>(records[i].refreshRate);
+    entry["pixel_density"] = static_cast<double>(records[i].pixelDensity);
+    out[i + 1] = entry;
+  }
+  return out;
+}
+
 void BindWindowAndDisplay(sol::state& lua, LuaBindingContext& ctx) {
   lua.set_function("is_fullscreen", [&ctx]() -> bool { return GetFullscreenState(ctx); });
   lua.set_function("set_fullscreen", [&ctx](const bool enabled) { SetFullscreenState(ctx, enabled); });
+  lua.set_function("get_window_mode",
+                   [&ctx]() -> std::string { return std::string(WindowModeToString(GetWindowModeState(ctx))); });
+  lua.set_function("set_window_mode",
+                   [&ctx](const std::string& mode) -> bool { return SetWindowModeState(ctx, mode); });
+  lua.set_function("get_fullscreen_resolution",
+                   [&ctx]() -> std::tuple<int, int, double> { return GetFullscreenResolutionState(ctx); });
+  lua.set_function("set_fullscreen_resolution",
+                   [&ctx](const int w, const int h, const sol::optional<double>& refreshRate) -> bool {
+                     return SetFullscreenResolutionState(ctx, w, h, static_cast<float>(refreshRate.value_or(0.0)));
+                   });
+  lua.set_function("get_presentation_mode", [&ctx]() -> std::string {
+    return std::string(PresentationModeToString(GetPresentationModeState(ctx)));
+  });
+  lua.set_function("set_presentation_mode",
+                   [&ctx](const std::string& mode) -> bool { return SetPresentationModeState(ctx, mode); });
+  lua.set_function("get_vsync", [&ctx]() -> bool { return GetVSyncState(ctx); });
+  lua.set_function("set_vsync", [&ctx](const bool enabled) -> bool { return SetVSyncState(ctx, enabled); });
+  lua.set_function("is_window_resizable", [&ctx]() -> bool { return GetWindowResizableState(ctx); });
+  lua.set_function("set_window_resizable", [&ctx](const bool resizable) { SetWindowResizableState(ctx, resizable); });
   lua.set_function("is_maximized", [&ctx]() -> bool { return GetMaximizedState(ctx); });
   lua.set_function("set_maximized", [&ctx](const bool enabled) { SetMaximizedState(ctx, enabled); });
   lua.set_function("get_window_size", [&ctx]() -> std::tuple<int, int> { return GetWindowSizeState(ctx); });
@@ -944,6 +1472,11 @@ void BindWindowAndDisplay(sol::state& lua, LuaBindingContext& ctx) {
     return 0;
   });
 
+  lua.set_function("get_displays", [](sol::this_state s) -> sol::table { return GetDisplaysLuaTable(s); });
+  lua.set_function("get_display_modes",
+                   [&ctx](const sol::optional<int>& displayIndex, sol::this_state s) -> sol::table {
+                     return GetDisplayModesLuaTable(ctx, displayIndex, s);
+                   });
   lua.set_function("get_current_display_index", [&ctx]() -> int { return GetCurrentDisplayIndexState(ctx); });
   lua.set_function("get_current_display_name", [&ctx]() -> std::string { return GetCurrentDisplayNameState(ctx); });
   lua.set_function("set_window_display",

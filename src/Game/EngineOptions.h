@@ -1,10 +1,71 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
+#include <string>
+#include <string_view>
 
 #include "General/AngleUnit.h"
 #include "General/Color.h"
 #include "General/Constants.h"
+
+// Window display mode. config.ini: DefaultWindowMode=windowed|borderless|exclusive
+enum class WindowMode : std::uint8_t {
+  Windowed = 0,
+  BorderlessFullscreen = 1,
+  ExclusiveFullscreen = 2,
+};
+
+// How the fixed logical scene texture is scaled into the window backbuffer.
+// config.ini: DefaultPresentationMode=letterbox|integer_scale|stretch
+enum class PresentationMode : std::uint8_t {
+  Letterbox = 0,
+  IntegerScale = 1,
+  Stretch = 2,
+};
+
+[[nodiscard]] inline std::optional<WindowMode> ParseWindowMode(std::string_view str) {
+  if (str == "windowed" || str == "window") return WindowMode::Windowed;
+  if (str == "borderless" || str == "borderless_fullscreen" || str == "desktop_fullscreen" ||
+      str == "borderless_window") {
+    return WindowMode::BorderlessFullscreen;
+  }
+  if (str == "exclusive" || str == "exclusive_fullscreen" || str == "fullscreen") {
+    return WindowMode::ExclusiveFullscreen;
+  }
+  return std::nullopt;
+}
+
+[[nodiscard]] constexpr std::string_view WindowModeToString(WindowMode mode) {
+  switch (mode) {
+    case WindowMode::Windowed:
+      return "windowed";
+    case WindowMode::BorderlessFullscreen:
+      return "borderless";
+    case WindowMode::ExclusiveFullscreen:
+      return "exclusive";
+  }
+  return "windowed";
+}
+
+[[nodiscard]] inline std::optional<PresentationMode> ParsePresentationMode(std::string_view str) {
+  if (str == "letterbox" || str == "aspect" || str == "fit") return PresentationMode::Letterbox;
+  if (str == "integer_scale" || str == "integer" || str == "pixel_perfect") return PresentationMode::IntegerScale;
+  if (str == "stretch" || str == "fill") return PresentationMode::Stretch;
+  return std::nullopt;
+}
+
+[[nodiscard]] constexpr std::string_view PresentationModeToString(PresentationMode mode) {
+  switch (mode) {
+    case PresentationMode::Letterbox:
+      return "letterbox";
+    case PresentationMode::IntegerScale:
+      return "integer_scale";
+    case PresentationMode::Stretch:
+      return "stretch";
+  }
+  return "letterbox";
+}
 
 // Screen anchor for the built-in perf overlay. config.ini: PerfOverlayCorner=top-left|top-right|
 // bottom-left|bottom-right.
@@ -28,6 +89,10 @@ struct EngineOptions {
   // Frame-rate cap enforced by FrameLoop::WaitTime. config.ini: FpsTarget= (0 = uncapped — the
   // loop runs as fast as it can and deltaTime carries the real elapsed time).
   int fpsTarget = Constants::kFps;
+  WindowMode windowMode = WindowMode::Windowed;
+  PresentationMode presentationMode = PresentationMode::Letterbox;
+  bool vsync = false;
+  bool windowResizable = true;
   bool showDebugGUI = false;
   bool drawColliders = false;
   bool showFpsCounter = true;

@@ -6,6 +6,7 @@
 
 #include "./RenderQueue.h"
 #include "AssetManager/AssetManager.h"
+#include "Game/EngineOptions.h"
 
 class Registry;
 
@@ -50,7 +51,12 @@ class Renderer {
   // Player-build composite: blit the full scene texture into the window backbuffer. Editor
   // builds skip this — the Scene window inside ImGui draws the scene texture itself, so
   // composing it to the window again would double-draw.
-  void CompositeSceneToWindow(SDL_Renderer* sdlRenderer) const;
+  void CompositeSceneToWindow(SDL_Renderer* sdlRenderer, const SDL_FRect* destRect = nullptr) const;
+
+  // Computes the destination rectangle inside the window backbuffer (`windowW` x `windowH`)
+  // for compositing the logical scene texture (`sceneW` x `sceneH`) under `mode`.
+  [[nodiscard]] static SDL_FRect ComputeCompositeRect(int sceneW, int sceneH, int windowW, int windowH,
+                                                      PresentationMode mode);
 
   // Phase 4: flip. SDL_RenderPresent stays inside Renderer so the engine has exactly one
   // present site per frame.

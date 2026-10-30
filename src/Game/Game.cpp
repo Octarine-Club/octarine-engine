@@ -216,16 +216,43 @@ void ApplyHeadlessOptions(EngineOptions& opts) {
 
 void InitUserSettings(Registry& registry, GameConfig& gameConfig, const std::string& saveDataPath) {
   octarine::UserSettings userSettings;
+  auto& opts = gameConfig.GetEngineOptions();
+  userSettings.builtInDefaults.windowWidth =
+      gameConfig.HasLoadedConfig() ? gameConfig.GetDefaultWidth() : Constants::kDefaultWindowWidth;
+  userSettings.builtInDefaults.windowHeight =
+      gameConfig.HasLoadedConfig() ? gameConfig.GetDefaultHeight() : Constants::kDefaultWindowHeight;
+  userSettings.builtInDefaults.windowMode = opts.windowMode;
+  userSettings.builtInDefaults.presentationMode = opts.presentationMode;
+  userSettings.builtInDefaults.vsync = opts.vsync;
+  userSettings.builtInDefaults.windowResizable = opts.windowResizable;
+  userSettings.builtInDefaults.fpsTarget = opts.fpsTarget;
+  userSettings.builtInDefaults.showPerfOverlay = opts.showPerfOverlay;
+  userSettings.builtInDefaults.masterVolume = opts.masterVolume;
+  userSettings.builtInDefaults.audioMuted = !opts.audioEnabled;
+
+  // Seed initial state from GameConfig defaults before loading user overrides.
+  userSettings.SetWindowMode(opts.windowMode);
+
   if (!saveDataPath.empty()) {
     static_cast<void>(userSettings.Load(saveDataPath));
   }
-  gameConfig.GetEngineOptions().masterVolume = userSettings.masterVolume;
-  gameConfig.GetEngineOptions().audioEnabled = !userSettings.audioMuted;
+  opts.masterVolume = userSettings.masterVolume;
+  opts.audioEnabled = !userSettings.audioMuted;
+  opts.windowMode = userSettings.GetEffectiveWindowMode();
+  if (userSettings.presentationMode.has_value()) {
+    opts.presentationMode = *userSettings.presentationMode;
+  }
+  if (userSettings.vsync.has_value()) {
+    opts.vsync = *userSettings.vsync;
+  }
+  if (userSettings.windowResizable.has_value()) {
+    opts.windowResizable = *userSettings.windowResizable;
+  }
   if (userSettings.fpsTarget.has_value()) {
-    gameConfig.GetEngineOptions().fpsTarget = *userSettings.fpsTarget;
+    opts.fpsTarget = *userSettings.fpsTarget;
   }
   if (userSettings.showPerfOverlay.has_value()) {
-    gameConfig.GetEngineOptions().showPerfOverlay = *userSettings.showPerfOverlay;
+    opts.showPerfOverlay = *userSettings.showPerfOverlay;
   }
   registry.Set<octarine::UserSettings>(userSettings);
 }
@@ -504,6 +531,17 @@ std::pair<int, int> ResolveInitialWindowSize([[maybe_unused]] Registry& registry
 #endif
   return {initialWidth, initialHeight};
 }
+
+void ApplyInitialWindowSettings(Registry& registry, const GameConfig& gameConfig, EngineRuntime& runtime,
+                                const bool headless) {
+  if (headless || gameConfig.IsEditorMode()) return;
+  if (runtime.SdlRenderer() != nullptr) {
+    SDL_SetRenderVSync(runtime.SdlRenderer(), gameConfig.GetEngineOptions().vsync ? 1 : 0);
+  }
+  if (auto* userSettings = registry.TryGet<octarine::UserSettings>()) {
+    userSettings->ApplyToWindow(runtime.Window(), gameConfig.windowWidth, gameConfig.windowHeight);
+  }
+}
 }  // namespace
 
 bool Game::CreateWindowAndScene(bool projectLoaded) {
@@ -515,15 +553,12 @@ bool Game::CreateWindowAndScene(bool projectLoaded) {
                                 : (gameConfig.IsEditorMode() ? kDefaultEditorWindowTitle : kDefaultWindowTitle);
 
   const auto [initialWidth, initialHeight] = ResolveInitialWindowSize(*registry_, gameConfig, headless_);
-  if (!runtime_.CreateWindow(title, initialWidth, initialHeight, headless_)) {
+  const bool resizable = gameConfig.IsEditorMode() || gameConfig.GetEngineOptions().windowResizable;
+  if (!runtime_.CreateWindow(title, initialWidth, initialHeight, headless_, resizable)) {
     return false;
   }
 
-  if (!headless_ && !gameConfig.IsEditorMode()) {
-    if (auto* userSettings = registry_->TryGet<octarine::UserSettings>()) {
-      userSettings->ApplyToWindow(runtime_.Window(), gameConfig.windowWidth, gameConfig.windowHeight);
-    }
-  }
+  ApplyInitialWindowSettings(*registry_, gameConfig, runtime_, headless_);
 
   return renderer_->CreateScene(runtime_.SdlRenderer(), gameConfig.windowWidth, gameConfig.windowHeight);
 }
@@ -679,7 +714,7 @@ bool Game::RunBakeValidation(const std::string& assetPath, const std::string& sc
   scriptSystem.CreateLuaBindings(lua);
   engine_bootstrap::InstallLuaModules(lua, *this);
   LuaSystemRegistry::bindAll(lua);
-  engine_bootstrap::SetCommonLuaGlobals(lua, gameConfig, startup_mode_);
+  engine_bootstrap::SetCommonLuaGlobals(lua, gameConfig, startup_mode_, dev_mode_);
 
   auto& assetManager = registry_->Get<AssetManager>();
   assetManager.LoadGameConfig(gameConfig);
@@ -914,7 +949,7 @@ void Game::Setup() {
   scriptSystem.Func().CreateLuaBindings(lua);
   engine_bootstrap::InstallLuaModules(lua, *this);
   LuaSystemRegistry::bindAll(lua);
-  engine_bootstrap::SetCommonLuaGlobals(lua, gameConfig, startup_mode_);
+  engine_bootstrap::SetCommonLuaGlobals(lua, gameConfig, startup_mode_, dev_mode_);
 
 #ifndef OCTARINE_SHIPPED
   // Emit the EmmyLua API stub once per Setup, after the full surface — globals, modules,

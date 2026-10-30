@@ -12,6 +12,7 @@
 #include "General/Logger.h"
 #include "Lua/LuaBindingContext.h"
 #include "Lua/Modules/GameModuleLuaBinding.h"
+#include "Renderer/Renderer.h"
 
 namespace {
 
@@ -72,6 +73,14 @@ void TestDefaults() {
   Check(!s.fullscreen, "default fullscreen is false");
   Check(!s.maximized, "default maximized is false");
   Check(!s.hasWindowPlacement, "default hasWindowPlacement is false");
+  Check(!s.windowMode.has_value(), "default windowMode is nullopt");
+  Check(s.GetEffectiveWindowMode() == WindowMode::Windowed, "default effective WindowMode is Windowed");
+  Check(s.fullscreenWidth == 0, "default fullscreenWidth is 0");
+  Check(s.fullscreenHeight == 0, "default fullscreenHeight is 0");
+  Check(s.fullscreenRefreshRate == 0.0F, "default fullscreenRefreshRate is 0.0");
+  Check(!s.presentationMode.has_value(), "default presentationMode is nullopt");
+  Check(!s.vsync.has_value(), "default vsync is nullopt");
+  Check(!s.windowResizable.has_value(), "default windowResizable is nullopt");
   Check(s.masterVolume == 1.0F, "default masterVolume is 1.0");
   Check(!s.audioMuted, "default audioMuted is false");
   Check(!s.fpsTarget.has_value(), "default fpsTarget is nullopt");
@@ -180,6 +189,13 @@ void TestSerializationRoundTrip() {
   original.displayIndex = 2;
   original.displayName = "Studio Display";
   original.fullscreen = true;
+  original.windowMode = WindowMode::ExclusiveFullscreen;
+  original.fullscreenWidth = 2560;
+  original.fullscreenHeight = 1440;
+  original.fullscreenRefreshRate = 144.0F;
+  original.presentationMode = PresentationMode::IntegerScale;
+  original.vsync = true;
+  original.windowResizable = false;
   original.maximized = false;
   original.hasWindowPlacement = true;
   original.masterVolume = 0.6F;
@@ -203,6 +219,12 @@ void TestSerializationRoundTrip() {
   Check(reloaded.displayIndex == original.displayIndex, "roundtrip displayIndex");
   Check(reloaded.displayName == original.displayName, "roundtrip displayName");
   Check(reloaded.fullscreen == original.fullscreen, "roundtrip fullscreen");
+  Check(reloaded.windowMode == original.windowMode, "roundtrip windowMode (exclusive)");
+  Check(reloaded.fullscreenWidth == 2560 && reloaded.fullscreenHeight == 1440, "roundtrip fullscreen resolution");
+  Check(std::abs(reloaded.fullscreenRefreshRate - 144.0F) < 0.01F, "roundtrip fullscreenRefreshRate");
+  Check(reloaded.presentationMode == PresentationMode::IntegerScale, "roundtrip presentationMode");
+  Check(reloaded.vsync == true, "roundtrip vsync");
+  Check(reloaded.windowResizable == false, "roundtrip windowResizable");
   Check(reloaded.maximized == original.maximized, "roundtrip maximized");
   Check(std::abs(reloaded.masterVolume - original.masterVolume) < 0.001F, "roundtrip masterVolume");
   Check(reloaded.audioMuted == original.audioMuted, "roundtrip audioMuted");
@@ -325,6 +347,134 @@ void TestLuaSettingsModule() {
   std::filesystem::remove_all(tempDir, ec);
 }
 
+void TestGameConfigAndCompositeRect() {
+  std::cout << "[display] GameConfig display defaults & Renderer::ComputeCompositeRect\n";
+  GameConfig cfg;
+  const std::unordered_map<std::string, std::string> raw = {
+      {"Title", "Display Test Game"}, {"StartupScript", "game.lua"},       {"DefaultWindowWidth", "640"},
+      {"DefaultWindowHeight", "360"}, {"DefaultWindowMode", "borderless"}, {"DefaultPresentationMode", "integer_scale"},
+      {"DefaultVSync", "true"},       {"WindowResizable", "false"},
+  };
+  Check(cfg.LoadConfig(raw), "GameConfig::LoadConfig with display keys succeeds");
+  Check(cfg.GetDefaultWidth() == 640 && cfg.GetDefaultHeight() == 360, "DefaultWindowWidth/Height parsed");
+  Check(cfg.GetEngineOptions().windowMode == WindowMode::BorderlessFullscreen, "DefaultWindowMode borderless parsed");
+  Check(cfg.GetEngineOptions().presentationMode == PresentationMode::IntegerScale,
+        "DefaultPresentationMode integer_scale parsed");
+  Check(cfg.GetEngineOptions().vsync, "DefaultVSync true parsed");
+  Check(!cfg.GetEngineOptions().windowResizable, "WindowResizable false parsed");
+
+  // Composite rect math: 640x360 (16:9) inside a 1920x1200 (16:10) window
+  const SDL_FRect letterbox = Renderer::ComputeCompositeRect(640, 360, 1920, 1200, PresentationMode::Letterbox);
+  Check(std::abs(letterbox.x - 0.0F) < 0.01F && std::abs(letterbox.y - 60.0F) < 0.01F &&
+            std::abs(letterbox.w - 1920.0F) < 0.01F && std::abs(letterbox.h - 1080.0F) < 0.01F,
+        "ComputeCompositeRect Letterbox centers 16:9 inside 1920x1200 with 60px top/bottom bars");
+
+  // IntegerScale: 640x360 inside 1600x900 -> 2x scale (1280x720) centered at (160, 90)
+  const SDL_FRect intScale = Renderer::ComputeCompositeRect(640, 360, 1600, 900, PresentationMode::IntegerScale);
+  Check(std::abs(intScale.x - 160.0F) < 0.01F && std::abs(intScale.y - 90.0F) < 0.01F &&
+            std::abs(intScale.w - 1280.0F) < 0.01F && std::abs(intScale.h - 720.0F) < 0.01F,
+        "ComputeCompositeRect IntegerScale picks 2x (1280x720) inside 1600x900");
+
+  // IntegerScale fallback when window is smaller than 1x scene: 640x360 inside 320x200
+  const SDL_FRect smallInt = Renderer::ComputeCompositeRect(640, 360, 320, 200, PresentationMode::IntegerScale);
+  Check(std::abs(smallInt.w - 320.0F) < 0.01F && std::abs(smallInt.h - 180.0F) < 0.01F &&
+            std::abs(smallInt.y - 10.0F) < 0.01F,
+        "ComputeCompositeRect IntegerScale falls back to Letterbox when window < 1x scene");
+
+  // Stretch: fills full window
+  const SDL_FRect stretch = Renderer::ComputeCompositeRect(640, 360, 1920, 1200, PresentationMode::Stretch);
+  Check(std::abs(stretch.x) < 0.01F && std::abs(stretch.y) < 0.01F && std::abs(stretch.w - 1920.0F) < 0.01F &&
+            std::abs(stretch.h - 1200.0F) < 0.01F,
+        "ComputeCompositeRect Stretch fills entire window");
+}
+
+void TestLuaDisplayApisAndReset() {
+  std::cout << "[lua-display] Lua display modes, window modes, presentation modes, vsync, and default reset\n";
+  const auto tempDir = std::filesystem::temp_directory_path() / "octarine_lua_display_test";
+  std::error_code ec;
+  std::filesystem::remove_all(tempDir, ec);
+  std::filesystem::create_directories(tempDir, ec);
+
+  FakeSettingsHost host(tempDir.string());
+  auto& cfg = host.GetRegistry()->Get<GameConfig>();
+  auto& us = host.GetRegistry()->Get<octarine::UserSettings>();
+  cfg.windowWidth = 1280;
+  cfg.windowHeight = 720;
+  cfg.GetEngineOptions().windowMode = WindowMode::BorderlessFullscreen;
+  cfg.GetEngineOptions().presentationMode = PresentationMode::IntegerScale;
+  cfg.GetEngineOptions().vsync = true;
+  us.builtInDefaults.windowWidth = 1280;
+  us.builtInDefaults.windowHeight = 720;
+  us.builtInDefaults.windowMode = WindowMode::BorderlessFullscreen;
+  us.builtInDefaults.presentationMode = PresentationMode::IntegerScale;
+  us.builtInDefaults.vsync = true;
+  us.SetWindowMode(WindowMode::BorderlessFullscreen);
+
+  sol::state lua;
+  lua.open_libraries(sol::lib::base, sol::lib::string, sol::lib::table, sol::lib::math);
+  LuaModuleBinding<GameModule>::install(lua, host);
+
+  const bool ok = lua.script(R"(
+    -- Inspect shipped defaults
+    assert(settings.get_default("window_mode") == "borderless")
+    assert(settings.get_default("presentation_mode") == "integer_scale")
+    assert(settings.get_default("vsync") == true)
+    assert(get_window_mode() == "borderless")
+    assert(is_fullscreen() == true)
+    assert(get_presentation_mode() == "integer_scale")
+    assert(get_vsync() == true)
+
+    -- Enumerate displays and display modes (works even headlessly via fallback)
+    local displays = get_displays()
+    assert(type(displays) == "table" and #displays >= 1)
+    assert(type(displays[1].name) == "string" and displays[1].width > 0 and displays[1].height > 0)
+
+    local modes = get_display_modes(0)
+    assert(type(modes) == "table" and #modes >= 1)
+    assert(modes[1].width > 0 and modes[1].height > 0 and modes[1].refresh_rate > 0)
+
+    -- Switch to exclusive fullscreen with custom resolution & refresh rate
+    assert(set_fullscreen_resolution(2560, 1440, 120.0) == true)
+    assert(set_window_mode("exclusive") == true)
+    assert(get_window_mode() == "exclusive")
+    assert(settings.get("window_mode") == "exclusive")
+    local fw, fh, fhz = get_fullscreen_resolution()
+    assert(fw == 2560 and fh == 1440 and math.abs(fhz - 120.0) < 0.01)
+
+    -- Switch presentation mode and vsync via both direct functions and settings.set
+    assert(set_presentation_mode("stretch") == true)
+    assert(settings.get("presentation_mode") == "stretch")
+    assert(settings.set("presentation_mode", "letterbox") == true)
+    assert(get_presentation_mode() == "letterbox")
+
+    assert(set_vsync(false) == true)
+    assert(settings.get("vsync") == false)
+    assert(settings.set("vsync", true) == true)
+    assert(get_vsync() == true)
+
+    -- Reject invalid mode strings
+    assert(set_window_mode("invalid_mode") == false)
+    assert(set_presentation_mode("invalid_scaling") == false)
+
+    -- Reset built-in settings back to shipped defaults from config.ini
+    assert(settings.set("window_mode", "windowed") == true)
+    assert(get_window_mode() == "windowed")
+    assert(settings.reset("window_mode") == "borderless")
+    assert(get_window_mode() == "borderless")
+
+    settings.set("presentation_mode", "stretch")
+    settings.set("vsync", false)
+    settings.reset_all()
+    assert(get_presentation_mode() == "integer_scale")
+    assert(get_vsync() == true)
+    return true
+  )")
+                      .get<bool>();
+
+  Check(ok, "Lua display APIs, mode switching, resolution queries, and built-in reset work");
+  std::filesystem::remove_all(tempDir, ec);
+}
+
 }  // namespace
 
 int main() {
@@ -335,6 +485,8 @@ int main() {
   TestSchemaAndTypeValidation();
   TestSerializationRoundTrip();
   TestLuaSettingsModule();
+  TestGameConfigAndCompositeRect();
+  TestLuaDisplayApisAndReset();
 
   if (g_failures == 0) {
     std::cout << "\nUserSettings test: PASS\n";

@@ -119,6 +119,13 @@ bool GameConfig::LoadConfig(const std::unordered_map<std::string, std::string>& 
   success &= SetValue(settings, "DefaultScalingMode", &GameConfig::SetDefaultScaleMode, false);
   success &= SetValue(settings, "DefaultWindowWidth", &GameConfig::SetDefaultWidth, false);
   success &= SetValue(settings, "DefaultWindowHeight", &GameConfig::SetDefaultHeight, false);
+  success &= SetValue(settings, "DefaultFullscreen", &GameConfig::SetDefaultFullscreen, false);
+  success &= SetValue(settings, "DefaultWindowMode", &GameConfig::SetDefaultWindowMode, false);
+  success &= SetValue(settings, "DefaultPresentationMode", &GameConfig::SetDefaultPresentationMode, false);
+  success &= SetValue(settings, "VSync", &GameConfig::SetDefaultVSync, false);
+  success &= SetValue(settings, "DefaultVSync", &GameConfig::SetDefaultVSync, false);
+  success &= SetValue(settings, "Resizable", &GameConfig::SetWindowResizable, false);
+  success &= SetValue(settings, "WindowResizable", &GameConfig::SetWindowResizable, false);
   success &= SetValue(settings, "FpsTarget", &GameConfig::SetFpsTarget, false);
   success &= SetValue(settings, "HotReload", &GameConfig::SetHotReloadEnabled, false);
   success &= SetValue(settings, "HotReloadPollSeconds", &GameConfig::SetHotReloadPollSeconds, false);
@@ -133,6 +140,9 @@ bool GameConfig::LoadConfig(const std::unordered_map<std::string, std::string>& 
   octarine::AngleUnits::Set(engine_options_.angleUnit);
   Logger::Info(std::string("Angle unit: ") + (octarine::AngleUnits::IsDegrees() ? "degrees" : "radians"));
 
+  if (success) {
+    has_loaded_config_ = true;
+  }
   return success;
 }
 
@@ -209,6 +219,41 @@ void GameConfig::SetDefaultScaleMode(const std::string& defaultScaleMode) {
 
 void GameConfig::SetDefaultWidth(const int defaultWidth) { default_width_ = defaultWidth; }
 void GameConfig::SetDefaultHeight(const int defaultHeight) { default_height_ = defaultHeight; }
+
+void GameConfig::SetDefaultWindowMode(const std::string& windowMode) {
+  if (const auto parsed = ParseWindowMode(windowMode)) {
+    engine_options_.windowMode = *parsed;
+    Logger::Info("Default window mode set to: " + std::string(WindowModeToString(*parsed)));
+  } else {
+    Logger::Warn("Unknown DefaultWindowMode '" + windowMode +
+                 "' (expected windowed|borderless|exclusive); keeping current.");
+  }
+}
+
+void GameConfig::SetDefaultFullscreen(const bool fullscreen) {
+  engine_options_.windowMode = fullscreen ? WindowMode::BorderlessFullscreen : WindowMode::Windowed;
+  Logger::Info(std::string("Default fullscreen set to: ") + (fullscreen ? "true (borderless)" : "false (windowed)"));
+}
+
+void GameConfig::SetDefaultPresentationMode(const std::string& presentationMode) {
+  if (const auto parsed = ParsePresentationMode(presentationMode)) {
+    engine_options_.presentationMode = *parsed;
+    Logger::Info("Default presentation mode set to: " + std::string(PresentationModeToString(*parsed)));
+  } else {
+    Logger::Warn("Unknown DefaultPresentationMode '" + presentationMode +
+                 "' (expected letterbox|integer_scale|stretch); keeping current.");
+  }
+}
+
+void GameConfig::SetDefaultVSync(const bool vsync) {
+  engine_options_.vsync = vsync;
+  Logger::Info(std::string("Default VSync ") + (vsync ? "enabled" : "disabled"));
+}
+
+void GameConfig::SetWindowResizable(const bool resizable) {
+  engine_options_.windowResizable = resizable;
+  Logger::Info(std::string("Window resizable ") + (resizable ? "enabled" : "disabled"));
+}
 
 void GameConfig::SetFpsTarget(const int fpsTarget) {
   if (fpsTarget < 0) {

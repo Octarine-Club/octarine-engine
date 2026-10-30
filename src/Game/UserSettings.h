@@ -20,6 +20,8 @@
 #include <unordered_map>
 #include <variant>
 
+#include "Game/EngineOptions.h"
+
 namespace octarine {
 
 // Persisted user preferences and runtime configuration.
@@ -28,6 +30,21 @@ namespace octarine {
 // audio volume/mute, engine overrides, and typed game settings defined in C++ or Lua.
 struct UserSettings {
   using SettingValue = std::variant<bool, int64_t, double, std::string>;
+
+  // Shipped project defaults seeded from GameConfig on startup so ResetSetting / ResetAllSettings
+  // can restore built-in display, audio, and engine settings to the game's authored defaults.
+  struct BuiltInDefaults {
+    int windowWidth = Constants::kDefaultWindowWidth;
+    int windowHeight = Constants::kDefaultWindowHeight;
+    WindowMode windowMode = WindowMode::Windowed;
+    PresentationMode presentationMode = PresentationMode::Letterbox;
+    bool vsync = false;
+    bool windowResizable = true;
+    int fpsTarget = Constants::kFps;
+    bool showPerfOverlay = false;
+    float masterVolume = 1.0F;
+    bool audioMuted = false;
+  };
 
   // Window & Screen Placement (desktop only; no-op on mobile platforms)
   int windowX = -1;
@@ -39,6 +56,13 @@ struct UserSettings {
   bool fullscreen = false;
   bool maximized = false;
   bool hasWindowPlacement = false;
+  std::optional<WindowMode> windowMode{};
+  int fullscreenWidth = 0;
+  int fullscreenHeight = 0;
+  float fullscreenRefreshRate = 0.0F;
+  std::optional<PresentationMode> presentationMode{};
+  std::optional<bool> vsync{};
+  std::optional<bool> windowResizable{};
 
   // Audio configuration
   float masterVolume = 1.0F;
@@ -48,11 +72,27 @@ struct UserSettings {
   std::optional<int> fpsTarget{};
   std::optional<bool> showPerfOverlay{};
 
+  // Shipped defaults from config.ini (not serialized to user_settings.ini)
+  BuiltInDefaults builtInDefaults{};
+
   // Typed user/game settings persisted under [settings]
   std::unordered_map<std::string, SettingValue> customSettings{};
 
   // Registered default values and schema types defined by C++ or Lua
   std::unordered_map<std::string, SettingValue> defaultSettings{};
+
+  // Resolves the effective WindowMode (preferring explicit windowMode, then fullscreen bool, then builtInDefaults).
+  [[nodiscard]] WindowMode GetEffectiveWindowMode() const {
+    if (windowMode.has_value()) return *windowMode;
+    if (fullscreen) return WindowMode::BorderlessFullscreen;
+    return builtInDefaults.windowMode;
+  }
+
+  // Sets the active WindowMode and synchronizes the legacy `fullscreen` boolean flag.
+  void SetWindowMode(WindowMode mode) {
+    windowMode = mode;
+    fullscreen = (mode != WindowMode::Windowed);
+  }
 
   // Loads settings from `<saveDataPath>/user_settings.ini`. Returns true if loaded successfully.
   [[nodiscard]] bool Load(const std::string& saveDataPath);

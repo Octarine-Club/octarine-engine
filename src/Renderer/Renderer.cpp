@@ -44,10 +44,38 @@ void Renderer::EndScene(SDL_Renderer* sdlRenderer) const {
   SDL_RenderClear(sdlRenderer);
 }
 
-void Renderer::CompositeSceneToWindow(SDL_Renderer* sdlRenderer) const {
+void Renderer::CompositeSceneToWindow(SDL_Renderer* sdlRenderer, const SDL_FRect* destRect) const {
   if (scene_texture_ != nullptr) {
-    SDL_RenderTexture(sdlRenderer, scene_texture_, nullptr, nullptr);
+    SDL_RenderTexture(sdlRenderer, scene_texture_, nullptr, destRect);
   }
+}
+
+SDL_FRect Renderer::ComputeCompositeRect(const int sceneW, const int sceneH, const int windowW, const int windowH,
+                                         const PresentationMode mode) {
+  if (windowW <= 0 || windowH <= 0) {
+    return {0.0F, 0.0F, static_cast<float>(std::max(0, sceneW)), static_cast<float>(std::max(0, sceneH))};
+  }
+  if (sceneW <= 0 || sceneH <= 0 || mode == PresentationMode::Stretch) {
+    return {0.0F, 0.0F, static_cast<float>(windowW), static_cast<float>(windowH)};
+  }
+
+  if (mode == PresentationMode::IntegerScale && windowW >= sceneW && windowH >= sceneH) {
+    const int scale = std::max(1, std::min(windowW / sceneW, windowH / sceneH));
+    const auto w = static_cast<float>(sceneW * scale);
+    const auto h = static_cast<float>(sceneH * scale);
+    const float x = (static_cast<float>(windowW) - w) * 0.5F;
+    const float y = (static_cast<float>(windowH) - h) * 0.5F;
+    return {x, y, w, h};
+  }
+
+  const float scaleX = static_cast<float>(windowW) / static_cast<float>(sceneW);
+  const float scaleY = static_cast<float>(windowH) / static_cast<float>(sceneH);
+  const float scale = std::min(scaleX, scaleY);
+  const float w = static_cast<float>(sceneW) * scale;
+  const float h = static_cast<float>(sceneH) * scale;
+  const float x = (static_cast<float>(windowW) - w) * 0.5F;
+  const float y = (static_cast<float>(windowH) - h) * 0.5F;
+  return {x, y, w, h};
 }
 
 void Renderer::Present(SDL_Renderer* sdlRenderer) const { SDL_RenderPresent(sdlRenderer); }

@@ -1618,11 +1618,17 @@ function get_current_display_name(...) end
 
 function get_display_count(...) end
 
+function get_display_modes(...) end
+
+function get_displays(...) end
+
 function get_env(...) end
 
 function get_fixed_dt(...) end
 
 function get_fps_target(...) end
+
+function get_fullscreen_resolution(...) end
 
 function get_game_map_dimensions(...) end
 
@@ -1634,11 +1640,17 @@ function get_position(...) end
 
 function get_position_xy(...) end
 
+function get_presentation_mode(...) end
+
 function get_sim_substeps(...) end
 
 function get_state_hash(...) end
 
 function get_user_setting(...) end
+
+function get_vsync(...) end
+
+function get_window_mode(...) end
 
 function get_window_position(...) end
 
@@ -1709,6 +1721,8 @@ function is_fullscreen(...) end
 function is_headless(...) end
 
 function is_maximized(...) end
+
+function is_window_resizable(...) end
 
 ---@class lifetime_component
 lifetime_component = {}
@@ -1960,6 +1974,8 @@ function set_fps_target(...) end
 
 function set_fullscreen(...) end
 
+function set_fullscreen_resolution(...) end
+
 function set_game_map_dimensions(...) end
 
 function set_headless(...) end
@@ -1974,6 +1990,8 @@ function set_perf_overlay(...) end
 
 function set_position(...) end
 
+function set_presentation_mode(...) end
+
 function set_rotation(...) end
 
 function set_sim_seed(...) end
@@ -1984,9 +2002,15 @@ function set_sprite_src_rect(...) end
 
 function set_user_setting(...) end
 
+function set_vsync(...) end
+
 function set_window_display(...) end
 
+function set_window_mode(...) end
+
 function set_window_position(...) end
+
+function set_window_resizable(...) end
 
 function set_window_size(...) end
 

@@ -181,8 +181,18 @@ void FrameLoop::HandleWindowEvent(const SDL_Event& event) {
       int windowW = 0;
       int windowH = 0;
       SDL_GetWindowSize(runtime_->Window(), &windowW, &windowH);
-      viewportInfo->width = static_cast<float>(windowW);
-      viewportInfo->height = static_cast<float>(windowH);
+      const auto* config = registry_->TryGet<GameConfig>();
+      if (config != nullptr && !config->IsEditorMode()) {
+        const SDL_FRect rect = Renderer::ComputeCompositeRect(config->windowWidth, config->windowHeight, windowW,
+                                                              windowH, config->GetEngineOptions().presentationMode);
+        viewportInfo->x = rect.x;
+        viewportInfo->y = rect.y;
+        viewportInfo->width = rect.w;
+        viewportInfo->height = rect.h;
+      } else {
+        viewportInfo->width = static_cast<float>(windowW);
+        viewportInfo->height = static_cast<float>(windowH);
+      }
     }
   }
 }
@@ -300,13 +310,23 @@ void FrameLoop::UpdateViewportInfo([[maybe_unused]] const bool editorSession,
   // Update viewport info for non-editor sessions or when ImGui is disabled.
   // In editor mode with ImGui, RenderDebugGUISystem::Render will override this with the Scene window bounds.
   auto& viewportInfo = registry_->Get<ViewportInfo>();
-  viewportInfo.x = 0;
-  viewportInfo.y = 0;
+  const auto& gameConfig = registry_->Get<GameConfig>();
   int windowW = 0;
   int windowH = 0;
   SDL_GetWindowSize(runtime_->Window(), &windowW, &windowH);
-  viewportInfo.width = static_cast<float>(windowW);
-  viewportInfo.height = static_cast<float>(windowH);
+  if (!editorSession) {
+    const SDL_FRect rect = Renderer::ComputeCompositeRect(gameConfig.windowWidth, gameConfig.windowHeight, windowW,
+                                                          windowH, gameConfig.GetEngineOptions().presentationMode);
+    viewportInfo.x = rect.x;
+    viewportInfo.y = rect.y;
+    viewportInfo.width = rect.w;
+    viewportInfo.height = rect.h;
+  } else {
+    viewportInfo.x = 0;
+    viewportInfo.y = 0;
+    viewportInfo.width = static_cast<float>(windowW);
+    viewportInfo.height = static_cast<float>(windowH);
+  }
 
 #ifdef OCTARINE_WITH_IMGUI
   const auto& io = ImGui::GetIO();
@@ -387,7 +407,9 @@ void FrameLoop::Render(const float deltaTime) {
   // Only draw the game texture to the full window if we are NOT in an editor session.
   // In editor mode, the Scene window handles drawing this texture.
   if (!editorSession) {
-    renderer_->CompositeSceneToWindow(runtime_->SdlRenderer());
+    const auto& viewportInfo = registry_->Get<ViewportInfo>();
+    const SDL_FRect destRect{viewportInfo.x, viewportInfo.y, viewportInfo.width, viewportInfo.height};
+    renderer_->CompositeSceneToWindow(runtime_->SdlRenderer(), &destRect);
   }
 
   if (!game_->IsBenchMode()) {
