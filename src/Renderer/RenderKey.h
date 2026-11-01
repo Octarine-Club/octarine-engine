@@ -4,9 +4,9 @@
 #include <compare>
 #include <cstdint>
 
-#include "./RenderCommands.h"
-#include "./RenderableType.h"
 #include "General/Constants.h"
+#include "Renderer/RenderCommands.h"
+#include "Renderer/RenderableType.h"
 
 // Render entry — slim header (precomputed sortKey + type) plus one of three POD payloads
 // in a union, selected by `type`. Inlining the payload here means a sorted iteration is
@@ -30,6 +30,7 @@
 struct RenderKey {
   std::uint64_t sortKey{};
   RenderableType type{};
+  std::uint8_t clipId{0};
 
   union Payload {
     SpriteCommand sprite;

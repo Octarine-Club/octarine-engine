@@ -28,6 +28,8 @@ std::optional<AssetType> ClassifyByExtension(const fs::path& path) {
   if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp") return AssetType::Texture;
   if (ext == ".ttf" || ext == ".otf") return AssetType::Font;
   if (ext == ".wav" || ext == ".ogg" || ext == ".mp3" || ext == ".flac") return AssetType::Audio;
+  if (ext == ".oxml") return AssetType::UIView;
+  if (ext == ".oss") return AssetType::UIStyle;
   return std::nullopt;
 }
 
@@ -43,6 +45,8 @@ std::optional<AssetType> ParseAssetType(const std::string& s) {
   if (s == "texture") return AssetType::Texture;
   if (s == "font") return AssetType::Font;
   if (s == "audio_clip") return AssetType::Audio;
+  if (s == "ui_view") return AssetType::UIView;
+  if (s == "ui_style") return AssetType::UIStyle;
   return std::nullopt;
 }
 
@@ -98,6 +102,12 @@ AudioMeta ParseAudioMeta(const sol::table& t) {
   if (const sol::optional<bool> stream = t["stream"]; stream) meta.stream = *stream;
   if (const sol::optional<bool> normalize = t["normalize"]; normalize) meta.normalize = *normalize;
   return meta;
+}
+
+std::optional<std::string> ParseSidecarId(const std::optional<sol::table>& sidecar) {
+  if (!sidecar) return std::nullopt;
+  if (const sol::optional<std::string> id = (*sidecar)["id"]; id) return *id;
+  return std::nullopt;
 }
 
 // Load `<file>.meta` next to an asset, if present, into a Lua table. Returns nullopt when there
@@ -178,6 +188,9 @@ std::optional<CatalogEntry> ParseManifestEntry(const std::string& id, const sol:
     case AssetType::Audio:
       entry.stream = e["stream"].get_or(false);
       entry.normalize = e["normalize"].get_or(false);
+      break;
+    case AssetType::UIView:
+    case AssetType::UIStyle:
       break;
   }
   return entry;
@@ -305,6 +318,15 @@ bool AssetCatalog::ScanFilesystem(const std::string& basePath, sol::state& lua,
         entry.fullPath = fullPath;
         entry.stream = meta.stream;
         entry.normalize = meta.normalize;
+        insert(std::move(entry));
+        break;
+      }
+      case AssetType::UIView:
+      case AssetType::UIStyle: {
+        CatalogEntry entry;
+        entry.type = *type;
+        entry.id = ParseSidecarId(sidecar).value_or(path.filename().string());
+        entry.fullPath = fullPath;
         insert(std::move(entry));
         break;
       }
@@ -453,6 +475,9 @@ bool AssetCatalog::WriteManifest(const std::string& outPath, const std::string& 
       case AssetType::Audio:
         out << ", stream = " << (entry.stream ? "true" : "false");
         out << ", normalize = " << (entry.normalize ? "true" : "false");
+        break;
+      case AssetType::UIView:
+      case AssetType::UIStyle:
         break;
     }
 

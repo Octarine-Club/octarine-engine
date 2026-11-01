@@ -363,6 +363,16 @@
       "lua_surface": false
     },
     {
+      "name": "TilemapSystem",
+      "source": "src/Systems/TilemapSystem.h",
+      "tier": null,
+      "setup_order": null,
+      "queried_components": [],
+      "emits": [],
+      "subscribes": [],
+      "lua_surface": false
+    },
+    {
       "name": "TransformSystem",
       "source": "src/Systems/TransformSystem.h",
       "tier": "bulk",
@@ -382,20 +392,36 @@
       "queried_components": [
         "UIButtonComponent",
         "GlobalTransformComponent",
-        "BoxColliderComponent"
+        "BoxColliderComponent",
+        "UIFocusComponent",
+        "UIRectComponent",
+        "UIScrollComponent"
       ],
-      "emits": [],
+      "emits": [
+        "AudioPlayEvent"
+      ],
       "subscribes": [
         "GamepadButtonEvent",
         "KeyInputEvent",
-        "MouseInputEvent"
+        "MouseInputEvent",
+        "MouseWheelEvent"
       ],
+      "lua_surface": false
+    },
+    {
+      "name": "UILayoutMetrics",
+      "source": "src/Systems/UILayoutMetrics.h",
+      "tier": null,
+      "setup_order": null,
+      "queried_components": [],
+      "emits": [],
+      "subscribes": [],
       "lua_surface": false
     },
     {
       "name": "UILayoutSystem",
       "source": "src/Systems/UILayoutSystem.h",
-      "tier": "bulk",
+      "tier": "serial",
       "setup_order": 13,
       "queried_components": [
         "UICanvasComponent"

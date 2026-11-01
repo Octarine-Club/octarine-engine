@@ -12,14 +12,17 @@ struct UIButtonComponent {
   std::string key;
   std::string controllerButton;
   std::string action;
+  std::string hoverSound{};
+  std::string clickSound{};
+  std::string focusSound{};
+  octarine::Color hoverColor{0, 0, 0, 0};
+  octarine::Color pressColor{0, 0, 0, 0};
   bool isActive;
   bool isFixed;
   bool isHovered = false;
   bool isPressed = false;
   bool hasHoverColor = false;
   bool hasPressColor = false;
-  octarine::Color hoverColor{0, 0, 0, 0};
-  octarine::Color pressColor{0, 0, 0, 0};
 
   explicit UIButtonComponent(const bool t_isActive = true, const bool t_isFixed = true,
                              sol::optional<sol::table> t_buttonTable = sol::nullopt,

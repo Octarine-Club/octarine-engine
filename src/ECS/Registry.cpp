@@ -276,8 +276,14 @@ void Registry::BlamEntity(const Entity entity) {
 }
 
 void Registry::ClearUserEntities() {
+  pending_blams_.clear();
+  pending_blam_ids_.clear();
+  pending_despawns_.clear();
+  pending_despawn_ids_.clear();
+
   const auto entities = GetUserEntities();
   for (const auto entity : entities) {
+    if (!IsAlive(entity)) continue;
     BlamEntity(entity);
   }
 }

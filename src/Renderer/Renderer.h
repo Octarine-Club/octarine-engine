@@ -4,8 +4,8 @@
 
 #include <string>
 
-#include "./RenderQueue.h"
 #include "AssetManager/AssetManager.h"
+#include "Renderer/RenderQueue.h"
 
 class Registry;
 

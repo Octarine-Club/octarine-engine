@@ -176,6 +176,7 @@ octarine_add_engine_test(OctarineGameBakeTest GameBakeTest GameBakeTest.cpp
 )
 
 octarine_add_engine_test(OctarineRenderQueueTest RenderQueueTest RenderQueueTest.cpp)
+octarine_add_engine_test(OctarineUILayoutTest UILayoutTest UILayoutTest.cpp)
 
 if (NOT OCTARINE_SHIPPED)
     set(_extra_dev_libs "")

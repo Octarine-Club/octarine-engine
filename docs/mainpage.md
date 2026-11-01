@@ -8,6 +8,7 @@ Octarine Engine is a lightweight, high-performance 2D game engine built with C++
 
 * **ECS & Memory Architecture:** 64-bit generational handles, 16KB 64-byte aligned SoA chunks, active/inactive partition shuffling, archetype transition graph, inverted index query matching, and lock-free command buffers.
 * **Lua 5.4 Scripting:** Zero-copy in-chunk proxy access via `sol2`, domain modules, declarative hierarchy trees, and state-preserving script hot reloading.
+* **Declarative UI Framework (`.oxml` & `.oss`):** XML-inspired layout templates, CSS-like stylesheets with variables and pseudo-states, unified imperative/snapshot/reactive MVVM bindings, and single-entity composite ECS widgets. See [`docs/ui-framework.md`](ui-framework.md).
 * **Rendering Architecture:** Lock-free multi-producer render queue, 64-bit packed sort key layout, frustum culling, and sprite render cache powered by SDL3.
 * **Simulation Pipeline:** Kahn's topological sort system DAG, two-tier Transform system, median-cut/SAT Collision system, and optional native C++ game modules (`OCTARINE_GAME_MODULE_DIR`; see [`docs/making-games.md`](making-games.md#14-native-c-game-modules)).
 * **Asset Pipeline:** Dual-path catalog loading, headless reference validation, texture atlas baker, BS.1770 audio normalization, and `AssetPak` archives.

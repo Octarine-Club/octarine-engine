@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL_rect.h>
 
+#include <cstdint>
 #include <map>
 #include <optional>
 #include <string>
@@ -14,7 +15,7 @@ class state;
 
 class GameConfig;
 
-enum class AssetType { Texture, Font, Audio };
+enum class AssetType : uint8_t { Texture, Font, Audio, UIView, UIStyle };
 
 inline const char* toAssetTypeString(AssetType type) {
   switch (type) {
@@ -24,6 +25,10 @@ inline const char* toAssetTypeString(AssetType type) {
       return "font";
     case AssetType::Audio:
       return "audio_clip";
+    case AssetType::UIView:
+      return "ui_view";
+    case AssetType::UIStyle:
+      return "ui_style";
   }
   return "unknown";
 }

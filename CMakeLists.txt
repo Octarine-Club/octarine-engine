@@ -316,6 +316,7 @@ if (OCTARINE_ENABLE_BENCHMARKS)
             tests/benchmarks/KDTreeCollisionSystemBenchmark.cpp
             tests/benchmarks/SpatialAudioBenchmark.cpp
             tests/benchmarks/TextCacheBenchmark.cpp
+            tests/benchmarks/UIBenchmark.cpp
     )
     target_include_directories(OctarineBenchmarks PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmarks")
     if (TARGET octarine_game_module AND EXISTS "${OCTARINE_GAME_MODULE_DIR}/benchmarks/CMakeLists.txt")
