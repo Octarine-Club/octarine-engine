@@ -143,9 +143,10 @@ void InstallLuaModules(sol::state& lua, Game& game) {
   game_module::InstallLuaFunctions(lua, game);
 }
 
-void SetCommonLuaGlobals(sol::state& lua, const GameConfig& config, const std::string& startupMode) {
+void SetCommonLuaGlobals(sol::state& lua, const GameConfig& config, const std::string& startupMode, bool devMode) {
   lua["game_window_width"] = config.windowWidth;
   lua["game_window_height"] = config.windowHeight;
   lua["oct_startup_mode"] = startupMode;
+  lua["oct_dev_mode"] = devMode;
 }
 }  // namespace engine_bootstrap

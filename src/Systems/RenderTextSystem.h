@@ -51,7 +51,8 @@ class RenderTextSystem {
 
     Registry* registry = ctx.GetRegistry();
     const auto& assetManager = registry->Get<AssetManager>();
-    auto* sdlRenderer = registry->Get<EngineContext>().sdlRenderer;
+    const auto& engineCtx = registry->Get<EngineContext>();
+    auto* sdlRenderer = engineCtx.sdlRenderer;
     auto& renderQueue = registry->Get<RenderQueue>();
     const auto& cameraComp = registry->Get<CameraComponent>();
     const octarine::Rect camera = cameraComp.viewport;
@@ -61,17 +62,21 @@ class RenderTextSystem {
     if (!font) return;
 
     const Entity entity = ctx.GetEntity();
+    SweepDeadCacheEntries(registry);
     const int effectiveWrapWidth = ResolveWrapWidth(registry, entity, text);
+    const float rasterScale = ResolveRasterScale(engineCtx.sceneRenderScale);
 
-    auto it = text_cache_.find(entity.GetId());
+    auto it = text_cache_.find(entity.id);
     const bool needsRaster = it == text_cache_.end() || it->second.fontId != text.fontId ||
-                             it->second.text != text.text || it->second.wrapWidth != effectiveWrapWidth;
+                             it->second.text != text.text || it->second.wrapWidth != effectiveWrapWidth ||
+                             std::abs(it->second.rasterScale - rasterScale) > 0.01F;
     if (needsRaster) {
-      float w = 0;
-      float h = 0;
-      SDL_Texture* texture = RasterizeLabel(assetManager, sdlRenderer, font, text, effectiveWrapWidth, w, h);
+      float w = 0.0F;
+      float h = 0.0F;
+      SDL_Texture* texture =
+          RasterizeLabel(assetManager, sdlRenderer, font, text, effectiveWrapWidth, rasterScale, w, h);
       if (texture == nullptr) return;
-      it = StoreEntry(it, entity, text, effectiveWrapWidth, texture, w, h);
+      it = StoreEntry(it, entity, text, effectiveWrapWidth, rasterScale, texture, w, h);
     }
 
     // UIRectComponent (written by UILayoutSystem) takes priority over GlobalTransform for position.
@@ -180,6 +185,8 @@ class RenderTextSystem {
       origin += transform.position;
       sortY = origin.y;
     }
+    origin.x = std::round(origin.x);
+    origin.y = std::round(origin.y);
     return {origin, sortY, effectivelyFixed, visible, renderLayer, clipId};
   }
 
@@ -187,45 +194,89 @@ class RenderTextSystem {
     std::string fontId{};
     std::string text{};
     int wrapWidth = 0;
+    float rasterScale = 1.0F;
     SDL_Texture* texture = nullptr;
     float width = 0.0F;
     float height = 0.0F;
   };
 
-  mutable std::unordered_map<EcsId, TextCacheEntry> text_cache_;
+  mutable std::unordered_map<std::uint64_t, TextCacheEntry> text_cache_;
+  mutable std::uint32_t sweep_counter_ = 0;
 
-  std::unordered_map<EcsId, TextCacheEntry>::iterator StoreEntry(std::unordered_map<EcsId, TextCacheEntry>::iterator it,
-                                                                 Entity entity, const TextLabelComponent& text,
-                                                                 int wrapWidth, SDL_Texture* texture, float width,
-                                                                 float height) const {
+  void SweepDeadCacheEntries(Registry* registry) const {
+    static constexpr std::uint32_t kSweepInterval = 64;
+    if (++sweep_counter_ < kSweepInterval) return;
+    sweep_counter_ = 0;
+    for (auto it = text_cache_.begin(); it != text_cache_.end();) {
+      const Entity cachedEnt(it->first);
+      if (!registry->IsAlive(cachedEnt) || !registry->HasComponent<TextLabelComponent>(cachedEnt)) {
+        if (it->second.texture != nullptr) {
+          SDL_DestroyTexture(it->second.texture);
+        }
+        it = text_cache_.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
+
+  static float ResolveRasterScale(const float rawScale) {
+    if (rawScale <= 1.01F) return 1.0F;
+    const float quantized = std::round(rawScale * 4.0F) * 0.25F;
+    return std::clamp(quantized, 1.0F, 4.0F);
+  }
+
+  std::unordered_map<std::uint64_t, TextCacheEntry>::iterator StoreEntry(
+      std::unordered_map<std::uint64_t, TextCacheEntry>::iterator it, Entity entity, const TextLabelComponent& text,
+      int wrapWidth, float rasterScale, SDL_Texture* texture, float width, float height) const {
     if (it != text_cache_.end()) {
       if (it->second.texture != nullptr) SDL_DestroyTexture(it->second.texture);
-      it->second = {text.fontId, text.text, wrapWidth, texture, width, height};
+      it->second = {text.fontId, text.text, wrapWidth, rasterScale, texture, width, height};
       return it;
     }
     return text_cache_
-        .emplace(entity.GetId(), TextCacheEntry{text.fontId, text.text, wrapWidth, texture, width, height})
+        .emplace(entity.id, TextCacheEntry{text.fontId, text.text, wrapWidth, rasterScale, texture, width, height})
         .first;
   }
 
-  // Rasterize `text` in white (255,255,255,255) to a freshly created SDL_Texture, writing its size
+  static SDL_Surface* RenderTtfSurface(TTF_Font* font, const std::string& str, const int wrapWidth,
+                                       const float baseSize, const float rasterScale) {
+    const SDL_Color white{255, 255, 255, 255};
+    const bool scaled = rasterScale > 1.01F && baseSize > 0.0F;
+    if (scaled) {
+      TTF_SetFontSize(font, baseSize * rasterScale);
+    }
+    const bool hasNewline = str.find('\n') != std::string::npos;
+    const int scaledWrap =
+        wrapWidth > 0 ? std::max(1, static_cast<int>(std::lround(static_cast<float>(wrapWidth) * rasterScale))) : 0;
+    SDL_Surface* surface = (wrapWidth > 0 || hasNewline)
+                               ? TTF_RenderText_Blended_Wrapped(font, str.c_str(), 0, white, scaledWrap)
+                               : TTF_RenderText_Blended(font, str.c_str(), 0, white);
+    if (scaled) {
+      TTF_SetFontSize(font, baseSize);
+    }
+    return surface;
+  }
+
+  // Rasterize `text` in white (255,255,255,255) to a freshly created SDL_Texture, writing its logical size
   // into outW/outH. Per-draw colorMod in TextCommand tints the texture (and its optional shadow pass)
   // without re-rasterizing when color or alpha changes.
   static SDL_Texture* RasterizeLabel(const AssetManager& assetManager, SDL_Renderer* sdlRenderer, TTF_Font* font,
-                                     const TextLabelComponent& text, const int wrapWidth, float& outW, float& outH) {
+                                     const TextLabelComponent& text, const int wrapWidth, const float rasterScale,
+                                     float& outW, float& outH) {
     const SDL_Color white{255, 255, 255, 255};
     SDL_Surface* surface = nullptr;
     const GlyphAtlas* atlas = assetManager.GetGlyphAtlas(text.fontId);
     const bool hasNewline = text.text.find('\n') != std::string::npos;
-    if (wrapWidth <= 0 && !hasNewline && atlas != nullptr && atlas->IsLoaded()) {
+    if (rasterScale <= 1.01F && wrapWidth <= 0 && !hasNewline && atlas != nullptr && atlas->IsLoaded()) {
       surface = ComposeFromAtlas(*atlas, text.text, white);
     }
     if (surface == nullptr) {
-      if (wrapWidth > 0 || hasNewline) {
-        surface = TTF_RenderText_Blended_Wrapped(font, text.text.c_str(), 0, white, wrapWidth > 0 ? wrapWidth : 0);
-      } else {
-        surface = TTF_RenderText_Blended(font, text.text.c_str(), 0, white);
+      float baseSize = assetManager.GetFontBaseSize(text.fontId);
+      if (baseSize <= 0.0F) {
+        baseSize = TTF_GetFontSize(font);
       }
+      surface = RenderTtfSurface(font, text.text, wrapWidth, baseSize, rasterScale);
     }
     if (surface == nullptr) {
       Logger::Error("RenderText: surface compose failed: " + std::string(SDL_GetError()));
@@ -237,9 +288,13 @@ class RenderTextSystem {
       Logger::Error("SDL_CreateTextureFromSurface failed: " + std::string(SDL_GetError()));
       return nullptr;
     }
-    outW = 0;
-    outH = 0;
-    SDL_GetTextureSize(texture, &outW, &outH);
+    SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_LINEAR);
+    float texW = 0.0F;
+    float texH = 0.0F;
+    SDL_GetTextureSize(texture, &texW, &texH);
+    const float invScale = rasterScale > 0.0F ? (1.0F / rasterScale) : 1.0F;
+    outW = texW * invScale;
+    outH = texH * invScale;
     return texture;
   }
 

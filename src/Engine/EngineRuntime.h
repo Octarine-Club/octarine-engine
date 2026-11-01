@@ -27,7 +27,8 @@ class EngineRuntime {
 
   // Create the window + accelerated renderer (resizable, or hidden when `headless` is true).
   // Returns false on failure; on success Window()/SdlRenderer() are non-null.
-  [[nodiscard]] bool CreateWindow(const std::string& title, int width, int height, bool headless = false);
+  [[nodiscard]] bool CreateWindow(const std::string& title, int width, int height, bool headless = false,
+                                  bool resizable = true);
 
 #ifdef OCTARINE_WITH_IMGUI
   // Stand up the ImGui context + SDL3/SDLRenderer3 backends and the docking/nav config flags.

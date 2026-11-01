@@ -60,7 +60,8 @@ void RegisterAllComponentBindings();
 void InstallLuaModules(sol::state& lua, Game& game);
 
 // Stash the always-present Lua globals every scene/startup-script reads: window
-// dimensions + oct_startup_mode. Pulled out of Setup/Bake so a future startup-mode
+// dimensions + oct_startup_mode + oct_dev_mode. Pulled out of Setup/Bake so a future startup-mode
 // addition only edits one site.
-void SetCommonLuaGlobals(sol::state& lua, const GameConfig& config, const std::string& startupMode);
+void SetCommonLuaGlobals(sol::state& lua, const GameConfig& config, const std::string& startupMode,
+                         bool devMode = false);
 }  // namespace engine_bootstrap

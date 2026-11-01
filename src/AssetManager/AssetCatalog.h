@@ -42,6 +42,7 @@ struct CatalogEntry {
   std::string fullPath;  // absolute path to the source file on disk
   // Texture
   std::optional<ScaleMode> scaleMode;
+  bool hasExplicitScaleMode{false};  // true when sidecar explicitly set `scale_mode`
   std::optional<std::string> atlas;  // sidecar `meta.atlas = <group>` (raw group name)
   bool noAtlas{false};               // sidecar `meta.no_atlas = true` (escape hatch, see AssetMetadata.h)
   // Resolved atlas membership — populated by TextureAtlasBaker after the scan. When set, this entry
@@ -108,6 +109,7 @@ class AssetCatalog {
   // splice in the new atlas entries themselves. Not for runtime use.
   void InsertOrReplace(CatalogEntry entry);
   void SetAtlasMembership(const std::string& memberId, std::string atlasId, SDL_FRect atlasSlice);
+  void UpdateDefaultScaleMode(ScaleMode newDefault);
 
   // Emit one Info line per catalog entry (id -> path). Verification aid during bring-up.
   void DumpToLog() const;

@@ -13,15 +13,41 @@
 namespace {
 constexpr Uint8 kSceneClearGrey = 24;
 constexpr Uint8 kWindowClearBlack = 0;
+constexpr int kMaxRenderTargetDim = 8192;
+constexpr float kHairlineScaleThreshold = 1.05F;
 }  // namespace
 
 bool Renderer::CreateScene(SDL_Renderer* sdlRenderer, const int width, const int height) {
   if (sdlRenderer == nullptr) return false;
-  scene_texture_ = SDL_CreateTexture(sdlRenderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, width, height);
-  if (scene_texture_ == nullptr) {
-    Logger::Error("Renderer::CreateScene SDL_CreateTexture failed: " + std::string(SDL_GetError()));
-    return false;
+  logical_width_ = std::max(1, width);
+  logical_height_ = std::max(1, height);
+  DestroyScene();
+  return EnsureSceneTargetSize(sdlRenderer, logical_width_, logical_height_);
+}
+
+bool Renderer::EnsureSceneTargetSize(SDL_Renderer* sdlRenderer, const int targetPixelW, const int targetPixelH) {
+  if (sdlRenderer == nullptr) return false;
+  const int clampedW = std::clamp(targetPixelW, 1, kMaxRenderTargetDim);
+  const int clampedH = std::clamp(targetPixelH, 1, kMaxRenderTargetDim);
+  if (scene_texture_ != nullptr && clampedW == target_width_ && clampedH == target_height_) {
+    return true;
   }
+  SDL_Texture* newTex =
+      SDL_CreateTexture(sdlRenderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, clampedW, clampedH);
+  if (newTex == nullptr) {
+    Logger::Error("Renderer::EnsureSceneTargetSize SDL_CreateTexture failed: " + std::string(SDL_GetError()));
+    return scene_texture_ != nullptr;
+  }
+  SDL_SetTextureScaleMode(newTex, SDL_SCALEMODE_NEAREST);
+  if (scene_texture_ != nullptr) {
+    SDL_DestroyTexture(scene_texture_);
+  }
+  scene_texture_ = newTex;
+  target_width_ = clampedW;
+  target_height_ = clampedH;
+  render_scale_x_ = logical_width_ > 0 ? static_cast<float>(target_width_) / static_cast<float>(logical_width_) : 1.0F;
+  render_scale_y_ =
+      logical_height_ > 0 ? static_cast<float>(target_height_) / static_cast<float>(logical_height_) : 1.0F;
   return true;
 }
 
@@ -30,24 +56,59 @@ void Renderer::DestroyScene() {
     SDL_DestroyTexture(scene_texture_);
     scene_texture_ = nullptr;
   }
+  target_width_ = 0;
+  target_height_ = 0;
+  render_scale_x_ = 1.0F;
+  render_scale_y_ = 1.0F;
 }
 
 void Renderer::BeginScene(SDL_Renderer* sdlRenderer) const {
   SDL_SetRenderTarget(sdlRenderer, scene_texture_);
+  SDL_SetRenderScale(sdlRenderer, render_scale_x_, render_scale_y_);
   SDL_SetRenderDrawColor(sdlRenderer, kSceneClearGrey, kSceneClearGrey, kSceneClearGrey, Constants::kUint8Max);
   SDL_RenderClear(sdlRenderer);
 }
 
 void Renderer::EndScene(SDL_Renderer* sdlRenderer) const {
+  SDL_SetRenderScale(sdlRenderer, 1.0F, 1.0F);
   SDL_SetRenderTarget(sdlRenderer, nullptr);
+  SDL_SetRenderScale(sdlRenderer, 1.0F, 1.0F);
   SDL_SetRenderDrawColor(sdlRenderer, kWindowClearBlack, kWindowClearBlack, kWindowClearBlack, Constants::kUint8Max);
   SDL_RenderClear(sdlRenderer);
 }
 
-void Renderer::CompositeSceneToWindow(SDL_Renderer* sdlRenderer) const {
+void Renderer::CompositeSceneToWindow(SDL_Renderer* sdlRenderer, const SDL_FRect* destRect) const {
   if (scene_texture_ != nullptr) {
-    SDL_RenderTexture(sdlRenderer, scene_texture_, nullptr, nullptr);
+    SDL_RenderTexture(sdlRenderer, scene_texture_, nullptr, destRect);
   }
+}
+
+SDL_FRect Renderer::ComputeCompositeRect(const int sceneW, const int sceneH, const int windowW, const int windowH,
+                                         const PresentationMode mode) {
+  if (windowW <= 0 || windowH <= 0) {
+    return {0.0F, 0.0F, static_cast<float>(std::max(0, sceneW)), static_cast<float>(std::max(0, sceneH))};
+  }
+  if (sceneW <= 0 || sceneH <= 0 || mode == PresentationMode::Stretch) {
+    return {0.0F, 0.0F, static_cast<float>(windowW), static_cast<float>(windowH)};
+  }
+
+  if (mode == PresentationMode::IntegerScale && windowW >= sceneW && windowH >= sceneH) {
+    const int scale = std::max(1, std::min(windowW / sceneW, windowH / sceneH));
+    const auto w = static_cast<float>(sceneW * scale);
+    const auto h = static_cast<float>(sceneH * scale);
+    const float x = (static_cast<float>(windowW) - w) * 0.5F;
+    const float y = (static_cast<float>(windowH) - h) * 0.5F;
+    return {x, y, w, h};
+  }
+
+  const float scaleX = static_cast<float>(windowW) / static_cast<float>(sceneW);
+  const float scaleY = static_cast<float>(windowH) / static_cast<float>(sceneH);
+  const float scale = std::min(scaleX, scaleY);
+  const float w = static_cast<float>(sceneW) * scale;
+  const float h = static_cast<float>(sceneH) * scale;
+  const float x = (static_cast<float>(windowW) - w) * 0.5F;
+  const float y = (static_cast<float>(windowH) - h) * 0.5F;
+  return {x, y, w, h};
 }
 
 void Renderer::Present(SDL_Renderer* sdlRenderer) const { SDL_RenderPresent(sdlRenderer); }
@@ -125,10 +186,11 @@ void DrawText(SDL_Renderer* renderer, const TextCommand& cmd) {
   SDL_RenderTexture(renderer, cmd.texture, nullptr, &cmd.destRect);
 }
 
-void DrawLine(SDL_Renderer* renderer, const LineCommand& cmd) {
+void DrawLine(SDL_Renderer* renderer, const LineCommand& cmd, const float renderScale) {
   SDL_SetRenderDrawBlendMode(renderer, cmd.blendMode);
   SDL_SetRenderDrawColor(renderer, cmd.color.r, cmd.color.g, cmd.color.b, cmd.color.a);
-  if (cmd.thickness <= 1.0f) {
+  const float effectiveThickness = std::max(cmd.thickness, 1.0F);
+  if (effectiveThickness * renderScale <= kHairlineScaleThreshold) {
     SDL_RenderLine(renderer, cmd.start.x, cmd.start.y, cmd.end.x, cmd.end.y);
     return;
   }
@@ -136,7 +198,7 @@ void DrawLine(SDL_Renderer* renderer, const LineCommand& cmd) {
   const float len = glm::length(d);
   if (len < 0.0001f) return;
 
-  const glm::vec2 n = glm::vec2{-d.y, d.x} * (cmd.thickness * 0.5f / len);
+  const glm::vec2 n = glm::vec2{-d.y, d.x} * (effectiveThickness * 0.5f / len);
   const SDL_FColor fcol = ToSdlFColor(cmd.color);
   const glm::vec2 start{cmd.start.x, cmd.start.y};
   const glm::vec2 end{cmd.end.x, cmd.end.y};
@@ -193,9 +255,11 @@ void DrawFilledCircle(SDL_Renderer* renderer, const CircleCommand& cmd, const in
 }
 
 void DrawOutlineCircle(SDL_Renderer* renderer, const CircleCommand& cmd, const int segments,
-                       const octarine::Rotation2D stepRot, const bool rotateEllipse, const octarine::Rotation2D rot) {
+                       const octarine::Rotation2D stepRot, const bool rotateEllipse, const octarine::Rotation2D rot,
+                       const float renderScale) {
   constexpr int kMaxSegments = 64;
-  if (cmd.thickness <= 1.0f) {
+  const float effectiveThickness = std::max(cmd.thickness, 1.0F);
+  if (effectiveThickness * renderScale <= kHairlineScaleThreshold) {
     SDL_SetRenderDrawColor(renderer, cmd.color.r, cmd.color.g, cmd.color.b, cmd.color.a);
     SDL_FPoint points[kMaxSegments + 1];
     glm::vec2 unitDir{1.0f, 0.0f};
@@ -209,7 +273,7 @@ void DrawOutlineCircle(SDL_Renderer* renderer, const CircleCommand& cmd, const i
     SDL_RenderLines(renderer, points, segments + 1);
     return;
   }
-  const float halfT = cmd.thickness * 0.5f;
+  const float halfT = effectiveThickness * 0.5f;
   const float outRx = cmd.radiusX + halfT;
   const float outRy = cmd.radiusY + halfT;
   const float inRx = std::max(0.0f, cmd.radiusX - halfT);
@@ -231,13 +295,13 @@ void DrawOutlineCircle(SDL_Renderer* renderer, const CircleCommand& cmd, const i
   DrawRingStrip<kMaxSegments>(renderer, outerPts, innerPts, segments, cmd.color);
 }
 
-void DrawCircle(SDL_Renderer* renderer, const CircleCommand& cmd) {
+void DrawCircle(SDL_Renderer* renderer, const CircleCommand& cmd, const float renderScale) {
   if (cmd.radiusX <= 0.0f || cmd.radiusY <= 0.0f) return;
   SDL_SetRenderDrawBlendMode(renderer, cmd.blendMode);
 
   constexpr int kMaxSegments = 64;
   constexpr int kMinSegments = 16;
-  const float maxR = std::max(cmd.radiusX, cmd.radiusY);
+  const float maxR = std::max(cmd.radiusX, cmd.radiusY) * std::max(1.0F, renderScale);
   const int segments = std::clamp(static_cast<int>(maxR * 0.75f), kMinSegments, kMaxSegments);
   const float step = (2.0f * std::numbers::pi_v<float>) / static_cast<float>(segments);
   const auto stepRot = octarine::Rotation2D::FromRadians(step);
@@ -248,11 +312,11 @@ void DrawCircle(SDL_Renderer* renderer, const CircleCommand& cmd) {
   if (cmd.filled) {
     DrawFilledCircle(renderer, cmd, segments, stepRot, rotateEllipse, rot);
   } else {
-    DrawOutlineCircle(renderer, cmd, segments, stepRot, rotateEllipse, rot);
+    DrawOutlineCircle(renderer, cmd, segments, stepRot, rotateEllipse, rot, renderScale);
   }
 }
 
-void DrawTriangle(SDL_Renderer* renderer, const TriangleCommand& cmd) {
+void DrawTriangle(SDL_Renderer* renderer, const TriangleCommand& cmd, const float renderScale) {
   SDL_SetRenderDrawBlendMode(renderer, cmd.blendMode);
   if (cmd.filled) {
     const SDL_FColor fcol = ToSdlFColor(cmd.color);
@@ -265,7 +329,8 @@ void DrawTriangle(SDL_Renderer* renderer, const TriangleCommand& cmd) {
     SDL_RenderGeometry(renderer, nullptr, verts, 3, indices, 3);
     return;
   }
-  if (cmd.thickness <= 1.0f) {
+  const float effectiveThickness = std::max(cmd.thickness, 1.0F);
+  if (effectiveThickness * renderScale <= kHairlineScaleThreshold) {
     SDL_SetRenderDrawColor(renderer, cmd.color.r, cmd.color.g, cmd.color.b, cmd.color.a);
     const SDL_FPoint points[4] = {cmd.p1, cmd.p2, cmd.p3, cmd.p1};
     SDL_RenderLines(renderer, points, 4);
@@ -291,7 +356,7 @@ void DrawTriangle(SDL_Renderer* renderer, const TriangleCommand& cmd) {
   for (int i = 0; i < 3; ++i) {
     const glm::vec2 b = normals[(i + 2) % 3] + normals[i];
     // For unit edge normals, dot(b, n_i) == 0.5 * dot(b, b); clamping dot(b, b) >= 0.5 caps sharp miters.
-    const glm::vec2 miter = b * (cmd.thickness / std::max(0.5f, glm::dot(b, b)));
+    const glm::vec2 miter = b * (effectiveThickness / std::max(0.5f, glm::dot(b, b)));
     outerPts[i] = {v[i].x + miter.x, v[i].y + miter.y};
     innerPts[i] = {v[i].x - miter.x, v[i].y - miter.y};
   }
@@ -314,10 +379,10 @@ void BuildCapsuleContour(const glm::vec2 p1, const glm::vec2 p2, const glm::vec2
   }
 }
 
-void DrawCapsule(SDL_Renderer* renderer, const CapsuleCommand& cmd) {
+void DrawCapsule(SDL_Renderer* renderer, const CapsuleCommand& cmd, const float renderScale) {
   SDL_SetRenderDrawBlendMode(renderer, cmd.blendMode);
   if (cmd.radius <= 0.0f) {
-    DrawLine(renderer, LineCommand{cmd.start, cmd.end, cmd.thickness, cmd.color, cmd.blendMode});
+    DrawLine(renderer, LineCommand{cmd.start, cmd.end, cmd.thickness, cmd.color, cmd.blendMode}, renderScale);
     return;
   }
   const glm::vec2 p1{cmd.start.x, cmd.start.y};
@@ -325,8 +390,10 @@ void DrawCapsule(SDL_Renderer* renderer, const CapsuleCommand& cmd) {
   const glm::vec2 d = p2 - p1;
   const float len = glm::length(d);
   if (len < 0.0001f) {
-    DrawCircle(renderer, CircleCommand{cmd.start, cmd.radius, cmd.radius, 0.0f, cmd.thickness, cmd.color, cmd.blendMode,
-                                       cmd.filled});
+    DrawCircle(
+        renderer,
+        CircleCommand{cmd.start, cmd.radius, cmd.radius, 0.0f, cmd.thickness, cmd.color, cmd.blendMode, cmd.filled},
+        renderScale);
     return;
   }
 
@@ -338,7 +405,8 @@ void DrawCapsule(SDL_Renderer* renderer, const CapsuleCommand& cmd) {
   BuildCapsuleContour(p1, p2, d / len, kArcSegs, stepRot, centers, normals);
 
   if (!cmd.filled) {
-    if (cmd.thickness <= 1.0f) {
+    const float effectiveThickness = std::max(cmd.thickness, 1.0F);
+    if (effectiveThickness * renderScale <= kHairlineScaleThreshold) {
       SDL_SetRenderDrawColor(renderer, cmd.color.r, cmd.color.g, cmd.color.b, cmd.color.a);
       SDL_FPoint points[kTotalVerts + 1];
       for (int i = 0; i < kTotalVerts; ++i) {
@@ -348,7 +416,7 @@ void DrawCapsule(SDL_Renderer* renderer, const CapsuleCommand& cmd) {
       SDL_RenderLines(renderer, points, kTotalVerts + 1);
       return;
     }
-    const float halfT = cmd.thickness * 0.5f;
+    const float halfT = effectiveThickness * 0.5f;
     const float outR = cmd.radius + halfT;
     const float inR = std::max(0.0f, cmd.radius - halfT);
     SDL_FPoint outerPts[kTotalVerts];
@@ -381,6 +449,7 @@ void DrawCapsule(SDL_Renderer* renderer, const CapsuleCommand& cmd) {
 }  // namespace
 
 void Renderer::DrawQueue(const RenderQueue& renderQueue, SDL_Renderer* renderer) const {
+  const float renderScale = std::max(render_scale_x_, render_scale_y_);
   std::uint8_t activeClipId = 0;
   for (const RenderKey& key : renderQueue) {
     if (key.clipId != activeClipId) {
@@ -398,16 +467,16 @@ void Renderer::DrawQueue(const RenderQueue& renderQueue, SDL_Renderer* renderer)
         DrawText(renderer, key.payload.text);
         break;
       case CIRCLE_PRIMITIVE:
-        DrawCircle(renderer, key.payload.circle);
+        DrawCircle(renderer, key.payload.circle, renderScale);
         break;
       case LINE_PRIMITIVE:
-        DrawLine(renderer, key.payload.line);
+        DrawLine(renderer, key.payload.line, renderScale);
         break;
       case TRIANGLE_PRIMITIVE:
-        DrawTriangle(renderer, key.payload.triangle);
+        DrawTriangle(renderer, key.payload.triangle, renderScale);
         break;
       case CAPSULE_PRIMITIVE:
-        DrawCapsule(renderer, key.payload.capsule);
+        DrawCapsule(renderer, key.payload.capsule, renderScale);
         break;
       default:
         Logger::Error("Unknown renderable type");

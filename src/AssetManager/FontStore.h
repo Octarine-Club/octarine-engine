@@ -32,6 +32,7 @@ class FontStore {
                 const IoOpener& openIO = nullptr);
 
   [[nodiscard]] TTF_Font* Get(const std::string& id) const;
+  [[nodiscard]] float GetBaseSize(const std::string& id) const;
   [[nodiscard]] bool Contains(const std::string& id) const { return fonts_.contains(id); }
 
   // Resident glyph atlas for `id`, or nullptr when none was loaded.
@@ -48,6 +49,7 @@ class FontStore {
 
  private:
   std::map<std::string, TTF_Font*> fonts_;
+  std::map<std::string, float> base_sizes_;
   // Per-font glyph atlases keyed by font catalog id (e.g. "main-16"). unique_ptr keeps each
   // GlyphAtlas pinned across the map's rehashes (its surface wraps a vector<uint8_t> that must not
   // move underneath SDL).

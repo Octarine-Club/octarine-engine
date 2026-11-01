@@ -29,6 +29,7 @@ TTF_Font* FontStore::Add(const std::string& id, SDL_IOStream* io, const float fo
   } else {
     fonts_.emplace(id, font);
   }
+  base_sizes_[id] = fontSize;
 
   Logger::Info("Added font: " + id);
 
@@ -74,6 +75,11 @@ TTF_Font* FontStore::Get(const std::string& id) const {
   return it == fonts_.end() ? nullptr : it->second;
 }
 
+float FontStore::GetBaseSize(const std::string& id) const {
+  const auto it = base_sizes_.find(id);
+  return it == base_sizes_.end() ? 0.0F : it->second;
+}
+
 const GlyphAtlas* FontStore::GetGlyphAtlas(const std::string& id) const {
   const auto it = glyph_atlases_.find(id);
   return it == glyph_atlases_.end() ? nullptr : it->second.get();
@@ -84,6 +90,7 @@ bool FontStore::Remove(const std::string& id) {
   if (it == fonts_.end()) return false;
   TTF_CloseFont(it->second);
   fonts_.erase(it);
+  base_sizes_.erase(id);
   return true;
 }
 
@@ -92,4 +99,5 @@ void FontStore::Clear() {
     TTF_CloseFont(font);
   }
   fonts_.clear();
+  base_sizes_.clear();
 }

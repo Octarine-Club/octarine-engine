@@ -89,6 +89,9 @@ int main() {
   std::cout << "[scale-mode] string conversion\n";
   Check(std::string(toScaleModeString(ScaleMode::Nearest)) == "nearest", "ScaleMode::Nearest -> \"nearest\"");
   Check(std::string(toScaleModeString(ScaleMode::Linear)) == "linear", "ScaleMode::Linear -> \"linear\"");
+  Check(std::string(toScaleModeString(ScaleMode::PixelArt)) == "pixelart", "ScaleMode::PixelArt -> \"pixelart\"");
+  Check(ParseScaleModeString("pixelart") == ScaleMode::PixelArt, "ParseScaleModeString(\"pixelart\") -> PixelArt");
+  Check(ParseScaleModeString("pixel_art") == ScaleMode::PixelArt, "ParseScaleModeString(\"pixel_art\") -> PixelArt");
 
 #ifdef ASSET_TEST_FIXTURE_DIR
   std::cout << "[catalog] build against fixture dir\n";

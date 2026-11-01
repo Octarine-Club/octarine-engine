@@ -9,6 +9,20 @@
 #include "Game/GameConfig.h"
 #include "General/Logger.h"
 
+namespace {
+SDL_ScaleMode ToSdlScaleMode(const ScaleMode mode) {
+  switch (mode) {
+    case ScaleMode::Linear:
+      return SDL_SCALEMODE_LINEAR;
+    case ScaleMode::PixelArt:
+      return SDL_SCALEMODE_PIXELART;
+    case ScaleMode::Nearest:
+    default:
+      return SDL_SCALEMODE_NEAREST;
+  }
+}
+}  // namespace
+
 AssetManager::~AssetManager() { ClearAssets(); }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
@@ -103,8 +117,7 @@ bool AssetManager::LoadFromCatalog(const CatalogEntry& entry, const std::string&
       // Per-asset scale mode from the catalog overrides the project default applied in AddTexture.
       if (entry.scaleMode.has_value()) {
         if (SDL_Texture* texture = texture_store_.Get(assetId)) {
-          SDL_SetTextureScaleMode(texture,
-                                  *entry.scaleMode == ScaleMode::Linear ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
+          SDL_SetTextureScaleMode(texture, ToSdlScaleMode(*entry.scaleMode));
         }
       }
       return texture_store_.Contains(assetId);
@@ -366,11 +379,19 @@ std::string AssetManager::GetFullPath(const std::string& relativePath) const {
 }
 
 void AssetManager::SetDefaultScaleMode(const std::string& scaleMode) {
-  if (scaleMode == "nearest") {
-    texture_store_.SetDefaultScaleMode(SDL_SCALEMODE_NEAREST);
-  } else if (scaleMode == "linear") {
-    texture_store_.SetDefaultScaleMode(SDL_SCALEMODE_LINEAR);
-  } else {
+  const auto parsed = ParseScaleModeString(scaleMode);
+  if (!parsed.has_value()) {
     Logger::Error("Invalid scale mode: " + scaleMode);
+    return;
+  }
+  const SDL_ScaleMode sdlMode = ToSdlScaleMode(*parsed);
+  texture_store_.SetDefaultScaleMode(sdlMode);
+  catalog_.UpdateDefaultScaleMode(*parsed);
+  for (const auto& [id, texture] : texture_store_.All()) {
+    if (texture == nullptr) continue;
+    const CatalogEntry* entry = catalog_.Find(id);
+    if (entry == nullptr || !entry->hasExplicitScaleMode) {
+      SDL_SetTextureScaleMode(texture, sdlMode);
+    }
   }
 }

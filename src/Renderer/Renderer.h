@@ -5,6 +5,7 @@
 #include <string>
 
 #include "AssetManager/AssetManager.h"
+#include "Game/EngineOptions.h"
 #include "Renderer/RenderQueue.h"
 
 class Registry;
@@ -30,6 +31,10 @@ class Renderer {
   // leaves the renderer in a no-scene state) when SDL_CreateTexture fails — caller logs.
   bool CreateScene(SDL_Renderer* sdlRenderer, int width, int height);
 
+  // Dynamically resize the backing scene render target to `targetPixelW` x `targetPixelH` while
+  // preserving the logical coordinate space (`logical_width_` x `logical_height_`).
+  bool EnsureSceneTargetSize(SDL_Renderer* sdlRenderer, int targetPixelW, int targetPixelH);
+
   // Destroy the scene texture. Idempotent; safe to call when CreateScene never ran or failed.
   // Must run before SDL_DestroyRenderer.
   void DestroyScene();
@@ -50,7 +55,12 @@ class Renderer {
   // Player-build composite: blit the full scene texture into the window backbuffer. Editor
   // builds skip this — the Scene window inside ImGui draws the scene texture itself, so
   // composing it to the window again would double-draw.
-  void CompositeSceneToWindow(SDL_Renderer* sdlRenderer) const;
+  void CompositeSceneToWindow(SDL_Renderer* sdlRenderer, const SDL_FRect* destRect = nullptr) const;
+
+  // Computes the destination rectangle inside the window backbuffer (`windowW` x `windowH`)
+  // for compositing the logical scene texture (`sceneW` x `sceneH`) under `mode`.
+  [[nodiscard]] static SDL_FRect ComputeCompositeRect(int sceneW, int sceneH, int windowW, int windowH,
+                                                      PresentationMode mode);
 
   // Phase 4: flip. SDL_RenderPresent stays inside Renderer so the engine has exactly one
   // present site per frame.
@@ -60,6 +70,10 @@ class Renderer {
   // window. Returns nullptr when CreateScene never ran (headless / bake / pre-Init paths).
   [[nodiscard]] SDL_Texture* GetSceneTexture() const { return scene_texture_; }
 
+  [[nodiscard]] float GetRenderScale() const {
+    return render_scale_x_ > render_scale_y_ ? render_scale_x_ : render_scale_y_;
+  }
+
   // Dev/headless capture: read the scene texture back to a surface and write it to `path` as a
   // BMP. Lets a headless run (SDL_VIDEODRIVER=dummy, software renderer) produce a viewable frame
   // of what was rendered. Returns false (and logs) if there's no scene texture, the readback
@@ -68,4 +82,10 @@ class Renderer {
 
  private:
   SDL_Texture* scene_texture_ = nullptr;
+  int logical_width_ = 0;
+  int logical_height_ = 0;
+  int target_width_ = 0;
+  int target_height_ = 0;
+  float render_scale_x_ = 1.0F;
+  float render_scale_y_ = 1.0F;
 };

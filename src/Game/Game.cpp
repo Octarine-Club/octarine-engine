@@ -1,4 +1,4 @@
-#include "Game.h"
+#include "Game/Game.h"
 
 #include <SDL3/SDL.h>
 #include <SDL3_ttf/SDL_ttf.h>
@@ -48,8 +48,8 @@
 #include "Events/KeyInputEvent.h"
 #include "Events/MouseInputEvent.h"
 #include "Events/MouseWheelEvent.h"
+#include "Game/GameConfig.h"
 #include "Game/UserSettings.h"
-#include "GameConfig.h"
 #include "General/Logger.h"
 #include "General/PerfUtils.h"
 #include "General/Rect.h"
@@ -216,16 +216,51 @@ void ApplyHeadlessOptions(EngineOptions& opts) {
 
 void InitUserSettings(Registry& registry, GameConfig& gameConfig, const std::string& saveDataPath) {
   octarine::UserSettings userSettings;
+  auto& opts = gameConfig.GetEngineOptions();
+  userSettings.builtInDefaults.windowWidth =
+      gameConfig.HasLoadedConfig() ? gameConfig.GetDefaultWidth() : Constants::kDefaultWindowWidth;
+  userSettings.builtInDefaults.windowHeight =
+      gameConfig.HasLoadedConfig() ? gameConfig.GetDefaultHeight() : Constants::kDefaultWindowHeight;
+  userSettings.builtInDefaults.windowMode = opts.windowMode;
+  userSettings.builtInDefaults.presentationMode = opts.presentationMode;
+  if (gameConfig.HasLoadedConfig() && gameConfig.GetDefaultScaleMode().has_value()) {
+    if (const auto parsed = ParseScaleModeString(*gameConfig.GetDefaultScaleMode())) {
+      userSettings.builtInDefaults.textureScaleMode = toScaleModeString(*parsed);
+    }
+  }
+  userSettings.builtInDefaults.vsync = opts.vsync;
+  userSettings.builtInDefaults.windowResizable = opts.windowResizable;
+  userSettings.builtInDefaults.fpsTarget = opts.fpsTarget;
+  userSettings.builtInDefaults.showPerfOverlay = opts.showPerfOverlay;
+  userSettings.builtInDefaults.masterVolume = opts.masterVolume;
+  userSettings.builtInDefaults.audioMuted = !opts.audioEnabled;
+
+  // Seed initial state from GameConfig defaults before loading user overrides.
+  userSettings.SetWindowMode(opts.windowMode);
+
   if (!saveDataPath.empty()) {
     static_cast<void>(userSettings.Load(saveDataPath));
   }
-  gameConfig.GetEngineOptions().masterVolume = userSettings.masterVolume;
-  gameConfig.GetEngineOptions().audioEnabled = !userSettings.audioMuted;
+  opts.masterVolume = userSettings.masterVolume;
+  opts.audioEnabled = !userSettings.audioMuted;
+  opts.windowMode = userSettings.GetEffectiveWindowMode();
+  if (userSettings.presentationMode.has_value()) {
+    opts.presentationMode = *userSettings.presentationMode;
+  }
+  if (userSettings.textureScaleMode.has_value() && !userSettings.textureScaleMode->empty()) {
+    gameConfig.SetDefaultScaleMode(*userSettings.textureScaleMode);
+  }
+  if (userSettings.vsync.has_value()) {
+    opts.vsync = *userSettings.vsync;
+  }
+  if (userSettings.windowResizable.has_value()) {
+    opts.windowResizable = *userSettings.windowResizable;
+  }
   if (userSettings.fpsTarget.has_value()) {
-    gameConfig.GetEngineOptions().fpsTarget = *userSettings.fpsTarget;
+    opts.fpsTarget = *userSettings.fpsTarget;
   }
   if (userSettings.showPerfOverlay.has_value()) {
-    gameConfig.GetEngineOptions().showPerfOverlay = *userSettings.showPerfOverlay;
+    opts.showPerfOverlay = *userSettings.showPerfOverlay;
   }
   registry.Set<octarine::UserSettings>(userSettings);
 }
@@ -504,6 +539,17 @@ std::pair<int, int> ResolveInitialWindowSize([[maybe_unused]] Registry& registry
 #endif
   return {initialWidth, initialHeight};
 }
+
+void ApplyInitialWindowSettings(Registry& registry, const GameConfig& gameConfig, EngineRuntime& runtime,
+                                const bool headless) {
+  if (headless || gameConfig.IsEditorMode()) return;
+  if (runtime.SdlRenderer() != nullptr) {
+    SDL_SetRenderVSync(runtime.SdlRenderer(), gameConfig.GetEngineOptions().vsync ? 1 : 0);
+  }
+  if (auto* userSettings = registry.TryGet<octarine::UserSettings>()) {
+    userSettings->ApplyToWindow(runtime.Window(), gameConfig.windowWidth, gameConfig.windowHeight);
+  }
+}
 }  // namespace
 
 bool Game::CreateWindowAndScene(bool projectLoaded) {
@@ -515,15 +561,12 @@ bool Game::CreateWindowAndScene(bool projectLoaded) {
                                 : (gameConfig.IsEditorMode() ? kDefaultEditorWindowTitle : kDefaultWindowTitle);
 
   const auto [initialWidth, initialHeight] = ResolveInitialWindowSize(*registry_, gameConfig, headless_);
-  if (!runtime_.CreateWindow(title, initialWidth, initialHeight, headless_)) {
+  const bool resizable = gameConfig.IsEditorMode() || gameConfig.GetEngineOptions().windowResizable;
+  if (!runtime_.CreateWindow(title, initialWidth, initialHeight, headless_, resizable)) {
     return false;
   }
 
-  if (!headless_ && !gameConfig.IsEditorMode()) {
-    if (auto* userSettings = registry_->TryGet<octarine::UserSettings>()) {
-      userSettings->ApplyToWindow(runtime_.Window(), gameConfig.windowWidth, gameConfig.windowHeight);
-    }
-  }
+  ApplyInitialWindowSettings(*registry_, gameConfig, runtime_, headless_);
 
   return renderer_->CreateScene(runtime_.SdlRenderer(), gameConfig.windowWidth, gameConfig.windowHeight);
 }
@@ -679,7 +722,7 @@ bool Game::RunBakeValidation(const std::string& assetPath, const std::string& sc
   scriptSystem.CreateLuaBindings(lua);
   engine_bootstrap::InstallLuaModules(lua, *this);
   LuaSystemRegistry::bindAll(lua);
-  engine_bootstrap::SetCommonLuaGlobals(lua, gameConfig, startup_mode_);
+  engine_bootstrap::SetCommonLuaGlobals(lua, gameConfig, startup_mode_, dev_mode_);
 
   auto& assetManager = registry_->Get<AssetManager>();
   assetManager.LoadGameConfig(gameConfig);
@@ -887,40 +930,51 @@ bool Game::IsPaused() const {
   return false;
 }
 
+namespace {
+void ApplyBenchModeOverlayOverrides(Registry& registry, GameConfig& gameConfig, const std::string& startupMode) {
+  if (startupMode == kStartupModeEditor) return;
+  auto& options = gameConfig.GetEngineOptions();
+  options.showDebugGUI = false;
+  options.showFpsCounter = false;
+  options.showEntityInfo = false;
+  options.showImGuiDemoWindow = false;
+  options.drawColliders = false;
+  engine_bootstrap::editor::DisableBenchOverlays(registry);
+}
+
+void RegisterEventAndHotReloadSingletons(Registry& registry, const std::unique_ptr<EventBus>& eventBus) {
+  auto& uiButtonSystem = registry.Set<UIButtonSystem>(UIButtonSystem());
+  auto& scriptCollisionSystem = registry.Set<ScriptCollisionSystem>(ScriptCollisionSystem());
+  uiButtonSystem.Init(&registry, eventBus);
+  scriptCollisionSystem.Init(&registry, eventBus);
+  game_module::RegisterEventSystems(registry, eventBus);
+  registry.Set<ScriptHotReload>(ScriptHotReload());
+  registry.Set<AssetHotReload>(AssetHotReload());
+}
+}  // namespace
+
 void Game::Setup() {
   auto& gameConfig = registry_->Get<GameConfig>();
 
-  // Shared bootstrap spine (see engine_bootstrap/EngineBootstrap.h). withFramePathCaches=true —
-  // the live game loop reads SpriteRenderCache from the sprite-render pass and AudioTrackCache
-  // from the spatial/Doppler/culling audio systems.
   engine_bootstrap::InstallCoreSingletons(*registry_, registry_->Get<EngineContext>(), gameConfig.windowWidth,
                                           gameConfig.windowHeight, /*withFramePathCaches=*/true, &lua);
 
-  // ScriptSystem is registered as a per-frame system (vs. Bake's stack instance) so its
-  // operator() runs each tick. CreateLuaBindings still happens below in the bootstrap spine.
   auto scriptSystem = registry_->RegisterSystem<ScriptComponent>(ScriptSystem());
-
   auto& inputSystem = engine_bootstrap::InstallInputSystem(*registry_, event_bus_);
   engine_bootstrap::RegisterAllComponentBindings();
   LuaSystemRegistry::clear();
   LuaSystemRegistry::registerSystem(inputSystem);
   engine_bootstrap::InstallLuaLibraries(lua);
 #ifndef OCTARINE_SHIPPED
-  // Snapshot stdlib globals before binding so the API manifest can diff out everything the
-  // engine adds. Cheap; the actual dump below only fires in editor mode or via env override.
   const auto preBindingGlobals = LuaApiManifest::SnapshotGlobals(lua);
 #endif
   engine_bootstrap::InstallPoolAndSingletons(*registry_);
   scriptSystem.Func().CreateLuaBindings(lua);
   engine_bootstrap::InstallLuaModules(lua, *this);
   LuaSystemRegistry::bindAll(lua);
-  engine_bootstrap::SetCommonLuaGlobals(lua, gameConfig, startup_mode_);
+  engine_bootstrap::SetCommonLuaGlobals(lua, gameConfig, startup_mode_, dev_mode_);
 
 #ifndef OCTARINE_SHIPPED
-  // Emit the EmmyLua API stub once per Setup, after the full surface — globals, modules,
-  // system tables — is installed. OCTARINE_DUMP_LUA_API overrides the destination; otherwise
-  // editor sessions refresh <project>/types/octarine_api.lua so IDE autocomplete (LuaLS
-  // workspace.library) tracks the live engine surface. Shipped builds compile this out.
   if (!LuaApiManifest::MaybeDumpFromEnv(lua, preBindingGlobals) &&
       (gameConfig.IsEditorMode() || startup_mode_ == kStartupModeEditor)) {
     LuaApiManifest::WriteProjectStub(lua, preBindingGlobals, gameConfig.GetAssetPath());
@@ -930,18 +984,8 @@ void Game::Setup() {
   if (startup_mode_ == kStartupModeEditor) {
     gameConfig.SetIsEditorMode(true);
   }
-
-  if (IsBenchMode() && startup_mode_ != kStartupModeEditor) {
-    // Bench runs shouldn't pay for debug overlays. Force-zero every toggle that would add per-frame
-    // work. These EngineOptions fields exist in every build (and read as no-ops without ImGui); the
-    // editor-only window toggles move into EditorBootstrap (no-op in player builds).
-    auto& options = gameConfig.GetEngineOptions();
-    options.showDebugGUI = false;
-    options.showFpsCounter = false;
-    options.showEntityInfo = false;
-    options.showImGuiDemoWindow = false;
-    options.drawColliders = false;
-    engine_bootstrap::editor::DisableBenchOverlays(*registry_);
+  if (IsBenchMode()) {
+    ApplyBenchModeOverlayOverrides(*registry_, gameConfig, startup_mode_);
   }
 
   auto& assetManager = registry_->Get<AssetManager>();
@@ -949,56 +993,34 @@ void Game::Setup() {
     SetupAssetCatalogAndPak(*registry_, assetManager, lua, gameConfig, use_manifest_);
   }
 
-  // Audio must be live before LoadGame: the startup script may call load_asset for audio_clip
-  // entries, which need the mixer. RegisterSystem owns the single AudioSystem instance — Init
-  // runs against that instance so the EventBus subscription, cmd buffer, and per-frame Update
-  // all share state.
   auto audioSystem = registry_->RegisterSystem<AudioSourceComponent>(AudioSystem());
   if (!audioSystem.Func().Init(registry_.get(), event_bus_)) {
     Logger::Error("AudioSystem failed to initialize; audio disabled this session.");
   }
-  // Mixer is owned by AudioSystem; publish it on the context so asset loads + the master-
-  // volume sync (in Game::Update) can reach it without going through the Registry's typed slot.
   registry_->Get<EngineContext>().mixer = audioSystem.Func().Mixer();
 
   if (gameConfig.HasLoadedConfig()) {
     LoadGame(lua, assetManager, gameConfig);
   }
 
-  // Gameplay simulation tier (projectiles, steering, separation, combat, integration, transforms,
-  // collision, lifetime) and its internal ordering edges. Shared with the headless benchmark
-  // harness so the benchmarked frame is the shipped frame.
   const auto simulation = engine_bootstrap::RegisterSimulationSystems(*registry_, event_bus_);
   const auto& transform = simulation.transform;
 
-  // Spatial audio: snapshot the listener entity (UpdateListenerTransformSystem) then mutate
-  // gain + stereo pan on live spatial tracks (SpatialAudioSystem). AudioSystem (above) is the
-  // one that adds the AudioSinkComponent and caches its MIX_Track in AudioTrackCache, which
-  // these resolve per entity.
   registry_->Set<AudioListenerCache>(AudioListenerCache{});
   auto listenerTransform = registry_->RegisterBulkSystem<GlobalTransformComponent>(UpdateListenerTransformSystem());
-  // Pre-register the AudioActiveTag so its tag entity exists
-  // before any HasTag query fires (Tag<T>() is lazy otherwise). CullingSystem then gates
-  // SpatialAudioSystem / DopplerSystem implicitly — culled emitters lose their sink, and
-  // both downstream systems short-circuit on the missing sink.
   registry_->Tag<AudioActiveTag>();
   auto audioCulling = registry_->RegisterSystem<GlobalTransformComponent, AudioSourceComponent>(AudioCullingSystem());
   auto spatialAudio = registry_->RegisterSystem<GlobalTransformComponent, AudioSourceComponent, AudioSinkComponent>(
       SpatialAudioSystem());
-  // Doppler is independent of spatial: governs frequency ratio via MIX_SetTrackFrequencyRatio.
-  // Requires RigidBodyComponent on the emitter (no body → no velocity → no shift).
   auto doppler =
       registry_->RegisterSystem<GlobalTransformComponent, RigidBodyComponent, AudioSourceComponent, AudioSinkComponent>(
           DopplerSystem());
 
   auto cameraFollow = registry_->RegisterSystem<PositionComponent, CameraFollowComponent>(CameraFollowSystem());
 
-  // UI layout pass: resolves UIRectComponent for all canvas descendants. Runs after TransformSystem
-  // so world-parented canvases see up-to-date globals; runs before render systems that read UIRectComponent.
   auto uiLayout = registry_->RegisterSystem(UILayoutSystem());
   registry_->Order(uiLayout).After(transform);
 
-  // Render queue producers
   registry_->RegisterParallelSystem<GlobalTransformComponent, SpriteComponent>(RenderSpriteSystem());
   auto renderUISprite = registry_->RegisterSystem<UIRectComponent, SpriteComponent>(RenderUISpriteSystem());
   auto renderUIPrimitive = registry_->RegisterBulkSystem(RenderUIPrimitiveSystem());
@@ -1015,32 +1037,11 @@ void Game::Setup() {
       RenderCapsulePrimitiveSystem());
   registry_->RegisterParallelSystem<ColorGridComponent, GlobalTransformComponent>(RenderColorGridSystem());
 
-  // Execution-order edges (topo-sorted in Registry::Update; registration order breaks ties).
-  // Simulation-internal edges live in RegisterSimulationSystems.
-  // Listener snapshot + spatial gain/pan need this-frame globals; spatial reads the listener
-  // snapshot and is gated by culling (culled emitters lose their sink); both resolve tracks the
-  // AudioSystem update cached.
   registry_->Order(listenerTransform).After(transform);
   registry_->Order(audioCulling).After(audioSystem);
   registry_->Order(spatialAudio).After(transform).After(listenerTransform).After(audioCulling).After(audioSystem);
-  // Doppler needs this-frame emitter globals + listener snapshot, and sits behind the same
-  // culling gate and AudioSystem-cached tracks as spatial.
   registry_->Order(doppler).After(transform).After(listenerTransform).After(audioCulling).After(audioSystem);
-  // Camera follows after gameplay-driven transform updates.
   registry_->Order(cameraFollow).After(transform);
 
-  // Event-driven systems with no per-frame Update — owned by the Registry instead of
-  // living as parallel members on Game. Keeps the registry as the single source of truth.
-  auto& uiButtonSystem = registry_->Set<UIButtonSystem>(UIButtonSystem());
-  auto& scriptCollisionSystem = registry_->Set<ScriptCollisionSystem>(ScriptCollisionSystem());
-  uiButtonSystem.Init(registry_.get(), event_bus_);
-  scriptCollisionSystem.Init(registry_.get(), event_bus_);
-  game_module::RegisterEventSystems(*registry_, event_bus_);
-
-  // Hot reload owns its own FileWatcher + (path -> entities) discovery loop. Compiled out
-  // under OCTARINE_SHIPPED; in dev/editor builds the runtime gate lives on EngineOptions.
-  registry_->Set<ScriptHotReload>(ScriptHotReload());
-  // Asset hot reload: same FileWatcher infra, watching resident texture/font/audio source files
-  // and swapping the live SDL/MIX handles via AssetManager::ReloadByPath when they change on disk.
-  registry_->Set<AssetHotReload>(AssetHotReload());
+  RegisterEventAndHotReloadSingletons(*registry_, event_bus_);
 }

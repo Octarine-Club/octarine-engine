@@ -34,8 +34,7 @@ std::optional<AssetType> ClassifyByExtension(const fs::path& path) {
 }
 
 std::optional<ScaleMode> ParseScaleMode(const std::string& s) {
-  if (s == "nearest") return ScaleMode::Nearest;
-  if (s == "linear") return ScaleMode::Linear;
+  if (const auto parsed = ParseScaleModeString(s)) return *parsed;
   Logger::Warn("AssetCatalog: unknown scale_mode '" + s + "', ignoring");
   return std::nullopt;
 }
@@ -236,6 +235,94 @@ bool AssetCatalog::ScanFilesystem(const std::string& basePath, sol::state& lua, 
   return ScanFilesystem(basePath, lua, DefaultScaleModeFromConfig(gameConfig));
 }
 
+namespace {
+template <typename InsertFn>
+void ScanCatalogFile(const fs::path& path, sol::state& lua, const std::optional<ScaleMode> defaultScaleMode,
+                     InsertFn&& insert) {
+  if (path.extension() == ".meta") return;
+  const std::optional<AssetType> type = ClassifyByExtension(path);
+  if (!type) return;
+
+  std::error_code ec;
+  const std::string fullPath = fs::absolute(path, ec).lexically_normal().string();
+  const std::string stem = path.stem().string();
+  const std::optional<sol::table> sidecar = LoadSidecar(lua, path);
+
+  switch (*type) {
+    case AssetType::Texture: {
+      TextureMeta meta = sidecar ? ParseTextureMeta(*sidecar) : TextureMeta{};
+      const bool explicitScale = meta.scaleMode.has_value();
+      meta.applyDefaults(defaultScaleMode);
+      CatalogEntry entry;
+      entry.type = AssetType::Texture;
+      entry.id = meta.id.value_or(stem);
+      entry.fullPath = fullPath;
+      entry.scaleMode = meta.scaleMode;
+      entry.hasExplicitScaleMode = explicitScale;
+      entry.atlas = meta.atlas;
+      entry.noAtlas = meta.noAtlas;
+      insert(std::move(entry));
+      break;
+    }
+    case AssetType::Font: {
+      FontMeta meta = sidecar ? ParseFontMeta(*sidecar) : FontMeta{};
+      meta.applyDefaults();
+      const std::string base = meta.id.value_or(stem);
+      for (const float size : meta.sizes) {
+        CatalogEntry entry;
+        entry.type = AssetType::Font;
+        entry.id = base + "-" + FormatFontSize(size);
+        entry.fullPath = fullPath;
+        entry.fontSize = size;
+        insert(std::move(entry));
+      }
+      break;
+    }
+    case AssetType::Audio: {
+      AudioMeta meta = sidecar ? ParseAudioMeta(*sidecar) : AudioMeta{};
+      meta.applyDefaults();
+      CatalogEntry entry;
+      entry.type = AssetType::Audio;
+      entry.id = meta.id.value_or(stem);
+      entry.fullPath = fullPath;
+      entry.stream = meta.stream;
+      entry.normalize = meta.normalize;
+      insert(std::move(entry));
+      break;
+    }
+    case AssetType::UIView:
+    case AssetType::UIStyle: {
+      CatalogEntry entry;
+      entry.type = *type;
+      entry.id = ParseSidecarId(sidecar).value_or(path.filename().string());
+      entry.fullPath = fullPath;
+      insert(std::move(entry));
+      break;
+    }
+  }
+}
+
+void WriteTextureManifestFields(std::ostream& out, const CatalogEntry& entry) {
+  if (entry.scaleMode.has_value()) {
+    out << ", scale_mode = \"" << toScaleModeString(*entry.scaleMode) << "\"";
+  }
+  if (entry.atlas.has_value()) {
+    out << ", atlas = \"" << EscapeLua(*entry.atlas) << "\"";
+  }
+  if (entry.noAtlas) {
+    out << ", no_atlas = true";
+  }
+  if (entry.atlasId.has_value()) {
+    out << ", atlas_id = \"" << EscapeLua(*entry.atlasId) << "\"";
+  }
+  if (entry.atlasSlice.has_value()) {
+    const auto& s = *entry.atlasSlice;
+    out << ", atlas_slice = { x = " << static_cast<int>(s.x) << ", y = " << static_cast<int>(s.y)
+        << ", w = " << static_cast<int>(s.w) << ", h = " << static_cast<int>(s.h) << " }";
+  }
+}
+}  // namespace
+
 bool AssetCatalog::ScanFilesystem(const std::string& basePath, sol::state& lua,
                                   std::optional<ScaleMode> defaultScaleMode) {
   entries_.clear();
@@ -269,68 +356,7 @@ bool AssetCatalog::ScanFilesystem(const std::string& basePath, sol::state& lua,
       continue;
     }
     if (!it->is_regular_file(ec)) continue;
-
-    const fs::path& path = it->path();
-    // Sidecars are metadata, not assets — never catalog them.
-    if (path.extension() == ".meta") continue;
-
-    const std::optional<AssetType> type = ClassifyByExtension(path);
-    if (!type) continue;
-
-    const std::string fullPath = fs::absolute(path, ec).lexically_normal().string();
-    const std::string stem = path.stem().string();
-    const std::optional<sol::table> sidecar = LoadSidecar(lua, path);
-
-    switch (*type) {
-      case AssetType::Texture: {
-        TextureMeta meta = sidecar ? ParseTextureMeta(*sidecar) : TextureMeta{};
-        meta.applyDefaults(defaultScaleMode);
-        CatalogEntry entry;
-        entry.type = AssetType::Texture;
-        entry.id = meta.id.value_or(stem);
-        entry.fullPath = fullPath;
-        entry.scaleMode = meta.scaleMode;
-        entry.atlas = meta.atlas;
-        entry.noAtlas = meta.noAtlas;
-        insert(std::move(entry));
-        break;
-      }
-      case AssetType::Font: {
-        FontMeta meta = sidecar ? ParseFontMeta(*sidecar) : FontMeta{};
-        meta.applyDefaults();
-        const std::string base = meta.id.value_or(stem);
-        for (const float size : meta.sizes) {
-          CatalogEntry entry;
-          entry.type = AssetType::Font;
-          entry.id = base + "-" + FormatFontSize(size);
-          entry.fullPath = fullPath;
-          entry.fontSize = size;
-          insert(std::move(entry));
-        }
-        break;
-      }
-      case AssetType::Audio: {
-        AudioMeta meta = sidecar ? ParseAudioMeta(*sidecar) : AudioMeta{};
-        meta.applyDefaults();
-        CatalogEntry entry;
-        entry.type = AssetType::Audio;
-        entry.id = meta.id.value_or(stem);
-        entry.fullPath = fullPath;
-        entry.stream = meta.stream;
-        entry.normalize = meta.normalize;
-        insert(std::move(entry));
-        break;
-      }
-      case AssetType::UIView:
-      case AssetType::UIStyle: {
-        CatalogEntry entry;
-        entry.type = *type;
-        entry.id = ParseSidecarId(sidecar).value_or(path.filename().string());
-        entry.fullPath = fullPath;
-        insert(std::move(entry));
-        break;
-      }
-    }
+    ScanCatalogFile(it->path(), lua, defaultScaleMode, insert);
   }
 
   Logger::Info("AssetCatalog: built " + std::to_string(entries_.size()) + " entries from " + basePath +
@@ -421,6 +447,14 @@ void AssetCatalog::SetAtlasMembership(const std::string& memberId, std::string a
   it->second.atlasSlice = atlasSlice;
 }
 
+void AssetCatalog::UpdateDefaultScaleMode(const ScaleMode newDefault) {
+  for (auto& [id, entry] : entries_) {
+    if (entry.type == AssetType::Texture && !entry.hasExplicitScaleMode) {
+      entry.scaleMode = newDefault;
+    }
+  }
+}
+
 void AssetCatalog::DumpToLog() const {
   for (const auto& [id, entry] : entries_) {
     Logger::Info(std::string("  catalog[") + toAssetTypeString(entry.type) + "] " + id + " -> " + entry.fullPath);
@@ -451,23 +485,7 @@ bool AssetCatalog::WriteManifest(const std::string& outPath, const std::string& 
 
     switch (entry.type) {
       case AssetType::Texture:
-        if (entry.scaleMode.has_value()) {
-          out << ", scale_mode = \"" << (*entry.scaleMode == ScaleMode::Linear ? "linear" : "nearest") << "\"";
-        }
-        if (entry.atlas.has_value()) {
-          out << ", atlas = \"" << EscapeLua(*entry.atlas) << "\"";
-        }
-        if (entry.noAtlas) {
-          out << ", no_atlas = true";
-        }
-        if (entry.atlasId.has_value()) {
-          out << ", atlas_id = \"" << EscapeLua(*entry.atlasId) << "\"";
-        }
-        if (entry.atlasSlice.has_value()) {
-          const auto& s = *entry.atlasSlice;
-          out << ", atlas_slice = { x = " << static_cast<int>(s.x) << ", y = " << static_cast<int>(s.y)
-              << ", w = " << static_cast<int>(s.w) << ", h = " << static_cast<int>(s.h) << " }";
-        }
+        WriteTextureManifestFields(out, entry);
         break;
       case AssetType::Font:
         out << ", font_size = " << FormatFontSize(entry.fontSize);

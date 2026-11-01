@@ -109,6 +109,7 @@ class AssetManager {
   // renderer perf overlay so it has a usable font even when the project supplies none.
   void AddFontFromMemory(const std::string& assetId, const unsigned char* data, std::size_t len, float fontSize);
   [[nodiscard]] TTF_Font* GetFont(const std::string& assetId) const;
+  [[nodiscard]] float GetFontBaseSize(const std::string& assetId) const { return font_store_.GetBaseSize(assetId); }
   // `stream` plumbs the catalog's `meta.stream` flag into SDL_mixer's predecode toggle: false for
   // SFX (eager decode = predictable play latency), true for long music + ambient beds (lazy decode
   // = decode-as-played, keeps the loading footprint flat at the cost of a touch more per-play cost).

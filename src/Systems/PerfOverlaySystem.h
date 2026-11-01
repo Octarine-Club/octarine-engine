@@ -43,6 +43,7 @@ class PerfOverlaySystem {
   struct Line {
     std::string text;
     SDL_Texture* texture = nullptr;
+    float rasterScale = 1.0F;
     float width = 0.0F;
     float height = 0.0F;
   };

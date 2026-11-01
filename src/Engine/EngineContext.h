@@ -27,4 +27,5 @@ struct EngineContext {
   AssetManager* assets = nullptr;
   GameConfig* config = nullptr;
   octarine::UserSettings* userSettings = nullptr;
+  float sceneRenderScale = 1.0F;
 };

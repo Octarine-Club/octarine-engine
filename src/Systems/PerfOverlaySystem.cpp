@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdio>
 #include <string>
@@ -79,8 +80,13 @@ Vec2 BlockOrigin(const PerfOverlayCorner corner, SDL_Renderer* sdlRenderer, cons
   if (!SDL_GetCurrentRenderOutputSize(sdlRenderer, &outW, &outH) || outW <= 0 || outH <= 0) {
     return {kMargin, kMargin};
   }
-  const float rightX = static_cast<float>(outW) - kMargin - blockW;
-  const float bottomY = static_cast<float>(outH) - kMargin - blockH;
+  float scaleX = 1.0F;
+  float scaleY = 1.0F;
+  SDL_GetRenderScale(sdlRenderer, &scaleX, &scaleY);
+  const float logicalW = scaleX > 0.0F ? static_cast<float>(outW) / scaleX : static_cast<float>(outW);
+  const float logicalH = scaleY > 0.0F ? static_cast<float>(outH) / scaleY : static_cast<float>(outH);
+  const float rightX = logicalW - kMargin - blockW;
+  const float bottomY = logicalH - kMargin - blockH;
   switch (corner) {
     case PerfOverlayCorner::TopRight:
       return {rightX, kMargin};
@@ -119,9 +125,22 @@ TTF_Font* PerfOverlaySystem::EnsureFont(AssetManager& assetManager) {
 
 bool PerfOverlaySystem::UpdateLine(Line& line, TTF_Font* font, SDL_Renderer* sdlRenderer,
                                    const std::string& text) const {
-  if (line.texture != nullptr && line.text == text) return true;  // cache hit: string unchanged
+  float sx = 1.0F;
+  float sy = 1.0F;
+  SDL_GetRenderScale(sdlRenderer, &sx, &sy);
+  const float rawScale = std::max(sx, sy);
+  const float rasterScale = rawScale > 1.01F ? std::clamp(std::round(rawScale * 4.0F) * 0.25F, 1.0F, 4.0F) : 1.0F;
+  if (line.texture != nullptr && line.text == text && std::abs(line.rasterScale - rasterScale) <= 0.01F) {
+    return true;
+  }
 
+  if (rasterScale > 1.01F) {
+    TTF_SetFontSize(font, kDebugFontSize * rasterScale);
+  }
   SDL_Surface* surface = TTF_RenderText_Blended(font, text.c_str(), 0, SDL_Color{kWhite, kWhite, kWhite, kWhite});
+  if (rasterScale > 1.01F) {
+    TTF_SetFontSize(font, kDebugFontSize);
+  }
   if (surface == nullptr) {
     Logger::Error("PerfOverlay: text render failed: " + std::string(SDL_GetError()));
     return false;
@@ -132,11 +151,17 @@ bool PerfOverlaySystem::UpdateLine(Line& line, TTF_Font* font, SDL_Renderer* sdl
     Logger::Error("PerfOverlay: texture create failed: " + std::string(SDL_GetError()));
     return false;
   }
+  SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_LINEAR);
 
   if (line.texture != nullptr) SDL_DestroyTexture(line.texture);
   line.texture = texture;
   line.text = text;
-  SDL_GetTextureSize(texture, &line.width, &line.height);
+  line.rasterScale = rasterScale;
+  float texW = 0.0F;
+  float texH = 0.0F;
+  SDL_GetTextureSize(texture, &texW, &texH);
+  line.width = texW / rasterScale;
+  line.height = texH / rasterScale;
   return true;
 }
 
