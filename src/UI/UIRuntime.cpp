@@ -1632,42 +1632,43 @@ void AttachRefValueMethods(sol::table& h, const std::weak_ptr<UIViewInstance>& w
   });
 }
 
-void AttachRefStateMethods(sol::table& h, const std::weak_ptr<UIViewInstance>& weakView, Entity entity) {
+void AttachRefStateSetters(sol::table& h, const std::weak_ptr<UIViewInstance>& weakView, Entity entity) {
   h.set_function("set_checked", [weakView, entity](const sol::table&, const bool checked) {
     if (auto v = weakView.lock()) SetEntityChecked(v->runtime->GetRegistry(), entity, checked);
   });
+  h.set_function("set_visible", [weakView, entity](const sol::table&, const bool visible) {
+    if (auto v = weakView.lock()) SetEntityVisibility(v->runtime->GetRegistry(), entity, visible);
+  });
+  h.set_function("set_disabled", [weakView, entity](const sol::table&, const bool disabled) {
+    if (auto v = weakView.lock()) SetEntityDisabled(v->runtime->GetRegistry(), entity, disabled);
+  });
+  h.set_function("set_inert", [weakView, entity](const sol::table&, const bool inert) {
+    if (auto v = weakView.lock()) v->SetRefSubtreeInert(entity, inert);
+  });
+}
 
+void AttachRefStateGetters(sol::table& h, const std::weak_ptr<UIViewInstance>& weakView, Entity entity) {
   h.set_function("is_checked", [weakView, entity](const sol::table&) -> bool {
     auto v = weakView.lock();
     return v ? IsEntityChecked(v->runtime->GetRegistry(), entity) : false;
   });
-
-  h.set_function("set_visible", [weakView, entity](const sol::table&, const bool visible) {
-    if (auto v = weakView.lock()) SetEntityVisibility(v->runtime->GetRegistry(), entity, visible);
-  });
-
   h.set_function("is_visible", [weakView, entity](const sol::table&) -> bool {
     auto v = weakView.lock();
     return v ? IsEntityVisible(v->runtime->GetRegistry(), entity) : false;
   });
-
-  h.set_function("set_disabled", [weakView, entity](const sol::table&, const bool disabled) {
-    if (auto v = weakView.lock()) SetEntityDisabled(v->runtime->GetRegistry(), entity, disabled);
-  });
-
   h.set_function("is_disabled", [weakView, entity](const sol::table&) -> bool {
     auto v = weakView.lock();
     return v ? IsEntityDisabled(v->runtime->GetRegistry(), entity) : false;
   });
-
-  h.set_function("set_inert", [weakView, entity](const sol::table&, const bool inert) {
-    if (auto v = weakView.lock()) v->SetRefSubtreeInert(entity, inert);
-  });
-
   h.set_function("is_inert", [weakView, entity](const sol::table&) -> bool {
     auto v = weakView.lock();
     return v ? IsEntityInert(v->runtime->GetRegistry(), entity) : false;
   });
+}
+
+void AttachRefStateMethods(sol::table& h, const std::weak_ptr<UIViewInstance>& weakView, Entity entity) {
+  AttachRefStateSetters(h, weakView, entity);
+  AttachRefStateGetters(h, weakView, entity);
 }
 
 void RegisterRefEventHandler(const std::shared_ptr<UIViewInstance>& v, Entity entity, const std::string& eventName,
