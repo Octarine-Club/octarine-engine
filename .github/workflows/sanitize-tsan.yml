@@ -10,9 +10,6 @@ on:
   schedule:
     - cron: '0 5 * * *'   # 05:00 UTC nightly
 
-env:
-  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
-
 jobs:
   tsan:
     name: linux (tsan, player-debug)
