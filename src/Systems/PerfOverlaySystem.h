@@ -81,9 +81,9 @@ class PerfOverlaySystem {
   // Update both columns of a row slot. Returns false if either raster fails.
   bool UpdateRow(std::size_t slot, TTF_Font* font, SDL_Renderer* sdlRenderer, const char* label, const char* value);
 
-  // Resolve the embedded debug font, registering it into the asset manager on first use. Returns
-  // nullptr (latched, no retry) if registration fails.
-  TTF_Font* EnsureFont(AssetManager& assetManager);
+  // Resolve the embedded debug font (scaled when rasterScale > 1), registering it into the asset
+  // manager on first use. Returns nullptr (latched, no retry) if registration fails.
+  TTF_Font* EnsureFont(AssetManager& assetManager, float rasterScale = 1.0F);
 
   // Rasterize + activate the FPS section rows (current/avg/p50/p95/p99). Returns false if any
   // raster fails.
@@ -126,6 +126,8 @@ class PerfOverlaySystem {
   // system simply re-draws the already rasterized textures without GPU texture churn.
   static constexpr float kOverlayRefreshSeconds = 0.1F;
   float overlay_refresh_timer_ = 0.0F;
+  std::uint32_t window_frames_ = 0;
+  float window_seconds_ = 0.0F;
   std::array<ActiveRow, kRowCount> active_rows_{};
   std::size_t active_count_ = 0;
   float cached_block_w_ = 0.0F;

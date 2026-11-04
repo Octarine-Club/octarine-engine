@@ -2,6 +2,7 @@
 
 #include <sol/sol.hpp>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 
 #include "General/FileWatcher.h"
@@ -36,6 +37,7 @@ class ScriptHotReload {
 
  private:
   void RefreshTracking(Registry& registry);
+  const std::string& ResolveCanonical(const std::string& rawPath);
   void ReloadFile(const std::string& canonicalPath, Registry& registry, sol::state& lua);
   bool SwapComponent(ScriptComponent& sc, const sol::table& newTable);
   void RecordSuccess(const std::string& path);
@@ -43,6 +45,7 @@ class ScriptHotReload {
 
   FileWatcher watcher_;
   std::unordered_set<std::string> tracked_;  // canonical paths the watcher currently watches
+  std::unordered_map<std::string, std::string> raw_to_canonical_{};
   float accumulator_ = 0.0F;
   ReloadInfo last_;
 };

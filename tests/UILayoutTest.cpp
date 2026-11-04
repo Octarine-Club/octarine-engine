@@ -22,8 +22,10 @@
 #include "Events/MouseInputEvent.h"
 #include "Events/MouseWheelEvent.h"
 #include "Game/GameConfig.h"
+#include "Lua/Bindings/TextLabelComponentLuaBinding.h"
 #include "Renderer/RenderKey.h"
 #include "Renderer/RenderQueue.h"
+#include "Systems/RenderTextSystem.h"
 #include "Systems/RenderUIPrimitiveSystem.h"
 #include "Systems/RenderUISpriteSystem.h"
 #include "Systems/UIButtonSystem.h"
@@ -1118,6 +1120,313 @@ void TestSceneClearAndMenuLifecycleNoDoubleBlam() {
   CheckEq(registry.GetUserEntityCount(), static_cast<uint64_t>(0), "Modal entities despawned cleanly");
 }
 
+void TestTextOutlineAndShadowRenderQueueEmission() {
+  std::cout << "[text-fx] RenderTextSystem::EmitShadowIfAny and EmitOutlineIfAny queue commands & clamp radius\n";
+  RenderQueue rq(64);
+  TextLabelComponent lbl({0.0f, 0.0f}, 3, "Combo x5", "default-16");
+  lbl.shadowOffset = {2.0f, 3.0f};
+  lbl.shadowColor = {10, 20, 30, 128};
+  lbl.outlineWidth = 1.0f;
+  lbl.outlineColor = {0, 0, 0, 255};
+  const octarine::Color activeColor{255, 255, 255, 128};
+
+  RenderTextSystem::EmitShadowIfAny(rq, lbl, activeColor, nullptr, 3, 10.0f, 100.0f, 200.0f, 50.0f, 20.0f, 2.0f, 7);
+  CheckEq(rq.Size(), static_cast<size_t>(1), "Shadow emits 1 TextCommand");
+  const auto& shadowCmd = rq.begin()->payload.text;
+  CheckEq(shadowCmd.destRect.x, 104.0f, "Shadow destRect.x scaled by 2.0f (100 + 2*2)");
+  CheckEq(shadowCmd.destRect.y, 206.0f, "Shadow destRect.y scaled by 2.0f (200 + 3*2)");
+  CheckEq(shadowCmd.colorMod.a, static_cast<Uint8>((128 * 128) / 255), "Shadow alpha modulated by activeTextColor.a");
+  CheckEq(rq.begin()->clipId, static_cast<uint8_t>(7), "Shadow preserves clipId");
+
+  rq.Clear();
+  lbl.outlineWidth = 8.0f;  // Exceeds 4.0f cap; must clamp ring count to 4 and outer ring radius to 4.0f * scale
+  RenderTextSystem::EmitOutlineIfAny(rq, lbl, activeColor, nullptr, 3, 10.0f, 100.0f, 200.0f, 50.0f, 20.0f, 2.0f, 5);
+  CheckEq(rq.Size(), static_cast<size_t>(32), "Clamped 4-ring outline emits 4 * 8 = 32 TextCommands");
+  const auto lastIt = rq.begin() + 31;
+  // Last direction is (+1, +1) on ring 4 with clampedWidth=4.0f and scale=2.0f -> offset +8.0f
+  CheckEq(lastIt->payload.text.destRect.x, 108.0f, "Outer ring x clamped to 4.0f * scale (100 + 8)");
+  CheckEq(lastIt->payload.text.destRect.y, 208.0f, "Outer ring y clamped to 4.0f * scale (200 + 8)");
+  CheckEq(lastIt->clipId, static_cast<uint8_t>(5), "Outline preserves clipId");
+}
+
+void TestTextOutlineAndShadowOxmlAndLuaBindings() {
+  std::cout << "[text-fx] OXML/OSS shadow & outline, dynamic bindings, ref:set_outline, and LuaBinding\n";
+  Registry registry;
+  registry.Set<GameConfig>(GameConfig{});
+  registry.Set<RenderQueue>(RenderQueue(64));
+  registry.RegisterBulkSystem(UILayoutSystem());
+
+  sol::state lua;
+  lua.open_libraries(sol::lib::base, sol::lib::math, sol::lib::string, sol::lib::table);
+  LuaBinding<TextLabelComponent>::bindUsertype(lua);
+
+  UIRuntime uiRuntime(&lua, &registry, nullptr);
+  sol::table uiTbl = lua.create_table();
+  uiRuntime.InstallLuaFunctions(uiTbl);
+  lua["ui"] = uiTbl;
+
+  lua.script(R"(
+    fx_state = ui.observable({
+      out_col = "#112233",
+      out_w = "2px"
+    })
+    fx_view = ui.mount([[
+      <OXML>
+        <Canvas base-layer="1">
+          <Label ref="Banner" text="VICTORY" shadow-color="#000000c8" shadow-offset="2px 4px"
+                 outline-color="{out_col}" outline-width="{out_w}" />
+        </Canvas>
+      </OXML>
+    ]], { context = fx_state })
+  )");
+
+  registry.Update(0.016f);
+  registry.ValidateInvariants();
+
+  const Entity bannerEnt =
+      lua.get<sol::table>("fx_view").get<sol::table>("refs").get<sol::table>("Banner").get<Entity>("entity");
+  const auto& lbl = registry.GetComponent<TextLabelComponent>(bannerEnt);
+  CheckEq(lbl.shadowOffset.x, 2.0f, "OXML shadow-offset x == 2.0f");
+  CheckEq(lbl.shadowOffset.y, 4.0f, "OXML shadow-offset y == 4.0f");
+  CheckEq(lbl.shadowColor.a, static_cast<uint8_t>(200), "OXML shadow-color alpha == 200");
+  CheckEq(lbl.outlineColor.r, static_cast<uint8_t>(0x11), "Dynamic {out_col} evaluated r == 0x11");
+  CheckEq(lbl.outlineColor.g, static_cast<uint8_t>(0x22), "Dynamic {out_col} evaluated g == 0x22");
+  CheckEq(lbl.outlineColor.b, static_cast<uint8_t>(0x33), "Dynamic {out_col} evaluated b == 0x33");
+  CheckEq(lbl.outlineWidth, 2.0f, "Dynamic {out_w} evaluated outlineWidth == 2.0f");
+
+  // Update dynamic binding to disable outline, then use ref:set_outline
+  lua.script(R"(
+    fx_state.out_w = "none"
+  )");
+  CheckEq(lbl.outlineWidth, 0.0f, "Dynamic outline-width='none' resets outlineWidth to 0");
+
+  lua.script(R"(
+    fx_view.refs.Banner:set_outline("#ff0044", 3.0)
+  )");
+  CheckEq(lbl.outlineColor.r, static_cast<uint8_t>(0xff), "ref:set_outline('#ff0044', 3.0) sets r");
+  CheckEq(lbl.outlineWidth, 3.0f, "ref:set_outline('#ff0044', 3.0) sets width 3.0");
+
+  // Calling set_outline with color only preserves existing positive outlineWidth (3.0f)
+  lua.script(R"(
+    fx_view.refs.Banner:set_outline({ r = 10, g = 20, b = 30, a = 255 })
+  )");
+  CheckEq(lbl.outlineColor.g, static_cast<uint8_t>(20), "ref:set_outline(table) updates color");
+  CheckEq(lbl.outlineWidth, 3.0f, "ref:set_outline(color) without width preserves existing width 3.0f");
+
+  // Transparent color without explicit width disables outline
+  lua.script(R"(
+    fx_view.refs.Banner:set_outline("transparent")
+  )");
+  CheckEq(lbl.outlineWidth, 0.0f, "ref:set_outline('transparent') resets outlineWidth to 0");
+
+  lua.script("fx_view:unmount()");
+}
+
+void TestPointerEventsStopBlocksHoverClickAndWheel() {
+  std::cout << "[inert-pointer] pointer-events: stop blocks hover, click, and wheel on lower layers\n";
+  Registry registry;
+  registry.Set<GameConfig>(GameConfig{});
+  registry.Set<RenderQueue>(RenderQueue(64));
+  registry.RegisterBulkSystem(UILayoutSystem());
+
+  auto eventBus = std::make_unique<EventBus>();
+  auto& btnSys = registry.Set<UIButtonSystem>(UIButtonSystem{});
+  btnSys.Init(&registry, eventBus);
+
+  AudioListener audioListener;
+  auto audioSub = eventBus->SubscribeEvent<AudioListener, AudioPlayEvent>(&audioListener, &AudioListener::OnAudioPlay);
+
+  sol::state lua;
+  lua.open_libraries(sol::lib::base, sol::lib::math, sol::lib::string, sol::lib::table);
+
+  UIRuntime uiRuntime(&lua, &registry, nullptr);
+  sol::table uiTbl = lua.create_table();
+  uiRuntime.InstallLuaFunctions(uiTbl);
+  lua["ui"] = uiTbl;
+
+  lua.script(R"(
+    bg_clicks = 0
+    bg_ctrl = { on_bg = function(self) bg_clicks = bg_clicks + 1 end }
+    bg_view = ui.mount([[
+      <OXML>
+        <Canvas base-layer="10" width="800px" height="600px">
+          <Button ref="BgBtn" width="200px" height="60px" text="Embark" on-click="on_bg"
+                  sound-hover="sfx_ui_hover" sound-click="sfx_ui_click" />
+          <ScrollView ref="BgScroll" width="200px" height="100px" wheel-step="25">
+            <Panel width="200px" height="400px" />
+          </ScrollView>
+        </Canvas>
+      </OXML>
+    ]], { controller = bg_ctrl })
+
+    modal_view = ui.mount([[
+      <OXML>
+        <Canvas base-layer="20" width="800px" height="600px">
+          <Panel ref="Scrim" width="800px" height="600px" pointer-events="stop">
+            <Button ref="ModalBtn" width="120px" height="40px" text="Close" />
+          </Panel>
+        </Canvas>
+      </OXML>
+    ]])
+  )");
+
+  registry.Update(0.016f);
+  registry.ValidateInvariants();
+
+  const Entity bgBtnEnt =
+      lua.get<sol::table>("bg_view").get<sol::table>("refs").get<sol::table>("BgBtn").get<Entity>("entity");
+  const Entity bgScrollEnt =
+      lua.get<sol::table>("bg_view").get<sol::table>("refs").get<sol::table>("BgScroll").get<Entity>("entity");
+  const Entity scrimEnt =
+      lua.get<sol::table>("modal_view").get<sol::table>("refs").get<sol::table>("Scrim").get<Entity>("entity");
+
+  Check(registry.GetComponent<UIRectComponent>(scrimEnt).blocksPointer,
+        "pointer-events='stop' sets UIRectComponent::blocksPointer = true");
+
+  // Even before bg_view:set_inert(true), pointer-events="stop" on Scrim (layer 20) blocks mouse hover/click/wheel
+  // over empty modal space (e.g. x=150, y=50 is inside BgBtn [0..200, 0..60] but outside ModalBtn [0..120, 0..40]).
+  SDL_MouseButtonEvent moveOverCoveredBg{};
+  moveOverCoveredBg.type = SDL_EVENT_MOUSE_MOTION;
+  moveOverCoveredBg.x = 150.0f;
+  moveOverCoveredBg.y = 50.0f;
+  eventBus->EmitEvent<MouseInputEvent>(moveOverCoveredBg);
+
+  Check(!registry.GetComponent<UIButtonComponent>(bgBtnEnt).isHovered,
+        "pointer-events='stop' blocks hover on lower-layer button");
+  CheckEq(audioListener.clips.size(), static_cast<size_t>(0),
+          "Zero hover sounds emitted when hovering over scrim-covered background button");
+
+  SDL_MouseButtonEvent clickOverCoveredBg{};
+  clickOverCoveredBg.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+  clickOverCoveredBg.button = 1;
+  clickOverCoveredBg.x = 150.0f;
+  clickOverCoveredBg.y = 50.0f;
+  eventBus->EmitEvent<MouseInputEvent>(clickOverCoveredBg);
+  CheckEq(lua.get<int>("bg_clicks"), 0, "pointer-events='stop' blocks click on lower-layer button");
+
+  // Mouse wheel over covered scroll view (x=100, y=100) is also blocked by Scrim at layer 20
+  SDL_MouseButtonEvent moveOverScroll{};
+  moveOverScroll.type = SDL_EVENT_MOUSE_MOTION;
+  moveOverScroll.x = 100.0f;
+  moveOverScroll.y = 100.0f;
+  eventBus->EmitEvent<MouseInputEvent>(moveOverScroll);
+  eventBus->EmitEvent<MouseWheelEvent>(0.0f, -1.0f);
+  CheckEq(registry.GetComponent<UIScrollComponent>(bgScrollEnt).scrollY, 0.0f,
+          "pointer-events='stop' blocks mouse wheel on lower-layer ScrollView");
+
+  lua.script("modal_view:unmount(); bg_view:unmount()");
+}
+
+void TestViewSetInertSuspendsInputAndPreservesVisuals() {
+  std::cout << "[inert-pointer] view:set_inert(bool) & ref:set_inert(bool) suspend key/focus/nav without :disabled "
+               "visuals\n";
+  Registry registry;
+  registry.Set<GameConfig>(GameConfig{});
+  registry.Set<RenderQueue>(RenderQueue(64));
+  registry.RegisterBulkSystem(UILayoutSystem());
+
+  auto eventBus = std::make_unique<EventBus>();
+  auto& btnSys = registry.Set<UIButtonSystem>(UIButtonSystem{});
+  btnSys.Init(&registry, eventBus);
+
+  AudioListener audioListener;
+  auto audioSub = eventBus->SubscribeEvent<AudioListener, AudioPlayEvent>(&audioListener, &AudioListener::OnAudioPlay);
+
+  sol::state lua;
+  lua.open_libraries(sol::lib::base, sol::lib::math, sol::lib::string, sol::lib::table);
+
+  UIRuntime uiRuntime(&lua, &registry, nullptr);
+  sol::table uiTbl = lua.create_table();
+  uiRuntime.InstallLuaFunctions(uiTbl);
+  lua["ui"] = uiTbl;
+
+  lua.script(R"(
+    bg_clicks = 0
+    modal_clicks = 0
+    bg_ctrl = { on_bg = function(self) bg_clicks = bg_clicks + 1 end }
+    modal_ctrl = { on_modal = function(self) modal_clicks = modal_clicks + 1 end }
+    bg_view = ui.mount([[
+      <OXML>
+        <Canvas base-layer="10" width="800px" height="600px">
+          <Panel ref="BgContainer" width="200px" height="60px">
+            <Button ref="BgBtn" width="200px" height="60px" text="Embark" key="escape" on-click="on_bg"
+                    sound-click="sfx_ui_click" />
+          </Panel>
+        </Canvas>
+      </OXML>
+    ]], { controller = bg_ctrl })
+
+    modal_view = ui.mount([[
+      <OXML>
+        <Canvas base-layer="20" width="800px" height="600px">
+          <Button ref="ModalBtn" width="120px" height="40px" text="Close" key="escape" on-click="on_modal"
+                  sound-click="sfx_ui_click" />
+        </Canvas>
+      </OXML>
+    ]], { controller = modal_ctrl })
+  )");
+
+  registry.Update(0.016f);
+
+  const Entity bgBtnEnt =
+      lua.get<sol::table>("bg_view").get<sol::table>("refs").get<sol::table>("BgBtn").get<Entity>("entity");
+  const Entity modalBtnEnt =
+      lua.get<sol::table>("modal_view").get<sol::table>("refs").get<sol::table>("ModalBtn").get<Entity>("entity");
+
+  btnSys.SetFocus(bgBtnEnt);
+  Check(registry.GetComponent<UIFocusComponent>(bgBtnEnt).isFocused, "BgBtn focused before set_inert(true)");
+
+  // Verify container ref:set_inert(true) / ref:is_inert() round-trip and persistence across refresh()
+  lua.script("bg_view.refs.BgContainer:set_inert(true); bg_view:refresh()");
+  Check(lua.script("return bg_view.refs.BgContainer:is_inert()").get<bool>(),
+        "Container ref:is_inert() returns true after ref:set_inert(true)");
+  Check(lua.script("return bg_view.refs.BgBtn:is_inert()").get<bool>(),
+        "Child button ref:is_inert() returns true when parent container is inert");
+  lua.script("bg_view.refs.BgContainer:set_inert(false)");
+
+  lua.script("bg_view:set_inert(true)");
+  Check(lua.script("return bg_view:is_inert()").get<bool>(), "bg_view:is_inert() returns true");
+  Check(!lua.script("return bg_view.refs.BgBtn:is_disabled()").get<bool>(),
+        "ref:is_disabled() remains false when view is inert");
+  Check(!registry.GetComponent<UIButtonComponent>(bgBtnEnt).isActive, "Inert button has isActive == false");
+  Check(!registry.GetComponent<UIFocusComponent>(bgBtnEnt).isFocused, "set_inert(true) clears focus on subtree");
+
+  // Verify ResolveVisualState does not apply :disabled visuals when inert (unless explicitly disabled)
+  UIStyleStateComponent st{};
+  st.disabled.SetBg(octarine::Color{16, 16, 16, 255});
+  registry.AddComponent(bgBtnEnt, st);
+  const auto resolvedInertColors =
+      octarine::ui::ResolveVisualState(&registry, bgBtnEnt, octarine::Color{32, 48, 64, 255},
+                                       octarine::Color{0, 0, 0, 255}, octarine::Color{255, 255, 255, 255});
+  CheckEq(resolvedInertColors.bg.r, static_cast<uint8_t>(32),
+          "Inert non-disabled button preserves base bg color instead of :disabled color");
+
+  // Pressing Escape fires ONLY modal_view's button (1 click sound, 0 bg_clicks, 1 modal_clicks)
+  audioListener.clips.clear();
+  eventBus->EmitEvent<KeyInputEvent>(SDLK_ESCAPE, SDL_KMOD_NONE, true);
+  CheckEq(lua.get<int>("bg_clicks"), 0, "Inert background button ignores Escape key shortcut");
+  CheckEq(lua.get<int>("modal_clicks"), 1, "Active modal button receives Escape key shortcut");
+  CheckEq(audioListener.clips.size(), static_cast<size_t>(1), "Only active modal button emits click sound on Escape");
+
+  // Tab focus cycling & explicit navUp/navDown skip inert bgBtnEnt and keep focus on modalBtnEnt
+  registry.GetComponent<UIFocusComponent>(modalBtnEnt).navUp = bgBtnEnt;
+  btnSys.CycleFocusTab(false);
+  CheckEq(btnSys.GetFocusedEntity().id, modalBtnEnt.id, "CycleFocusTab skips inert view entities");
+  btnSys.NavigateDirection({0.0f, -1.0f});
+  CheckEq(btnSys.GetFocusedEntity().id, modalBtnEnt.id, "NavigateDirection skips inert explicit navUp target");
+
+  // Calling view:refresh() while inert preserves inert state, and set_inert(false) restores it
+  lua.script("bg_view:refresh()");
+  Check(!registry.GetComponent<UIButtonComponent>(bgBtnEnt).isActive,
+        "bg_view:refresh() preserves inert state on buttons");
+  lua.script("modal_view:unmount(); bg_view:set_inert(false)");
+  Check(registry.GetComponent<UIButtonComponent>(bgBtnEnt).isActive,
+        "set_inert(false) restores isActive on non-disabled button");
+  eventBus->EmitEvent<KeyInputEvent>(SDLK_ESCAPE, SDL_KMOD_NONE, true);
+  CheckEq(lua.get<int>("bg_clicks"), 1, "Restored background button responds to Escape key shortcut");
+  lua.script("bg_view:unmount()");
+}
+
 }  // namespace
 
 int main() {
@@ -1133,5 +1442,9 @@ int main() {
   TestQ1DebugWireframeAndAudioHooks();
   TestQ1GridAndFlexWrapAndSlots();
   TestSceneClearAndMenuLifecycleNoDoubleBlam();
+  TestTextOutlineAndShadowRenderQueueEmission();
+  TestTextOutlineAndShadowOxmlAndLuaBindings();
+  TestPointerEventsStopBlocksHoverClickAndWheel();
+  TestViewSetInertSuspendsInputAndPreservesVisuals();
   return octarine::test::ReportSummary("UILayoutTest");
 }

@@ -52,11 +52,18 @@ void AssetHotReload::ForceReloadAll(AssetManager& assets, SDL_Renderer* renderer
   }
 }
 
+const std::string& AssetHotReload::ResolveCanonical(const std::string& rawPath) {
+  if (const auto it = raw_to_canonical_.find(rawPath); it != raw_to_canonical_.end()) {
+    return it->second;
+  }
+  return raw_to_canonical_.emplace(rawPath, Canonicalize(rawPath)).first->second;
+}
+
 void AssetHotReload::RefreshTracking(AssetManager& assets) {
   // Canonicalize so the keys match what FileWatcher::Poll returns and what tracked_ stores.
   std::unordered_set<std::string> seen;
   for (const auto& path : assets.ResidentSourcePaths()) {
-    seen.insert(Canonicalize(path));
+    seen.insert(ResolveCanonical(path));
   }
 
   for (const auto& path : seen) {

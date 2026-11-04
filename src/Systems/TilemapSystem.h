@@ -140,6 +140,7 @@ class TilemapSystem {
   [[nodiscard]] int32_t GetCameraChunkX() const noexcept { return camera_chunk_x_; }
   [[nodiscard]] int32_t GetCameraChunkY() const noexcept { return camera_chunk_y_; }
   [[nodiscard]] uint64_t GetHotReloadCount() const noexcept { return hot_reload_count_; }
+  [[nodiscard]] uint64_t GetMapRevision() const noexcept { return map_revision_; }
   [[nodiscard]] const std::unordered_map<int64_t, octarine::tilemap::ActiveChunk>& GetActiveChunks() const noexcept {
     return active_chunks_;
   }
@@ -184,6 +185,7 @@ class TilemapSystem {
 
   std::unordered_map<int64_t, octarine::tilemap::ActiveChunk> active_chunks_{};
   std::unordered_map<int64_t, std::string> chunk_overrides_{};
+  mutable std::unordered_map<int64_t, const octarine::tilemap::ChunkTemplate*> resolved_templates_{};
   std::unordered_map<int64_t, uint64_t> consumed_props_{};
   sol::protected_function prop_spawner_{};
   octarine::tilemap::VariantGeneratorFn variant_generator_{};
@@ -191,6 +193,7 @@ class TilemapSystem {
   FileWatcher file_watcher_{};
   float hot_reload_accum_ = 0.0f;
   uint64_t hot_reload_count_ = 0;
+  uint64_t map_revision_ = 0;
 
   bool show_chunk_bounds_ = false;
   bool show_collision_overlay_ = false;

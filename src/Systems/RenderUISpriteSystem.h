@@ -33,49 +33,36 @@ class RenderUISpriteSystem {
     if (asset_manager_ == nullptr) {
       Prepare(registry);
     }
-    auto& assetManager = *asset_manager_;
-    auto& renderQueue = *render_queue_;
-    auto& spriteCache = *sprite_cache_;
 
-    const SpriteRenderCache::Entry* entry = spriteCache.Lookup(entity, assetManager.TextureGeneration());
-    if (!entry || !entry->texture) {
-      SDL_Texture* texture = assetManager.GetTexture(sprite.assetId);
-      const auto slice = assetManager.GetAtlasSlice(sprite.assetId);
-      const SDL_FRect atlasOffset = slice.has_value() ? *slice : SDL_FRect{0, 0, 0, 0};
-      spriteCache.Store(entity, texture, atlasOffset, assetManager.TextureGeneration());
-      entry = spriteCache.Lookup(entity, assetManager.TextureGeneration());
-      if (!entry) return;
-    }
+    const SpriteRenderCache::Entry* entry = LookupOrCacheSprite(entity, sprite);
+    if (!entry) return;
 
     SDL_Texture* texture = entry->texture;
     const SDL_FRect atlasOffset = entry->atlasOffset;
     const octarine::Color activeColor =
         octarine::ui::ResolveVisualState(registry, entity, sprite.colorMod, sprite.colorMod, sprite.colorMod).bg;
 
-    if (registry->HasComponent<UINineSliceComponent>(entity)) {
-      const auto& nine = registry->GetComponent<UINineSliceComponent>(entity);
-      if (nine.HasSlices()) {
-        EmitNineSlice(renderQueue, rect, sprite, nine, texture, atlasOffset, activeColor);
-        return;
-      }
+    if (TryEmitNineSlice(registry, *render_queue_, entity, rect, sprite, texture, atlasOffset, activeColor)) {
+      return;
     }
 
-    EmitQuad(renderQueue, rect, sprite, texture, rect.left, rect.top, rect.Width(), rect.Height(),
-             sprite.srcRect.x + atlasOffset.x, sprite.srcRect.y + atlasOffset.y, sprite.srcRect.w, sprite.srcRect.h,
-             activeColor);
+    const glm::vec2 srcDim = ResolveSourceDimensions(texture, sprite, atlasOffset, 0.0f, 0.0f);
+    EmitQuad(*render_queue_, rect, sprite, texture, rect.left, rect.top, rect.Width(), rect.Height(),
+             sprite.srcRect.x + atlasOffset.x, sprite.srcRect.y + atlasOffset.y, srcDim.x, srcDim.y, activeColor);
   }
 
   static void EmitNineSlice(RenderQueue& renderQueue, const UIRectComponent& rect, const SpriteComponent& sprite,
                             const UINineSliceComponent& nine, SDL_Texture* texture, const SDL_FRect& atlasOffset,
                             const octarine::Color& activeColor = {255, 255, 255, 255}) {
-    const float srcX = sprite.srcRect.x + atlasOffset.x;
-    const float srcY = sprite.srcRect.y + atlasOffset.y;
-    const float srcW = sprite.srcRect.w > 0.0f ? sprite.srcRect.w : rect.Width();
-    const float srcH = sprite.srcRect.h > 0.0f ? sprite.srcRect.h : rect.Height();
     const float dstW = rect.Width();
     const float dstH = rect.Height();
+    const glm::vec2 srcDim = ResolveSourceDimensions(texture, sprite, atlasOffset, dstW, dstH);
+    const float srcW = srcDim.x;
+    const float srcH = srcDim.y;
     if (dstW <= 0.0f || dstH <= 0.0f || srcW <= 0.0f || srcH <= 0.0f) return;
 
+    const float srcX = sprite.srcRect.x + atlasOffset.x;
+    const float srcY = sprite.srcRect.y + atlasOffset.y;
     const float sl = std::clamp(nine.left, 0.0f, std::min(srcW * 0.5f, dstW * 0.5f));
     const float sr = std::clamp(nine.right, 0.0f, std::min(srcW - sl, dstW - sl));
     const float st = std::clamp(nine.top, 0.0f, std::min(srcH * 0.5f, dstH * 0.5f));
@@ -91,9 +78,10 @@ class RenderUISpriteSystem {
     const float dy[3] = {rect.top, rect.top + st, rect.bottom - sb};
     const float dh[3] = {st, std::max(0.0f, dstH - st - sb), sb};
 
-    for (int row = 0; row < 3; ++row) {
-      for (int col = 0; col < 3; ++col) {
-        if (dw[col] <= 0.0f || dh[row] <= 0.0f || sw[col] <= 0.0f || sh[row] <= 0.0f) continue;
+    for (int idx = 0; idx < 9; ++idx) {
+      const int row = idx / 3;
+      const int col = idx % 3;
+      if (dw[col] > 0.0f && dh[row] > 0.0f && sw[col] > 0.0f && sh[row] > 0.0f) {
         EmitQuad(renderQueue, rect, sprite, texture, dx[col], dy[row], dw[col], dh[row], sx[col], sy[row], sw[col],
                  sh[row], activeColor);
       }
@@ -101,6 +89,44 @@ class RenderUISpriteSystem {
   }
 
  private:
+  const SpriteRenderCache::Entry* LookupOrCacheSprite(const Entity entity, const SpriteComponent& sprite) const {
+    const auto gen = asset_manager_->TextureGeneration();
+    const SpriteRenderCache::Entry* entry = sprite_cache_->Lookup(entity, gen);
+    if (entry && entry->texture) {
+      return entry;
+    }
+    SDL_Texture* texture = asset_manager_->GetTexture(sprite.assetId);
+    const auto slice = asset_manager_->GetAtlasSlice(sprite.assetId);
+    const SDL_FRect atlasOffset = slice.has_value() ? *slice : SDL_FRect{0, 0, 0, 0};
+    sprite_cache_->Store(entity, texture, atlasOffset, gen);
+    return sprite_cache_->Lookup(entity, gen);
+  }
+
+  static bool TryEmitNineSlice(Registry* registry, RenderQueue& renderQueue, const Entity entity,
+                               const UIRectComponent& rect, const SpriteComponent& sprite, SDL_Texture* texture,
+                               const SDL_FRect& atlasOffset, const octarine::Color& activeColor) {
+    if (!registry->HasComponent<UINineSliceComponent>(entity)) return false;
+    const auto& nine = registry->GetComponent<UINineSliceComponent>(entity);
+    if (!nine.HasSlices()) return false;
+    EmitNineSlice(renderQueue, rect, sprite, nine, texture, atlasOffset, activeColor);
+    return true;
+  }
+
+  static glm::vec2 ResolveSourceDimensions(SDL_Texture* texture, const SpriteComponent& sprite,
+                                           const SDL_FRect& atlasOffset, const float fallbackW, const float fallbackH) {
+    float srcW = sprite.srcRect.w > 0.0f ? sprite.srcRect.w : atlasOffset.w;
+    float srcH = sprite.srcRect.h > 0.0f ? sprite.srcRect.h : atlasOffset.h;
+    if (srcW > 0.0f && srcH > 0.0f) {
+      return {srcW, srcH};
+    }
+    float texW = 0.0f;
+    float texH = 0.0f;
+    const bool hasTexSize = SDL_GetTextureSize(texture, &texW, &texH);
+    const float resolvedFallbackW = hasTexSize ? texW : fallbackW;
+    const float resolvedFallbackH = hasTexSize ? texH : fallbackH;
+    return {srcW > 0.0f ? srcW : resolvedFallbackW, srcH > 0.0f ? srcH : resolvedFallbackH};
+  }
+
   static void EmitQuad(RenderQueue& renderQueue, const UIRectComponent& rect, const SpriteComponent& sprite,
                        SDL_Texture* texture, const float dx, const float dy, const float dw, const float dh,
                        const float sx, const float sy, const float sw, const float sh,

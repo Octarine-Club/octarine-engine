@@ -263,12 +263,16 @@ void FrameLoop::HandleWindowEvent(const SDL_Event& event) {
       CaptureWindowStateOnEvent(*userSettings, runtime_->Window(), event.type);
     }
   }
-  if (event.type == SDL_EVENT_WINDOW_RESIZED || event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) {
+  if (event.type == SDL_EVENT_WINDOW_RESIZED || event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED ||
+      event.type == SDL_EVENT_WINDOW_DISPLAY_CHANGED) {
     auto* viewportInfo = registry_->TryGet<ViewportInfo>();
     const auto* config = registry_->TryGet<GameConfig>();
     if (viewportInfo != nullptr && config != nullptr) {
       SyncViewportRectFromWindow(runtime_->Window(), runtime_->SdlRenderer(), *config, config->IsEditorMode(),
                                  *viewportInfo);
+    }
+    if (event.type == SDL_EVENT_WINDOW_DISPLAY_CHANGED && runtime_->SdlRenderer() != nullptr && config != nullptr) {
+      Renderer::ApplyVSync(runtime_->SdlRenderer(), config->GetEngineOptions().vsync);
     }
   }
 }

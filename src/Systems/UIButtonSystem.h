@@ -46,6 +46,7 @@ class UIButtonSystem {
       buttonQuery_ = registry_->CreateQuery<UIButtonComponent>();
       focusQuery_ = registry_->CreateQuery<UIFocusComponent>();
       scrollQuery_ = registry_->CreateQuery<UIRectComponent, UIScrollComponent>();
+      pointerBlockQuery_ = registry_->CreateQuery<UIRectComponent>();
     }
     subscriptions_.clear();
     subscriptions_.push_back(
@@ -91,10 +92,11 @@ class UIButtonSystem {
     }
     scrollQuery_->Update();
 
+    const int blockingLayer = FindTopPointerBlockingLayer(lastMousePos_);
     Entity bestEntity{static_cast<EcsId>(-1)};
     int bestLayer = std::numeric_limits<int>::min();
     scrollQuery_->ForEach([&](const Entity entity, const UIRectComponent& rect, UIScrollComponent& /*scroll*/) {
-      if (!rect.visible || !ContainsPointInRect(rect, lastMousePos_)) return;
+      if (!rect.visible || rect.layer < blockingLayer || !ContainsPointInRect(rect, lastMousePos_)) return;
       if (rect.layer >= bestLayer) {
         bestLayer = rect.layer;
         bestEntity = entity;
@@ -226,7 +228,7 @@ class UIButtonSystem {
     if (!EnsureFocusQuery()) return;
     const Entity prevFocused = GetFocusedEntity();
     focusQuery_->ForEach([&](const Entity entity, UIFocusComponent& focus) {
-      focus.isFocused = (entity == target && focus.isFocusable && !focus.isDisabled);
+      focus.isFocused = (entity == target && focus.isFocusable && !focus.isDisabled && !focus.isInert);
     });
     if (target != prevFocused && registry_ && registry_->IsAlive(target) &&
         registry_->HasComponent<UIFocusComponent>(target) &&
@@ -240,7 +242,7 @@ class UIButtonSystem {
     if (!EnsureFocusQuery()) return Entity(static_cast<EcsId>(-1));
     Entity current{static_cast<EcsId>(-1)};
     focusQuery_->ForEach([&](const Entity entity, const UIFocusComponent& focus) {
-      if (focus.isFocused && focus.isFocusable && !focus.isDisabled && IsButtonVisible(entity)) {
+      if (focus.isFocused && focus.isFocusable && !focus.isDisabled && !focus.isInert && IsButtonVisible(entity)) {
         current = entity;
       }
     });
@@ -264,7 +266,7 @@ class UIButtonSystem {
     }
 
     const Entity explicitNext = ResolveExplicitDirectionTarget(registry_->GetComponent<UIFocusComponent>(current), dir);
-    if (explicitNext.GetId() != static_cast<std::uint32_t>(-1) && registry_->IsAlive(explicitNext)) {
+    if (IsFocusableCandidate(explicitNext)) {
       SetFocus(explicitNext);
       return true;
     }
@@ -275,7 +277,9 @@ class UIButtonSystem {
     Entity best{static_cast<EcsId>(-1)};
     float bestScore = std::numeric_limits<float>::max();
     focusQuery_->ForEach([&](const Entity candidate, const UIFocusComponent& foc) {
-      if (candidate == current || !foc.isFocusable || foc.isDisabled || !IsButtonVisible(candidate)) return;
+      if (candidate == current || !foc.isFocusable || foc.isDisabled || foc.isInert || !IsButtonVisible(candidate)) {
+        return;
+      }
       if (!registry_->HasComponent<UIRectComponent>(candidate)) return;
       const glm::vec2 delta = registry_->GetComponent<UIRectComponent>(candidate).Center() - curCenter;
       const float proj = delta.x * dir.x + delta.y * dir.y;
@@ -299,7 +303,7 @@ class UIButtonSystem {
     if (!EnsureFocusQuery()) return false;
     std::vector<std::pair<std::int32_t, Entity>> candidates;
     focusQuery_->ForEach([&](const Entity entity, const UIFocusComponent& foc) {
-      if (foc.isFocusable && !foc.isDisabled && IsButtonVisible(entity)) {
+      if (foc.isFocusable && !foc.isDisabled && !foc.isInert && IsButtonVisible(entity)) {
         candidates.emplace_back(foc.tabIndex, entity);
       }
     });
@@ -328,6 +332,15 @@ class UIButtonSystem {
     return true;
   }
 
+  [[nodiscard]] bool IsFocusableCandidate(const Entity entity) const {
+    if (entity.GetId() == static_cast<std::uint32_t>(-1) || !IsButtonVisible(entity) ||
+        !registry_->HasComponent<UIFocusComponent>(entity)) {
+      return false;
+    }
+    const auto& foc = registry_->GetComponent<UIFocusComponent>(entity);
+    return foc.isFocusable && !foc.isDisabled && !foc.isInert;
+  }
+
   [[nodiscard]] int ComputeEntitySortLayer(const Entity entity) const {
     if (registry_ && registry_->HasComponent<UIRectComponent>(entity)) {
       return registry_->GetComponent<UIRectComponent>(entity).layer;
@@ -335,14 +348,32 @@ class UIButtonSystem {
     return 0;
   }
 
+  [[nodiscard]] int FindTopPointerBlockingLayer(const glm::vec2 mousePos) {
+    if (!registry_) return std::numeric_limits<int>::min();
+    if (!pointerBlockQuery_) {
+      pointerBlockQuery_ = registry_->CreateQuery<UIRectComponent>();
+    }
+    if (!pointerBlockQuery_) return std::numeric_limits<int>::min();
+    pointerBlockQuery_->Update();
+    int blockingLayer = std::numeric_limits<int>::min();
+    pointerBlockQuery_->ForEach([&](const Entity /*entity*/, const UIRectComponent& rect) {
+      if (!rect.visible || !rect.blocksPointer || rect.layer <= blockingLayer) return;
+      if (!ContainsPointInRect(rect, mousePos) || !IsInsideActiveClip(rect, mousePos)) return;
+      blockingLayer = rect.layer;
+    });
+    return blockingLayer;
+  }
+
   [[nodiscard]] Entity FindTopmostHit(const octarine::Rect& camera, const float zoom, const glm::vec2 mousePos) {
+    const int blockingLayer = FindTopPointerBlockingLayer(mousePos);
     Entity topEntity{static_cast<EcsId>(-1)};
     int topLayer = std::numeric_limits<int>::min();
     mouseQuery_->ForEach([&](const Entity entity, UIButtonComponent& button, const GlobalTransformComponent* transform,
                              const BoxColliderComponent* collider) {
       if (!button.isActive || !IsButtonVisible(entity)) return;
-      if (!HitTest(entity, button, transform, collider, camera, zoom, mousePos.x, mousePos.y)) return;
       const int layer = ComputeEntitySortLayer(entity);
+      if (layer < blockingLayer) return;
+      if (!HitTest(entity, button, transform, collider, camera, zoom, mousePos.x, mousePos.y)) return;
       if (layer >= topLayer) {
         topLayer = layer;
         topEntity = entity;
@@ -444,7 +475,7 @@ class UIButtonSystem {
     bool any = false;
     if (!focusQuery_) return false;
     focusQuery_->ForEach([&](const Entity /*e*/, const UIFocusComponent& f) {
-      if (f.isFocusable && !f.isDisabled) any = true;
+      if (f.isFocusable && !f.isDisabled && !f.isInert) any = true;
     });
     return any;
   }
@@ -686,6 +717,7 @@ class UIButtonSystem {
   using ButtonQuery = ComponentQuery<UIButtonComponent>;
   using FocusQuery = ComponentQuery<UIFocusComponent>;
   using ScrollQuery = ComponentQuery<UIRectComponent, UIScrollComponent>;
+  using PointerBlockQuery = ComponentQuery<UIRectComponent>;
 
   Registry* registry_ = nullptr;
   EventBus* event_bus_ = nullptr;
@@ -693,6 +725,7 @@ class UIButtonSystem {
   std::unique_ptr<ButtonQuery> buttonQuery_ = nullptr;
   std::unique_ptr<FocusQuery> focusQuery_ = nullptr;
   std::unique_ptr<ScrollQuery> scrollQuery_ = nullptr;
+  std::unique_ptr<PointerBlockQuery> pointerBlockQuery_ = nullptr;
   glm::vec2 lastMousePos_{0.0f, 0.0f};
   std::vector<EventBus::SubscriptionHandle> subscriptions_{};
 };

@@ -544,11 +544,11 @@ std::pair<int, int> ResolveInitialWindowSize([[maybe_unused]] Registry& registry
 void ApplyInitialWindowSettings(Registry& registry, const GameConfig& gameConfig, EngineRuntime& runtime,
                                 const bool headless) {
   if (headless || gameConfig.IsEditorMode()) return;
-  if (runtime.SdlRenderer() != nullptr) {
-    SDL_SetRenderVSync(runtime.SdlRenderer(), gameConfig.GetEngineOptions().vsync ? 1 : 0);
-  }
   if (auto* userSettings = registry.TryGet<octarine::UserSettings>()) {
     userSettings->ApplyToWindow(runtime.Window(), gameConfig.windowWidth, gameConfig.windowHeight);
+  }
+  if (runtime.SdlRenderer() != nullptr) {
+    Renderer::ApplyVSync(runtime.SdlRenderer(), gameConfig.GetEngineOptions().vsync);
   }
 }
 }  // namespace

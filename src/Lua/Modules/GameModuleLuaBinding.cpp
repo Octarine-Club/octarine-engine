@@ -30,6 +30,7 @@
 #include "General/SimRandom.h"
 #include "General/ThreadPool.h"
 #include "Lua/LuaBindingContext.h"
+#include "Renderer/Renderer.h"
 #ifdef OCTARINE_WITH_IMGUI
 #include "Systems/RenderDebugGUISystem.h"
 #endif
@@ -551,7 +552,7 @@ bool SetVSyncState(LuaBindingContext& ctx, const bool enabled) {
     settings->vsync = enabled;
   }
   if (auto* renderer = TryGetRenderer(ctx)) {
-    SDL_SetRenderVSync(renderer, enabled ? 1 : 0);
+    Renderer::ApplyVSync(renderer, enabled);
   }
   return true;
 }
@@ -1188,14 +1189,14 @@ void SyncEngineOptionsFromSettings(LuaBindingContext& ctx) {
     CopySettingsToEngineOptions(*settings, config->GetEngineOptions());
   }
   ApplyTextureScaleSetting(*reg, *settings);
-  if (auto* renderer = TryGetRenderer(ctx)) {
-    SDL_SetRenderVSync(renderer, GetVSyncState(ctx) ? 1 : 0);
-  }
   if (auto* window = TryGetWindow(ctx)) {
     const auto* config = reg->TryGet<GameConfig>();
     const int defW = config ? config->windowWidth : Constants::kDefaultWindowWidth;
     const int defH = config ? config->windowHeight : Constants::kDefaultWindowHeight;
     settings->ApplyToWindow(window, defW, defH);
+  }
+  if (auto* renderer = TryGetRenderer(ctx)) {
+    Renderer::ApplyVSync(renderer, GetVSyncState(ctx));
   }
 }
 

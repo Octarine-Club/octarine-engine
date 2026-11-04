@@ -25,6 +25,12 @@ function(octarine_add_test TARGET CTEST_NAME)
     if (ARG_LIBS)
         target_link_libraries(${TARGET} PRIVATE ${ARG_LIBS})
     endif ()
+    if (NOT MSVC)
+        target_compile_options(${TARGET} PRIVATE
+                $<$<NOT:$<CONFIG:Debug>>:-fvisibility=hidden>
+                $<$<NOT:$<CONFIG:Debug>>:-fvisibility-inlines-hidden>
+        )
+    endif ()
     add_test(NAME ${CTEST_NAME} COMMAND ${TARGET})
 endfunction()
 

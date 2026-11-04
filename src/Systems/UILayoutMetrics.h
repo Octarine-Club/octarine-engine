@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <glm/glm.hpp>
 #include <string>
+#include <unordered_map>
 
 #include "AssetManager/AssetManager.h"
 #include "AssetManager/GlyphAtlas.h"
@@ -101,16 +102,49 @@ inline glm::vec2 MeasureFromAtlas(const GlyphAtlas& atlas, const std::string& te
   return {std::ceil(totalW), static_cast<float>(std::max(1, atlas.LineSkip()))};
 }
 
-inline glm::vec2 MeasureTtfFontText(TTF_Font* font, const TextLabelComponent& label, const bool hasNewline,
-                                    const int effWrapWidth) {
-  int w = 0;
-  int h = 0;
+inline glm::vec2 MeasureTtfFontText(TTF_Font* font, const std::uint64_t fontGen, const TextLabelComponent& label,
+                                    const bool hasNewline, const int effWrapWidth) {
+  struct CacheKey {
+    TTF_Font* font = nullptr;
+    std::uint64_t fontGen = 0;
+    int wrapLen = 0;
+    bool wrapped = false;
+    std::string text{};
+    bool operator==(const CacheKey& o) const {
+      return font == o.font && fontGen == o.fontGen && wrapLen == o.wrapLen && wrapped == o.wrapped && text == o.text;
+    }
+  };
+  struct CacheKeyHash {
+    std::size_t operator()(const CacheKey& k) const {
+      std::size_t h = std::hash<const void*>{}(k.font);
+      h ^= std::hash<std::uint64_t>{}(k.fontGen) + 0x9e3779b9u + (h << 6) + (h >> 2);
+      h ^= std::hash<int>{}(k.wrapLen) + 0x9e3779b9u + (h << 6) + (h >> 2);
+      h ^= std::hash<bool>{}(k.wrapped) + 0x9e3779b9u + (h << 6) + (h >> 2);
+      h ^= std::hash<std::string>{}(k.text) + 0x9e3779b9u + (h << 6) + (h >> 2);
+      return h;
+    }
+  };
+  static constexpr std::size_t kMaxCacheEntries = 512;
+  static std::unordered_map<CacheKey, glm::vec2, CacheKeyHash> s_cache;
+
   const bool wrapped = effWrapWidth > 0 || hasNewline;
   const int wrapLen = effWrapWidth > 0 ? effWrapWidth : 0;
+  const CacheKey key{font, fontGen, wrapLen, wrapped, label.text};
+  if (const auto it = s_cache.find(key); it != s_cache.end()) {
+    return it->second;
+  }
+
+  int w = 0;
+  int h = 0;
   const bool ok = wrapped ? TTF_GetStringSizeWrapped(font, label.text.c_str(), 0, wrapLen, &w, &h)
                           : TTF_GetStringSize(font, label.text.c_str(), 0, &w, &h);
   if (!ok) return {-1.0f, -1.0f};
-  return {static_cast<float>(w), static_cast<float>(h)};
+  const glm::vec2 result{static_cast<float>(w), static_cast<float>(h)};
+  if (s_cache.size() >= kMaxCacheEntries) {
+    s_cache.clear();
+  }
+  s_cache.emplace(key, result);
+  return result;
 }
 
 inline glm::vec2 MeasureTextLabel(Registry* registry, const TextLabelComponent& label,
@@ -130,7 +164,7 @@ inline glm::vec2 MeasureTextLabel(Registry* registry, const TextLabelComponent& 
     }
   }
   if (TTF_Font* font = assetMgr->GetFont(label.fontId)) {
-    const glm::vec2 ttfSize = MeasureTtfFontText(font, label, hasNewline, effWrap);
+    const glm::vec2 ttfSize = MeasureTtfFontText(font, assetMgr->FontGeneration(), label, hasNewline, effWrap);
     if (ttfSize.x >= 0.0f) return ttfSize;
   }
   return MeasureFallbackText(label.text, ParseFontPixelSize(label.fontId), effWrap);
@@ -187,7 +221,11 @@ inline InteractiveEntityFlags ReadInteractiveFlags(Registry* registry, const Ent
     const auto& foc = registry->GetComponent<UIFocusComponent>(entity);
     flags.isFocused = foc.isFocused;
     flags.isChecked = foc.isChecked;
-    if (foc.isDisabled) flags.isDisabled = true;
+    if (foc.isInert) {
+      flags.isDisabled = foc.isDisabled;
+    } else if (foc.isDisabled) {
+      flags.isDisabled = true;
+    }
   }
   return flags;
 }

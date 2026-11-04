@@ -717,7 +717,7 @@ OCTARINE_GAME_MODULE_DIR=/path/to/MyGame/native scripts/octarine-verify.sh --fas
 | [`docs/systems.md`](systems.md) | Built-in systems and the order they run |
 | [`docs/events.md`](events.md) | The event bus — every event type and how to use them |
 | [`docs/editor.md`](editor.md) | Editor panels, hotkeys, export workflow |
-| [`docs/tilemaps.md`](tilemaps.md) | Tilemap scene field |
+| [`docs/tilemaps.md`](tilemaps.md) | Infinite LDtk chunked tilemaps, spatial queries, collision, and prop streaming |
 | [`docs/device-builds.md`](device-builds.md) | Shipping for desktop and Android |
 
 ### Lua API reference

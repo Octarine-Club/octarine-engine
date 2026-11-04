@@ -149,16 +149,28 @@ Renders a simple colored rectangle.
 
 ### `text_label`
 
-Renders text using a loaded font.
+Renders text using a loaded font, with optional alignment, word wrapping, drop shadow, and outline effects.
 
-| Field      | Type                 | Default                | Description                      |
-|------------|----------------------|------------------------|----------------------------------|
-| `text`     | `string`             | **Required**           | The text to display.             |
-| `font_id`  | `string`             | **Required**           | The ID of the loaded font asset. |
-| `position` | `table {x, y}`       | `{x=0, y=0}`           | Local offset position.           |
-| `color`    | `table {r, g, b, a}` | `{r=0, g=0, b=0, a=0}` | Text color.                      |
-| `layer`    | `number`             | `1`                    | Rendering layer.                 |
-| `is_fixed` | `boolean`            | `true`                 | If true, ignores camera.         |
+| Field               | Type                                | Default                | Description                                                                                     |
+|---------------------|-------------------------------------|------------------------|-------------------------------------------------------------------------------------------------|
+| `text`              | `string`                            | **Required**           | The text to display.                                                                            |
+| `font_id`           | `string`                            | **Required**           | The ID of the loaded font asset.                                                                |
+| `position`          | `table {x, y}`                      | `{x=0, y=0}`           | Local offset position.                                                                          |
+| `color`             | `table {r, g, b, a}`                | `{r=0, g=0, b=0, a=0}` | Text color (`0-255`).                                                                           |
+| `layer`             | `number`                            | `1`                    | Rendering layer.                                                                                |
+| `is_fixed`          | `boolean`                           | `true`                 | If `true`, ignores camera.                                                                      |
+| `align`             | `string`                            | `"left"`               | Horizontal alignment inside `ui_rect`: `"left"`, `"center"`, or `"right"`.                      |
+| `valign`            | `string`                            | `"top"`                | Vertical alignment inside `ui_rect`: `"top"`, `"center"`, or `"bottom"`.                        |
+| `wrap`              | `boolean`                           | `false`                | If `true`, word-wraps text to the entity's resolved `ui_rect` width.                            |
+| `wrap_width`        | `number`                            | `0`                    | Explicit wrap width in pixels (`<= 0` disables explicit wrap).                                  |
+| `shadow`            | `boolean`                           | `false`                | Shorthand: when `true`, enables a `(1, 1)` pixel drop shadow.                                   |
+| `shadow_offset`     | `table {x, y}`                      | `{x=0, y=0}`           | Drop-shadow `(x, y)` pixel offset (`{x=0, y=0}` disables shadow).                               |
+| `shadow_color`      | `table {r, g, b, a}`                | `{r=0, g=0, b=0, a=200}`| Drop-shadow color (`0-255`).                                                                    |
+| `outline`           | `boolean` / `number` / `table`      | `false`                | Shorthand: `true` (`1px`), thickness in pixels (`0..4`), or `{r, g, b, a}` color table (`1px`). |
+| `outline_width`     | `number`                            | `0`                    | Outline stroke thickness in pixels (clamped to `0..4`; alias: `outline_thickness`).             |
+| `outline_color`     | `table {r, g, b, a}`                | `{r=0, g=0, b=0, a=255}`| Outline stroke color (`0-255`). Defaults `outline_width` to `1` if unset and alpha `> 0`.       |
+
+At runtime (`local lbl = registry.get_text_label(entity)`), you can also mutate `lbl.outline_width`, `lbl.outline_color`, `lbl.shadow_offset`, `lbl.shadow_color`, or call `lbl:set_outline(color_or_width, width?)` (accepts a boolean, pixel width, CSS/hex color string like `"#102030"`, or `{r, g, b, a}` table).
 
 ---
 
@@ -233,6 +245,146 @@ Makes an entity clickable and input-triggerable. Triggering via a mapped key, co
 
 Methods:
 - `button:trigger(entity)` — Programmatically activates the button, invoking `on_click`.
+
+### `ui_canvas`
+
+Marks an entity as a UI layout root. All children positioned via `ui_anchor`, `ui_flex`, or `ui_layout_box` must descend from an entity with `ui_canvas`.
+
+| Field        | Type      | Default | Description                                                                  |
+|--------------|-----------|---------|------------------------------------------------------------------------------|
+| `is_fixed`   | `boolean` | `true`  | If `true`, the canvas stays fixed on screen and ignores the camera viewport. |
+| `width`      | `number`  | `0.0`   | Explicit canvas width in pixels (`0.0` uses current viewport width).          |
+| `height`     | `number`  | `0.0`   | Explicit canvas height in pixels (`0.0` uses current viewport height).        |
+| `base_layer` | `integer` | `0`     | Baseline render layer inherited by all descendant UI elements.                |
+
+### `ui_anchor`
+
+Anchors a child entity within its parent's resolved rectangle.
+
+| Field           | Type     | Default | Description                                                                      |
+|-----------------|----------|---------|----------------------------------------------------------------------------------|
+| `anchor_left`   | `number` | `0.0`   | Normalized parent left edge (`0.0` = parent left, `1.0` = parent right).         |
+| `anchor_top`    | `number` | `0.0`   | Normalized parent top edge (`0.0` = parent top, `1.0` = parent bottom).          |
+| `anchor_right`  | `number` | `1.0`   | Normalized parent right edge.                                                    |
+| `anchor_bottom` | `number` | `1.0`   | Normalized parent bottom edge.                                                   |
+| `offset_left`   | `number` | `0.0`   | Pixel offset added after anchor evaluation (`left_px = parent_left + offset`).   |
+| `offset_top`    | `number` | `0.0`   | Pixel offset added after anchor evaluation.                                      |
+| `offset_right`  | `number` | `0.0`   | Pixel offset added after anchor evaluation.                                      |
+| `offset_bottom` | `number` | `0.0`   | Pixel offset added after anchor evaluation.                                      |
+
+### `ui_z_index`
+
+Specifies a local render layer delta for a UI entity.
+
+| Field | Type      | Default | Description                                                                                |
+|-------|-----------|---------|--------------------------------------------------------------------------------------------|
+| `z`   | `integer` | `0`     | Relative layer offset. Layers accumulate down the hierarchy from `canvas.base_layer`.       |
+
+### `ui_flex`
+
+Configures CSS-like flexbox or grid layout for child entities.
+
+| Field            | Type      | Default     | Description                                                                              |
+|------------------|-----------|-------------|------------------------------------------------------------------------------------------|
+| `direction`      | `string`  | `"row"`     | Main axis direction (`"row"` or `"column"`).                                             |
+| `gap`            | `number`  | `0.0`       | Spacing in pixels between children along the main axis.                                  |
+| `cross_gap`      | `number`  | `-1.0`      | Spacing in pixels between wrapped lines or rows/columns (`-1.0` uses `gap`).             |
+| `wrap`           | `boolean` | `false`     | When `true`, children that exceed container extent wrap onto new lines.                  |
+| `columns`        | `integer` | `0`         | When `> 0`, enables fixed-column grid partitioning into $N$ equal-width columns.          |
+| `padding_left`   | `number`  | `0.0`       | Left padding inset in pixels.                                                            |
+| `padding_top`    | `number`  | `0.0`       | Top padding inset in pixels.                                                             |
+| `padding_right`  | `number`  | `0.0`       | Right padding inset in pixels.                                                           |
+| `padding_bottom` | `number`  | `0.0`       | Bottom padding inset in pixels.                                                          |
+| `justify`        | `string`  | `"stretch"` | Main-axis distribution (`"start"`, `"center"`, `"end"`, `"space_between"`, `"stretch"`). |
+| `align`          | `string`  | `"stretch"` | Cross-axis alignment (`"start"`, `"center"`, `"end"`, `"stretch"`).                       |
+
+### `ui_layout_box`
+
+Defines sizing constraints and outer margins on UI elements.
+
+| Field           | Type     | Default  | Description                                                                                 |
+|-----------------|----------|----------|---------------------------------------------------------------------------------------------|
+| `width`         | `number` / `string` | `"auto"` | Box width (`"200px"`, `"50%"`, `"1fr"`, `"auto"`).                                          |
+| `height`        | `number` / `string` | `"auto"` | Box height (`"200px"`, `"50%"`, `"1fr"`, `"auto"`).                                         |
+| `min_width`     | `number` / `string` | `"0px"`  | Lower clamp on width.                                                                       |
+| `max_width`     | `number` / `string` | `""`     | Upper clamp on width (empty = unconstrained).                                               |
+| `min_height`    | `number` / `string` | `"0px"`  | Lower clamp on height.                                                                      |
+| `max_height`    | `number` / `string` | `""`     | Upper clamp on height (empty = unconstrained).                                              |
+| `margin_left`   | `number` | `0.0`    | Left outer margin in pixels.                                                                |
+| `margin_top`    | `number` | `0.0`    | Top outer margin in pixels.                                                                 |
+| `margin_right`  | `number` | `0.0`    | Right outer margin in pixels.                                                                |
+| `margin_bottom` | `number` | `0.0`    | Bottom outer margin in pixels.                                                              |
+| `visible`       | `boolean`| `true`   | When `false`, the element is hidden and skipped during layout resolution.                   |
+
+### `ui_clip`
+
+Enables hardware scissor clipping for the entity and all of its descendants during rendering and pointer hit-testing.
+
+| Field     | Type      | Default | Description                                                     |
+|-----------|-----------|---------|-----------------------------------------------------------------|
+| `enabled` | `boolean` | `true`  | If `true`, rendering and pointer hits are clipped to this rect. |
+
+### `ui_nine_slice`
+
+Specifies 9-patch border insets on an image or panel, preserving unstretched corner caps while scaling edges and center.
+
+| Field    | Type     | Default | Description                                |
+|----------|----------|---------|--------------------------------------------|
+| `left`   | `number` | `0.0`   | Left border inset in source texels.        |
+| `top`    | `number` | `0.0`   | Top border inset in source texels.         |
+| `right`  | `number` | `0.0`   | Right border inset in source texels.       |
+| `bottom` | `number` | `0.0`   | Bottom border inset in source texels.      |
+
+### `ui_scroll`
+
+Enables mouse-wheel scrolling for a clipped viewport. Usually paired with `ui_clip`.
+
+| Field            | Type      | Default | Description                                                               |
+|------------------|-----------|---------|---------------------------------------------------------------------------|
+| `scroll_x`       | `number`  | `0.0`   | Current horizontal scroll offset in pixels.                               |
+| `scroll_y`       | `number`  | `0.0`   | Current vertical scroll offset in pixels.                                 |
+| `content_width`  | `number`  | `0.0`   | Computed total content width (read-only from Lua).                        |
+| `content_height` | `number`  | `0.0`   | Computed total content height (read-only from Lua).                       |
+| `wheel_step`     | `number`  | `36.0`  | Pixels scrolled per mouse-wheel notch.                                    |
+| `horizontal`     | `boolean` | `false` | Enables horizontal mouse-wheel scrolling.                                 |
+| `vertical`       | `boolean` | `true`  | Enables vertical mouse-wheel scrolling.                                   |
+
+### `ui_focus`
+
+Configures keyboard and gamepad focus navigation, state flags, and directional links.
+
+| Field        | Type      | Default | Description                                                                                     |
+|--------------|-----------|---------|-------------------------------------------------------------------------------------------------|
+| `tab_index`  | `integer` | `0`     | Tab ordering key (`0` = sequential document order).                                             |
+| `is_focused` | `boolean` | `false` | Whether this entity currently holds UI input focus.                                             |
+| `focusable`  | `boolean` | `true`  | Whether this entity can receive keyboard/gamepad focus.                                         |
+| `checked`    | `boolean` | `false` | Toggle/checkbox checked state.                                                                  |
+| `disabled`   | `boolean` | `false` | Disabled state: suppresses input and applies the `:disabled` style state.                       |
+| `inert`      | `boolean` | `false` | Inert state: suspends input and focus, but **preserves normal visuals** (no `:disabled` style). |
+| `nav_up`     | `entity`  | `nil`   | Explicit focus target for Up directional navigation.                                            |
+| `nav_down`   | `entity`  | `nil`   | Explicit focus target for Down directional navigation.                                          |
+| `nav_left`   | `entity`  | `nil`   | Explicit focus target for Left directional navigation.                                          |
+| `nav_right`  | `entity`  | `nil`   | Explicit focus target for Right directional navigation.                                         |
+
+### `ui_style_state`
+
+Stores visual overrides for interactive pseudo-states (`hover`, `press`, `focus`, `checked`, `disabled`), each containing `bg_color`, `border_color`, `text_color`, and `opacity`.
+
+### `ui_rect`
+
+Resolved screen-space pixel rectangle computed every frame by `UILayoutSystem`.
+
+| Property         | Type      | Access    | Description                                                                                     |
+|------------------|-----------|-----------|-------------------------------------------------------------------------------------------------|
+| `left`           | `number`  | Read-only | Left pixel coordinate in screen/canvas space.                                                   |
+| `top`            | `number`  | Read-only | Top pixel coordinate in screen/canvas space.                                                    |
+| `right`          | `number`  | Read-only | Right pixel coordinate in screen/canvas space.                                                  |
+| `bottom`         | `number`  | Read-only | Bottom pixel coordinate in screen/canvas space.                                                 |
+| `width`          | `number`  | Read-only | Computed pixel width (`right - left`).                                                          |
+| `height`         | `number`  | Read-only | Computed pixel height (`bottom - top`).                                                         |
+| `center`         | `vec2`    | Read-only | Computed center position `(x, y)`.                                                              |
+| `layer`          | `integer` | Read-only | Resolved render layer (`canvas.base_layer` + accumulated `z_index`).                            |
+| `blocks_pointer` | `boolean` | Read/Write| When `true` (via `pointer-events: stop`), pointer events cannot reach lower layers below this.  |
 
 ### `color_grid`
 
@@ -393,3 +545,13 @@ Explicitly sets the collision bitmask for an entity.
 | Field   | Type     | Default | Description        |
 |---------|----------|---------|--------------------|
 | `value` | `number` | `1`     | The bitmask value. |
+
+### `chunk_resident`
+
+Tracks an entity spawned by `TilemapSystem` during LDtk chunk streaming, binding it to its home chunk and prop index for persistence and hysteresis windowing.
+
+| Field        | Type      | Default | Description                                              |
+|--------------|-----------|---------|----------------------------------------------------------|
+| `chunk_x`    | `integer` | `0`     | Grid X coordinate of the chunk that spawned this entity. |
+| `chunk_y`    | `integer` | `0`     | Grid Y coordinate of the chunk that spawned this entity. |
+| `prop_index` | `integer` | `0`     | Unique prop index within the chunk.                      |

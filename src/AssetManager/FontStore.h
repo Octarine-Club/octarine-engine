@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3_ttf/SDL_ttf.h>
 
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
@@ -32,6 +33,7 @@ class FontStore {
                 const IoOpener& openIO = nullptr);
 
   [[nodiscard]] TTF_Font* Get(const std::string& id) const;
+  [[nodiscard]] TTF_Font* GetScaled(const std::string& id, float scale) const;
   [[nodiscard]] float GetBaseSize(const std::string& id) const;
   [[nodiscard]] bool Contains(const std::string& id) const { return fonts_.contains(id); }
 
@@ -45,13 +47,18 @@ class FontStore {
   // Close every font. Loaded glyph atlases remain cached until the store is destroyed.
   void Clear();
 
+  [[nodiscard]] std::uint64_t Generation() const noexcept { return generation_; }
   [[nodiscard]] const std::map<std::string, TTF_Font*>& All() const { return fonts_; }
 
  private:
+  void EraseScaledCopies(const std::string& id);
+
   std::map<std::string, TTF_Font*> fonts_;
-  std::map<std::string, float> base_sizes_;
+  std::map<std::string, float> base_sizes_{};
+  mutable std::map<std::pair<std::string, int>, TTF_Font*> scaled_fonts_{};
   // Per-font glyph atlases keyed by font catalog id (e.g. "main-16"). unique_ptr keeps each
   // GlyphAtlas pinned across the map's rehashes (its surface wraps a vector<uint8_t> that must not
   // move underneath SDL).
   std::map<std::string, std::unique_ptr<GlyphAtlas>> glyph_atlases_;
+  std::uint64_t generation_{0};
 };

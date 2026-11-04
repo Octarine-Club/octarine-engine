@@ -238,14 +238,14 @@ Unlike manual multi-entity setups that require separate background and text enti
 
 | Tag | Description | Key Attributes |
 |---|---|---|
-| `<Canvas>` | Root coordinate space (`UICanvasComponent`). | `fixed="true\|false"`, `width`, `height`, `base-layer="0"` |
-| `<Panel>` | Styled container (`UIFlexComponent` + background/border/9-slice). Defaults to column direction. Supports flex-wrap. | `direction="row\|column"`, `wrap="true\|false"`, `gap`, `cross-gap`, `padding`, `slice="l,t,r,b"` |
-| `<Row>` | Horizontal flex container (`direction="row"`). Supports flex-wrap. | `gap`, `cross-gap`, `wrap="true\|false"`, `padding`, `justify`, `align` |
-| `<Column>` | Vertical flex container (`direction="column"`). Supports flex-wrap. | `gap`, `cross-gap`, `wrap="true\|false"`, `padding`, `justify`, `align` |
-| `<Grid>` | Fixed-column grid container (`direction="row"`, `wrap="true"`). Partitions children into $N$ equal-width columns. | `columns="N"`, `gap`, `cross-gap`, `padding`, `justify`, `align` |
-| `<Box>` | Non-flex container or spacer with explicit sizing. | `width`, `height`, `anchor` |
-| `<Label>` | Text display (`TextLabelComponent`). Supports `{...}` interpolation and multi-line word wrapping (`wrap="true"`). | `text`, `font`, `color`, `text-align`, `wrap="true\|false\|<px>"`, `max-width` |
-| `<Image>` | Texture / atlas region (`SpriteComponent`). Supports 9-slice borders. | `src="asset_id"`, `slice="l,t,r,b"` (or `"all"`), `color` |
+| `<Canvas>` | Root coordinate space (`UICanvasComponent`). | `fixed="true\|false"`, `width`, `height`, `base-layer="0"`, `pointer-events="stop\|none"` |
+| `<Panel>` | Styled container (`UIFlexComponent` + background/border/9-slice). Defaults to column direction. Supports flex-wrap. | `direction="row\|column"`, `wrap="true\|false"`, `gap`, `cross-gap`, `padding`, `slice="l,t,r,b"`, `pointer-events="stop\|none"` |
+| `<Row>` | Horizontal flex container (`direction="row"`). Supports flex-wrap. | `gap`, `cross-gap`, `wrap="true\|false"`, `padding`, `justify`, `align`, `pointer-events="stop\|none"` |
+| `<Column>` | Vertical flex container (`direction="column"`). Supports flex-wrap. | `gap`, `cross-gap`, `wrap="true\|false"`, `padding`, `justify`, `align`, `pointer-events="stop\|none"` |
+| `<Grid>` | Fixed-column grid container (`direction="row"`, `wrap="true"`). Partitions children into $N$ equal-width columns. | `columns="N"`, `gap`, `cross-gap`, `padding`, `justify`, `align`, `pointer-events="stop\|none"` |
+| `<Box>` | Non-flex container or spacer with explicit sizing. | `width`, `height`, `anchor`, `pointer-events="stop\|none"` |
+| `<Label>` | Text display (`TextLabelComponent`). Supports `{...}` interpolation, word wrapping (`wrap="true"`), drop shadows, and outlines. | `text`, `font`, `color`, `text-align`, `text-valign`, `wrap="true\|false\|<px>"`, `max-width`, `outline`, `outline-width`, `outline-color`, `shadow-color`, `shadow-offset` |
+| `<Image>` | Texture / atlas region (`SpriteComponent`). Resolves full texture dimensions when `srcRect` is empty. Supports 9-slice borders. | `src="asset_id"`, `slice="l,t,r,b"` (or `"all"`), `color` |
 | `<Button>` | Interactive button (`UIButtonComponent` + background + label + focus/style state). | `text`, `on-click`, `key`, `gamepad`, `action`, `sound-hover`, `sound-click`, `sound-focus`, `disabled`, `focusable` |
 | `<ProgressBar>` | Fill bar (`SquarePrimitiveComponent.fillRatio`). | `value="{0..1}"`, `fill-color`, `background-color` |
 | `<Toggle>` | Boolean checkbox / switch with `:checked` state and two-way binding. | `checked="{bool}"`, `bind-value="field"`, `on-change="fn"`, `sound-hover`, `sound-click`, `text` |
@@ -437,6 +437,7 @@ Octarine supports four sizing units on `width` and `height` (`UILayoutBoxCompone
 | `align-items` (or `align`) | `stretch`, `start`, `center`, `end` | Cross-axis alignment of flex children. |
 | `flex-grow` | `0`, `1`, `2` | Flex expansion weight along the parent's main axis. |
 | `overflow` | `visible`, `hidden`, `clip` | Enables hardware scissor clipping (`UIClipComponent`) for the element and all descendants. |
+| `pointer-events` | `stop`, `block`, `all`, `none` | When set to `stop`, `block`, or `all`, flags `UIRectComponent.blocksPointer = true` so mouse clicks, hover, and scroll wheel cannot pass through to UI on lower render layers. |
 | `z-index` | `1`, `10` | Relative render layer offset (`UIZIndexComponent`), accumulated down the hierarchy. |
 
 ### Visual, Text, Audio & 9-Slice Properties
@@ -455,6 +456,9 @@ Octarine supports four sizing units on `width` and `height` (`UILayoutBoxCompone
 | `text-wrap` | `true`, `false` | Word-wraps text to the element's resolved pixel width. |
 | `shadow-color` | `#000000aa` | Text drop-shadow color. |
 | `shadow-offset` | `2px 2px` | Text drop-shadow `(x, y)` offset in pixels (`shadow-offset-x`, `shadow-offset-y`). |
+| `outline` (or `text-outline`) | `true`, `false`, `2px`, `#000000` | Shorthand for text outline: boolean toggle (`1px`), pixel width (`0..4px`), or outline color (`1px`). |
+| `outline-width` (or `outline-thickness`, `text-outline-width`) | `1px`, `2px` | Text outline stroke thickness in pixels (clamped to `4px`; rendered as 8-direction rings behind the glyph). |
+| `outline-color` (or `text-outline-color`) | `#000000`, `#102030ff` | Text outline stroke color (defaults `outline-width` to `1px` when omitted and alpha `> 0`). |
 | `sound-hover` | `sfx_hover` | Audio clip ID played on pointer hover enter. |
 | `sound-click` (or `sound-press`) | `sfx_confirm` | Audio clip ID played on button activation / click. |
 | `sound-focus` | `sfx_focus` | Audio clip ID played on gaining keyboard/gamepad focus. |
@@ -554,21 +558,67 @@ Once registered, `<BadgeCounter title="Shards" count="{shards}" />` can be used 
 
 ---
 
-## 6. Focus Navigation, Z-Order Hit Testing & Scrolling
+## 6. Focus Navigation, Z-Order Hit Testing, Pointer Blocking & Inert States
 
 ### Topmost Z-Order Hit Stopping & Clip Culling
 `UIButtonSystem` evaluates interactive elements in **topmost `(layer, EntityID)` order**:
 1. **Modal & Overlay Blocking**: Clicking an overlapping button on a higher `layer` (or later in the hierarchy at the same layer) consumes the pointer hit so buttons underneath do not fire simultaneously.
 2. **Clipped Hit Testing**: Buttons inside a `<ScrollView>` or `overflow: hidden` container (`UIClipComponent`) only accept pointer hits inside the container's active scissor rectangle—scrolled-out items cannot be clicked outside the viewport.
 
+### Pointer Blocking Backdrops (`pointer-events: stop`)
+Full-screen modal dialogs, popup overlays, and HUD menus often need to block mouse input from leaking through to gameplay buttons or background UI underneath:
+- **Usage**: Add `pointer-events="stop"` (or `block` / `all`) in `.oxml`, or `pointer-events: stop;` in `.oss`.
+- **ECS Mechanism**: Flags `UIRectComponent.blocksPointer = true` (exposed in Lua as `ui_rect.blocks_pointer`).
+- **Layer Filtering**: Every frame, `UIButtonSystem::FindTopPointerBlockingLayer` checks if the cursor position lies within any visible, unclipped blocking rectangle. Any button or scroll container located on a lower render layer (`rect.layer < blockingLayer`) is completely blocked from receiving pointer hover, click, press, release, and scroll-wheel events.
+
+```xml
+<!-- Modal Scrim: absorbs all pointer hits on layer 20 and below -->
+<Canvas base-layer="20" width="100%" height="100%">
+  <Box width="100%" height="100%" background-color="#000000a0" pointer-events="stop">
+    <Panel class="dialog-card" width="400px" height="260px">
+      <Label text="Confirm Forfeit?" font="ui-font" />
+      <Row gap="12px">
+        <Button text="Cancel" on-click="onCancel" />
+        <Button text="Confirm" on-click="onConfirm" />
+      </Row>
+    </Panel>
+  </Box>
+</Canvas>
+```
+
+### Subtree Inert State (`view:set_inert` / `ref:set_inert`)
+When presenting a modal view or pause overlay, background views often need to suspend user interaction (clearing focus, ignoring clicks and keyboard shortcuts like `key="escape"`) while **preserving their exact visual appearance** without graying out as disabled:
+- **`view:set_inert(bool)` & `view:is_inert()`**: Recursively marks or clears the `isInert` state for all entities under the view's root.
+- **`ref:set_inert(bool)` & `ref:is_inert()`**: Sets or queries inert status on a specific container ref and all its descendants. Nested container inert states are tracked and retained across `view:refresh()`.
+- **Runtime Behavior While Inert**:
+  - Buttons have `isActive` cleared (`btn.isActive = false`), immediately ignoring mouse hover, clicks, and mapped key/gamepad shortcuts (e.g. `key="escape"`).
+  - Any existing keyboard or gamepad focus within the subtree is cleared immediately.
+  - Focus cycling (`Tab` / `Shift+Tab`) and spatial or explicit directional navigation (`nav_up`, `nav_down`, etc.) automatically skip inert entities.
+  - **Visual Preservation (Inert vs. Disabled)**: Unlike `disabled` (`isDisabled`), inert elements do **not** trigger `:disabled` pseudo-class styling. Background buttons retain their authored normal colors, borders, and text styling—ideal when dimmed behind a translucent modal scrim.
+  - Restoring inert (`set_inert(false)`) safely re-enables non-disabled buttons without disturbing explicitly disabled controls.
+
+```lua
+-- Pause the game and suspend input on the main HUD view
+hud_view:set_inert(true)
+
+local modal_view = ui.mount("assets/ui/pause_modal.oxml", {
+    controller = {
+        onResume = function()
+            modal_view:unmount()
+            hud_view:set_inert(false) -- Restores interactive inputs on HUD
+        end,
+    },
+})
+```
+
 ### Keyboard & Gamepad Focus Navigation
 Interactive widgets (`<Button>`, `<Toggle>`, `<RadioButton>`, `<Slider>`, or any element with `focusable="true"`) participate in automatic focus navigation:
-- **`Tab` / `Shift+Tab`**: Cycles focus through visible, active focusable elements ordered by `(tabIndex, EntityID)`.
-- **Arrow Keys / Gamepad D-Pad (`Up`, `Down`, `Left`, `Right`)**: Moves focus to the nearest visible focusable candidate in the chosen cardinal direction using spatial cone projection, or follows explicit overrides (`focus-up`, `focus-down`, `focus-left`, `focus-right`).
+- **`Tab` / `Shift+Tab`**: Cycles focus through visible, active, non-inert focusable elements ordered by `(tabIndex, EntityID)`.
+- **Arrow Keys / Gamepad D-Pad (`Up`, `Down`, `Left`, `Right`)**: Moves focus to the nearest visible, non-inert focusable candidate in the chosen cardinal direction using spatial cone projection, or follows explicit overrides (`focus-up`, `focus-down`, `focus-left`, `focus-right`).
 - **`Enter` / `Space` / Gamepad `South` (`A`)**: Activates the currently focused widget.
 
 ### Scroll Containers (`<ScrollView>`)
-A `<ScrollView>` attaches both `UIScrollComponent` and `UIClipComponent`. Moving the mouse wheel while hovering anywhere inside the `<ScrollView>` viewport scrolls the content and clamps `scrollX` / `scrollY` to `[0, max(0, contentSize - viewportSize)]`.
+A `<ScrollView>` attaches both `UIScrollComponent` and `UIClipComponent`. Moving the mouse wheel while hovering anywhere inside the `<ScrollView>` viewport scrolls the content and clamps `scrollX` / `scrollY` to `[0, max(0, contentSize - viewportSize)]`. Scroll containers respect `FindTopPointerBlockingLayer` and will not scroll if obscured by a blocking backdrop.
 
 ---
 
@@ -614,6 +664,10 @@ When running a development build (`player-debug` or `player-release`), `FrameLoo
 - **File Inclusions**: Missing `<Style src="..." />` stylesheets or `<Use src="..." />` widget template files.
 - **Asset Integrity**: Broken `<Image src="..." />` textures, invalid `font` asset IDs, and missing `sound-hover`, `sound-click`, `sound-press`, or `sound-focus` audio clip references fail the bake gate in CI before broken UI can ship.
 
+### High-DPI Text & Measurement Caching
+- **Font Scaling Cache**: TTF font instances are cached per requested scale factor in `FontStore::GetScaled` to prevent costly per-frame glyph cache invalidations on High-DPI and scaled presentation modes.
+- **Text Measurement Cache**: `UILayoutMetrics` caches text bounds queries (`UILayoutMetrics::MeasureText`) keyed by string content and font ID, avoiding redundant glyph rasterization and measurement passes during flex and auto-sizing calculations.
+
 ---
 
 ## 9. Lua API Reference (`ui.*` & `view` Handle)
@@ -634,12 +688,17 @@ When running a development build (`player-debug` or `player-release`), `FrameLoo
 | Member / Method | Description |
 |---|---|
 | `view.root` | Root `Entity` of the mounted view (`<Canvas>` or root widget). |
-| `view.refs.<id>` | Ref handle table for any element with `ref="<id>"` or `id="<id>"`. |
+| `view.refs.<id>` (or `view.refs[id]`) | Ref handle table for any element with `ref="<id>"` or `id="<id>"`. |
 | `view:set_context(tbl)` | Replaces the view's data context table and refreshes all `{...}` bindings, `if` directives, and `each` repeaters. |
 | `view:get_context() -> tbl` | Returns the active `context` table or observable proxy. |
 | `view:refresh()` | Re-evaluates all bindings against the current `context`. |
-| `view:find(id) -> ref?` | Looks up a ref handle by ID (`view.refs[id]`). |
-| `view:unmount()` | Destroys the view's entity subtree and unregisters all subscriptions. |
+| `view:show()` | Sets the view's root entity and hierarchy visibility to `true`. |
+| `view:hide()` | Sets the view's root entity and hierarchy visibility to `false`. |
+| `view:set_inert(bool)` | Suspends button clicks, shortcuts, and focus navigation across the entire view subtree while preserving authored visuals. |
+| `view:is_inert() -> bool` | Returns `true` if the view is currently inert. |
+| `view:is_mounted() -> bool` | Returns `true` if the view's entities are currently alive and mounted. |
+| `view:unmount()` | Destroys the view's entity subtree and unregisters all event subscriptions. |
+| `view:destroy()` | Alias for `view:unmount()`. |
 
 ### `view.refs.<id>` Element Handle Methods
 
@@ -647,23 +706,29 @@ Every element with `ref="id"` exposes both its raw ECS `Entity` (`ref.entity`) a
 
 | Method | Description |
 |---|---|
-| `ref.entity` | The underlying 64-bit ECS `Entity` handle (usable with `registry.*`). |
+| `ref.entity` | The underlying 64-bit ECS `Entity` handle (usable with `registry.*` or `ui.focus`). |
 | `ref:set_text(str)` / `ref:get_text()` | Reads or updates the element's `TextLabelComponent.text`. |
+| `ref:set_outline(color_or_width, width?)` | Updates the element's `TextLabelComponent` outline (`bool`, pixel width `0..4`, hex/CSS color string, or `{r, g, b, a}` table, with optional explicit `width`). |
 | `ref:set_visible(bool)` / `ref:is_visible()` | Shows or hides the element and its subtree (`UIRectComponent.visible`). |
 | `ref:set_disabled(bool)` / `ref:is_disabled()` | Enables or disables interaction and applies the `:disabled` style state. |
+| `ref:set_inert(bool)` / `ref:is_inert()` | Sets or reads whether this element and its descendants are inert (inputs suspended, focus cleared, visuals preserved). |
 | `ref:set_checked(bool)` / `ref:is_checked()` | Sets or reads the checked state on a `<Toggle>` or `<RadioButton>`. |
 | `ref:set_value(num)` / `ref:get_value()` | Sets or reads the normalized fill/value on a `<ProgressBar>` or `<Slider>`. |
-| `ref:focus()` | Assigns keyboard/gamepad focus to this element. |
+| `ref:on(eventName, fn)` | Registers an imperative Lua event listener (`"click"` for buttons/toggles, `"change"` for sliders/toggles). |
+
+> To move keyboard or gamepad focus to a ref element, pass its entity handle: `ui.focus(view.refs.myBtn.entity)`.
 
 ### Low-Level Procedural Helpers (`ui.*`)
 
 All declarative primitives map to low-level helpers that remain available for procedural Lua scripts:
-- `ui.canvas(entity, opts?)` — Attaches `UICanvasComponent`.
-- `ui.anchor(entity, preset_or_table, opts?)` — Attaches `UIAnchorComponent`.
-- `ui.flex(entity, opts?)` — Attaches `UIFlexComponent` (`direction`, `gap`, `cross_gap`, `wrap`, `columns`, `padding`, `padding_left`, `padding_top`, `padding_right`, `padding_bottom`, `justify`, `align`).
-- `ui.box(entity, opts?)` — Attaches `UILayoutBoxComponent` (`width`, `height`, `min_width`, `max_width`, `margin`, `flex_grow`).
+- `ui.canvas(entity, opts?)` — Attaches `UICanvasComponent` (`fixed`, `width`, `height`, `base_layer`).
+- `ui.anchor(entity, preset_or_table, opts?)` — Attaches `UIAnchorComponent` (`left`, `top`, `right`, `bottom`, `offset_*`).
+- `ui.flex(entity, opts?)` — Attaches `UIFlexComponent` (`direction`, `gap`, `cross_gap`, `wrap`, `columns`, `padding`, `padding_*`, `justify`, `align`).
+- `ui.box(entity, opts?)` — Attaches `UILayoutBoxComponent` (`width`, `height`, `min_width`, `max_width`, `min_height`, `max_height`, `margin`, `margin_*`, `visible`).
 - `ui.clip(entity, enabled_or_table?)` — Attaches `UIClipComponent` hardware scissor clipping.
-- `ui.nine_slice(entity, slice_or_table)` — Attaches `UINineSliceComponent` 9-patch border slicing.
-- `ui.scroll(entity, opts?)` — Attaches `UIScrollComponent` + `UIClipComponent`.
-- `ui.z_index(entity, z)` — Attaches `UIZIndexComponent`.
-- `ui.debug_draw(enabled?)` — Toggles or sets wireframe overlay visualization.
+- `ui.nine_slice(entity, slice_or_table)` — Attaches `UINineSliceComponent` 9-patch border slicing (`left`, `top`, `right`, `bottom`).
+- `ui.scroll(entity, opts?)` — Attaches `UIScrollComponent` (`scroll_x`, `scroll_y`, `wheel_step`, `horizontal`, `vertical`) + `UIClipComponent`.
+- `ui.z_index(entity, z)` — Attaches `UIZIndexComponent` (`z`).
+- `ui.focus(entity)` — Assigns focus to `entity` via `UIButtonSystem`.
+- `ui.get_focused() -> entity?` — Returns the currently focused UI entity, or `nil`.
+- `ui.debug_draw(enabled?) -> bool` — Toggles or sets wireframe overlay visualization.

@@ -12,6 +12,7 @@ struct UIRectComponent {
   int layer = 0;  // computed by UILayoutSystem from canvas.baseLayer + accumulated UIZIndexComponent.z
   std::uint8_t clipId = 0;
   bool visible = true;
+  bool blocksPointer = false;
 
   explicit UIRectComponent(const float t_left = 0.f, const float t_top = 0.f, const float t_right = 0.f,
                            const float t_bottom = 0.f, const int t_layer = 0)

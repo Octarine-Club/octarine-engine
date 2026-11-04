@@ -4,6 +4,7 @@
 #include <SDL3_mixer/SDL_mixer.h>
 
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 
 #include "General/FileWatcher.h"
@@ -48,9 +49,11 @@ class AssetHotReload {
 
  private:
   void RefreshTracking(AssetManager& assets);
+  const std::string& ResolveCanonical(const std::string& rawPath);
 
   FileWatcher watcher_;
   std::unordered_set<std::string> tracked_;  // canonical paths the watcher currently watches
+  std::unordered_map<std::string, std::string> raw_to_canonical_{};
   float accumulator_ = 0.0F;
   ReloadInfo last_;
 };

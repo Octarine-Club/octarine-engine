@@ -114,13 +114,13 @@ PerfOverlaySystem::~PerfOverlaySystem() {
   }
 }
 
-TTF_Font* PerfOverlaySystem::EnsureFont(AssetManager& assetManager) {
-  if (TTF_Font* font = assetManager.GetFont(kDebugFontId); font != nullptr) return font;
+TTF_Font* PerfOverlaySystem::EnsureFont(AssetManager& assetManager, const float rasterScale) {
+  if (TTF_Font* font = assetManager.GetFontScaled(kDebugFontId, rasterScale); font != nullptr) return font;
   if (font_init_attempted_) return nullptr;  // a prior registration failed; don't retry/respam
   font_init_attempted_ = true;
   assetManager.AddFontFromMemory(kDebugFontId, octarine::fonts::kRobotoMediumData, octarine::fonts::kRobotoMediumSize,
                                  kDebugFontSize);
-  return assetManager.GetFont(kDebugFontId);
+  return assetManager.GetFontScaled(kDebugFontId, rasterScale);
 }
 
 bool PerfOverlaySystem::UpdateLine(Line& line, TTF_Font* font, SDL_Renderer* sdlRenderer,
@@ -134,13 +134,7 @@ bool PerfOverlaySystem::UpdateLine(Line& line, TTF_Font* font, SDL_Renderer* sdl
     return true;
   }
 
-  if (rasterScale > 1.01F) {
-    TTF_SetFontSize(font, kDebugFontSize * rasterScale);
-  }
   SDL_Surface* surface = TTF_RenderText_Blended(font, text.c_str(), 0, SDL_Color{kWhite, kWhite, kWhite, kWhite});
-  if (rasterScale > 1.01F) {
-    TTF_SetFontSize(font, kDebugFontSize);
-  }
   if (surface == nullptr) {
     Logger::Error("PerfOverlay: text render failed: " + std::string(SDL_GetError()));
     return false;
@@ -176,9 +170,11 @@ bool PerfOverlaySystem::AppendFpsRows(TTF_Font* font, SDL_Renderer* sdlRenderer,
   // Percentile lows: "P95" is the FPS exceeded 95% of the time (5th percentile of the samples),
   // matching the 1%/5% low convention of game perf overlays.
   scratchpad_ = fps_samples_;
+  const float avgMs = GetAverage(ms_samples_);
+  const float avgFps = avgMs > 0.0F ? (1000.0F / avgMs) : GetAverage(fps_samples_);
   const std::array<std::pair<const char*, float>, 5> entries{
       {{"FPS", fps},
-       {"AVG", GetAverage(fps_samples_)},
+       {"AVG", avgFps},
        {"P50", PerfUtils::GetPercentileInPlace(scratchpad_, 0.5F)},
        {"P95", PerfUtils::GetPercentileInPlace(scratchpad_, 0.05F)},
        {"P99", PerfUtils::GetPercentileInPlace(scratchpad_, 0.01F)}}};
@@ -280,18 +276,30 @@ void PerfOverlaySystem::RecomputeBlockDimensions() {
 void PerfOverlaySystem::Draw(Registry& registry, SDL_Renderer* sdlRenderer, const float deltaTime) {
   if (sdlRenderer == nullptr) return;
   auto& assetManager = registry.Get<AssetManager>();
-  TTF_Font* font = EnsureFont(assetManager);
+  float sx = 1.0F;
+  float sy = 1.0F;
+  SDL_GetRenderScale(sdlRenderer, &sx, &sy);
+  const float rawScale = std::max(sx, sy);
+  const float rasterScale = rawScale > 1.01F ? std::clamp(std::round(rawScale * 4.0F) * 0.25F, 1.0F, 4.0F) : 1.0F;
+  TTF_Font* font = EnsureFont(assetManager, rasterScale);
   if (font == nullptr) return;
 
   const auto& options = registry.Get<GameConfig>().GetEngineOptions();
   const float fps = deltaTime > 0.0F ? 1.0F / deltaTime : 0.0F;
   const float frameMs = deltaTime * 1000.0F;
   RecordSample(fps, frameMs);
+  ++window_frames_;
+  window_seconds_ += deltaTime;
 
   overlay_refresh_timer_ -= deltaTime;
   if (overlay_refresh_timer_ <= 0.0F) {
+    const float windowFps = window_seconds_ > 0.0F ? static_cast<float>(window_frames_) / window_seconds_ : fps;
+    const float windowFrameMs =
+        window_frames_ > 0 ? (window_seconds_ * 1000.0F) / static_cast<float>(window_frames_) : frameMs;
+    window_frames_ = 0;
+    window_seconds_ = 0.0F;
     overlay_refresh_timer_ = kOverlayRefreshSeconds;
-    RefreshRows(font, sdlRenderer, registry, options, fps, frameMs);
+    RefreshRows(font, sdlRenderer, registry, options, windowFps, windowFrameMs);
   }
   if (active_count_ == 0) return;
 

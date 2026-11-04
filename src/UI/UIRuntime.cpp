@@ -30,6 +30,7 @@
 #include "ECS/Registry.h"
 #include "Game/GameConfig.h"
 #include "General/Logger.h"
+#include "Lua/Bindings/TextLabelComponentLuaBinding.h"
 #include "Renderer/SpriteRenderCache.h"
 
 namespace {
@@ -376,13 +377,22 @@ bool IsEntityChecked(Registry* reg, Entity entity) {
 
 void SetEntityDisabled(Registry* reg, Entity entity, bool disabled) {
   if (!reg->IsAlive(entity)) return;
-  if (reg->HasComponent<UIButtonComponent>(entity)) {
-    reg->GetComponent<UIButtonComponent>(entity).isActive = !disabled;
-  }
   if (!reg->HasComponent<UIFocusComponent>(entity)) {
     reg->AddComponent(entity, UIFocusComponent{});
   }
-  reg->GetComponent<UIFocusComponent>(entity).isDisabled = disabled;
+  auto& foc = reg->GetComponent<UIFocusComponent>(entity);
+  foc.isDisabled = disabled;
+  if (disabled) {
+    foc.isFocused = false;
+  }
+  if (reg->HasComponent<UIButtonComponent>(entity)) {
+    auto& btn = reg->GetComponent<UIButtonComponent>(entity);
+    btn.isActive = !disabled && !foc.isInert;
+    if (!btn.isActive) {
+      btn.isHovered = false;
+      btn.isPressed = false;
+    }
+  }
 }
 
 bool IsEntityDisabled(Registry* reg, Entity entity) {
@@ -394,6 +404,60 @@ bool IsEntityDisabled(Registry* reg, Entity entity) {
     return !reg->GetComponent<UIButtonComponent>(entity).isActive;
   }
   return false;
+}
+
+void SetEntityInert(Registry* reg, Entity entity, bool inert, bool forceFocusComponent = false) {
+  if (!reg || !reg->IsAlive(entity)) return;
+  const bool hasButton = reg->HasComponent<UIButtonComponent>(entity);
+  const bool hasFocus = reg->HasComponent<UIFocusComponent>(entity);
+  if (!hasButton && !hasFocus && !forceFocusComponent) return;
+  if (!hasFocus) {
+    UIFocusComponent foc{};
+    foc.isFocusable = hasButton;
+    reg->AddComponent(entity, foc);
+  }
+  auto& foc = reg->GetComponent<UIFocusComponent>(entity);
+  foc.isInert = inert;
+  if (inert) {
+    foc.isFocused = false;
+  }
+  if (hasButton) {
+    auto& btn = reg->GetComponent<UIButtonComponent>(entity);
+    btn.isActive = !inert && !foc.isDisabled;
+    if (inert) {
+      btn.isHovered = false;
+      btn.isPressed = false;
+    }
+  }
+}
+
+bool IsEntityInert(Registry* reg, Entity entity) {
+  if (!reg || !reg->IsAlive(entity)) return false;
+  std::optional<Entity> curr = entity;
+  while (curr.has_value() && reg->IsAlive(*curr)) {
+    if (reg->HasComponent<UIFocusComponent>(*curr) && reg->GetComponent<UIFocusComponent>(*curr).isInert) {
+      return true;
+    }
+    curr = reg->GetParent(*curr);
+  }
+  return false;
+}
+
+void SetSubtreeInert(Registry* reg, Entity root, bool inert) {
+  if (!reg || !reg->IsAlive(root)) return;
+  std::vector<Entity> stack{root};
+  while (!stack.empty()) {
+    const Entity curr = stack.back();
+    stack.pop_back();
+    if (!reg->IsAlive(curr)) continue;
+    SetEntityInert(reg, curr, inert, curr == root);
+    reg->ForEachChild(curr, [&stack](const Entity child) { stack.push_back(child); });
+  }
+}
+
+bool ParsePointerEventsBlocks(std::string_view raw) {
+  const std::string_view v = TrimSv(raw);
+  return v == "stop" || v == "block" || v == "all";
 }
 
 struct RadioGroupState {
@@ -443,8 +507,34 @@ struct UIViewInstance : std::enable_shared_from_this<UIViewInstance> {
   std::vector<std::function<void()>> unmountFns{};
   std::unordered_map<uint32_t, std::shared_ptr<SliderState>> sliders{};
   std::unordered_map<uint32_t, std::vector<sol::protected_function>> changeCallbacks{};
+  std::vector<Entity> inertSubtreeRoots{};
   bool isMounted = true;
   bool isRefreshing = false;
+  bool isInert = false;
+
+  void SetInert(const bool inert) {
+    isInert = inert;
+    if (!IsCurrentlyMounted()) return;
+    SetSubtreeInert(runtime->GetRegistry(), rootEntity, inert);
+    if (!inert) {
+      for (const Entity subRoot : inertSubtreeRoots) {
+        if (runtime->GetRegistry()->IsAlive(subRoot)) {
+          SetSubtreeInert(runtime->GetRegistry(), subRoot, true);
+        }
+      }
+    }
+  }
+
+  // Mutates inertSubtreeRoots; clang-tidy false-positives when macOS SDK headers fail to parse std::vector<Entity>.
+  // NOLINTNEXTLINE(readability-make-member-function-const)
+  void SetRefSubtreeInert(const Entity entity, const bool inert) {
+    std::erase(inertSubtreeRoots, entity);
+    if (inert) {
+      inertSubtreeRoots.push_back(entity);
+    }
+    if (!IsCurrentlyMounted()) return;
+    SetSubtreeInert(runtime->GetRegistry(), entity, inert || isInert);
+  }
 
   void AddRefreshFn(std::function<void()> fn) {
     auto& target = (activeRefreshSink != nullptr) ? *activeRefreshSink : refreshFns;
@@ -491,6 +581,15 @@ struct UIViewInstance : std::enable_shared_from_this<UIViewInstance> {
     const auto fns = refreshFns;
     for (const auto& fn : fns) {
       fn();
+    }
+    if (isInert) {
+      SetSubtreeInert(runtime->GetRegistry(), rootEntity, true);
+    } else if (!inertSubtreeRoots.empty()) {
+      Registry* reg = runtime->GetRegistry();
+      std::erase_if(inertSubtreeRoots, [reg](const Entity e) { return !reg->IsAlive(e); });
+      for (const Entity subRoot : inertSubtreeRoots) {
+        SetSubtreeInert(reg, subRoot, true);
+      }
     }
     isRefreshing = false;
   }
@@ -566,6 +665,16 @@ constexpr const char* kStyleAttrs[] = {
     "sound-click",
     "sound-press",
     "sound-focus",
+    "shadow-color",
+    "shadow-offset",
+    "outline",
+    "outline-color",
+    "outline-width",
+    "outline-thickness",
+    "text-outline",
+    "text-outline-color",
+    "text-outline-width",
+    "pointer-events",
 };
 
 std::vector<std::string> ResolveNodeClasses(const OxmlNode& node, const sol::table& scope, sol::state& lua) {
@@ -607,7 +716,9 @@ std::map<std::string, std::string> CollectInlineStyleProps(const OxmlNode& node,
 }
 
 void AttachCommonComponents(Registry* reg, Entity entity, const OxmlNode& node, const OssResolvedStyle& resolved) {
-  reg->AddComponent(entity, UIRectComponent{});
+  UIRectComponent rect{};
+  rect.blocksPointer = ParsePointerEventsBlocks(node.GetAttr("pointer-events", resolved.Get("pointer-events")));
+  reg->AddComponent(entity, rect);
   UILayoutBoxComponent box = BuildLayoutBoxFromStyle(resolved.base);
   if (node.tag == "Canvas" && !resolved.Has("width") && !node.HasAttr("width")) {
     box.SetWidthPercent(100.0f);
@@ -697,6 +808,81 @@ void ConfigureLabelWrapping(const OxmlNode& node, const OssResolvedStyle& resolv
   }
 }
 
+void ApplyLabelShadowEffects(const OssResolvedStyle& resolved, TextLabelComponent& lbl) {
+  lbl.shadowColor = octarine::Color{0, 0, 0, 200};
+  lbl.shadowOffset = glm::vec2{0.0f, 0.0f};
+
+  const std::string shadowColStr = resolved.Get("shadow-color");
+  if (!shadowColStr.empty()) {
+    octarine::Color sc{0, 0, 0, 200};
+    if (OssParser::ParseColor(shadowColStr, sc)) {
+      lbl.shadowColor = sc;
+    }
+  }
+  const std::string shadowOffStr = resolved.Get("shadow-offset");
+  if (!shadowOffStr.empty()) {
+    float offX = 0.0f;
+    float offY = 0.0f;
+    float unusedB = 0.0f;
+    float unusedL = 0.0f;
+    if (OssParser::ParseEdges(shadowOffStr, offX, offY, unusedB, unusedL)) {
+      lbl.shadowOffset = glm::vec2(offX, offY);
+    }
+  }
+}
+
+void ApplyOutlineWidthToken(const std::string& outWidthStr, TextLabelComponent& lbl) {
+  if (outWidthStr == "false" || outWidthStr == "0" || outWidthStr == "none") {
+    lbl.outlineWidth = 0.0f;
+    return;
+  }
+  if (outWidthStr == "true") {
+    lbl.outlineWidth = 1.0f;
+    return;
+  }
+  float ow = 0.0f;
+  if (OssParser::ParseFloat(outWidthStr, ow)) {
+    lbl.outlineWidth = std::max(0.0f, ow);
+    return;
+  }
+  octarine::Color oc{0, 0, 0, 255};
+  if (OssParser::ParseColor(outWidthStr, oc)) {
+    lbl.outlineColor = oc;
+    lbl.outlineWidth = oc.a > 0 ? 1.0f : 0.0f;
+  }
+}
+
+void ApplyLabelOutlineEffects(const OssResolvedStyle& resolved, TextLabelComponent& lbl) {
+  lbl.outlineColor = octarine::Color{0, 0, 0, 255};
+  lbl.outlineWidth = 0.0f;
+
+  const std::string outColStr = resolved.Get("outline-color", resolved.Get("text-outline-color"));
+  bool hasOutlineColor = false;
+  if (!outColStr.empty()) {
+    octarine::Color oc{0, 0, 0, 255};
+    if (OssParser::ParseColor(outColStr, oc)) {
+      lbl.outlineColor = oc;
+      hasOutlineColor = (oc.a > 0);
+    }
+  }
+
+  std::string outWidthStr =
+      resolved.Get("outline-width", resolved.Get("outline-thickness", resolved.Get("text-outline-width")));
+  if (outWidthStr.empty()) {
+    outWidthStr = resolved.Get("outline", resolved.Get("text-outline"));
+  }
+  if (!outWidthStr.empty()) {
+    ApplyOutlineWidthToken(outWidthStr, lbl);
+  } else if (hasOutlineColor) {
+    lbl.outlineWidth = 1.0f;
+  }
+}
+
+void ConfigureLabelEffects(const OssResolvedStyle& resolved, TextLabelComponent& lbl) {
+  ApplyLabelShadowEffects(resolved, lbl);
+  ApplyLabelOutlineEffects(resolved, lbl);
+}
+
 void ConfigureLabelEntity(Registry* reg, Entity entity, const OxmlNode& node, const OssResolvedStyle& resolved,
                           const sol::table& scope, sol::state& lua) {
   const std::string rawText = node.GetAttr("text");
@@ -711,6 +897,7 @@ void ConfigureLabelEntity(Registry* reg, Entity entity, const OxmlNode& node, co
   const TextAlign vAlign = centered ? TextAlign::Center : TextAlign::Start;
   TextLabelComponent lbl({0.0f, 0.0f}, 0, initialText, fontId, textColor, true, hAlign, vAlign);
   ConfigureLabelWrapping(node, resolved, lbl);
+  ConfigureLabelEffects(resolved, lbl);
   reg->AddComponent(entity, lbl);
 }
 
@@ -1219,6 +1406,10 @@ void BindSpriteAttribute(const std::shared_ptr<UIViewInstance>& view, Entity ent
 }
 
 void ApplyResolvedBoxAndFlexUpdate(Registry* r, Entity entity, const OxmlNode& node, const OssResolvedStyle& resolved) {
+  if (r->HasComponent<UIRectComponent>(entity)) {
+    r->GetComponent<UIRectComponent>(entity).blocksPointer =
+        ParsePointerEventsBlocks(node.GetAttr("pointer-events", resolved.Get("pointer-events")));
+  }
   if (r->HasComponent<UILayoutBoxComponent>(entity)) {
     const bool prevVis = r->GetComponent<UILayoutBoxComponent>(entity).visible;
     UILayoutBoxComponent box = BuildLayoutBoxFromStyle(resolved.base);
@@ -1283,6 +1474,7 @@ void ApplyResolvedVisualUpdate(Registry* r, Entity entity, const OxmlNode& node,
       lbl.fontId = resolved.Get("font", lbl.fontId);
     }
     ConfigureLabelWrapping(node, resolved, lbl);
+    ConfigureLabelEffects(resolved, lbl);
   }
   if (resolved.HasPseudoStates()) {
     if (r->HasComponent<UIStyleStateComponent>(entity)) {
@@ -1387,6 +1579,15 @@ void AttachRefTextMethods(sol::table& h, const std::weak_ptr<UIViewInstance>& we
     }
     return "";
   });
+
+  h.set_function("set_outline", [weakView, entity](const sol::table&, const sol::object& colorOrWidth,
+                                                   const sol::optional<float>& maybeWidth) {
+    auto v = weakView.lock();
+    if (!v) return;
+    Registry* r = v->runtime->GetRegistry();
+    if (!r->IsAlive(entity) || !r->HasComponent<TextLabelComponent>(entity)) return;
+    LuaBinding<TextLabelComponent>::ApplyOutline(r->GetComponent<TextLabelComponent>(entity), colorOrWidth, maybeWidth);
+  });
 }
 
 void AttachRefValueMethods(sol::table& h, const std::weak_ptr<UIViewInstance>& weakView, Entity entity) {
@@ -1447,6 +1648,15 @@ void AttachRefStateMethods(sol::table& h, const std::weak_ptr<UIViewInstance>& w
   h.set_function("is_disabled", [weakView, entity](const sol::table&) -> bool {
     auto v = weakView.lock();
     return v ? IsEntityDisabled(v->runtime->GetRegistry(), entity) : false;
+  });
+
+  h.set_function("set_inert", [weakView, entity](const sol::table&, const bool inert) {
+    if (auto v = weakView.lock()) v->SetRefSubtreeInert(entity, inert);
+  });
+
+  h.set_function("is_inert", [weakView, entity](const sol::table&) -> bool {
+    auto v = weakView.lock();
+    return v ? IsEntityInert(v->runtime->GetRegistry(), entity) : false;
   });
 }
 
@@ -1530,10 +1740,10 @@ void RebuildRepeaterItems(const std::shared_ptr<UIViewInstance>& v, const std::s
     sol::object itemVal = listTbl[idx];
     if (!itemVal.valid() || itemVal == sol::lua_nil) continue;
     sol::table itemVars = lua.create_table();
-    itemVars[rec->clause.itemVar] = itemVal;
-    itemVars["__item"] = itemVal;
+    itemVars.set(rec->clause.itemVar, itemVal);
+    itemVars.set("__item", itemVal);
     if (!rec->clause.indexVar.empty()) {
-      itemVars[rec->clause.indexVar] = static_cast<int>(idx);
+      itemVars.set(rec->clause.indexVar, static_cast<int>(idx));
     }
     sol::table childScope = v->MakeScope(itemVars);
     const Entity spawned =
@@ -1543,6 +1753,11 @@ void RebuildRepeaterItems(const std::shared_ptr<UIViewInstance>& v, const std::s
   v->activeRefreshSink = prevSink;
   for (const auto& fn : rec->itemRefreshFns) {
     fn();
+  }
+  if (v->isInert || IsEntityInert(r, rec->parentEntity)) {
+    for (const Entity e : rec->spawnedEntities) {
+      SetSubtreeInert(r, e, true);
+    }
   }
 }
 
@@ -2044,6 +2259,8 @@ void PopulateMountViewTable(const std::shared_ptr<UIViewInstance>& view) {
   vt.set_function("hide", [view](const sol::table&) {
     SetEntityVisibility(view->runtime->GetRegistry(), view->rootEntity, false);
   });
+  vt.set_function("set_inert", [view](const sol::table&, const bool inert) { view->SetInert(inert); });
+  vt.set_function("is_inert", [view](const sol::table&) -> bool { return view->isInert; });
   vt.set_function("is_mounted", [view](const sol::table&) -> bool { return view->IsCurrentlyMounted(); });
   vt.set_function("unmount", [view](const sol::table&) { view->Unmount(); });
   vt.set_function("destroy", [view](const sol::table&) { view->Unmount(); });

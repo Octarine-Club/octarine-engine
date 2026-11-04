@@ -288,7 +288,17 @@ generated Lua stub at
 
 ---
 
-## 7. Adding Component Methods (engine contributors & native game modules)
+## 7. Domain Modules (`ui`, `tilemap`, `input`)
+
+The engine exposes core subsystems as dedicated global modules:
+
+- **`ui`**: The declarative and procedural UI framework. Provides `ui.mount` for `.oxml` and `.oss` layout rendering, `ui.observable` for reactive MVVM state binding, `ui.register_widget` for custom tags, `ui.debug_draw` for wireframe debugging, and procedural layout helpers (`ui.canvas`, `ui.anchor`, `ui.flex`, `ui.box`, `ui.clip`, `ui.nine_slice`, `ui.scroll`, `ui.focus`, `ui.get_focused`). See [`docs/ui-framework.md`](ui-framework.md) and [`docs/ui-layout.md`](ui-layout.md).
+- **`tilemap`**: Infinite 2D LDtk chunked tilemap runtime. Provides level loading (`tilemap.load`), edge-socket procedural stitching, IntGrid spatial queries (`tilemap.is_solid_at`), 2D DDA raycasting (`tilemap.raycast`), circle and AABB penetration resolution, and dynamic prop streaming with consumed persistence. See [`docs/tilemaps.md`](tilemaps.md).
+- **`input`**: Action mapping and raw device input handling. Provides action binding (`input.bind`), state queries (`input.is_down`, `input.is_pressed`), and event callbacks (`input.on_key_down`). See § 5 above.
+
+---
+
+## 8. Adding Component Methods (engine contributors & native game modules)
 
 When you add a Lua binding for an engine or native game-module component
 (`LuaBinding<X>`), the `bindUsertype` call exposes both fields and **member

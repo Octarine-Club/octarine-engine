@@ -349,6 +349,10 @@ if (OCTARINE_ENABLE_BENCHMARKS)
         target_compile_options(OctarineBenchmarks PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(OctarineBenchmarks PRIVATE
                 $<IF:$<CONFIG:Debug>,,-Werror ${OCTARINE_ARCH_FLAG} -ffast-math>
+                $<$<NOT:$<CONFIG:Debug>>:-ffunction-sections>
+                $<$<NOT:$<CONFIG:Debug>>:-fdata-sections>
+                $<$<NOT:$<CONFIG:Debug>>:-fvisibility=hidden>
+                $<$<NOT:$<CONFIG:Debug>>:-fvisibility-inlines-hidden>
         )
     endif ()
 

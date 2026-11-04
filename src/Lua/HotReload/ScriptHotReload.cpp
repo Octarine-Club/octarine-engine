@@ -38,12 +38,19 @@ void ScriptHotReload::Tick(Registry& registry, sol::state& lua, float dt, float 
   }
 }
 
+const std::string& ScriptHotReload::ResolveCanonical(const std::string& rawPath) {
+  if (const auto it = raw_to_canonical_.find(rawPath); it != raw_to_canonical_.end()) {
+    return it->second;
+  }
+  return raw_to_canonical_.emplace(rawPath, Canonicalize(rawPath)).first->second;
+}
+
 void ScriptHotReload::ForceReloadAll(Registry& registry, sol::state& lua) {
   std::unordered_set<std::string> paths;
   auto query = registry.CreateQuery<ScriptComponent>();
   query->ForEach([&](const ScriptComponent& sc) {
     if (!sc.sourcePath.empty()) {
-      paths.insert(Canonicalize(sc.sourcePath));
+      paths.insert(ResolveCanonical(sc.sourcePath));
     }
   });
   for (const auto& p : paths) {
@@ -56,7 +63,7 @@ void ScriptHotReload::RefreshTracking(Registry& registry) {
   auto query = registry.CreateQuery<ScriptComponent>();
   query->ForEach([&](const ScriptComponent& sc) {
     if (!sc.sourcePath.empty()) {
-      seen.insert(Canonicalize(sc.sourcePath));
+      seen.insert(ResolveCanonical(sc.sourcePath));
     }
   });
 
@@ -103,7 +110,7 @@ void ScriptHotReload::ReloadFile(const std::string& canonicalPath, Registry& reg
   int swapped = 0;
   auto query = registry.CreateQuery<ScriptComponent>();
   query->ForEach([&](ScriptComponent& sc) {
-    if (Canonicalize(sc.sourcePath) == canonicalPath) {
+    if (!sc.sourcePath.empty() && ResolveCanonical(sc.sourcePath) == canonicalPath) {
       if (SwapComponent(sc, newTable)) {
         ++swapped;
       }

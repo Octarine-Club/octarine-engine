@@ -62,7 +62,10 @@ class UILayoutSystem {
 
   static void WriteRect(Registry* registry, const Entity entity, const UIRectComponent& rect) {
     if (registry->HasComponent<UIRectComponent>(entity)) {
-      registry->GetComponent<UIRectComponent>(entity) = rect;
+      auto& dst = registry->GetComponent<UIRectComponent>(entity);
+      const bool keepBlocksPointer = dst.blocksPointer;
+      dst = rect;
+      dst.blocksPointer = keepBlocksPointer;
     } else {
       registry->AddComponent(entity, rect);
     }

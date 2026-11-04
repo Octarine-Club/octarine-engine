@@ -1,9 +1,19 @@
 #include "Renderer/Renderer.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <cstdint>
 #include <numbers>
 #include <string>
+
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#if TARGET_OS_OSX
+#include <objc/message.h>
+#include <objc/runtime.h>
+#endif
+#endif
 
 #include "General/AngleUnit.h"
 #include "General/Constants.h"
@@ -15,6 +25,80 @@ constexpr Uint8 kSceneClearGrey = 24;
 constexpr Uint8 kWindowClearBlack = 0;
 constexpr int kMaxRenderTargetDim = 8192;
 constexpr float kHairlineScaleThreshold = 1.05F;
+
+#if defined(__APPLE__) && TARGET_OS_OSX
+void ConfigureMacMetalLayerVSync(SDL_Renderer* sdlRenderer, const bool enabled) {
+  if (sdlRenderer == nullptr) return;
+  void* layer = SDL_GetRenderMetalLayer(sdlRenderer);
+  if (layer == nullptr) return;
+  // Disable direct WindowServer scanout compositing when VSync is off so WindowServer does not
+  // pin two of the three CAMetalLayer drawables across display refresh intervals on lower-Hz monitors.
+  reinterpret_cast<void (*)(void*, SEL, bool)>(objc_msgSend)(layer, sel_registerName("setAllowsDisplayCompositing:"),
+                                                             enabled);
+}
+
+// When SDL_SetRenderVSync(0) is toggled on macOS Metal, QuartzCore's CAImageQueue can leave
+// previously queued IOSurface drawables in state 0 (queued for display scanout) when switching
+// away from direct display compositing, starving nextDrawable into a 1Hz timeout.
+// Probing the CAImageQueue shared-memory ring (validated against version 20 and capacity [4, 8])
+// and atomically marking non-latest queued slots as collectable (0x22222222) releases those
+// pinned drawables immediately; if any header check mismatches on a future macOS release, this
+// function safely no-ops.
+void ReclaimStaleMacMetalDrawables(SDL_Renderer* sdlRenderer) {
+  if (sdlRenderer == nullptr) return;
+  int vsync = 1;
+  if (!SDL_GetRenderVSync(sdlRenderer, &vsync) || vsync != 0) return;
+  void* layer = SDL_GetRenderMetalLayer(sdlRenderer);
+  if (layer == nullptr) return;
+  reinterpret_cast<void (*)(void*, SEL, bool)>(objc_msgSend)(layer, sel_registerName("setAllowsDisplayCompositing:"),
+                                                             false);
+
+  constexpr ptrdiff_t kLayerPrivOffset = 0x20;
+  constexpr ptrdiff_t kPrivImageQueueOffset = 0x10;
+  constexpr ptrdiff_t kQueueCapOffset = 0x28;
+  constexpr ptrdiff_t kQueueShmHolderOffset = 0x30;
+  constexpr ptrdiff_t kShmPtrOffset = 0x18;
+  constexpr ptrdiff_t kShmCapOffset = 0x20;
+  constexpr ptrdiff_t kShmLatestGenOffset = 0x24;
+  constexpr ptrdiff_t kShmSlotsOffset = 0x1e0;
+  constexpr ptrdiff_t kShmSlotStride = 0xa0;
+  constexpr ptrdiff_t kSlotStateOffset = 0x3c;
+  constexpr ptrdiff_t kSlotTypeOffset = 0x44;
+  constexpr ptrdiff_t kSlotGenOffset = 0x64;
+  constexpr uint32_t kExpectedShmVersion = 20U;
+  constexpr uint32_t kMinQueueCap = 4U;
+  constexpr uint32_t kMaxQueueCap = 8U;
+  constexpr uint32_t kIOSurfaceSlotType = 3U;
+  constexpr uint32_t kSlotStateQueued = 0U;
+  constexpr uint32_t kSlotStateCollectable = 0x22222222U;
+
+  const auto* priv = *reinterpret_cast<const char* const*>(static_cast<const char*>(layer) + kLayerPrivOffset);
+  if (priv == nullptr) return;
+  const auto* iq = *reinterpret_cast<const char* const*>(priv + kPrivImageQueueOffset);
+  if (iq == nullptr) return;
+  const uint32_t cap = *reinterpret_cast<const uint32_t*>(iq + kQueueCapOffset);
+  const auto* shmHolder = *reinterpret_cast<const char* const*>(iq + kQueueShmHolderOffset);
+  if (shmHolder == nullptr || cap < kMinQueueCap || cap > kMaxQueueCap) return;
+  auto* shm = *reinterpret_cast<char* const*>(shmHolder + kShmPtrOffset);
+  if (shm == nullptr) return;
+  if (*reinterpret_cast<const uint32_t*>(shm) != kExpectedShmVersion ||
+      *reinterpret_cast<const uint32_t*>(shm + kShmCapOffset) != cap) {
+    return;
+  }
+
+  const uint32_t latestGen = *reinterpret_cast<const volatile uint32_t*>(shm + kShmLatestGenOffset);
+  for (uint32_t si = 0; si < cap; ++si) {
+    char* slot = shm + kShmSlotsOffset + static_cast<ptrdiff_t>(si) * kShmSlotStride;
+    const uint32_t tp = *reinterpret_cast<const volatile uint32_t*>(slot + kSlotTypeOffset);
+    const uint32_t gen = *reinterpret_cast<const volatile uint32_t*>(slot + kSlotGenOffset);
+    if (tp == kIOSurfaceSlotType && gen != 0U && gen != latestGen) {
+      auto* statePtr = reinterpret_cast<std::atomic<uint32_t>*>(slot + kSlotStateOffset);
+      uint32_t expected = kSlotStateQueued;
+      statePtr->compare_exchange_strong(expected, kSlotStateCollectable, std::memory_order_acq_rel);
+    }
+  }
+}
+#endif
 }  // namespace
 
 bool Renderer::CreateScene(SDL_Renderer* sdlRenderer, const int width, const int height) {
@@ -70,6 +154,10 @@ void Renderer::BeginScene(SDL_Renderer* sdlRenderer) const {
 }
 
 void Renderer::EndScene(SDL_Renderer* sdlRenderer) const {
+#if defined(__APPLE__) && TARGET_OS_OSX
+  SDL_FlushRenderer(sdlRenderer);
+  ReclaimStaleMacMetalDrawables(sdlRenderer);
+#endif
   SDL_SetRenderScale(sdlRenderer, 1.0F, 1.0F);
   SDL_SetRenderTarget(sdlRenderer, nullptr);
   SDL_SetRenderScale(sdlRenderer, 1.0F, 1.0F);
@@ -111,7 +199,20 @@ SDL_FRect Renderer::ComputeCompositeRect(const int sceneW, const int sceneH, con
   return {x, y, w, h};
 }
 
-void Renderer::Present(SDL_Renderer* sdlRenderer) const { SDL_RenderPresent(sdlRenderer); }
+void Renderer::Present(SDL_Renderer* sdlRenderer) const {
+  SDL_RenderPresent(sdlRenderer);
+#if defined(__APPLE__) && TARGET_OS_OSX
+  ReclaimStaleMacMetalDrawables(sdlRenderer);
+#endif
+}
+
+void Renderer::ApplyVSync(SDL_Renderer* sdlRenderer, const bool enabled) {
+  if (sdlRenderer == nullptr) return;
+  SDL_SetRenderVSync(sdlRenderer, enabled ? 1 : 0);
+#if defined(__APPLE__) && TARGET_OS_OSX
+  ConfigureMacMetalLayerVSync(sdlRenderer, enabled);
+#endif
+}
 
 bool Renderer::CaptureScene(SDL_Renderer* sdlRenderer, const std::string& path) const {
   if (scene_texture_ == nullptr) {
@@ -149,11 +250,12 @@ inline SDL_FColor ToSdlFColor(const SDL_Color& c) {
 
 void DrawSprite(SDL_Renderer* renderer, const SpriteCommand& cmd) {
   const SDL_FRect destRect = {cmd.destX, cmd.destY, cmd.destW, cmd.destH};
+  const SDL_FRect* srcRectPtr = (cmd.srcRect.w > 0.0f && cmd.srcRect.h > 0.0f) ? &cmd.srcRect : nullptr;
   const float deg = cmd.rotation * octarine::kRadiansToDegrees;
   SDL_SetTextureColorMod(cmd.texture, cmd.colorMod.r, cmd.colorMod.g, cmd.colorMod.b);
   SDL_SetTextureAlphaMod(cmd.texture, cmd.colorMod.a);
   SDL_SetTextureBlendMode(cmd.texture, cmd.blendMode);
-  SDL_RenderTextureRotated(renderer, cmd.texture, &cmd.srcRect, &destRect, deg, &cmd.pivot, cmd.flip);
+  SDL_RenderTextureRotated(renderer, cmd.texture, srcRectPtr, &destRect, deg, &cmd.pivot, cmd.flip);
 }
 
 void DrawSquare(SDL_Renderer* renderer, const SquareCommand& cmd) {

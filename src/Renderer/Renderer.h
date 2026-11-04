@@ -66,6 +66,10 @@ class Renderer {
   // present site per frame.
   void Present(SDL_Renderer* sdlRenderer) const;
 
+  // Applies VSync state to the SDL renderer and configures platform-specific swapchain properties
+  // (such as CAMetalLayer direct-display compositing on macOS).
+  static void ApplyVSync(SDL_Renderer* sdlRenderer, bool enabled);
+
   // Hand the editor / RenderDebugGUI access to the texture they composite into the Scene
   // window. Returns nullptr when CreateScene never ran (headless / bake / pre-Init paths).
   [[nodiscard]] SDL_Texture* GetSceneTexture() const { return scene_texture_; }

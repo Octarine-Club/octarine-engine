@@ -43,20 +43,25 @@ sections).
 | 11 | `SpatialAudioSystem` | serial · `GlobalTransformComponent, AudioSourceComponent, AudioSinkComponent` | Distance attenuation + stereo pan for active spatial sources. |
 | 12 | `DopplerSystem` | serial · `GlobalTransformComponent, RigidBodyComponent, AudioSourceComponent, AudioSinkComponent` | Doppler pitch shift from relative emitter/listener velocity. |
 | 13 | `CameraFollowSystem` | serial · `PositionComponent, CameraFollowComponent` | Moves the camera viewport to follow its target within bounds. |
-| 14 | `RenderSpriteSystem` | parallel · `GlobalTransformComponent, SpriteComponent` | Resolves textures and enqueues visible sprites into the render queue (viewport-culled). |
-| 15 | `RenderTextSystem` | serial · `TextLabelComponent` | Rasterizes/caches glyphs and enqueues visible text (viewport-culled). |
-| 16 | `RenderPrimitiveSystem` | parallel · `SquarePrimitiveComponent, GlobalTransformComponent` | Enqueues square primitives (viewport-culled). |
+| 14 | `UILayoutSystem` | bulk · canvas hierarchy | Resolves `UIRectComponent` pixel bounds for all canvas descendants via anchors, flexbox/grid (`UIFlexComponent`), and box constraints (`UILayoutBoxComponent`). Runs **after** `TransformSystem`. |
+| 15 | `TilemapRenderSystem` | bulk · active chunks | Enqueues pre-batched static layer geometry (`TILE_CHUNK`) for all visible chunks in the camera viewport. Runs **after** `CameraFollowSystem` and **before** sprite rendering. |
+| 16 | `RenderSpriteSystem` | parallel · `GlobalTransformComponent, SpriteComponent` | Resolves textures and enqueues visible world sprites into the render queue (viewport-culled). |
+| 17 | `RenderUISpriteSystem` | serial · `UIRectComponent, SpriteComponent` | Enqueues UI sprites, 9-slice sliced borders (`UINineSliceComponent`), and icons based on resolved UI rectangles. Runs **after** `UILayoutSystem`. |
+| 18 | `RenderUIPrimitiveSystem` | bulk · UI primitive queries | Enqueues UI panels, backgrounds, borders, progress bars, and debug wireframe overlays (`ui.debug_draw`). Runs **after** `UILayoutSystem`. |
+| 19 | `RenderTextSystem` | serial · `TextLabelComponent` | Rasterizes/caches glyphs and enqueues visible text (both world-space and UI-anchored with alignment, word wrapping, drop shadow, and outline support). Runs **after** `UILayoutSystem`. |
+| 20 | Primitive Render Systems | parallel · `PrimitiveComponent, GlobalTransformComponent` | `RenderPrimitiveSystem` (squares), `RenderCirclePrimitiveSystem` (circles), `RenderLinePrimitiveSystem` (lines), `RenderTrianglePrimitiveSystem` (triangles), `RenderCapsulePrimitiveSystem` (capsules), `RenderColorGridSystem` (color grids). |
 
-The render systems (14–16) only *produce* render-queue entries; `Game::Render` sorts the queue and
+The render systems (15–20) only *produce* render-queue entries; `Game::Render` sorts the queue and
 draws it after `Update` (see [`ecs-architecture.md`](ecs-architecture.md) § Rendering).
 
 ### Why the order matters
 
-- **Velocity (5) → Transform (7) → Collision (8) / Render (14–16):** local position must be integrated
-  before transforms resolve, and transforms must be world-space before collision and rendering read
-  them.
+- **Velocity (5) → Transform (7) → Collision (8) / UI Layout (14) / Render (15–20):** local position must be integrated
+  before transforms resolve, transforms must be world-space before collision and world rendering read
+  them, and UI layout must run before UI render systems enqueue their geometry.
 - **Listener (9) → cull (10) → spatial (11) → doppler (12):** the spatial-audio chain depends on the
   current listener snapshot, then progressively narrows to the sources that need full processing.
+- **Camera (13) → Tilemap Render (15) → Sprite Render (16):** camera viewport updates determine tile chunk culling bounds before tile geometry and world sprites are submitted.
 
 ## Event-driven systems
 
@@ -66,13 +71,21 @@ events on the [event bus](events.md):
 | System | Reacts to | What it does |
 |--------|-----------|--------------|
 | `ScriptCollisionSystem` | `CollisionBatchEvent`, `CollisionExitBatchEvent` | Dispatches Lua `on_collision` and `on_collision_exit` callbacks. |
-| `UIButtonSystem` | `MouseInputEvent`, `KeyInputEvent`, `GamepadButtonEvent` | Hit-tests mouse clicks and handles keyboard, gamepad, and action bindings to trigger button callbacks. |
+| `UIButtonSystem` | `MouseInputEvent`, `KeyInputEvent`, `GamepadButtonEvent` | Hit-tests mouse clicks and handles keyboard, gamepad, and action bindings. Evaluates topmost Z-order hit testing, scissor clipping (`UIClipComponent`), backdrop pointer blocking (`pointer-events: stop`), inert subtree skipping, and spatial directional navigation. |
 
 ## Services and on-demand systems
 
 Not per-frame query systems, but part of the engine:
 
 | System | How it's used | Lua surface |
+|--------|---------------|-------------|
+| `InputSystem` | Installed at boot; subscribes to input events and tracks per-frame key/mouse/wheel state and action bindings. | `input.*` (held/pressed/released, actions) |
+| `TilemapSystem` | Managed singleton; drives LDtk chunk streaming, 2D DDA raycasting, IntGrid bitmask queries, circle/AABB collision resolution, and prop persistence. | `tilemap.*` (load, raycast, collision, props) |
+| `UIRuntime` | Managed singleton; drives `.oxml` and `.oss` parsing, view mounting, reactive observable binding, and live hot reloading. | `ui.*` (mount, observable, register_widget) |
+| `PerfOverlaySystem` | Frame timing and stats overlay driven in `FrameLoop`. | `toggle_perf_overlay()` |
+| `EntityPoolManager` (`EntityPoolSystem.h`) | Object pool for recycling entities across archetypes without fresh allocations. | — |
+| `DrawColliderSystem` | Instantiated per frame in `Game::Render` only when the `drawColliders` option is on. Draws collider wireframes. | debug (ImGui builds) |
+| `RenderDebugGUISystem` | Called from `Game::Render`; renders the ImGui editor/profiler/hierarchy. Compiled out unless `OCTARINE_WITH_IMGUI`. | editor UI |
 |--------|---------------|-------------|
 | `InputSystem` | Installed at boot; subscribes to the input events and tracks per-frame key/mouse/wheel state and action bindings. | `input.*` (held/pressed/released, actions) |
 | `EntityPoolManager` (`EntityPoolSystem.h`) | Object pool for recycling entities across archetypes without fresh allocations. | — |

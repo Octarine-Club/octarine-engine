@@ -15,7 +15,8 @@ struct UIFocusComponent {
   bool isFocusable = true;
   bool isChecked = false;
   bool isDisabled = false;
+  bool isInert = false;
 };
 
 static_assert(std::is_trivially_copyable_v<UIFocusComponent>);
-static_assert(sizeof(UIFocusComponent) == 40);
+static_assert(sizeof(UIFocusComponent) == 48);
