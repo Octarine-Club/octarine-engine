@@ -18,7 +18,9 @@ enum class OssPseudoState : uint8_t {
   Press = 2,
   Focus = 3,
   Checked = 4,
-  Disabled = 5,
+  CheckedHover = 5,
+  CheckedPress = 6,
+  Disabled = 7,
 };
 
 struct OssSelector {
@@ -56,6 +58,8 @@ struct OssResolvedStyle {
   std::map<std::string, std::string> press{};
   std::map<std::string, std::string> focus{};
   std::map<std::string, std::string> checked{};
+  std::map<std::string, std::string> checkedHover{};
+  std::map<std::string, std::string> checkedPress{};
   std::map<std::string, std::string> disabled{};
 
   [[nodiscard]] std::string Get(const std::string& key, const std::string& fallback = "") const {
@@ -66,7 +70,8 @@ struct OssResolvedStyle {
   [[nodiscard]] bool Has(const std::string& key) const { return base.find(key) != base.end(); }
 
   [[nodiscard]] bool HasPseudoStates() const {
-    return !hover.empty() || !press.empty() || !focus.empty() || !checked.empty() || !disabled.empty();
+    return !hover.empty() || !press.empty() || !focus.empty() || !checked.empty() || !checkedHover.empty() ||
+           !checkedPress.empty() || !disabled.empty();
   }
 
   [[nodiscard]] UIStyleStateComponent BuildStyleStateComponent() const;

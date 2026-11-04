@@ -369,8 +369,13 @@ void TilemapSystem::EnsureTilesetTexturesLoaded(Registry& registry) {
       if (assetManager->GetTexture(assetId) != nullptr) {
         continue;
       }
-      if (assetManager->GetCatalog().Find(assetId) != nullptr) {
-        assetManager->Acquire(assetId, ctx->sdlRenderer, ctx->mixer);
+      const CatalogEntry* entry = assetManager->GetCatalog().Find(assetId);
+      if (entry == nullptr && !relPath.empty()) {
+        const std::string stem = std::filesystem::path(relPath).stem().string();
+        entry = assetManager->GetCatalog().Find(stem);
+      }
+      if (entry != nullptr) {
+        assetManager->Acquire(entry->id, ctx->sdlRenderer, ctx->mixer);
       } else if (!relPath.empty()) {
         assetManager->AddTexture(ctx->sdlRenderer, assetId, relPath);
       }
@@ -409,7 +414,24 @@ SDL_Texture* TilemapSystem::ResolveTilesetTexture(AssetManager* assetManager, co
   if (assetManager == nullptr || assetId.empty()) {
     return nullptr;
   }
-  return assetManager->GetTexture(assetId);
+  if (SDL_Texture* tex = assetManager->GetTexture(assetId)) {
+    return tex;
+  }
+  for (const auto& [aid, relPath] : project_data_.tilesetAssets) {
+    if (aid == assetId) {
+      const std::string stem = std::filesystem::path(relPath).stem().string();
+      if (SDL_Texture* tex = assetManager->GetTexture(stem)) {
+        return tex;
+      }
+      if (const auto* entry = assetManager->GetCatalog().Find(stem)) {
+        if (SDL_Texture* tex = assetManager->GetTexture(entry->id)) {
+          return tex;
+        }
+      }
+      break;
+    }
+  }
+  return nullptr;
 }
 
 void TilemapSystem::UpdateActiveWindow(Registry& registry, const int32_t centerChunkX, const int32_t centerChunkY) {

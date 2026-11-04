@@ -15,7 +15,7 @@ class state;
 
 class GameConfig;
 
-enum class AssetType : uint8_t { Texture, Font, Audio, UIView, UIStyle };
+enum class AssetType : uint8_t { Texture, Font, Audio, UIView, UIStyle, Tilemap };
 
 inline const char* toAssetTypeString(AssetType type) {
   switch (type) {
@@ -29,6 +29,8 @@ inline const char* toAssetTypeString(AssetType type) {
       return "ui_view";
     case AssetType::UIStyle:
       return "ui_style";
+    case AssetType::Tilemap:
+      return "tilemap";
   }
   return "unknown";
 }

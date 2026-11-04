@@ -33,6 +33,9 @@ struct LuaBinding<UIButtonComponent> {
 
     UIButtonComponent btn(isActive, isFixed, t, clickFn, std::move(key), std::move(controllerButton),
                           std::move(action));
+    btn.hoverSound = SafeGetOptionalValue<std::string>(t, "hover_sound", "");
+    btn.clickSound = SafeGetOptionalValue<std::string>(t, "click_sound", "");
+    btn.focusSound = SafeGetOptionalValue<std::string>(t, "focus_sound", "");
     if (t["hover_color"].is<sol::table>()) {
       btn.hasHoverColor = true;
       btn.hoverColor = SafeGetColor(t, "hover_color", 255, 255, 255, 255);
@@ -51,8 +54,10 @@ struct LuaBinding<UIButtonComponent> {
         &UIButtonComponent::hasHoverColor, "has_press_color", &UIButtonComponent::hasPressColor, "hover_color",
         &UIButtonComponent::hoverColor, "press_color", &UIButtonComponent::pressColor, "key", &UIButtonComponent::key,
         "input_key", &UIButtonComponent::key, "controller_button", &UIButtonComponent::controllerButton,
-        "gamepad_button", &UIButtonComponent::controllerButton, "action", &UIButtonComponent::action, "on_click",
-        &UIButtonComponent::clickFunction, "trigger", [](UIButtonComponent& self, sol::optional<Entity> entity) {
+        "gamepad_button", &UIButtonComponent::controllerButton, "action", &UIButtonComponent::action, "hover_sound",
+        &UIButtonComponent::hoverSound, "click_sound", &UIButtonComponent::clickSound, "focus_sound",
+        &UIButtonComponent::focusSound, "on_click", &UIButtonComponent::clickFunction, "trigger",
+        [](UIButtonComponent& self, sol::optional<Entity> entity) {
           if (!self.isActive) return false;
           if (self.clickFunction != sol::lua_nil) {
             sol::protected_function clickFn = self.clickFunction;

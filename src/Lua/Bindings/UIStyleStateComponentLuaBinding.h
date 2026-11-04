@@ -32,6 +32,10 @@ struct LuaBinding<UIStyleStateComponent> {
     st.press = ParsePatch(t.get<sol::object>("press"));
     st.focus = ParsePatch(t.get<sol::object>("focus"));
     st.checked = ParsePatch(t.get<sol::object>("checked"));
+    st.checkedHover = ParsePatch(t.get<sol::object>("checked_hover"));
+    if (st.checkedHover.flags == 0) st.checkedHover = ParsePatch(t.get<sol::object>("checkedHover"));
+    st.checkedPress = ParsePatch(t.get<sol::object>("checked_press"));
+    if (st.checkedPress.flags == 0) st.checkedPress = ParsePatch(t.get<sol::object>("checkedPress"));
     st.disabled = ParsePatch(t.get<sol::object>("disabled"));
     return st;
   }
@@ -40,9 +44,10 @@ struct LuaBinding<UIStyleStateComponent> {
     lua.new_usertype<UIStylePatch>("ui_style_patch", "bg_color", &UIStylePatch::bgColor, "border_color",
                                    &UIStylePatch::borderColor, "text_color", &UIStylePatch::textColor, "opacity",
                                    &UIStylePatch::opacity, "flags", &UIStylePatch::flags);
-    lua.new_usertype<UIStyleStateComponent>(kUsertypeName, "hover", &UIStyleStateComponent::hover, "press",
-                                            &UIStyleStateComponent::press, "focus", &UIStyleStateComponent::focus,
-                                            "checked", &UIStyleStateComponent::checked, "disabled",
-                                            &UIStyleStateComponent::disabled);
+    lua.new_usertype<UIStyleStateComponent>(
+        kUsertypeName, "hover", &UIStyleStateComponent::hover, "press", &UIStyleStateComponent::press, "focus",
+        &UIStyleStateComponent::focus, "checked", &UIStyleStateComponent::checked, "checked_hover",
+        &UIStyleStateComponent::checkedHover, "checked_press", &UIStyleStateComponent::checkedPress, "disabled",
+        &UIStyleStateComponent::disabled);
   }
 };

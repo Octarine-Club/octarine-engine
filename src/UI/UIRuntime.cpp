@@ -556,13 +556,21 @@ struct UIViewInstance : std::enable_shared_from_this<UIViewInstance> {
 
   void InvokeController(const std::string& methodName, const sol::object& arg1 = sol::lua_nil) {
     if (methodName.empty() || !controller.valid()) return;
-    sol::object fnObj = controller.get<sol::object>(methodName);
+    std::string resolvedMethod = methodName;
+    const size_t paren = resolvedMethod.find('(');
+    if (paren != std::string::npos) {
+      resolvedMethod = resolvedMethod.substr(0, paren);
+    }
+    sol::object fnObj = controller.get<sol::object>(resolvedMethod);
+    if (!fnObj.is<sol::protected_function>()) {
+      fnObj = controller.get<sol::object>(methodName);
+    }
     if (!fnObj.is<sol::protected_function>()) return;
     sol::protected_function fn = fnObj.as<sol::protected_function>();
     const auto res = arg1.valid() && arg1 != sol::lua_nil ? fn(controller, arg1, viewTable) : fn(controller, viewTable);
     if (!res.valid()) {
       const sol::error err = res;
-      Logger::Error("UI controller '" + methodName + "' error: " + err.what());
+      Logger::Error("UI controller '" + resolvedMethod + "' error: " + err.what());
     }
   }
 

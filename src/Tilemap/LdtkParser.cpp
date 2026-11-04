@@ -757,8 +757,22 @@ std::optional<TilemapData> LdtkParser::ParseFromJsonString(const std::string& js
 
 std::optional<TilemapData> LdtkParser::ParseFromFile(const std::string& ldtkPath, const AssetManager* assetManager) {
   std::string fullPath = ldtkPath;
-  if (assetManager != nullptr && !std::filesystem::path(ldtkPath).is_absolute()) {
-    fullPath = assetManager->GetFullPath(ldtkPath);
+  if (assetManager != nullptr) {
+    const std::filesystem::path fsPath(ldtkPath);
+    const CatalogEntry* entry = assetManager->GetCatalog().Find(ldtkPath);
+    if (entry == nullptr) {
+      entry = assetManager->GetCatalog().Find(fsPath.filename().string());
+    }
+    if (entry == nullptr) {
+      entry = assetManager->GetCatalog().Find(fsPath.stem().string());
+    }
+    if (entry != nullptr) {
+      fullPath = entry->fullPath;
+    } else if (!fsPath.is_absolute()) {
+      fullPath = assetManager->GetFullPath(ldtkPath);
+    }
+  } else if (!std::filesystem::path(ldtkPath).is_absolute()) {
+    fullPath = ldtkPath;
   }
   if (fullPath.empty()) {
     Logger::Error("LdtkParser::ParseFromFile: invalid path '" + ldtkPath + "'");

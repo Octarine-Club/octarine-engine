@@ -117,7 +117,7 @@ struct EngineOptions {
   bool windowResizable = true;
   bool showDebugGUI = false;
   bool drawColliders = false;
-  bool showFpsCounter = true;
+  bool showFpsCounter = false;
   bool showEntityInfo = false;
   // Built-in renderer FPS + frame-time overlay (no ImGui). Unlike the ImGui FPS window this ships in
   // packaged builds, so it's the player-facing perf readout. Off by default; opt in via the

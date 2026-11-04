@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <unordered_map>
 
+#include "AssetManager/AssetManager.h"
 #include "General/Logger.h"
 #include "Tilemap/LdtkParser.h"
 
@@ -114,6 +115,22 @@ std::optional<TilemapData> TilemapLoaderRegistry::LoadFromFile(const std::string
     const std::string ext = std::filesystem::path(path).extension().string();
     if (!ext.empty()) {
       loader = state.Resolve(ext);
+    }
+  }
+  if (loader == nullptr && assetManager != nullptr) {
+    const std::filesystem::path fsPath(path);
+    const CatalogEntry* entry = assetManager->GetCatalog().Find(path);
+    if (entry == nullptr) {
+      entry = assetManager->GetCatalog().Find(fsPath.filename().string());
+    }
+    if (entry == nullptr) {
+      entry = assetManager->GetCatalog().Find(fsPath.stem().string());
+    }
+    if (entry != nullptr) {
+      const std::string ext = std::filesystem::path(entry->fullPath).extension().string();
+      if (!ext.empty()) {
+        loader = state.Resolve(ext);
+      }
     }
   }
   if (loader == nullptr) {

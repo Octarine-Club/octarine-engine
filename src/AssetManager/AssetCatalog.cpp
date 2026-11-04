@@ -30,6 +30,7 @@ std::optional<AssetType> ClassifyByExtension(const fs::path& path) {
   if (ext == ".wav" || ext == ".ogg" || ext == ".mp3" || ext == ".flac") return AssetType::Audio;
   if (ext == ".oxml") return AssetType::UIView;
   if (ext == ".oss") return AssetType::UIStyle;
+  if (ext == ".ldtk" || ext == ".ldtkl") return AssetType::Tilemap;
   return std::nullopt;
 }
 
@@ -46,6 +47,7 @@ std::optional<AssetType> ParseAssetType(const std::string& s) {
   if (s == "audio_clip") return AssetType::Audio;
   if (s == "ui_view") return AssetType::UIView;
   if (s == "ui_style") return AssetType::UIStyle;
+  if (s == "tilemap") return AssetType::Tilemap;
   return std::nullopt;
 }
 
@@ -206,6 +208,7 @@ std::optional<CatalogEntry> ParseManifestEntry(const std::string& id, const sol:
       break;
     case AssetType::UIView:
     case AssetType::UIStyle:
+    case AssetType::Tilemap:
       break;
   }
   return entry;
@@ -317,7 +320,8 @@ void ScanCatalogFile(const fs::path& path, sol::state& lua, const std::optional<
       break;
     }
     case AssetType::UIView:
-    case AssetType::UIStyle: {
+    case AssetType::UIStyle:
+    case AssetType::Tilemap: {
       CatalogEntry entry;
       entry.type = *type;
       entry.id = ParseSidecarId(sidecar).value_or(path.filename().string());
@@ -526,6 +530,7 @@ bool AssetCatalog::WriteManifest(const std::string& outPath, const std::string& 
         break;
       case AssetType::UIView:
       case AssetType::UIStyle:
+      case AssetType::Tilemap:
         break;
     }
 

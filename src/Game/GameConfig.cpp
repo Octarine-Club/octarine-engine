@@ -132,6 +132,8 @@ bool GameConfig::LoadConfig(const std::unordered_map<std::string, std::string>& 
   success &= SetValue(settings, "PerfOverlay", &GameConfig::SetPerfOverlay, false);
   success &= SetValue(settings, "PerfOverlayCorner", &GameConfig::SetPerfOverlayCorner, false);
   success &= SetValue(settings, "PerfOverlayMetrics", &GameConfig::SetPerfOverlayMetrics, false);
+  success &= SetValue(settings, "ShowFpsCounter", &GameConfig::SetShowFpsCounter, false);
+  success &= SetValue(settings, "FpsCounter", &GameConfig::SetShowFpsCounter, false);
   success &= SetValue(settings, "DebugOverlayBackgroundColor", &GameConfig::SetDebugOverlayBackgroundColor, false);
   success &= SetValue(settings, "AngleUnit", &GameConfig::SetAngleUnit, false);
 
@@ -289,6 +291,11 @@ void GameConfig::SetPerfOverlayCorner(const std::string& corner) {
     return;
   }
   Logger::Info("Perf overlay corner: " + corner);
+}
+
+void GameConfig::SetShowFpsCounter(const bool enabled) {
+  engine_options_.showFpsCounter = enabled;
+  Logger::Info(std::string("FPS counter ") + (enabled ? "enabled" : "disabled"));
 }
 
 // Parses only; LoadConfig applies it to the process-wide AngleUnits once every key is read.

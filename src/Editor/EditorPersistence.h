@@ -58,7 +58,7 @@ struct EditorPersistence {
   bool showDevices = false;
   bool showDebugGUI = false;
   bool drawColliders = false;
-  bool showFpsCounter = true;
+  bool showFpsCounter = false;
   bool showEntityInfo = false;
 
   // Single source of truth for persisted window-visibility flags. Both the project-prefs

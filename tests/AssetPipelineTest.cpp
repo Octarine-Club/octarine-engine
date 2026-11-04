@@ -152,6 +152,8 @@ int main() {
     std::ofstream(tmpDir / "assets" / "fonts" / "ui.ttf") << "stub";
     std::ofstream(tmpDir / "assets" / "fonts" / "ui.ttf.meta")
         << "return { sizes = { { id = \"ui-heading\", size = 20 }, 30 } }\n";
+    std::filesystem::create_directories(tmpDir / "assets" / "maps", ec);
+    std::ofstream(tmpDir / "assets" / "maps" / "world.ldtk") << "{}";
     // Generated bake artifacts that must be ignored by ScanFilesystem:
     std::ofstream(tmpDir / "assets" / "atlases" / "ui-heading.atlas.png") << "stub";
     std::ofstream(tmpDir / "_atlases" / "packed.png") << "stub";
@@ -161,14 +163,24 @@ int main() {
     lua.open_libraries(sol::lib::base, sol::lib::table);
     AssetCatalog catalog;
     Check(catalog.Build(tmpDir.string(), lua, std::optional<ScaleMode>(ScaleMode::Nearest)),
-          "catalog builds with table-based font sizes and generated bake dirs present");
-    Check(catalog.Size() == 2, "only the 2 font size entries are cataloged (generated bake dirs ignored)");
+          "catalog builds with table-based font sizes, .ldtk tilemap, and generated bake dirs present");
+    Check(catalog.Size() == 3, "only the 2 font size entries + 1 tilemap are cataloged (generated bake dirs ignored)");
     const CatalogEntry* heading = catalog.Find("ui-heading");
     Check(heading != nullptr && heading->type == AssetType::Font && heading->fontSize == 20.0F,
           "table font size entry uses explicit id 'ui-heading' and size 20");
     const CatalogEntry* body = catalog.Find("ui-30");
     Check(body != nullptr && body->type == AssetType::Font && body->fontSize == 30.0F,
           "numeric font size entry falls back to '<stem>-30'");
+    const CatalogEntry* mapEntry = catalog.Find("world.ldtk");
+    Check(mapEntry != nullptr && mapEntry->type == AssetType::Tilemap, "world.ldtk is cataloged as AssetType::Tilemap");
+
+    const std::string tmpManifest = (tmpDir / "asset_manifest.lua").string();
+    Check(catalog.WriteManifest(tmpManifest, tmpDir.string()), "WriteManifest with AssetType::Tilemap succeeds");
+    AssetCatalog reloaded;
+    Check(reloaded.LoadManifest(tmpManifest, lua, tmpDir.string()), "LoadManifest with AssetType::Tilemap succeeds");
+    const CatalogEntry* reloadedMap = reloaded.Find("world.ldtk");
+    Check(reloadedMap != nullptr && reloadedMap->type == AssetType::Tilemap,
+          "AssetType::Tilemap round-trips through asset_manifest.lua");
 
     std::filesystem::remove_all(tmpDir, ec);
   }

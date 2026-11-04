@@ -225,6 +225,15 @@ bool ParsePseudoSuffix(std::string_view suffix, OssPseudoState& outPseudo) {
     outPseudo = OssPseudoState::Checked;
     return true;
   }
+  if (suffix == "checked:hover" || suffix == "hover:checked") {
+    outPseudo = OssPseudoState::CheckedHover;
+    return true;
+  }
+  if (suffix == "checked:press" || suffix == "checked:active" || suffix == "active:checked" ||
+      suffix == "press:checked") {
+    outPseudo = OssPseudoState::CheckedPress;
+    return true;
+  }
   if (suffix == "disabled") {
     outPseudo = OssPseudoState::Disabled;
     return true;
@@ -367,6 +376,8 @@ UIStyleStateComponent OssResolvedStyle::BuildStyleStateComponent() const {
   comp.press = BuildStylePatch(press);
   comp.focus = BuildStylePatch(focus);
   comp.checked = BuildStylePatch(checked);
+  comp.checkedHover = BuildStylePatch(checkedHover);
+  comp.checkedPress = BuildStylePatch(checkedPress);
   comp.disabled = BuildStylePatch(disabled);
   return comp;
 }
@@ -444,6 +455,12 @@ OssResolvedStyle OssStylesheet::Resolve(std::string_view tag, const std::vector<
         break;
       case OssPseudoState::Checked:
         target = &resolved.checked;
+        break;
+      case OssPseudoState::CheckedHover:
+        target = &resolved.checkedHover;
+        break;
+      case OssPseudoState::CheckedPress:
+        target = &resolved.checkedPress;
         break;
       case OssPseudoState::Disabled:
         target = &resolved.disabled;
