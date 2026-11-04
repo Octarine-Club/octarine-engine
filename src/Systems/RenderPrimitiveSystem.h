@@ -84,9 +84,10 @@ class RenderPrimitiveSystem : public RenderPrimitiveBase {
     const glm::vec2 screenOrigin = ToScreenPoint(origin, square.isFixed);
     const float destW = ToScreenLength(w, square.isFixed);
     const float destH = ToScreenLength(h, square.isFixed);
+    const float sortDepth = square.isFixed ? square.position.y : (origin.y + h);
 
-    auto& cmd = renderQueue_->EmplaceSquare(static_cast<unsigned int>(square.layer), square.position.y, nullptr,
-                                            square.blendMode);
+    auto& cmd =
+        renderQueue_->EmplaceSquare(static_cast<unsigned int>(square.layer), sortDepth, nullptr, square.blendMode);
     cmd.destRect = {screenOrigin.x, screenOrigin.y, destW, destH};
     cmd.color = SDL_Color{square.color.r, square.color.g, square.color.b, square.color.a};
     cmd.rotation = transform.rotation;

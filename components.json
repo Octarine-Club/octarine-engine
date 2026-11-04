@@ -44,6 +44,12 @@
       "get_accessor": "registry.get_capsule_collider"
     },
     {
+      "lua_key": "chunk_resident",
+      "usertype": "chunk_resident_component",
+      "has_accessor": "registry.has_chunk_resident",
+      "get_accessor": "registry.get_chunk_resident"
+    },
+    {
       "lua_key": "circle",
       "usertype": "circle_primitive_component",
       "has_accessor": "registry.has_circle",

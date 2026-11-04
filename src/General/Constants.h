@@ -24,6 +24,6 @@ constexpr static size_t kInitialRenderQueueCapacity = 256 * 1024;
 
 static constexpr int kDebugUIBaseLayer = 1000;
 
-// Y-axis quantization band (world pixels) for texture batching. Set to 0.0f for strict painter's order.
-static constexpr float kRenderBatchYBandPx = 32.0f;
+// Y-axis quantization band (world pixels) for texture batching. Set to 1.0f for pixel-exact Y-sorting.
+static constexpr float kRenderBatchYBandPx = 1.0f;
 }  // namespace Constants

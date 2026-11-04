@@ -90,3 +90,12 @@ struct CapsuleCommand {
   SDL_BlendMode blendMode{SDL_BLENDMODE_BLEND};
   bool filled{true};
 };
+
+struct TileChunkCommand {
+  const SDL_Vertex* vertices{nullptr};
+  const int* indices{nullptr};
+  SDL_Texture* texture{nullptr};
+  int vertexCount{0};
+  int indexCount{0};
+  SDL_BlendMode blendMode{SDL_BLENDMODE_BLEND};
+};

@@ -92,6 +92,7 @@
 #include "Systems/ScriptCollisionSystem.h"
 #include "Systems/ScriptSystem.h"
 #include "Systems/SpatialAudioSystem.h"
+#include "Systems/TilemapSystem.h"
 #include "Systems/TransformSystem.h"
 #include "Systems/UIButtonSystem.h"
 #include "Systems/UILayoutSystem.h"
@@ -690,6 +691,7 @@ bool Game::Bake(const std::string& assetPath, const std::string& scriptsOverride
   return ok;
 }
 
+// End-to-end headless asset baking pipeline (catalog scan, UI validation, atlas packing, audio normalization, pak).
 // NOLINTNEXTLINE(readability-function-cognitive-complexity,readability-function-size)
 bool Game::RunBakeValidation(const std::string& assetPath, const std::string& scriptsOverrideDir) {
   registry_->Set<GameConfig>(GameConfig());
@@ -763,7 +765,9 @@ bool Game::RunBakeValidation(const std::string& assetPath, const std::string& sc
   // SDL_Init(0) only — no video/audio subsystems).
   std::vector<std::string> atlasFiles;
   if (wrote && TTF_Init()) {
-    const std::filesystem::path atlasDir = std::filesystem::path(assetPath) / kAtlasesDirName;
+    const std::filesystem::path atlasDir = std::filesystem::exists(std::filesystem::path(assetPath) / "assets")
+                                               ? std::filesystem::path(assetPath) / "assets" / kAtlasesDirName
+                                               : std::filesystem::path(assetPath) / kAtlasesDirName;
     std::error_code ec;
     std::filesystem::create_directories(atlasDir, ec);
     const auto codepoints = AtlasBaker::DefaultAsciiPrintable();
@@ -1018,10 +1022,15 @@ void Game::Setup() {
 
   auto cameraFollow = registry_->RegisterSystem<PositionComponent, CameraFollowComponent>(CameraFollowSystem());
 
-  auto uiLayout = registry_->RegisterSystem(UILayoutSystem());
+  // UI layout pass: resolves UIRectComponent for all canvas descendants. Runs after TransformSystem
+  // so world-parented canvases see up-to-date globals; runs before render systems that read UIRectComponent.
+  auto uiLayout = registry_->RegisterBulkSystem(UILayoutSystem());
   registry_->Order(uiLayout).After(transform);
 
-  registry_->RegisterParallelSystem<GlobalTransformComponent, SpriteComponent>(RenderSpriteSystem());
+  auto tilemapRender = registry_->RegisterBulkSystem(TilemapRenderSystem());
+  auto renderSprite =
+      registry_->RegisterParallelSystem<GlobalTransformComponent, SpriteComponent>(RenderSpriteSystem());
+  registry_->Order(tilemapRender).After(cameraFollow).Before(renderSprite);
   auto renderUISprite = registry_->RegisterSystem<UIRectComponent, SpriteComponent>(RenderUISpriteSystem());
   auto renderUIPrimitive = registry_->RegisterBulkSystem(RenderUIPrimitiveSystem());
   auto renderText = registry_->RegisterSystem<TextLabelComponent>(RenderTextSystem());
@@ -1041,7 +1050,7 @@ void Game::Setup() {
   registry_->Order(audioCulling).After(audioSystem);
   registry_->Order(spatialAudio).After(transform).After(listenerTransform).After(audioCulling).After(audioSystem);
   registry_->Order(doppler).After(transform).After(listenerTransform).After(audioCulling).After(audioSystem);
-  registry_->Order(cameraFollow).After(transform);
+  registry_->Order(cameraFollow).After(transform).After(scriptSystem);
 
   RegisterEventAndHotReloadSingletons(*registry_, event_bus_);
 }

@@ -25,6 +25,7 @@ SDL_ScaleMode ToSdlScaleMode(const ScaleMode mode) {
 
 AssetManager::~AssetManager() { ClearAssets(); }
 
+// Probes AssetPak by exact and base-relative paths before falling back to loose disk I/O.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 SDL_IOStream* AssetManager::OpenAssetIO(const std::string& fullPath) const {
   if (asset_pak_ != nullptr && asset_pak_->IsOpen()) {

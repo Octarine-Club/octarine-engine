@@ -31,6 +31,7 @@
 #include "Systems/DrawColliderSystem.h"
 #include "Systems/InputSystem.h"
 #include "Systems/PerfOverlaySystem.h"
+#include "Systems/TilemapSystem.h"
 #include "UI/UIRuntime.h"
 
 #ifndef OCTARINE_SHIPPED
@@ -297,6 +298,9 @@ void FrameLoop::PollHotReload([[maybe_unused]] const EngineOptions& options, [[m
     }
     if (auto* uiRuntime = registry_->TryGet<UIRuntime>()) {
       uiRuntime->PollHotReload(deltaTime, options.hotReloadPollSeconds);
+    }
+    if (auto* tilemap = registry_->TryGet<TilemapSystem>()) {
+      tilemap->PollHotReload(*registry_, deltaTime, options.hotReloadPollSeconds);
     }
   }
 #endif

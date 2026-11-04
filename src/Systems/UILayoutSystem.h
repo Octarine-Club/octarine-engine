@@ -17,16 +17,16 @@ class UILayoutSystem {
 
     const auto& gameConfig = registry->Get<GameConfig>();
 
-    std::vector<std::pair<Entity, UIRectComponent>> canvases;
+    canvases_scratch_.clear();
     canvasQuery_->ForEach([&](const Entity canvasEntity, const UICanvasComponent& canvas) {
       const float cw = (canvas.width > 0.f) ? canvas.width : static_cast<float>(gameConfig.windowWidth);
       const float ch = (canvas.height > 0.f) ? canvas.height : static_cast<float>(gameConfig.windowHeight);
       UIRectComponent canvasRect{0.f, 0.f, cw, ch, canvas.baseLayer};
       canvasRect.visible = IsEntityVisible(registry, canvasEntity);
-      canvases.emplace_back(canvasEntity, canvasRect);
+      canvases_scratch_.emplace_back(canvasEntity, canvasRect);
     });
 
-    for (const auto& [canvasEntity, canvasRect] : canvases) {
+    for (const auto& [canvasEntity, canvasRect] : canvases_scratch_) {
       WriteRect(registry, canvasEntity, canvasRect);
       if (canvasRect.visible) {
         ResolveChildren(registry, canvasEntity, canvasRect);
@@ -68,17 +68,18 @@ class UILayoutSystem {
     }
   }
 
-  static void MarkSubtreeHidden(Registry* registry, const Entity root) {
+  void MarkSubtreeHidden(Registry* registry, const Entity root) const {
     if (!IsUILayoutParticipant(registry, root)) return;
-    std::vector<Entity> stack{root};
-    while (!stack.empty()) {
-      const Entity current = stack.back();
-      stack.pop_back();
+    hidden_stack_scratch_.clear();
+    hidden_stack_scratch_.push_back(root);
+    while (!hidden_stack_scratch_.empty()) {
+      const Entity current = hidden_stack_scratch_.back();
+      hidden_stack_scratch_.pop_back();
       if (!IsUILayoutParticipant(registry, current)) continue;
       UIRectComponent hiddenRect{};
       hiddenRect.visible = false;
       WriteRect(registry, current, hiddenRect);
-      registry->ForEachChild(current, [&](const Entity child) { stack.push_back(child); });
+      registry->ForEachChild(current, [&](const Entity child) { hidden_stack_scratch_.push_back(child); });
     }
   }
 
@@ -192,43 +193,55 @@ class UILayoutSystem {
     return 0.0f;
   }
 
+  // Recursive measurement of fixed-column grid cross axis during intrinsic auto-sizing.
+  // NOLINTNEXTLINE(misc-no-recursion)
+  static float MeasureGridColumnsCross(Registry* registry, const Entity entity, const UIFlexComponent& flex,
+                                       const bool isRow, size_t& outVisCount) {
+    const auto cols = static_cast<size_t>(std::max<std::uint16_t>(1, flex.columns));
+    float totalCross = 0.0f;
+    float lineMax = 0.0f;
+    size_t colIdx = 0;
+    size_t lines = 0;
+    outVisCount = 0;
+    registry->ForEachChild(entity, [&](const Entity child) {
+      if (!IsEntityVisible(registry, child)) return;
+      ++outVisCount;
+      const float cCross = MeasureNodeNaturalAxis(registry, child, !isRow) + MarginCross(registry, child, isRow);
+      lineMax = std::max(lineMax, cCross);
+      ++colIdx;
+      if (colIdx == cols) {
+        totalCross += lineMax;
+        ++lines;
+        lineMax = 0.0f;
+        colIdx = 0;
+      }
+    });
+    if (colIdx > 0) {
+      totalCross += lineMax;
+      ++lines;
+    }
+    if (lines > 1) totalCross += flex.EffectiveCrossGap() * static_cast<float>(lines - 1);
+    return totalCross;
+  }
+
   // Recursive traversal over shallow UI element trees during intrinsic auto-sizing.
   // NOLINTNEXTLINE(misc-no-recursion)
   static float MeasureWrappedCrossIntrinsic(Registry* registry, const Entity entity, const UIFlexComponent& flex,
                                             const bool isRow, size_t& outVisCount) {
-    std::vector<Entity> children;
-    registry->ForEachChild(entity, [&](const Entity child) {
-      if (IsEntityVisible(registry, child)) children.push_back(child);
-    });
-    outVisCount = children.size();
-    if (children.empty()) return 0.0f;
-
-    const float crossGap = flex.EffectiveCrossGap();
     if (flex.columns > 0) {
-      const auto cols = static_cast<size_t>(flex.columns);
-      float totalCross = 0.0f;
-      size_t lines = 0;
-      for (size_t i = 0; i < children.size(); i += cols) {
-        float lineMax = 0.0f;
-        const size_t end = std::min(children.size(), i + cols);
-        for (size_t j = i; j < end; ++j) {
-          const float cCross =
-              MeasureNodeNaturalAxis(registry, children[j], !isRow) + MarginCross(registry, children[j], isRow);
-          lineMax = std::max(lineMax, cCross);
-        }
-        totalCross += lineMax;
-        ++lines;
-      }
-      if (lines > 1) totalCross += crossGap * static_cast<float>(lines - 1);
-      return totalCross;
+      return MeasureGridColumnsCross(registry, entity, flex, isRow, outVisCount);
     }
 
+    const float crossGap = flex.EffectiveCrossGap();
     const float availMain = ResolveWrapContainerMain(registry, entity, flex, isRow);
     float totalCross = 0.0f;
     float curMain = 0.0f;
     float lineMaxCross = 0.0f;
     size_t lines = 0;
-    for (const Entity child : children) {
+    outVisCount = 0;
+    registry->ForEachChild(entity, [&](const Entity child) {
+      if (!IsEntityVisible(registry, child)) return;
+      ++outVisCount;
       const float cMain = MeasureNodeNaturalAxis(registry, child, isRow) + MarginMain(registry, child, isRow);
       const float cCross = MeasureNodeNaturalAxis(registry, child, !isRow) + MarginCross(registry, child, isRow);
       const float needed = (curMain > 0.0f) ? (curMain + flex.gap + cMain) : cMain;
@@ -241,7 +254,8 @@ class UILayoutSystem {
         curMain = needed;
         lineMaxCross = std::max(lineMaxCross, cCross);
       }
-    }
+    });
+    if (outVisCount == 0) return 0.0f;
     if (lineMaxCross > 0.0f || curMain > 0.0f) {
       totalCross += lineMaxCross;
       ++lines;
@@ -250,6 +264,7 @@ class UILayoutSystem {
     return totalCross;
   }
 
+  // Recursive measurement of flex container children along either the main or cross axis.
   // NOLINTNEXTLINE(misc-no-recursion)
   static float MeasureFlexChildrenIntrinsic(Registry* registry, const Entity entity, const UIFlexComponent& flex,
                                             const bool isHorizontal, size_t& outVisCount) {
@@ -258,23 +273,22 @@ class UILayoutSystem {
     if (!sameAxis && (flex.wrap || flex.columns > 0)) {
       return MeasureWrappedCrossIntrinsic(registry, entity, flex, isRow, outVisCount);
     }
-    std::vector<Entity> children;
-    registry->ForEachChild(entity, [&](const Entity child) {
-      if (IsEntityVisible(registry, child)) children.push_back(child);
-    });
-    outVisCount = children.size();
+    outVisCount = 0;
     float accum = 0.0f;
-    for (const Entity child : children) {
+    registry->ForEachChild(entity, [&](const Entity child) {
+      if (!IsEntityVisible(registry, child)) return;
+      ++outVisCount;
       const float childSize =
           MeasureNodeNaturalAxis(registry, child, isHorizontal) + MarginMain(registry, child, isHorizontal);
       accum = sameAxis ? (accum + childSize) : std::max(accum, childSize);
-    }
+    });
     if (sameAxis && outVisCount > 1) {
       accum += flex.gap * static_cast<float>(outVisCount - 1);
     }
     return accum;
   }
 
+  // Recursive intrinsic content measurement for auto-sized UI nodes.
   // NOLINTNEXTLINE(misc-no-recursion)
   static float MeasureIntrinsicAxis(Registry* registry, const Entity entity, const bool isHorizontal) {
     float pad = 0.0f;
@@ -303,6 +317,7 @@ class UILayoutSystem {
     return 0.0f;
   }
 
+  // Recursive natural size resolution falling back to MeasureIntrinsicAxis when no explicit size is set.
   // NOLINTNEXTLINE(misc-no-recursion)
   static float MeasureNodeNaturalAxis(Registry* registry, const Entity entity, const bool isHorizontal) {
     if (registry->HasComponent<UILayoutBoxComponent>(entity)) {
@@ -474,16 +489,16 @@ class UILayoutSystem {
 
   static void ComputeFlexMainSizes(Registry* registry, const std::vector<Entity>& children, const bool isRow,
                                    const float availMain, const float totalGaps, std::vector<float>& mainSizes,
-                                   float& outUsedMain, bool& outHasFlex) {
+                                   std::vector<float>& weightsScratch, float& outUsedMain, bool& outHasFlex) {
     const size_t n = children.size();
     float fixedSum = 0.0f;
     float totalWeight = 0.0f;
-    std::vector<float> weights(n, 0.0f);
+    weightsScratch.assign(n, 0.0f);
     for (size_t i = 0; i < n; ++i) {
       const float mSpan = MarginMain(registry, children[i], isRow);
-      weights[i] = ResolveChildFlexWeight(registry, children[i], isRow);
-      if (weights[i] > 0.0f) {
-        totalWeight += weights[i];
+      weightsScratch[i] = ResolveChildFlexWeight(registry, children[i], isRow);
+      if (weightsScratch[i] > 0.0f) {
+        totalWeight += weightsScratch[i];
         fixedSum += mSpan;
       } else {
         mainSizes[i] = DesiredMainSize(registry, children[i], isRow, availMain);
@@ -494,8 +509,8 @@ class UILayoutSystem {
     const float remaining = std::max(0.0f, availMain - fixedSum - totalGaps);
     outUsedMain = totalGaps;
     for (size_t i = 0; i < n; ++i) {
-      if (weights[i] > 0.0f && totalWeight > 0.0f) {
-        const float rawShare = remaining * (weights[i] / totalWeight);
+      if (weightsScratch[i] > 0.0f && totalWeight > 0.0f) {
+        const float rawShare = remaining * (weightsScratch[i] / totalWeight);
         mainSizes[i] = ClampBoxAxis(registry, children[i], isRow, rawShare, availMain);
       }
       outUsedMain += mainSizes[i] + MarginMain(registry, children[i], isRow);
@@ -635,7 +650,7 @@ class UILayoutSystem {
     };
   }
 
-  static void CollectVisibleFlexChildren(Registry* registry, const Entity parent, std::vector<Entity>& outChildren) {
+  void CollectVisibleFlexChildren(Registry* registry, const Entity parent, std::vector<Entity>& outChildren) const {
     registry->ForEachChild(parent, [&](const Entity child) {
       if (IsEntityVisible(registry, child)) {
         outChildren.push_back(child);
@@ -645,20 +660,18 @@ class UILayoutSystem {
     });
   }
 
-  static void ResolveWrappedOrGridChildren(Registry* registry, const Entity parent, const UIRectComponent& parentRect,
-                                           const UIFlexComponent& flex, const std::vector<Entity>& children,
-                                           std::vector<std::pair<Entity, UIRectComponent>>& pending) {
+  void ResolveWrappedOrGridChildren(Registry* registry, const Entity parent, const UIRectComponent& parentRect,
+                                    const UIFlexComponent& flex, const std::vector<Entity>& children,
+                                    std::vector<std::pair<Entity, UIRectComponent>>& pending) const {
     const bool isRow = (flex.direction == FlexDirection::Row);
     const FlexInnerViewport vp = ComputeFlexInnerViewport(parentRect, flex, isRow);
 
-    std::vector<WrappedChildPlacement> placements;
-    placements.reserve(children.size());
+    wrapped_placements_scratch_.clear();
+    wrapped_placements_scratch_.reserve(children.size());
+    const auto buildFn =
+        (flex.columns > 0) ? &UILayoutSystem::BuildGridPlacements : &UILayoutSystem::BuildFlexWrapPlacements;
     float totalCross = 0.0f;
-    if (flex.columns > 0) {
-      BuildGridPlacements(registry, children, flex, isRow, vp.availMain, vp.availCross, placements, totalCross);
-    } else {
-      BuildFlexWrapPlacements(registry, children, flex, isRow, vp.availMain, vp.availCross, placements, totalCross);
-    }
+    buildFn(registry, children, flex, isRow, vp.availMain, vp.availCross, wrapped_placements_scratch_, totalCross);
 
     float scrollOffsetX = 0.0f;
     float scrollOffsetY = 0.0f;
@@ -666,7 +679,7 @@ class UILayoutSystem {
 
     const float mainOrigin = vp.mainStart - (isRow ? scrollOffsetX : scrollOffsetY);
     const float crossOrigin = vp.crossStart - (isRow ? scrollOffsetY : scrollOffsetX);
-    for (const auto& pl : placements) {
+    for (const auto& pl : wrapped_placements_scratch_) {
       const UIRectComponent childRect =
           BuildFlexChildRect(registry, pl.child, parentRect, flex, isRow, mainOrigin + pl.mainStart, pl.mainSpan,
                              crossOrigin + pl.crossStart, pl.lineCrossSpan);
@@ -675,27 +688,28 @@ class UILayoutSystem {
     }
   }
 
-  static void ResolveFlexChildren(Registry* registry, const Entity parent, const UIRectComponent& parentRect,
-                                  const UIFlexComponent& flex,
-                                  std::vector<std::pair<Entity, UIRectComponent>>& pending) {
-    std::vector<Entity> children;
-    CollectVisibleFlexChildren(registry, parent, children);
-    if (children.empty()) return;
+  void ResolveFlexChildren(Registry* registry, const Entity parent, const UIRectComponent& parentRect,
+                           const UIFlexComponent& flex,
+                           std::vector<std::pair<Entity, UIRectComponent>>& pending) const {
+    flex_children_scratch_.clear();
+    CollectVisibleFlexChildren(registry, parent, flex_children_scratch_);
+    if (flex_children_scratch_.empty()) return;
     if (flex.wrap || flex.columns > 0) {
-      ResolveWrappedOrGridChildren(registry, parent, parentRect, flex, children, pending);
+      ResolveWrappedOrGridChildren(registry, parent, parentRect, flex, flex_children_scratch_, pending);
       return;
     }
 
     const bool isRow = (flex.direction == FlexDirection::Row);
     const FlexInnerViewport vp = ComputeFlexInnerViewport(parentRect, flex, isRow);
 
-    const size_t n = children.size();
+    const size_t n = flex_children_scratch_.size();
     const float totalGaps = (n > 1) ? flex.gap * static_cast<float>(n - 1) : 0.0f;
 
-    std::vector<float> mainSizes(n, 0.0f);
+    flex_sizes_scratch_.assign(n, 0.0f);
     float usedMain = 0.0f;
     bool hasFlex = false;
-    ComputeFlexMainSizes(registry, children, isRow, vp.availMain, totalGaps, mainSizes, usedMain, hasFlex);
+    ComputeFlexMainSizes(registry, flex_children_scratch_, isRow, vp.availMain, totalGaps, flex_sizes_scratch_,
+                         flex_weights_scratch_, usedMain, hasFlex);
 
     float cursor = 0.0f;
     float stepGap = flex.gap;
@@ -708,12 +722,13 @@ class UILayoutSystem {
     const float mainScroll = isRow ? scrollOffsetX : scrollOffsetY;
     const float effCrossOrigin = vp.crossStart - (isRow ? scrollOffsetY : scrollOffsetX);
     for (size_t i = 0; i < n; ++i) {
-      const Entity child = children[i];
-      const UIRectComponent childRect = BuildFlexChildRect(
-          registry, child, parentRect, flex, isRow, cursor - mainScroll, mainSizes[i], effCrossOrigin, vp.availCross);
+      const Entity child = flex_children_scratch_[i];
+      const UIRectComponent childRect =
+          BuildFlexChildRect(registry, child, parentRect, flex, isRow, cursor - mainScroll, flex_sizes_scratch_[i],
+                             effCrossOrigin, vp.availCross);
       WriteRect(registry, child, childRect);
       pending.emplace_back(child, childRect);
-      cursor += mainSizes[i] + MarginMain(registry, child, isRow) + stepGap;
+      cursor += flex_sizes_scratch_[i] + MarginMain(registry, child, isRow) + stepGap;
     }
   }
 
@@ -760,13 +775,14 @@ class UILayoutSystem {
   }
 
   void ResolveChildren(Registry* registry, const Entity root, const UIRectComponent& rootRect) const {
-    std::vector<std::pair<Entity, UIRectComponent>> pending;
-    pending.emplace_back(root, rootRect);
-    while (!pending.empty()) {
-      auto [parent, parentRect] = pending.back();
-      pending.pop_back();
+    pending_scratch_.clear();
+    pending_scratch_.emplace_back(root, rootRect);
+    while (!pending_scratch_.empty()) {
+      auto [parent, parentRect] = pending_scratch_.back();
+      pending_scratch_.pop_back();
       if (registry->HasComponent<UIFlexComponent>(parent)) {
-        ResolveFlexChildren(registry, parent, parentRect, registry->GetComponent<UIFlexComponent>(parent), pending);
+        ResolveFlexChildren(registry, parent, parentRect, registry->GetComponent<UIFlexComponent>(parent),
+                            pending_scratch_);
         continue;
       }
       registry->ForEachChild(parent, [&](const Entity child) {
@@ -776,10 +792,17 @@ class UILayoutSystem {
         }
         const UIRectComponent childRect = ResolveNonFlexChildRect(registry, parent, child, parentRect);
         WriteRect(registry, child, childRect);
-        pending.emplace_back(child, childRect);
+        pending_scratch_.emplace_back(child, childRect);
       });
     }
   }
 
   std::unique_ptr<CanvasQuery> canvasQuery_{};
+  mutable std::vector<std::pair<Entity, UIRectComponent>> canvases_scratch_{};
+  mutable std::vector<std::pair<Entity, UIRectComponent>> pending_scratch_{};
+  mutable std::vector<Entity> hidden_stack_scratch_{};
+  mutable std::vector<Entity> flex_children_scratch_{};
+  mutable std::vector<float> flex_sizes_scratch_{};
+  mutable std::vector<float> flex_weights_scratch_{};
+  mutable std::vector<WrappedChildPlacement> wrapped_placements_scratch_{};
 };

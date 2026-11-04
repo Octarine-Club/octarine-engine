@@ -12,12 +12,12 @@ struct SquarePrimitiveComponent {
   int layer;
   float width;
   float height;
-  octarine::Color color;  // a < 255 fades the square (with the default Blend mode)
   float borderThickness = 0.0f;
-  octarine::Color borderColor{Constants::kUint8Max, Constants::kUint8Max, Constants::kUint8Max, Constants::kUint8Max};
-  octarine::Color trackColor{0, 0, 0, 0};
   float cornerRadius = 0.0f;
   float fillRatio = 1.0f;
+  octarine::Color color;  // a < 255 fades the square (with the default Blend mode)
+  octarine::Color borderColor{Constants::kUint8Max, Constants::kUint8Max, Constants::kUint8Max, Constants::kUint8Max};
+  octarine::Color trackColor{0, 0, 0, 0};
   bool isFixed;
   octarine::BlendMode blendMode = octarine::BlendMode::Blend;
 
@@ -30,3 +30,4 @@ struct SquarePrimitiveComponent {
 };
 
 static_assert(std::is_trivially_copyable_v<SquarePrimitiveComponent>);
+static_assert(sizeof(SquarePrimitiveComponent) == 48);

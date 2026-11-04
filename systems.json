@@ -182,7 +182,7 @@
       "name": "RenderCapsulePrimitiveSystem",
       "source": "src/Systems/RenderCapsulePrimitiveSystem.h",
       "tier": "parallel",
-      "setup_order": 22,
+      "setup_order": 23,
       "queried_components": [
         "CapsulePrimitiveComponent",
         "GlobalTransformComponent"
@@ -195,7 +195,7 @@
       "name": "RenderCirclePrimitiveSystem",
       "source": "src/Systems/RenderCirclePrimitiveSystem.h",
       "tier": "parallel",
-      "setup_order": 19,
+      "setup_order": 20,
       "queried_components": [
         "CirclePrimitiveComponent",
         "GlobalTransformComponent"
@@ -208,7 +208,7 @@
       "name": "RenderColorGridSystem",
       "source": "src/Systems/RenderColorGridSystem.h",
       "tier": "parallel",
-      "setup_order": 23,
+      "setup_order": 24,
       "queried_components": [
         "ColorGridComponent",
         "GlobalTransformComponent"
@@ -233,7 +233,7 @@
       "name": "RenderLinePrimitiveSystem",
       "source": "src/Systems/RenderLinePrimitiveSystem.h",
       "tier": "parallel",
-      "setup_order": 20,
+      "setup_order": 21,
       "queried_components": [
         "LinePrimitiveComponent",
         "GlobalTransformComponent"
@@ -246,7 +246,7 @@
       "name": "RenderPrimitiveSystem",
       "source": "src/Systems/RenderPrimitiveSystem.h",
       "tier": "parallel",
-      "setup_order": 18,
+      "setup_order": 19,
       "queried_components": [
         "SquarePrimitiveComponent",
         "GlobalTransformComponent"
@@ -259,7 +259,7 @@
       "name": "RenderSpriteSystem",
       "source": "src/Systems/RenderSpriteSystem.h",
       "tier": "parallel",
-      "setup_order": 14,
+      "setup_order": 15,
       "queried_components": [
         "GlobalTransformComponent",
         "SpriteComponent"
@@ -272,7 +272,7 @@
       "name": "RenderTextSystem",
       "source": "src/Systems/RenderTextSystem.h",
       "tier": "serial",
-      "setup_order": 17,
+      "setup_order": 18,
       "queried_components": [
         "TextLabelComponent"
       ],
@@ -284,7 +284,7 @@
       "name": "RenderTrianglePrimitiveSystem",
       "source": "src/Systems/RenderTrianglePrimitiveSystem.h",
       "tier": "parallel",
-      "setup_order": 21,
+      "setup_order": 22,
       "queried_components": [
         "TrianglePrimitiveComponent",
         "GlobalTransformComponent"
@@ -297,7 +297,7 @@
       "name": "RenderUIPrimitiveSystem",
       "source": "src/Systems/RenderUIPrimitiveSystem.h",
       "tier": "bulk",
-      "setup_order": 16,
+      "setup_order": 17,
       "queried_components": [
         "UIRectComponent",
         "SquarePrimitiveComponent",
@@ -314,7 +314,7 @@
       "name": "RenderUISpriteSystem",
       "source": "src/Systems/RenderUISpriteSystem.h",
       "tier": "serial",
-      "setup_order": 15,
+      "setup_order": 16,
       "queried_components": [
         "UIRectComponent",
         "SpriteComponent"
@@ -421,7 +421,7 @@
     {
       "name": "UILayoutSystem",
       "source": "src/Systems/UILayoutSystem.h",
-      "tier": "serial",
+      "tier": "bulk",
       "setup_order": 13,
       "queried_components": [
         "UICanvasComponent"

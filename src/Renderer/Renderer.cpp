@@ -446,6 +446,20 @@ void DrawCapsule(SDL_Renderer* renderer, const CapsuleCommand& cmd, const float 
   SDL_RenderGeometry(renderer, nullptr, verts, kTotalVerts + 1, indices, kTotalVerts * 3);
 }
 
+void DrawTileChunk(SDL_Renderer* renderer, const TileChunkCommand& cmd) {
+  if (cmd.vertices == nullptr || cmd.vertexCount <= 0) {
+    return;
+  }
+  if (cmd.texture != nullptr) {
+    SDL_SetTextureColorMod(cmd.texture, Constants::kUint8Max, Constants::kUint8Max, Constants::kUint8Max);
+    SDL_SetTextureAlphaMod(cmd.texture, Constants::kUint8Max);
+    SDL_SetTextureBlendMode(cmd.texture, cmd.blendMode);
+  } else {
+    SDL_SetRenderDrawBlendMode(renderer, cmd.blendMode);
+  }
+  SDL_RenderGeometry(renderer, cmd.texture, cmd.vertices, cmd.vertexCount, cmd.indices, cmd.indexCount);
+}
+
 }  // namespace
 
 void Renderer::DrawQueue(const RenderQueue& renderQueue, SDL_Renderer* renderer) const {
@@ -477,6 +491,9 @@ void Renderer::DrawQueue(const RenderQueue& renderQueue, SDL_Renderer* renderer)
         break;
       case CAPSULE_PRIMITIVE:
         DrawCapsule(renderer, key.payload.capsule, renderScale);
+        break;
+      case TILE_CHUNK:
+        DrawTileChunk(renderer, key.payload.tileChunk);
         break;
       default:
         Logger::Error("Unknown renderable type");

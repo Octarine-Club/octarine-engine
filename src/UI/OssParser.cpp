@@ -176,7 +176,7 @@ bool ParseNamedColor(std::string_view lower, octarine::Color& out) {
 
 void SkipBlockComment(std::string_view src, std::size_t& i, std::string& out) {
   i += 2;
-  while (i + 1 < src.size() && !(src[i] == '*' && src[i + 1] == '/')) {
+  while (i + 1 < src.size() && (src[i] != '*' || src[i + 1] != '/')) {
     if (src[i] == '\n') out.push_back('\n');
     ++i;
   }
@@ -279,31 +279,43 @@ std::map<std::string, std::string> ParseDeclarationsBlock(std::string_view block
   return props;
 }
 
+bool IsBgColorPropKey(const std::string& k) noexcept {
+  return k == "background-color" || k == "bg-color" || k == "background";
+}
+
+void ApplyOpacityStyleProp(const std::string& v, UIStylePatch& patch) {
+  float op = 1.0f;
+  if (OssParser::ParseFloat(v, op)) {
+    const float scaled = (op <= 1.0f) ? op * 255.0f : op;
+    patch.SetOpacity(static_cast<uint8_t>(std::clamp(std::round(scaled), 0.0f, 255.0f)));
+  }
+}
+
+void ApplySingleStyleProp(const std::string& k, const std::string& v, UIStylePatch& patch) {
+  if (IsBgColorPropKey(k)) {
+    octarine::Color c{};
+    if (OssParser::ParseColor(v, c)) patch.SetBg(c);
+    return;
+  }
+  if (k == "border-color") {
+    octarine::Color c{};
+    if (OssParser::ParseColor(v, c)) patch.SetBorder(c);
+    return;
+  }
+  if (k == "color" || k == "text-color") {
+    octarine::Color c{};
+    if (OssParser::ParseColor(v, c)) patch.SetText(c);
+    return;
+  }
+  if (k == "opacity") {
+    ApplyOpacityStyleProp(v, patch);
+  }
+}
+
 UIStylePatch BuildStylePatch(const std::map<std::string, std::string>& props) {
   UIStylePatch patch;
   for (const auto& [k, v] : props) {
-    if (k == "background-color" || k == "bg-color" || k == "background") {
-      octarine::Color c{};
-      if (OssParser::ParseColor(v, c)) {
-        patch.SetBg(c);
-      }
-    } else if (k == "border-color") {
-      octarine::Color c{};
-      if (OssParser::ParseColor(v, c)) {
-        patch.SetBorder(c);
-      }
-    } else if (k == "color" || k == "text-color") {
-      octarine::Color c{};
-      if (OssParser::ParseColor(v, c)) {
-        patch.SetText(c);
-      }
-    } else if (k == "opacity") {
-      float op = 1.0f;
-      if (OssParser::ParseFloat(v, op)) {
-        const float scaled = (op <= 1.0f) ? op * 255.0f : op;
-        patch.SetOpacity(static_cast<uint8_t>(std::clamp(std::round(scaled), 0.0f, 255.0f)));
-      }
-    }
+    ApplySingleStyleProp(k, v, patch);
   }
   return patch;
 }
@@ -448,6 +460,31 @@ OssResolvedStyle OssStylesheet::Resolve(std::string_view tag, const std::vector<
   return resolved;
 }
 
+namespace {
+
+bool AppendParsedRuleGroup(std::string_view selectorGroup, const std::map<std::string, std::string>& props,
+                           int& ruleOrder, OssParseResult& res) {
+  if (selectorGroup == ":root") {
+    for (const auto& [k, v] : props) {
+      res.stylesheet.variables[k] = v;
+    }
+    return true;
+  }
+  const auto selectors = SplitByChar(selectorGroup, ',');
+  for (const std::string_view selStr : selectors) {
+    OssSelector sel;
+    if (!ParseSingleSelector(selStr, sel)) {
+      res.error = "Invalid selector '" + std::string(selStr) + "'";
+      res.errorLine = 1;
+      return false;
+    }
+    res.stylesheet.rules.push_back(OssRule{std::move(sel), props, ruleOrder++});
+  }
+  return true;
+}
+
+}  // namespace
+
 OssParseResult OssParser::Parse(std::string_view source) {
   OssParseResult res;
   const std::string cleaned = StripComments(source);
@@ -477,23 +514,8 @@ OssParseResult OssParser::Parse(std::string_view source) {
 
     const std::string_view selectorGroup = Trim(sv.substr(pos, openBrace - pos));
     const std::string_view body = sv.substr(openBrace + 1, closeBrace - openBrace - 1);
-    auto props = ParseDeclarationsBlock(body);
-
-    if (selectorGroup == ":root") {
-      for (const auto& [k, v] : props) {
-        res.stylesheet.variables[k] = v;
-      }
-    } else {
-      const auto selectors = SplitByChar(selectorGroup, ',');
-      for (const std::string_view selStr : selectors) {
-        OssSelector sel;
-        if (!ParseSingleSelector(selStr, sel)) {
-          res.error = "Invalid selector '" + std::string(selStr) + "'";
-          res.errorLine = 1;
-          return res;
-        }
-        res.stylesheet.rules.push_back(OssRule{std::move(sel), props, ruleOrder++});
-      }
+    if (!AppendParsedRuleGroup(selectorGroup, ParseDeclarationsBlock(body), ruleOrder, res)) {
+      return res;
     }
 
     pos = closeBrace + 1;

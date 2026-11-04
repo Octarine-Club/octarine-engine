@@ -579,13 +579,10 @@ bool HasDynamicStyleOrClassBinding(const OxmlNode& node) {
   if (OxmlParser::ContainsBinding(node.GetAttr("class")) || OxmlParser::ContainsBinding(node.GetAttr("style"))) {
     return true;
   }
-  for (const char* key : kStyleAttrs) {
+  return std::ranges::any_of(kStyleAttrs, [&node](const char* key) {
     const auto it = node.attributes.find(key);
-    if (it != node.attributes.end() && OxmlParser::ContainsBinding(it->second)) {
-      return true;
-    }
-  }
-  return false;
+    return it != node.attributes.end() && OxmlParser::ContainsBinding(it->second);
+  });
 }
 
 std::map<std::string, std::string> CollectInlineStyleProps(const OxmlNode& node, const sol::table& scope,
@@ -800,13 +797,12 @@ void ConfigureButtonEntity(const std::shared_ptr<UIViewInstance>& view, Entity e
   btn.key = node.GetAttr("key");
 
   const std::string onClickMethod = node.GetAttr("on-click");
-  sol::table localScope = scope;
   std::weak_ptr<UIViewInstance> weakView = view;
-  btn.clickFunction = lua.create_table_with("fn", [weakView, onClickMethod, localScope]() {
+  btn.clickFunction = lua.create_table_with("fn", [weakView, onClickMethod, scope]() {
     if (auto v = weakView.lock()) {
-      sol::object itemArg = LookupKeyInTable(localScope, "item");
+      sol::object itemArg = LookupKeyInTable(scope, "item");
       if (itemArg == sol::lua_nil) {
-        itemArg = LookupKeyInTable(localScope, "__item");
+        itemArg = LookupKeyInTable(scope, "__item");
       }
       v->InvokeController(onClickMethod, itemArg);
     }
@@ -1315,10 +1311,41 @@ void BindDynamicStyleAttributes(const std::shared_ptr<UIViewInstance>& view, Ent
   });
 }
 
+void BindTextAttribute(const std::shared_ptr<UIViewInstance>& view, Entity entity, const OxmlNode& node,
+                       const sol::table& scope) {
+  if (!node.HasAttr("text") || !OxmlParser::ContainsBinding(node.GetAttr("text"))) {
+    return;
+  }
+  const std::string rawText = node.GetAttr("text");
+  std::weak_ptr<UIViewInstance> weakView = view;
+  view->AddRefreshFn([weakView, entity, rawText, scope]() {
+    auto v = weakView.lock();
+    if (!v) return;
+    Registry* r = v->runtime->GetRegistry();
+    if (!r->IsAlive(entity) || !r->HasComponent<TextLabelComponent>(entity)) return;
+    r->GetComponent<TextLabelComponent>(entity).text = EvalInterpolatedString(*v->runtime->GetLua(), rawText, scope);
+  });
+}
+
+void BindProgressValueAttribute(const std::shared_ptr<UIViewInstance>& view, Entity entity, const OxmlNode& node,
+                                const sol::table& scope) {
+  if (node.tag != "ProgressBar" || !node.HasAttr("value") || !OxmlParser::ContainsBinding(node.GetAttr("value"))) {
+    return;
+  }
+  const std::string valExpr = UnwrapBindingOrRaw(node.GetAttr("value"));
+  std::weak_ptr<UIViewInstance> weakView = view;
+  view->AddRefreshFn([weakView, entity, valExpr, scope]() {
+    auto v = weakView.lock();
+    if (!v) return;
+    Registry* r = v->runtime->GetRegistry();
+    if (!r->IsAlive(entity) || !r->HasComponent<SquarePrimitiveComponent>(entity)) return;
+    const float p = std::clamp(ObjectToFloat(EvalBindingExpr(*v->runtime->GetLua(), valExpr, scope), 0.0f), 0.0f, 1.0f);
+    r->GetComponent<SquarePrimitiveComponent>(entity).fillRatio = p;
+  });
+}
+
 void RegisterAttributeBindings(const std::shared_ptr<UIViewInstance>& view, Entity entity, const OxmlNode& node,
                                const sol::table& scope) {
-  std::weak_ptr<UIViewInstance> weakView = view;
-
   if (node.HasAttr("if")) {
     BindVisibilityAttribute(view, entity, node.GetAttr("if"), scope);
   }
@@ -1330,28 +1357,8 @@ void RegisterAttributeBindings(const std::shared_ptr<UIViewInstance>& view, Enti
       SetEntityVisibility(view->runtime->GetRegistry(), entity, ParseBoolStr(rawVis, true));
     }
   }
-  if (node.HasAttr("text") && OxmlParser::ContainsBinding(node.GetAttr("text"))) {
-    const std::string rawText = node.GetAttr("text");
-    view->AddRefreshFn([weakView, entity, rawText, scope]() {
-      auto v = weakView.lock();
-      if (!v) return;
-      Registry* r = v->runtime->GetRegistry();
-      if (!r->IsAlive(entity) || !r->HasComponent<TextLabelComponent>(entity)) return;
-      r->GetComponent<TextLabelComponent>(entity).text = EvalInterpolatedString(*v->runtime->GetLua(), rawText, scope);
-    });
-  }
-  if (node.HasAttr("value") && OxmlParser::ContainsBinding(node.GetAttr("value")) && node.tag == "ProgressBar") {
-    const std::string valExpr = UnwrapBindingOrRaw(node.GetAttr("value"));
-    view->AddRefreshFn([weakView, entity, valExpr, scope]() {
-      auto v = weakView.lock();
-      if (!v) return;
-      Registry* r = v->runtime->GetRegistry();
-      if (!r->IsAlive(entity) || !r->HasComponent<SquarePrimitiveComponent>(entity)) return;
-      const float p =
-          std::clamp(ObjectToFloat(EvalBindingExpr(*v->runtime->GetLua(), valExpr, scope), 0.0f), 0.0f, 1.0f);
-      r->GetComponent<SquarePrimitiveComponent>(entity).fillRatio = p;
-    });
-  }
+  BindTextAttribute(view, entity, node, scope);
+  BindProgressValueAttribute(view, entity, node, scope);
   if (node.HasAttr("disabled") && OxmlParser::ContainsBinding(node.GetAttr("disabled"))) {
     BindDisabledAttribute(view, entity, node.GetAttr("disabled"), scope);
   }
@@ -1361,7 +1368,7 @@ void RegisterAttributeBindings(const std::shared_ptr<UIViewInstance>& view, Enti
   BindDynamicStyleAttributes(view, entity, node, scope);
 }
 
-void AttachRefTextAndValueMethods(sol::table& h, const std::weak_ptr<UIViewInstance>& weakView, Entity entity) {
+void AttachRefTextMethods(sol::table& h, const std::weak_ptr<UIViewInstance>& weakView, Entity entity) {
   h.set_function("set_text", [weakView, entity](const sol::table&, const std::string& text) {
     auto v = weakView.lock();
     if (!v) return;
@@ -1380,7 +1387,9 @@ void AttachRefTextAndValueMethods(sol::table& h, const std::weak_ptr<UIViewInsta
     }
     return "";
   });
+}
 
+void AttachRefValueMethods(sol::table& h, const std::weak_ptr<UIViewInstance>& weakView, Entity entity) {
   h.set_function("set_value", [weakView, entity](const sol::table&, const float val) {
     auto v = weakView.lock();
     if (!v) return;
@@ -1467,7 +1476,8 @@ sol::table CreateRefHandle(const std::shared_ptr<UIViewInstance>& view, Entity e
   h.set("entity", entity);
   std::weak_ptr<UIViewInstance> weakView = view;
 
-  AttachRefTextAndValueMethods(h, weakView, entity);
+  AttachRefTextMethods(h, weakView, entity);
+  AttachRefValueMethods(h, weakView, entity);
   AttachRefStateMethods(h, weakView, entity);
 
   h.set_function(
@@ -1490,6 +1500,54 @@ Entity InstantiateNode(const std::shared_ptr<UIViewInstance>& view, const OxmlNo
                        const sol::table& scope, const SlotProjection* slotProjection,
                        const std::shared_ptr<RadioGroupState>& activeRadioGroup);
 
+// Repeater rebuild instantiates child OXML trees which may contain nested repeaters.
+// NOLINTNEXTLINE(misc-no-recursion)
+void RebuildRepeaterItems(const std::shared_ptr<UIViewInstance>& v, const std::shared_ptr<RepeaterRecord>& rec,
+                          const sol::table& scope, const SlotProjection* projPtr,
+                          const std::shared_ptr<RadioGroupState>& activeRadioGroup) {
+  Registry* r = v->runtime->GetRegistry();
+  if (!r->IsAlive(rec->parentEntity)) return;
+
+  for (const Entity e : rec->spawnedEntities) {
+    if (r->IsAlive(e)) {
+      r->BlamEntity(e);
+    }
+  }
+  rec->spawnedEntities.clear();
+  rec->itemRefreshFns.clear();
+  std::erase_if(v->sliders, [r](const auto& kv) { return !r->IsAlive(kv.second->entity); });
+  std::erase_if(v->changeCallbacks, [r](const auto& kv) { return !r->IsAlive(Entity(kv.first)); });
+
+  sol::state& lua = *v->runtime->GetLua();
+  const sol::object listObj = EvalBindingExpr(lua, rec->clause.listExpr, scope);
+  if (!listObj.is<sol::table>()) return;
+
+  auto* prevSink = v->activeRefreshSink;
+  v->activeRefreshSink = &rec->itemRefreshFns;
+  const sol::table listTbl = listObj.as<sol::table>();
+  const std::size_t len = listTbl.size();
+  for (std::size_t idx = 1; idx <= len; ++idx) {
+    sol::object itemVal = listTbl[idx];
+    if (!itemVal.valid() || itemVal == sol::lua_nil) continue;
+    sol::table itemVars = lua.create_table();
+    itemVars[rec->clause.itemVar] = itemVal;
+    itemVars["__item"] = itemVal;
+    if (!rec->clause.indexVar.empty()) {
+      itemVars[rec->clause.indexVar] = static_cast<int>(idx);
+    }
+    sol::table childScope = v->MakeScope(itemVars);
+    const Entity spawned =
+        InstantiateNode(v, rec->itemTemplate, rec->parentEntity, childScope, projPtr, activeRadioGroup);
+    rec->spawnedEntities.push_back(spawned);
+  }
+  v->activeRefreshSink = prevSink;
+  for (const auto& fn : rec->itemRefreshFns) {
+    fn();
+  }
+}
+
+// Repeater mounting delegates to RebuildRepeaterItems which recursively instantiates child nodes.
+// NOLINTNEXTLINE(misc-no-recursion)
 void MountRepeaterNode(const std::shared_ptr<UIViewInstance>& view, const OxmlNode& node, Entity parentEntity,
                        const sol::table& scope, const SlotProjection* slotProjection,
                        const std::shared_ptr<RadioGroupState>& activeRadioGroup) {
@@ -1514,51 +1572,14 @@ void MountRepeaterNode(const std::shared_ptr<UIViewInstance>& view, const OxmlNo
                                                : std::vector<OxmlNode>{};
   const sol::table savedCallerScope = slotProjection != nullptr ? slotProjection->callerScope : sol::table{};
 
+  // Repeater refresh callback invokes RebuildRepeaterItems which traverses child OXML subtrees.
+  // NOLINTNEXTLINE(misc-no-recursion)
   auto rebuild = [weakView, rec, scope, savedSlots, savedCallerScope, activeRadioGroup]() {
     auto v = weakView.lock();
     if (!v) return;
-    Registry* r = v->runtime->GetRegistry();
-    if (!r->IsAlive(rec->parentEntity)) return;
-
-    for (const Entity e : rec->spawnedEntities) {
-      if (r->IsAlive(e)) {
-        r->BlamEntity(e);
-      }
-    }
-    rec->spawnedEntities.clear();
-    rec->itemRefreshFns.clear();
-    std::erase_if(v->sliders, [r](const auto& kv) { return !r->IsAlive(kv.second->entity); });
-    std::erase_if(v->changeCallbacks, [r](const auto& kv) { return !r->IsAlive(Entity(kv.first)); });
-
-    sol::state& lua = *v->runtime->GetLua();
-    const sol::object listObj = EvalBindingExpr(lua, rec->clause.listExpr, scope);
-    if (!listObj.is<sol::table>()) return;
-
     const SlotProjection savedProj{&savedSlots, savedCallerScope};
     const SlotProjection* projPtr = savedSlots.empty() && !savedCallerScope.valid() ? nullptr : &savedProj;
-
-    auto* prevSink = v->activeRefreshSink;
-    v->activeRefreshSink = &rec->itemRefreshFns;
-    const sol::table listTbl = listObj.as<sol::table>();
-    const std::size_t len = listTbl.size();
-    for (std::size_t idx = 1; idx <= len; ++idx) {
-      sol::object itemVal = listTbl[idx];
-      if (!itemVal.valid() || itemVal == sol::lua_nil) continue;
-      sol::table itemVars = lua.create_table();
-      itemVars[rec->clause.itemVar] = itemVal;
-      itemVars["__item"] = itemVal;
-      if (!rec->clause.indexVar.empty()) {
-        itemVars[rec->clause.indexVar] = static_cast<int>(idx);
-      }
-      sol::table childScope = v->MakeScope(itemVars);
-      const Entity spawned =
-          InstantiateNode(v, rec->itemTemplate, rec->parentEntity, childScope, projPtr, activeRadioGroup);
-      rec->spawnedEntities.push_back(spawned);
-    }
-    v->activeRefreshSink = prevSink;
-    for (const auto& fn : rec->itemRefreshFns) {
-      fn();
-    }
+    RebuildRepeaterItems(v, rec, scope, projPtr, activeRadioGroup);
   };
 
   rebuild();
@@ -1595,6 +1616,8 @@ void ApplyCompositeNodeBindings(const std::shared_ptr<UIViewInstance>& view, Ent
   }
 }
 
+// Imported <Use> components instantiate a child OXML subtree via InstantiateNode.
+// NOLINTNEXTLINE(misc-no-recursion)
 Entity InstantiateImportedUse(const std::shared_ptr<UIViewInstance>& view, const OxmlNode& node,
                               const OxmlDocument& importedDoc, std::optional<Entity> parent, const sol::table& scope,
                               const std::shared_ptr<RadioGroupState>& activeRadioGroup) {
@@ -1631,39 +1654,48 @@ Entity InstantiateImportedUse(const std::shared_ptr<UIViewInstance>& view, const
   return rootEnt;
 }
 
-Entity InstantiateCustomLuaWidget(const std::shared_ptr<UIViewInstance>& view, const OxmlNode& node,
-                                  const sol::table& descriptor, std::optional<Entity> parent, const sol::table& scope,
-                                  const std::shared_ptr<RadioGroupState>& activeRadioGroup) {
+void BindCustomWidgetAttributes(const std::shared_ptr<UIViewInstance>& view, const OxmlNode& node,
+                                const sol::table& descriptor, const sol::table& scope, sol::table& props,
+                                const sol::table& instanceCtx) {
   sol::state& lua = *view->runtime->GetLua();
-  sol::table props = lua.create_table();
   if (const sol::optional<sol::table> defaults = descriptor["props"]; defaults) {
     for (const auto& [k, v] : *defaults) {
       props[k] = v;
     }
   }
-  sol::table instanceCtx = lua.create_table();
   const sol::optional<sol::protected_function> onPropChanged = descriptor["on_prop_changed"];
   std::weak_ptr<UIViewInstance> weakView = view;
 
   for (const auto& [k, rawVal] : node.attributes) {
     if (IsReservedCallSiteAttr(k)) continue;
-    if (OxmlParser::ContainsBinding(rawVal)) {
-      props[k] = EvalBoundAttrValue(lua, rawVal, scope);
-      const std::string key = k;
-      const std::string valStr = rawVal;
-      view->AddRefreshFn([weakView, instanceCtx, props, key, valStr, scope, onPropChanged]() mutable {
-        auto v = weakView.lock();
-        if (!v) return;
-        sol::object nextVal = EvalBoundAttrValue(*v->runtime->GetLua(), valStr, scope);
-        props[key] = nextVal;
-        if (onPropChanged.has_value()) {
-          (*onPropChanged)(instanceCtx, key, nextVal);
-        }
-      });
-    } else {
+    if (!OxmlParser::ContainsBinding(rawVal)) {
       props[k] = rawVal;
+      continue;
     }
+    props[k] = EvalBoundAttrValue(lua, rawVal, scope);
+    const std::string key = k;
+    const std::string valStr = rawVal;
+    view->AddRefreshFn([weakView, instanceCtx, props, key, valStr, scope, onPropChanged]() mutable {
+      auto v = weakView.lock();
+      if (!v) return;
+      sol::object nextVal = EvalBoundAttrValue(*v->runtime->GetLua(), valStr, scope);
+      props[key] = nextVal;
+      if (onPropChanged.has_value()) {
+        (*onPropChanged)(instanceCtx, key, nextVal);
+      }
+    });
   }
+}
+
+// Custom Lua widgets instantiate their template or fallback panel through InstantiateNode.
+// NOLINTNEXTLINE(misc-no-recursion)
+Entity InstantiateCustomLuaWidget(const std::shared_ptr<UIViewInstance>& view, const OxmlNode& node,
+                                  const sol::table& descriptor, std::optional<Entity> parent, const sol::table& scope,
+                                  const std::shared_ptr<RadioGroupState>& activeRadioGroup) {
+  sol::state& lua = *view->runtime->GetLua();
+  sol::table props = lua.create_table();
+  sol::table instanceCtx = lua.create_table();
+  BindCustomWidgetAttributes(view, node, descriptor, scope, props, instanceCtx);
 
   Entity rootEnt{};
   bool createdFromTemplate = false;
@@ -1692,8 +1724,8 @@ Entity InstantiateCustomLuaWidget(const std::shared_ptr<UIViewInstance>& view, c
     (*onMount)(instanceCtx);
   }
   if (const sol::optional<sol::protected_function> onUnmount = descriptor["on_unmount"]; onUnmount) {
-    sol::protected_function cb = *onUnmount;
-    view->unmountFns.push_back([cb, instanceCtx]() { cb(instanceCtx); });
+    const sol::protected_function& cb = *onUnmount;
+    view->unmountFns.emplace_back([cb, instanceCtx]() { cb(instanceCtx); });
   }
   return rootEnt;
 }
@@ -1764,13 +1796,12 @@ void ConfigureContainerEntity(const std::shared_ptr<UIViewInstance>& view, Entit
     btn.isActive = !isDisabled;
     btn.key = node.GetAttr("key");
     const std::string onClickMethod = node.GetAttr("on-click");
-    sol::table localScope = scope;
     std::weak_ptr<UIViewInstance> weakView = view;
-    btn.clickFunction = lua.create_table_with("fn", [weakView, onClickMethod, localScope]() {
+    btn.clickFunction = lua.create_table_with("fn", [weakView, onClickMethod, scope]() {
       if (auto v = weakView.lock()) {
-        sol::object itemArg = LookupKeyInTable(localScope, "item");
+        sol::object itemArg = LookupKeyInTable(scope, "item");
         if (itemArg == sol::lua_nil) {
-          itemArg = LookupKeyInTable(localScope, "__item");
+          itemArg = LookupKeyInTable(scope, "__item");
         }
         v->InvokeController(onClickMethod, itemArg);
       }
@@ -1808,6 +1839,7 @@ void ConfigureWidgetByTag(const std::shared_ptr<UIViewInstance>& view, Entity en
   }
 }
 
+// Dispatches child node instantiation to repeater or single-node tree traversal.
 // NOLINTNEXTLINE(misc-no-recursion)
 void InstantiateSingleOrRepeater(const std::shared_ptr<UIViewInstance>& view, const OxmlNode& child,
                                  Entity parentEntity, const sol::table& scope, const SlotProjection* slotProjection,
@@ -1819,6 +1851,7 @@ void InstantiateSingleOrRepeater(const std::shared_ptr<UIViewInstance>& view, co
   }
 }
 
+// Projects caller slot children or default fallback children into the parent entity hierarchy.
 // NOLINTNEXTLINE(misc-no-recursion)
 void InstantiateSlotProjection(const std::shared_ptr<UIViewInstance>& view, const OxmlNode& slotNode,
                                Entity parentEntity, const sol::table& templateScope,
@@ -1842,6 +1875,7 @@ void InstantiateSlotProjection(const std::shared_ptr<UIViewInstance>& view, cons
   }
 }
 
+// Recursively instantiates an OXML element and its child hierarchy into ECS entities.
 // NOLINTNEXTLINE(misc-no-recursion)
 Entity InstantiateNode(const std::shared_ptr<UIViewInstance>& view, const OxmlNode& node, std::optional<Entity> parent,
                        const sol::table& scope, const SlotProjection* slotProjection,
@@ -1905,57 +1939,69 @@ void SubscribeObservableTable(sol::table& obsTbl, const std::function<void(const
   }
 }
 
-void LoadStylesAndUsesForView(UIRuntime* runtime, const OxmlDocument& doc, const sol::optional<sol::table>& opts,
-                              const std::shared_ptr<UIViewInstance>& view, std::vector<std::string>& watchedPaths) {
+void LoadDeclaredStylesForView(UIRuntime* runtime, const OxmlDocument& doc, const std::shared_ptr<UIViewInstance>& view,
+                               std::vector<std::string>& watchedPaths) {
   for (const auto& styleImp : doc.styles) {
     std::string styleDiskPath;
-    if (const auto ossText = runtime->ReadTextAsset(styleImp.src, &styleDiskPath); ossText.has_value()) {
-      const OssParseResult ossRes = OssParser::Parse(*ossText);
-      if (ossRes.ok) {
-        view->stylesheet.MergeFrom(ossRes.stylesheet);
-        if (!styleDiskPath.empty()) watchedPaths.push_back(styleDiskPath);
-      } else {
-        Logger::Error("ui.mount: OSS parse error in '" + styleImp.src + "': " + ossRes.error);
-      }
-    } else {
+    const auto ossText = runtime->ReadTextAsset(styleImp.src, &styleDiskPath);
+    if (!ossText.has_value()) {
       Logger::Error("ui.mount: missing stylesheet '" + styleImp.src + "'");
+      continue;
+    }
+    const OssParseResult ossRes = OssParser::Parse(*ossText);
+    if (ossRes.ok) {
+      view->stylesheet.MergeFrom(ossRes.stylesheet);
+      if (!styleDiskPath.empty()) watchedPaths.push_back(styleDiskPath);
+    } else {
+      Logger::Error("ui.mount: OSS parse error in '" + styleImp.src + "': " + ossRes.error);
     }
   }
+}
 
-  if (opts.has_value()) {
-    if (const sol::optional<sol::table> extraStyles = (*opts)["styles"]; extraStyles) {
-      for (const auto& [_, val] : *extraStyles) {
-        if (!val.is<std::string>()) continue;
-        const std::string s = val.as<std::string>();
-        std::string styleDiskPath;
-        const auto text = (s.find('{') != std::string::npos) ? std::optional<std::string>(s)
-                                                             : runtime->ReadTextAsset(s, &styleDiskPath);
-        if (text.has_value()) {
-          const OssParseResult ossRes = OssParser::Parse(*text);
-          if (ossRes.ok) view->stylesheet.MergeFrom(ossRes.stylesheet);
-          if (!styleDiskPath.empty()) watchedPaths.push_back(styleDiskPath);
-        }
-      }
-    }
+void LoadExtraOptionStylesForView(UIRuntime* runtime, const sol::optional<sol::table>& opts,
+                                  const std::shared_ptr<UIViewInstance>& view, std::vector<std::string>& watchedPaths) {
+  if (!opts.has_value()) return;
+  const sol::optional<sol::table> extraStyles = (*opts)["styles"];
+  if (!extraStyles) return;
+  for (const auto& [_, val] : *extraStyles) {
+    if (!val.is<std::string>()) continue;
+    const std::string s = val.as<std::string>();
+    std::string styleDiskPath;
+    const auto text =
+        (s.find('{') != std::string::npos) ? std::optional<std::string>(s) : runtime->ReadTextAsset(s, &styleDiskPath);
+    if (!text.has_value()) continue;
+    const OssParseResult ossRes = OssParser::Parse(*text);
+    if (ossRes.ok) view->stylesheet.MergeFrom(ossRes.stylesheet);
+    if (!styleDiskPath.empty()) watchedPaths.push_back(styleDiskPath);
   }
+}
 
+void LoadUsesForView(UIRuntime* runtime, const OxmlDocument& doc, const std::shared_ptr<UIViewInstance>& view,
+                     std::vector<std::string>& watchedPaths) {
   for (const auto& useImp : doc.uses) {
     std::string useDiskPath;
     const auto useText = (!useImp.src.empty() && useImp.src.front() == '<')
                              ? std::optional<std::string>(useImp.src)
                              : runtime->ReadTextAsset(useImp.src, &useDiskPath);
-    if (useText.has_value()) {
-      const OxmlParseResult useParsed = OxmlParser::Parse(*useText);
-      if (useParsed.ok) {
-        view->importedUses[useImp.name] = useParsed.document;
-        if (!useDiskPath.empty()) watchedPaths.push_back(useDiskPath);
-      } else {
-        Logger::Error("ui.mount: failed to parse <Use src='" + useImp.src + "'>: " + useParsed.error);
-      }
-    } else {
+    if (!useText.has_value()) {
       Logger::Error("ui.mount: missing <Use src='" + useImp.src + "'>");
+      continue;
+    }
+    const OxmlParseResult useParsed = OxmlParser::Parse(*useText);
+    if (useParsed.ok) {
+      view->importedUses[useImp.name] = useParsed.document;
+      if (!useDiskPath.empty()) watchedPaths.push_back(useDiskPath);
+    } else {
+      Logger::Error("ui.mount: failed to parse <Use src='" + useImp.src + "'>: " + useParsed.error);
     }
   }
+}
+
+void LoadStylesAndUsesForView(UIRuntime* runtime, const OxmlDocument& doc, const sol::optional<sol::table>& opts,
+                              const std::shared_ptr<UIViewInstance>& view, std::vector<std::string>& watchedPaths) {
+  LoadDeclaredStylesForView(runtime, doc, view, watchedPaths);
+  LoadExtraOptionStylesForView(runtime, opts, view, watchedPaths);
+  LoadUsesForView(runtime, doc, view, watchedPaths);
 }
 
 void ApplyMountOptions(const sol::optional<sol::table>& opts, const std::shared_ptr<UIViewInstance>& view,
@@ -2110,6 +2156,33 @@ void UIRuntime::RegisterWidget(const std::string& name, const sol::table& descri
   custom_widgets_[name] = descriptor;
 }
 
+namespace {
+void NotifyObservableListeners(const sol::table& listeners, const std::string& key) {
+  const std::size_t n = listeners.size();
+  for (std::size_t i = 1; i <= n; ++i) {
+    sol::object fnObj = listeners[i];
+    if (fnObj.is<sol::protected_function>()) {
+      fnObj.as<sol::protected_function>()(key);
+    }
+  }
+}
+
+// Wraps nested child tables recursively in observables so deep mutations propagate to parent listeners.
+// NOLINTNEXTLINE(misc-no-recursion)
+void AssignObservableBackingField(UIRuntime* runtime, sol::table& backing, const sol::object& key,
+                                  const sol::object& val, const sol::table& listeners) {
+  if (val.is<sol::table>() && !IsTableObservable(val.as<sol::table>())) {
+    sol::table childObs = runtime->CreateObservable(val.as<sol::table>());
+    SubscribeObservableTable(childObs,
+                             [listeners](const std::string& subKey) { NotifyObservableListeners(listeners, subKey); });
+    backing[key] = childObs;
+  } else {
+    backing[key] = val;
+  }
+}
+}  // namespace
+
+// Observable tables wrap nested child tables recursively so deep mutations propagate to parent listeners.
 // NOLINTNEXTLINE(misc-no-recursion)
 sol::table UIRuntime::CreateObservable(const sol::table& rawTable) {
   if (IsTableObservable(rawTable)) {
@@ -2119,24 +2192,8 @@ sol::table UIRuntime::CreateObservable(const sol::table& rawTable) {
   sol::table listeners = lua_->create_table();
   sol::table backing = lua_->create_table();
 
-  auto notifyAll = [listeners](const std::string& key) {
-    const std::size_t n = listeners.size();
-    for (std::size_t i = 1; i <= n; ++i) {
-      sol::object fnObj = listeners[i];
-      if (fnObj.is<sol::protected_function>()) {
-        fnObj.as<sol::protected_function>()(key);
-      }
-    }
-  };
-
   for (const auto& [k, v] : rawTable) {
-    if (v.is<sol::table>() && !IsTableObservable(v.as<sol::table>())) {
-      sol::table childObs = CreateObservable(v.as<sol::table>());
-      SubscribeObservableTable(childObs, [notifyAll](const std::string& subKey) { notifyAll(subKey); });
-      backing[k] = childObs;
-    } else {
-      backing[k] = v;
-    }
+    AssignObservableBackingField(this, backing, k, v, listeners);
   }
 
   sol::table proxy = lua_->create_table();
@@ -2150,18 +2207,11 @@ sol::table UIRuntime::CreateObservable(const sol::table& rawTable) {
   sol::table meta = lua_->create_table();
   meta.set_function("__index",
                     [backing](const sol::table&, const sol::object& key) -> sol::object { return backing[key]; });
-  meta.set_function("__newindex", [this, backing, notifyAll](const sol::table&, const sol::object& key,
+  meta.set_function("__newindex", [this, backing, listeners](const sol::table&, const sol::object& key,
                                                              const sol::object& val) mutable {
-    sol::object prev = backing[key];
-    if (prev == val && !val.is<sol::table>()) return;
-    if (val.is<sol::table>() && !IsTableObservable(val.as<sol::table>())) {
-      sol::table childObs = CreateObservable(val.as<sol::table>());
-      SubscribeObservableTable(childObs, [notifyAll](const std::string& subKey) { notifyAll(subKey); });
-      backing[key] = childObs;
-    } else {
-      backing[key] = val;
-    }
-    notifyAll(key.is<std::string>() ? key.as<std::string>() : "");
+    if (backing[key] == val && !val.is<sol::table>()) return;
+    AssignObservableBackingField(this, backing, key, val, listeners);
+    NotifyObservableListeners(listeners, key.is<std::string>() ? key.as<std::string>() : "");
   });
   meta.set_function("__len", [backing](const sol::table&) -> std::size_t { return backing.size(); });
 
@@ -2241,17 +2291,33 @@ void UIRuntime::RegisterMountedViewWatch(const std::string& sourceStr, std::vect
     }
   }
   std::weak_ptr<UIViewInstance> weakView = view;
-  const sol::optional<sol::table> savedOpts = opts;
-  const std::optional<Entity> savedParent = parentEntity;
   rec->isMountedFn = [weakView]() {
     const auto v = weakView.lock();
     return v != nullptr && v->IsCurrentlyMounted();
   };
-  rec->reloadFn = [this, weakView, sourceStr, savedOpts, savedParent]() {
-    ReloadMountedView(this, weakView.lock(), sourceStr, savedOpts, savedParent);
+  rec->reloadFn = [this, weakView, sourceStr, opts, parentEntity]() {
+    ReloadMountedView(this, weakView.lock(), sourceStr, opts, parentEntity);
   };
   mounted_views_.push_back(std::move(rec));
 }
+
+namespace {
+bool HasWatchedViewFilesChanged(const std::vector<std::string>& watchedFiles,
+                                std::unordered_map<std::string, fs::file_time_type>& lastWriteTimes) {
+  bool changed = false;
+  std::error_code ec;
+  for (const auto& file : watchedFiles) {
+    if (!fs::exists(file, ec)) continue;
+    const auto mtime = fs::last_write_time(file, ec);
+    if (ec) continue;
+    if (const auto it = lastWriteTimes.find(file); it == lastWriteTimes.end() || it->second != mtime) {
+      lastWriteTimes[file] = mtime;
+      changed = true;
+    }
+  }
+  return changed;
+}
+}  // namespace
 
 void UIRuntime::PollHotReload(const float deltaTime, const float pollIntervalSeconds) {
   if (pollIntervalSeconds > 0.0f) {
@@ -2262,20 +2328,8 @@ void UIRuntime::PollHotReload(const float deltaTime, const float pollIntervalSec
     hot_reload_accum_ = 0.0f;
   }
   std::erase_if(mounted_views_, [](const auto& r) { return !r->isMountedFn || !r->isMountedFn(); });
-  std::error_code ec;
   for (const auto& rec : mounted_views_) {
-    bool changed = false;
-    for (const auto& file : rec->watchedFiles) {
-      if (!fs::exists(file, ec)) continue;
-      const auto mtime = fs::last_write_time(file, ec);
-      if (ec) continue;
-      const auto it = rec->lastWriteTimes.find(file);
-      if (it == rec->lastWriteTimes.end() || it->second != mtime) {
-        rec->lastWriteTimes[file] = mtime;
-        changed = true;
-      }
-    }
-    if (changed && rec->reloadFn) {
+    if (HasWatchedViewFilesChanged(rec->watchedFiles, rec->lastWriteTimes) && rec->reloadFn) {
       Logger::Info("UIRuntime: hot-reloading UI view '" + rec->sourcePath + "'");
       rec->reloadFn();
     }
@@ -2295,38 +2349,43 @@ bool IsUiRefResolvable(const AssetManager& assetManager, const std::string& refP
   return !fullPath.empty() && fs::exists(fullPath, ec);
 }
 
+int LogOxmlRefFailure(const std::string& id, std::string_view kind, const std::string& ref) {
+  std::string msg = "Bake UI validation: OXML '";
+  msg.append(id).append("' references ").append(kind).append(" '").append(ref).push_back('\'');
+  Logger::Error(msg);
+  return 1;
+}
+
+int CheckOxmlFileListRefs(const AssetManager& assetManager, const std::string& id,
+                          const std::vector<std::string>& sources, std::string_view kind) {
+  int failures = 0;
+  for (const auto& src : sources) {
+    if (!IsUiRefResolvable(assetManager, src)) {
+      failures += LogOxmlRefFailure(id, kind, src);
+    }
+  }
+  return failures;
+}
+
+int CheckOxmlCatalogListRefs(const AssetManager& assetManager, const std::string& id,
+                             const std::vector<std::string>& ids, std::string_view kind,
+                             std::string_view allowedDefault = "") {
+  int failures = 0;
+  for (const auto& assetId : ids) {
+    if (assetId != allowedDefault && !assetManager.GetCatalog().Contains(assetId)) {
+      failures += LogOxmlRefFailure(id, kind, assetId);
+    }
+  }
+  return failures;
+}
+
 int CheckOxmlAssetRefs(const AssetManager& assetManager, const std::string& id, const OxmlAssetRefs& refs) {
   int failures = 0;
-  for (const auto& styleSrc : refs.styleSources) {
-    if (!IsUiRefResolvable(assetManager, styleSrc)) {
-      Logger::Error("Bake UI validation: OXML '" + id + "' references missing stylesheet '" + styleSrc + "'");
-      ++failures;
-    }
-  }
-  for (const auto& useSrc : refs.useSources) {
-    if (!IsUiRefResolvable(assetManager, useSrc)) {
-      Logger::Error("Bake UI validation: OXML '" + id + "' references missing <Use> asset '" + useSrc + "'");
-      ++failures;
-    }
-  }
-  for (const auto& sp : refs.spriteIds) {
-    if (!assetManager.GetCatalog().Contains(sp)) {
-      Logger::Error("Bake UI validation: OXML '" + id + "' references unknown sprite '" + sp + "'");
-      ++failures;
-    }
-  }
-  for (const auto& fnt : refs.fontIds) {
-    if (fnt != "default-16" && !assetManager.GetCatalog().Contains(fnt)) {
-      Logger::Error("Bake UI validation: OXML '" + id + "' references unknown font '" + fnt + "'");
-      ++failures;
-    }
-  }
-  for (const auto& aud : refs.audioIds) {
-    if (!assetManager.GetCatalog().Contains(aud)) {
-      Logger::Error("Bake UI validation: OXML '" + id + "' references unknown audio '" + aud + "'");
-      ++failures;
-    }
-  }
+  failures += CheckOxmlFileListRefs(assetManager, id, refs.styleSources, "missing stylesheet");
+  failures += CheckOxmlFileListRefs(assetManager, id, refs.useSources, "missing <Use> asset");
+  failures += CheckOxmlCatalogListRefs(assetManager, id, refs.spriteIds, "unknown sprite");
+  failures += CheckOxmlCatalogListRefs(assetManager, id, refs.fontIds, "unknown font", "default-16");
+  failures += CheckOxmlCatalogListRefs(assetManager, id, refs.audioIds, "unknown audio");
   return failures;
 }
 }  // namespace

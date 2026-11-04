@@ -34,13 +34,26 @@ struct TextureMeta {
   }
 };
 
+struct FontSizeEntry {
+  std::optional<std::string> id{};
+  float size{kDefaultFontSize};
+
+  FontSizeEntry() = default;
+  // Implicit conversion from float keeps `meta.sizes = {12.0f, 16.0f}` ergonomic at call sites.
+  // NOLINTNEXTLINE(google-explicit-constructor)
+  FontSizeEntry(float s) : size(s) {}
+  FontSizeEntry(std::optional<std::string> i, float s) : id(std::move(i)), size(s) {}
+
+  bool operator==(float s) const { return size == s; }
+};
+
 struct FontMeta {
-  std::optional<std::string> id{};  // override the derived id base (filename stem)
-  std::vector<float> sizes{};       // one catalog entry per size; defaults to { kDefaultFontSize }
+  std::optional<std::string> id{};     // override the derived id base (filename stem)
+  std::vector<FontSizeEntry> sizes{};  // one catalog entry per size; defaults to { kDefaultFontSize }
 
   void applyDefaults() {
     if (sizes.empty()) {
-      sizes.push_back(kDefaultFontSize);
+      sizes.emplace_back(std::nullopt, kDefaultFontSize);
     }
   }
 };

@@ -247,6 +247,15 @@ class UIButtonSystem {
     return current;
   }
 
+  [[nodiscard]] static Entity ResolveExplicitDirectionTarget(const UIFocusComponent& curFocus,
+                                                             const glm::vec2 dir) noexcept {
+    if (dir.y < -0.5f) return curFocus.navUp;
+    if (dir.y > 0.5f) return curFocus.navDown;
+    if (dir.x < -0.5f) return curFocus.navLeft;
+    if (dir.x > 0.5f) return curFocus.navRight;
+    return Entity{static_cast<EcsId>(-1)};
+  }
+
   bool NavigateDirection(const glm::vec2 dir) {
     if (!EnsureFocusQuery()) return false;
     const Entity current = GetFocusedEntity();
@@ -254,12 +263,7 @@ class UIButtonSystem {
       return CycleFocusTab(false);
     }
 
-    const auto& curFocus = registry_->GetComponent<UIFocusComponent>(current);
-    Entity explicitNext{static_cast<EcsId>(-1)};
-    if (dir.y < -0.5f) explicitNext = curFocus.navUp;
-    if (dir.y > 0.5f) explicitNext = curFocus.navDown;
-    if (dir.x < -0.5f) explicitNext = curFocus.navLeft;
-    if (dir.x > 0.5f) explicitNext = curFocus.navRight;
+    const Entity explicitNext = ResolveExplicitDirectionTarget(registry_->GetComponent<UIFocusComponent>(current), dir);
     if (explicitNext.GetId() != static_cast<std::uint32_t>(-1) && registry_->IsAlive(explicitNext)) {
       SetFocus(explicitNext);
       return true;

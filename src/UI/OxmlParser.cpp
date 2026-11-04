@@ -234,6 +234,7 @@ void ConsumeTextUntilTag(XmlCursor& cur, OxmlNode& node) {
   AppendInnerText(node, cur.src.substr(textStart, cur.pos - textStart));
 }
 
+// Recursive descent XML parser traverses nested OXML element trees.
 // NOLINTNEXTLINE(misc-no-recursion)
 bool ParseChildrenAndClosingTag(XmlCursor& cur, OxmlNode& node, std::string& outError, int& outErrorLine) {
   while (!cur.Eof()) {
@@ -255,6 +256,7 @@ bool ParseChildrenAndClosingTag(XmlCursor& cur, OxmlNode& node, std::string& out
   return false;
 }
 
+// Recursive descent XML element parser paired with ParseChildrenAndClosingTag.
 // NOLINTNEXTLINE(misc-no-recursion)
 bool ParseElement(XmlCursor& cur, OxmlNode& outNode, std::string& outError, int& outErrorLine) {
   if (cur.Peek() != '<') {
@@ -332,6 +334,7 @@ void AddUniqueRef(std::vector<std::string>& vec, std::string_view rawVal) {
   }
 }
 
+// Recursive AST walk collecting static asset references across nested OXML nodes.
 // NOLINTNEXTLINE(misc-no-recursion)
 void WalkStaticNodeRefs(const OxmlNode& node, OxmlAssetRefs& refs) {
   AddUniqueRef(refs.spriteIds, node.GetAttr("sprite"));
@@ -344,6 +347,18 @@ void WalkStaticNodeRefs(const OxmlNode& node, OxmlAssetRefs& refs) {
   for (const auto& child : node.children) {
     WalkStaticNodeRefs(child, refs);
   }
+}
+
+bool AppendTopLevelNode(const OxmlNode& topNode, OxmlParseResult& res) {
+  if (topNode.tag != "OXML") {
+    return ExtractHeaderNode(topNode, res.document, res.error, res.errorLine);
+  }
+  for (const auto& child : topNode.children) {
+    if (!ExtractHeaderNode(child, res.document, res.error, res.errorLine)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 }  // namespace
@@ -360,19 +375,8 @@ OxmlParseResult OxmlParser::Parse(std::string_view source) {
       break;
     }
     OxmlNode topNode;
-    if (!ParseElement(cur, topNode, res.error, res.errorLine)) {
+    if (!ParseElement(cur, topNode, res.error, res.errorLine) || !AppendTopLevelNode(topNode, res)) {
       return res;
-    }
-    if (topNode.tag == "OXML") {
-      for (const auto& child : topNode.children) {
-        if (!ExtractHeaderNode(child, res.document, res.error, res.errorLine)) {
-          return res;
-        }
-      }
-    } else {
-      if (!ExtractHeaderNode(topNode, res.document, res.error, res.errorLine)) {
-        return res;
-      }
     }
   }
 

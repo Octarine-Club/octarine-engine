@@ -438,15 +438,16 @@ EntityLocation Registry::TransitionRemoveComponent(const Entity entity, const Co
 
 void Registry::PromoteToActive(const EntityLocation& location) {
   if (!location.archetype) return;
+  const EntityLocation oldLocation = location;
   // Activate is no-op-equivalent when the slot is already at the active boundary (no swap, just
   // ++active_count). When the chunk has an inactive tail, this swaps the new entity past it.
-  const auto result = location.archetype->Activate(location);
+  const auto result = oldLocation.archetype->Activate(oldLocation);
   // Patch entity_locations_ for both the entity that just became active and (if the boundary
-  // was occupied by an inactive entity) the displaced inactive entity now sitting at `location`.
-  const Entity activated = location.archetype->GetEntity(location.chunkIndex, result.newSlot);
-  entity_locations_[activated.GetId()] = EntityLocation{location.archetype, location.chunkIndex, result.newSlot};
+  // was occupied by an inactive entity) the displaced inactive entity now sitting at `oldLocation`.
+  const Entity activated = oldLocation.archetype->GetEntity(oldLocation.chunkIndex, result.newSlot);
+  entity_locations_[activated.GetId()] = EntityLocation{oldLocation.archetype, oldLocation.chunkIndex, result.newSlot};
   if (result.displaced) {
-    entity_locations_[result.displaced->GetId()] = location;
+    entity_locations_[result.displaced->GetId()] = oldLocation;
   }
 }
 

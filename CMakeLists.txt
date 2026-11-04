@@ -157,6 +157,7 @@ endif ()
 # =============================================================================
 
 find_package(glm CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 find_package(SDL3 CONFIG REQUIRED)
 find_package(SDL3_image CONFIG REQUIRED)
 find_package(SDL3_ttf CONFIG REQUIRED)
@@ -316,6 +317,7 @@ if (OCTARINE_ENABLE_BENCHMARKS)
             tests/benchmarks/KDTreeCollisionSystemBenchmark.cpp
             tests/benchmarks/SpatialAudioBenchmark.cpp
             tests/benchmarks/TextCacheBenchmark.cpp
+            tests/benchmarks/TilemapBenchmark.cpp
             tests/benchmarks/UIBenchmark.cpp
     )
     target_include_directories(OctarineBenchmarks PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmarks")

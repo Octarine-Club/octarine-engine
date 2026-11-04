@@ -8,6 +8,7 @@
 #include "Lua/Bindings/CameraFollowComponentLuaBinding.h"
 #include "Lua/Bindings/CapsuleColliderComponentLuaBinding.h"
 #include "Lua/Bindings/CapsulePrimitiveComponentLuaBinding.h"
+#include "Lua/Bindings/ChunkResidentComponentLuaBinding.h"
 #include "Lua/Bindings/CircleColliderComponentLuaBinding.h"
 #include "Lua/Bindings/CirclePrimitiveComponentLuaBinding.h"
 #include "Lua/Bindings/ColorGridComponentLuaBinding.h"
@@ -59,6 +60,7 @@ void RegisterAllLuaBindings(bool includeGameModule) {
   LuaComponentRegistry::registerComponent<LineColliderComponent>();
   LuaComponentRegistry::registerComponent<LifetimeComponent>();
   LuaComponentRegistry::registerComponent<CameraFollowComponent>();
+  LuaComponentRegistry::registerComponent<ChunkResidentComponent>();
   LuaComponentRegistry::registerComponent<ScriptCallbackComponent>();
   LuaComponentRegistry::registerComponent<ScriptComponent>();
   LuaComponentRegistry::registerComponent<UIButtonComponent>();

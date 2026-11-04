@@ -51,7 +51,7 @@ struct LuaBinding<UILayoutBoxComponent> {
     ApplyDim(t, "min_height", box.minHeight, box.minHeightUnit);
     ApplyDim(t, "max_height", box.maxHeight, box.maxHeightUnit);
 
-    const float margin = SafeGetOptionalValue<float>(t, "margin", 0.0f);
+    const auto margin = SafeGetOptionalValue<float>(t, "margin", 0.0f);
     box.marginLeft = SafeGetOptionalValue<float>(t, "margin_left", margin);
     box.marginTop = SafeGetOptionalValue<float>(t, "margin_top", margin);
     box.marginRight = SafeGetOptionalValue<float>(t, "margin_right", margin);

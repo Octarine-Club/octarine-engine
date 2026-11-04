@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "Components/ViewportInfo.h"
+#include "Editor/Panels/TilemapDebugPanel.h"
 #include "Game/Game.h"
 #include "Game/GameConfig.h"
 #include "General/PerfUtils.h"
@@ -100,6 +101,7 @@ void RenderDebugGUISystem::DrawDebugOverlays(Registry* registry, const EngineOpt
     if (engineOptions.showEntityInfo) {
       EntityInfoWindow(registry);
     }
+    octarine::editor::panels::DrawTilemapDebugPanel(registry);
 #ifdef OCTARINE_WITH_EDITOR
     FPSWindow(deltaTime);
 #endif

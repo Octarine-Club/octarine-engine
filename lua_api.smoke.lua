@@ -1582,6 +1582,10 @@ capsule_collider_component = {}
 capsule_primitive_component = {}
 
 
+---@class chunk_resident_component
+chunk_resident_component = {}
+
+
 ---@class circle_collider_component
 circle_collider_component = {}
 
@@ -1789,6 +1793,8 @@ function registry.get_capsule(...) end
 
 function registry.get_capsule_collider(...) end
 
+function registry.get_chunk_resident(...) end
+
 function registry.get_circle(...) end
 
 function registry.get_circle_collider(...) end
@@ -1866,6 +1872,8 @@ function registry.has_camera_follow(...) end
 function registry.has_capsule(...) end
 
 function registry.has_capsule_collider(...) end
+
+function registry.has_chunk_resident(...) end
 
 function registry.has_circle(...) end
 
@@ -2070,6 +2078,73 @@ function storage.write_table(...) end
 
 ---@class text_label_component
 text_label_component = {}
+
+
+---@class tilemap
+---@field MASK_CHASM any
+---@field MASK_EMPTY any
+---@field MASK_GROUND_BLOCKED any
+---@field MASK_HAZARD any
+---@field MASK_SOLID any
+---@field TILE_CHASM any
+---@field TILE_EMPTY any
+---@field TILE_HAZARD any
+---@field TILE_SOLID any
+tilemap = {}
+
+function tilemap.clear_chunk_overrides(...) end
+
+function tilemap.clear_consumed_props(...) end
+
+function tilemap.get_active_chunk_count(...) end
+
+function tilemap.get_camera_chunk(...) end
+
+function tilemap.get_chunk_size(...) end
+
+function tilemap.get_chunk_template_id(...) end
+
+function tilemap.get_seed(...) end
+
+function tilemap.get_stitch_mode(...) end
+
+function tilemap.get_templates(...) end
+
+function tilemap.get_tile_at(...) end
+
+function tilemap.is_loaded(...) end
+
+function tilemap.is_prop_consumed(...) end
+
+function tilemap.is_solid_at(...) end
+
+function tilemap.load(...) end
+
+function tilemap.load_data(...) end
+
+function tilemap.load_json(...) end
+
+function tilemap.mark_prop_consumed(...) end
+
+function tilemap.raycast(...) end
+
+function tilemap.reload(...) end
+
+function tilemap.resolve_aabb(...) end
+
+function tilemap.resolve_circle(...) end
+
+function tilemap.set_chunk_override(...) end
+
+function tilemap.set_debug_overlay(...) end
+
+function tilemap.set_prop_spawner(...) end
+
+function tilemap.set_stitch_mode(...) end
+
+function tilemap.set_window_radii(...) end
+
+function tilemap.unload(...) end
 
 
 function toggle_debug_gui(...) end

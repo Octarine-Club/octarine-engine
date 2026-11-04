@@ -9,5 +9,6 @@ enum RenderableType : std::uint8_t {
   LINE_PRIMITIVE = 3,
   TRIANGLE_PRIMITIVE = 4,
   CAPSULE_PRIMITIVE = 5,
-  TEXT = 6
+  TEXT = 6,
+  TILE_CHUNK = 7
 };

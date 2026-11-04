@@ -20,13 +20,22 @@
 
 class RenderUISpriteSystem {
  public:
+  void Prepare(Registry* registry) const {
+    asset_manager_ = &registry->Get<AssetManager>();
+    render_queue_ = &registry->Get<RenderQueue>();
+    sprite_cache_ = &registry->Get<SpriteRenderCache>();
+  }
+
   void operator()(const ContextFacade& ctx, Entity entity, const UIRectComponent& rect,
                   const SpriteComponent& sprite) const {
     if (!rect.visible) return;
     Registry* registry = ctx.GetRegistry();
-    auto& assetManager = registry->Get<AssetManager>();
-    auto& renderQueue = registry->Get<RenderQueue>();
-    auto& spriteCache = registry->Get<SpriteRenderCache>();
+    if (asset_manager_ == nullptr) {
+      Prepare(registry);
+    }
+    auto& assetManager = *asset_manager_;
+    auto& renderQueue = *render_queue_;
+    auto& spriteCache = *sprite_cache_;
 
     const SpriteRenderCache::Entry* entry = spriteCache.Lookup(entity, assetManager.TextureGeneration());
     if (!entry || !entry->texture) {
@@ -111,4 +120,8 @@ class RenderUISpriteSystem {
     cmd.colorMod = SDL_Color{activeColor.r, activeColor.g, activeColor.b, activeColor.a};
     cmd.blendMode = octarine::ToSdlBlendMode(sprite.blendMode);
   }
+
+  mutable AssetManager* asset_manager_ = nullptr;
+  mutable RenderQueue* render_queue_ = nullptr;
+  mutable SpriteRenderCache* sprite_cache_ = nullptr;
 };

@@ -46,15 +46,27 @@ class RenderTextSystem {
     }
   }
 
+  void Prepare(Registry* registry) const {
+    asset_manager_ = &registry->Get<AssetManager>();
+    engine_ctx_ = &registry->Get<EngineContext>();
+    render_queue_ = &registry->Get<RenderQueue>();
+    camera_comp_ = &registry->Get<CameraComponent>();
+    game_config_ = &registry->Get<GameConfig>();
+    SweepDeadCacheEntries(registry);
+  }
+
   void operator()(const ContextFacade& ctx, const TextLabelComponent& text) const {
     if (text.text.empty()) return;
 
     Registry* registry = ctx.GetRegistry();
-    const auto& assetManager = registry->Get<AssetManager>();
-    const auto& engineCtx = registry->Get<EngineContext>();
+    if (asset_manager_ == nullptr) {
+      Prepare(registry);
+    }
+    const auto& assetManager = *asset_manager_;
+    const auto& engineCtx = *engine_ctx_;
     auto* sdlRenderer = engineCtx.sdlRenderer;
-    auto& renderQueue = registry->Get<RenderQueue>();
-    const auto& cameraComp = registry->Get<CameraComponent>();
+    auto& renderQueue = *render_queue_;
+    const auto& cameraComp = *camera_comp_;
     const octarine::Rect camera = cameraComp.viewport;
     const float zoom = cameraComp.zoom > 0.001f ? cameraComp.zoom : 1.0f;
 
@@ -62,7 +74,6 @@ class RenderTextSystem {
     if (!font) return;
 
     const Entity entity = ctx.GetEntity();
-    SweepDeadCacheEntries(registry);
     const int effectiveWrapWidth = ResolveWrapWidth(registry, entity, text);
     const float rasterScale = ResolveRasterScale(engineCtx.sceneRenderScale);
 
@@ -89,7 +100,7 @@ class RenderTextSystem {
     const float sortY = placement.sortY;
     const std::uint8_t clipId = placement.clipId;
 
-    const auto& gameConfig = registry->Get<GameConfig>();
+    const auto& gameConfig = *game_config_;
     const bool isOutsideCamera = IsRenderableOutsideViewport(
         origin.x, origin.y, it->second.width, it->second.height, effectivelyFixed, camera,
         static_cast<float>(gameConfig.windowWidth), static_cast<float>(gameConfig.windowHeight));
@@ -202,6 +213,11 @@ class RenderTextSystem {
 
   mutable std::unordered_map<std::uint64_t, TextCacheEntry> text_cache_;
   mutable std::uint32_t sweep_counter_ = 0;
+  mutable const AssetManager* asset_manager_ = nullptr;
+  mutable const EngineContext* engine_ctx_ = nullptr;
+  mutable RenderQueue* render_queue_ = nullptr;
+  mutable const CameraComponent* camera_comp_ = nullptr;
+  mutable const GameConfig* game_config_ = nullptr;
 
   void SweepDeadCacheEntries(Registry* registry) const {
     static constexpr std::uint32_t kSweepInterval = 64;

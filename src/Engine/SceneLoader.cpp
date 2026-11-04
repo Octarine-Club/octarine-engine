@@ -20,6 +20,7 @@
 #include "Lua/LuaEntityLoader.h"
 #include "Renderer/SpriteRenderCache.h"
 #include "Systems/InputSystem.h"
+#include "Systems/TilemapSystem.h"
 
 #ifdef OCTARINE_WITH_EDITOR
 #include "Editor/EditorPersistence.h"
@@ -53,6 +54,7 @@ void SceneLoader::FlushPendingSceneLoad() {
   LoadScene(path);
 }
 
+// Coordinates sequential scene asset acquisition, entity spawning, and old-scene teardown.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void SceneLoader::LoadScene(const std::string& scenePath) {
   if (scenePath.empty()) {
@@ -78,6 +80,16 @@ void SceneLoader::LoadScene(const std::string& scenePath) {
   clearSceneEntities();
 
   auto releasePrevious = [&]() { assetManager.ReleaseAll(previousSceneAssets); };
+
+  struct LoadingScope {
+    bool& flag;
+    explicit LoadingScope(bool& f) : flag(f) { flag = true; }
+    ~LoadingScope() { flag = false; }
+    LoadingScope(const LoadingScope&) = delete;
+    LoadingScope& operator=(const LoadingScope&) = delete;
+    LoadingScope(LoadingScope&&) = delete;
+    LoadingScope& operator=(LoadingScope&&) = delete;
+  } const loadingScope(loading_scene_);
 
 #ifdef OCTARINE_WITH_EDITOR
   if (auto* editorPersistence = registry_->TryGet<EditorPersistence>()) {
@@ -250,9 +262,17 @@ void SceneLoader::clearSceneEntities() {
   if (auto* trackCache = registry_->TryGet<AudioTrackCache>()) {
     trackCache->Clear();
   }
+  if (auto* tilemap = registry_->TryGet<TilemapSystem>()) {
+    tilemap->Unload(*registry_);
+  }
 }
 
 void SceneLoader::TrackSceneAssets(const std::vector<std::string>& assetIds) {
+  if (!loading_scene_ && !scene_running_) {
+    // Assets acquired from the startup script before any scene is loaded are global
+    // preloads and retain their baseline refcount across scene swaps.
+    return;
+  }
   for (const auto& id : assetIds) {
     if (std::ranges::find(current_scene_assets_, id) == current_scene_assets_.end()) {
       current_scene_assets_.push_back(id);

@@ -22,6 +22,8 @@ struct OxmlParamDecl {
   int line = 1;
 };
 
+// AST node for parsed OXML trees; holds child OxmlNodes by value.
+// NOLINTNEXTLINE(misc-no-recursion)
 struct OxmlNode {
   std::string tag{};
   std::map<std::string, std::string> attributes{};

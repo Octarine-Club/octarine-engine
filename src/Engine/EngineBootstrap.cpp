@@ -24,6 +24,7 @@
 #include "Renderer/SpriteRenderCache.h"
 #include "Systems/EntityPoolSystem.h"
 #include "Systems/InputSystem.h"
+#include "Systems/TilemapSystem.h"
 
 #ifdef OCTARINE_WITH_EDITOR
 #include "Editor/Inspectors/RegisterAllInspectors.h"
@@ -89,6 +90,7 @@ void InstallCoreSingletons(Registry& registry, EngineContext& context, const int
 
   registry.Set<RenderQueue>(RenderQueue());
   registry.Set<CameraComponent>(CameraComponent{camera});
+  registry.Set<TilemapSystem>(TilemapSystem());
   auto& assetManager = registry.Set<AssetManager>(AssetManager());
   registry.Set<ViewportInfo>(ViewportInfo{0, 0, static_cast<float>(windowWidth), static_cast<float>(windowHeight)});
   if (withFramePathCaches) {

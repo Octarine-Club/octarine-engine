@@ -17,10 +17,9 @@ struct LuaBinding<UINineSliceComponent> {
     }
     if (!data.is<sol::table>()) return UINineSliceComponent{};
     const auto t = data.as<sol::table>();
-    const float border = SafeGetOptionalValue<float>(t, "border", 0.0f);
-    return UINineSliceComponent(
-        SafeGetOptionalValue<float>(t, "left", border), SafeGetOptionalValue<float>(t, "top", border),
-        SafeGetOptionalValue<float>(t, "right", border), SafeGetOptionalValue<float>(t, "bottom", border));
+    const auto border = SafeGetOptionalValue<float>(t, "border", 0.0f);
+    return {SafeGetOptionalValue<float>(t, "left", border), SafeGetOptionalValue<float>(t, "top", border),
+            SafeGetOptionalValue<float>(t, "right", border), SafeGetOptionalValue<float>(t, "bottom", border)};
   }
 
   static void bindUsertype(sol::state& lua) {

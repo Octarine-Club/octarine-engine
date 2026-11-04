@@ -120,6 +120,17 @@ class RenderQueue {
     return key.payload.capsule;
   }
 
+  TileChunkCommand& EmplaceTileChunk(unsigned int layer, float depth, const void* batchKey = nullptr,
+                                     octarine::BlendMode blendMode = octarine::BlendMode::Blend,
+                                     std::uint8_t clipId = 0) {
+    auto& key = ClaimSlot();
+    key.sortKey = RenderKey::ComputeSortKey(layer, depth, TILE_CHUNK, batchKey, static_cast<std::uint8_t>(blendMode));
+    key.type = TILE_CHUNK;
+    key.clipId = clipId;
+    key.payload.tileChunk.blendMode = octarine::ToSdlBlendMode(blendMode);
+    return key.payload.tileChunk;
+  }
+
   std::uint8_t RegisterClipRect(const SDL_Rect& rect) {
     for (size_t i = 0; i < clip_rects_.size(); ++i) {
       const auto& existing = clip_rects_[i];
@@ -217,6 +228,15 @@ class RenderQueue {
   //
   // Pass-parity bookkeeping ensures the final sorted result lives in sort_entries_ regardless
   // of how many passes actually executed.
+  static bool IsUniformHistogram(const std::array<size_t, 256>& hist, const size_t n) noexcept {
+    for (size_t bucket = 0; bucket < 256; ++bucket) {
+      if (hist[bucket] == n) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   void RadixSort() {
     const size_t n = sort_entries_.size();
     if (n <= 1) return;
@@ -240,12 +260,7 @@ class RenderQueue {
     // A pass is skippable when exactly one bucket holds all n entries (all bytes identical).
     std::array<bool, 8> skip{};
     for (size_t pass = 0; pass < 8; ++pass) {
-      for (size_t bucket = 0; bucket < 256; ++bucket) {
-        if (histograms[pass][bucket] == n) {
-          skip[pass] = true;
-          break;
-        }
-      }
+      skip[pass] = IsUniformHistogram(histograms[pass], n);
     }
 
     // --- Phase 3: scatter passes (LSB → MSB), skipping uniform bytes ---

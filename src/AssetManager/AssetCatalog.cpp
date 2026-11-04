@@ -82,15 +82,31 @@ TextureMeta ParseTextureMeta(const sol::table& t) {
   return meta;
 }
 
+std::optional<FontSizeEntry> ParseFontSizeEntry(const sol::object& v) {
+  if (v.is<float>()) {
+    return FontSizeEntry{std::nullopt, v.as<float>()};
+  }
+  if (!v.is<sol::table>()) {
+    return std::nullopt;
+  }
+  const sol::table entryTab = v.as<sol::table>();
+  FontSizeEntry entry;
+  if (const sol::optional<std::string> eid = entryTab["id"]; eid) entry.id = *eid;
+  if (const sol::optional<float> esize = entryTab["size"]; esize) entry.size = *esize;
+  return entry;
+}
+
 FontMeta ParseFontMeta(const sol::table& t) {
   FontMeta meta;
   if (const sol::optional<std::string> id = t["id"]; id) meta.id = *id;
   if (const sol::optional<sol::table> sizes = t["sizes"]; sizes) {
     for (const auto& [_, v] : *sizes) {
-      if (v.is<float>()) meta.sizes.push_back(v.as<float>());
+      if (auto entry = ParseFontSizeEntry(v)) {
+        meta.sizes.push_back(std::move(*entry));
+      }
     }
   } else if (const sol::optional<float> single = t["size"]; single) {
-    meta.sizes.push_back(*single);
+    meta.sizes.emplace_back(std::nullopt, *single);
   }
   return meta;
 }
@@ -236,10 +252,20 @@ bool AssetCatalog::ScanFilesystem(const std::string& basePath, sol::state& lua, 
 }
 
 namespace {
+bool IsGeneratedBakeDirectory(const fs::path& dirPath) {
+  const std::string name = dirPath.filename().string();
+  return name == "atlases" || name == "_atlases" || name == "normalized";
+}
+
+bool IsGeneratedAtlasArtifact(const fs::path& path) {
+  const std::string filename = path.filename().string();
+  return filename.ends_with(".atlas.png") || filename.ends_with(".atlas.lua");
+}
+
 template <typename InsertFn>
 void ScanCatalogFile(const fs::path& path, sol::state& lua, const std::optional<ScaleMode> defaultScaleMode,
                      InsertFn&& insert) {
-  if (path.extension() == ".meta") return;
+  if (path.extension() == ".meta" || IsGeneratedAtlasArtifact(path)) return;
   const std::optional<AssetType> type = ClassifyByExtension(path);
   if (!type) return;
 
@@ -268,12 +294,12 @@ void ScanCatalogFile(const fs::path& path, sol::state& lua, const std::optional<
       FontMeta meta = sidecar ? ParseFontMeta(*sidecar) : FontMeta{};
       meta.applyDefaults();
       const std::string base = meta.id.value_or(stem);
-      for (const float size : meta.sizes) {
+      for (const auto& entryInfo : meta.sizes) {
         CatalogEntry entry;
         entry.type = AssetType::Font;
-        entry.id = base + "-" + FormatFontSize(size);
+        entry.id = entryInfo.id.value_or(base + "-" + FormatFontSize(entryInfo.size));
         entry.fullPath = fullPath;
-        entry.fontSize = size;
+        entry.fontSize = entryInfo.size;
         insert(std::move(entry));
       }
       break;
@@ -353,6 +379,10 @@ bool AssetCatalog::ScanFilesystem(const std::string& basePath, sol::state& lua,
     if (ec) {
       Logger::Warn("AssetCatalog: directory iteration error: " + ec.message());
       ec.clear();
+      continue;
+    }
+    if (it->is_directory(ec) && IsGeneratedBakeDirectory(it->path())) {
+      it.disable_recursion_pending();
       continue;
     }
     if (!it->is_regular_file(ec)) continue;

@@ -66,6 +66,7 @@ octarine::UserSettings* GetOrCreateUserSettings(LuaBindingContext& ctx) {
   return &registry->Set<octarine::UserSettings>(octarine::UserSettings{});
 }
 
+// Recursively formats nested Lua tables up to max_depth for diagnostic logging.
 // NOLINTNEXTLINE(misc-no-recursion)
 std::string FormatLuaTable(const sol::table& table, size_t indent_level = 0, size_t max_depth = kDefaultMaxDepth) {
   if (indent_level > max_depth) {
@@ -1198,6 +1199,7 @@ void SyncEngineOptionsFromSettings(LuaBindingContext& ctx) {
   }
 }
 
+// Recursively flattens nested Lua tables into dot-separated setting keys up to kDefaultMaxDepth.
 // NOLINTNEXTLINE(misc-no-recursion)
 bool DefineSettingsFromTable(octarine::UserSettings& settings, const sol::table& tbl, const std::string& prefix,
                              size_t depth = 0) {

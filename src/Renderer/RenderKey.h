@@ -40,6 +40,7 @@ struct RenderKey {
     LineCommand line;
     TriangleCommand triangle;
     CapsuleCommand capsule;
+    TileChunkCommand tileChunk;
 
     // Leaves union storage uninitialized — the producing system always overwrites the
     // active member chosen by `type`. Skipping zero-init saves ~56 bytes of writes per
@@ -59,8 +60,8 @@ struct RenderKey {
     // Bias depthBand to non-negative 20-bit range. Layer is unsigned, masked to 16 bits
     // (kDebugUIBaseLayer is ~1000, so 64K headroom is plenty).
     constexpr std::int32_t kBandBias = 1 << 19;
-    const std::uint64_t layer16 = static_cast<std::uint64_t>(layer & 0xFFFFu);
-    const std::uint64_t band20 = static_cast<std::uint64_t>(static_cast<std::uint32_t>(band + kBandBias) & 0xFFFFFu);
+    const auto layer16 = static_cast<std::uint64_t>(layer & 0xFFFFu);
+    const auto band20 = static_cast<std::uint64_t>(static_cast<std::uint32_t>(band + kBandBias) & 0xFFFFFu);
     const std::uint64_t type4 = static_cast<std::uint64_t>(static_cast<std::uint8_t>(type)) & 0xFu;
 
     // 21-bit hash. Shift off allocator alignment noise then XOR-fold; for ~20 textures

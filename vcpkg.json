@@ -27,6 +27,10 @@
       "version>=": "5.4.7"
     },
     {
+      "name": "nlohmann-json",
+      "version>=": "3.11.3"
+    },
+    {
       "name": "sdl3",
       "version>=": "3.2.14"
     },
