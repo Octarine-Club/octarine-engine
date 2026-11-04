@@ -223,6 +223,7 @@ return immediately after.
 | State | Behavior |
 |-------|----------|
 | User entities | Cleared via `Registry::ClearUserEntities`. |
+| Active tilemap | Unloaded via `TilemapSystem::Unload` (all chunks cleared and streamed prop entities despawned). |
 | Lua input action bindings | Cleared via `InputSystem::ResetLuaState`. |
 | `input.on_key_*` / `input.on_mouse_*` callbacks | Cleared. |
 | Per-frame held / pressed / released input state | Cleared (so a tap that started during the swap doesn't stick). |
@@ -249,6 +250,7 @@ end,
 | State | Behavior |
 |-------|----------|
 | Asset catalog | One catalog for the lifetime of the process. The scene swap touches refcounts, never the catalog itself. |
+| Startup preloaded assets | Assets acquired from the startup script before any scene is loaded retain their baseline refcount and survive across all subsequent scene swaps. |
 | Singletons on the `Registry` (`AssetManager`, `GameConfig`, renderer, mixer, …) | Persist across scenes. Set once in `Game::Setup`. |
 | Lua globals (`assets`, modules, `require`'d libraries) | Persist. The Lua state is one per process. |
 | Engine systems registered in `Game::Setup` | Persist. Systems iterate whatever entities exist after the swap. |
@@ -421,9 +423,9 @@ same path. Guard `setup` against double-install:
 | Concern | File |
 |---------|------|
 | `load_scene` / `reload_scene` / `stop_scene` / `clear_scene` Lua bindings | `src/Lua/Modules/SceneModuleLuaBinding.cpp` |
-| Loader sequencing (acquire-before-release, entity clear, script run, hook call) | `src/Game/Game.cpp` (`Game::LoadScene`, `Game::ReloadScene`, `Game::StopScene`, `Game::clearSceneEntities`) |
+| Loader sequencing (acquire-before-release, entity clear, script run, hook call) | `src/Engine/SceneLoader.cpp` (`SceneLoader::LoadScene`, `SceneLoader::ReloadScene`, `SceneLoader::StopScene`, `SceneLoader::clearSceneEntities`) |
 | Scene asset scanning | `src/AssetManager/SceneAssetScanner.{h,cpp}` |
-| Per-scene asset tracking + refcount | `Game::TrackSceneAssets`, `AssetManager::AcquireAll` / `ReleaseAll` |
+| Per-scene asset tracking + refcount | `SceneLoader::TrackSceneAssets`, `AssetManager::AcquireAll` / `ReleaseAll` |
 | Lua input reset across swap | `src/Systems/InputSystem.h` (`InputSystem::ResetLuaState`) |
 | Entity clear across swap | `src/ECS/Registry.h` (`Registry::ClearUserEntities`) |
 | Entity-from-table loader | `src/Lua/LuaEntityLoader.{h,cpp}` |

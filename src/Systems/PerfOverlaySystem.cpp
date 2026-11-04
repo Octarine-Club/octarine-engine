@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdio>
 #include <string>
@@ -79,8 +80,13 @@ Vec2 BlockOrigin(const PerfOverlayCorner corner, SDL_Renderer* sdlRenderer, cons
   if (!SDL_GetCurrentRenderOutputSize(sdlRenderer, &outW, &outH) || outW <= 0 || outH <= 0) {
     return {kMargin, kMargin};
   }
-  const float rightX = static_cast<float>(outW) - kMargin - blockW;
-  const float bottomY = static_cast<float>(outH) - kMargin - blockH;
+  float scaleX = 1.0F;
+  float scaleY = 1.0F;
+  SDL_GetRenderScale(sdlRenderer, &scaleX, &scaleY);
+  const float logicalW = scaleX > 0.0F ? static_cast<float>(outW) / scaleX : static_cast<float>(outW);
+  const float logicalH = scaleY > 0.0F ? static_cast<float>(outH) / scaleY : static_cast<float>(outH);
+  const float rightX = logicalW - kMargin - blockW;
+  const float bottomY = logicalH - kMargin - blockH;
   switch (corner) {
     case PerfOverlayCorner::TopRight:
       return {rightX, kMargin};
@@ -108,18 +114,25 @@ PerfOverlaySystem::~PerfOverlaySystem() {
   }
 }
 
-TTF_Font* PerfOverlaySystem::EnsureFont(AssetManager& assetManager) {
-  if (TTF_Font* font = assetManager.GetFont(kDebugFontId); font != nullptr) return font;
+TTF_Font* PerfOverlaySystem::EnsureFont(AssetManager& assetManager, const float rasterScale) {
+  if (TTF_Font* font = assetManager.GetFontScaled(kDebugFontId, rasterScale); font != nullptr) return font;
   if (font_init_attempted_) return nullptr;  // a prior registration failed; don't retry/respam
   font_init_attempted_ = true;
   assetManager.AddFontFromMemory(kDebugFontId, octarine::fonts::kRobotoMediumData, octarine::fonts::kRobotoMediumSize,
                                  kDebugFontSize);
-  return assetManager.GetFont(kDebugFontId);
+  return assetManager.GetFontScaled(kDebugFontId, rasterScale);
 }
 
 bool PerfOverlaySystem::UpdateLine(Line& line, TTF_Font* font, SDL_Renderer* sdlRenderer,
                                    const std::string& text) const {
-  if (line.texture != nullptr && line.text == text) return true;  // cache hit: string unchanged
+  float sx = 1.0F;
+  float sy = 1.0F;
+  SDL_GetRenderScale(sdlRenderer, &sx, &sy);
+  const float rawScale = std::max(sx, sy);
+  const float rasterScale = rawScale > 1.01F ? std::clamp(std::round(rawScale * 4.0F) * 0.25F, 1.0F, 4.0F) : 1.0F;
+  if (line.texture != nullptr && line.text == text && std::abs(line.rasterScale - rasterScale) <= 0.01F) {
+    return true;
+  }
 
   SDL_Surface* surface = TTF_RenderText_Blended(font, text.c_str(), 0, SDL_Color{kWhite, kWhite, kWhite, kWhite});
   if (surface == nullptr) {
@@ -132,11 +145,17 @@ bool PerfOverlaySystem::UpdateLine(Line& line, TTF_Font* font, SDL_Renderer* sdl
     Logger::Error("PerfOverlay: texture create failed: " + std::string(SDL_GetError()));
     return false;
   }
+  SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_LINEAR);
 
   if (line.texture != nullptr) SDL_DestroyTexture(line.texture);
   line.texture = texture;
   line.text = text;
-  SDL_GetTextureSize(texture, &line.width, &line.height);
+  line.rasterScale = rasterScale;
+  float texW = 0.0F;
+  float texH = 0.0F;
+  SDL_GetTextureSize(texture, &texW, &texH);
+  line.width = texW / rasterScale;
+  line.height = texH / rasterScale;
   return true;
 }
 
@@ -151,9 +170,11 @@ bool PerfOverlaySystem::AppendFpsRows(TTF_Font* font, SDL_Renderer* sdlRenderer,
   // Percentile lows: "P95" is the FPS exceeded 95% of the time (5th percentile of the samples),
   // matching the 1%/5% low convention of game perf overlays.
   scratchpad_ = fps_samples_;
+  const float avgMs = GetAverage(ms_samples_);
+  const float avgFps = avgMs > 0.0F ? (1000.0F / avgMs) : GetAverage(fps_samples_);
   const std::array<std::pair<const char*, float>, 5> entries{
       {{"FPS", fps},
-       {"AVG", GetAverage(fps_samples_)},
+       {"AVG", avgFps},
        {"P50", PerfUtils::GetPercentileInPlace(scratchpad_, 0.5F)},
        {"P95", PerfUtils::GetPercentileInPlace(scratchpad_, 0.05F)},
        {"P99", PerfUtils::GetPercentileInPlace(scratchpad_, 0.01F)}}};
@@ -255,18 +276,30 @@ void PerfOverlaySystem::RecomputeBlockDimensions() {
 void PerfOverlaySystem::Draw(Registry& registry, SDL_Renderer* sdlRenderer, const float deltaTime) {
   if (sdlRenderer == nullptr) return;
   auto& assetManager = registry.Get<AssetManager>();
-  TTF_Font* font = EnsureFont(assetManager);
+  float sx = 1.0F;
+  float sy = 1.0F;
+  SDL_GetRenderScale(sdlRenderer, &sx, &sy);
+  const float rawScale = std::max(sx, sy);
+  const float rasterScale = rawScale > 1.01F ? std::clamp(std::round(rawScale * 4.0F) * 0.25F, 1.0F, 4.0F) : 1.0F;
+  TTF_Font* font = EnsureFont(assetManager, rasterScale);
   if (font == nullptr) return;
 
   const auto& options = registry.Get<GameConfig>().GetEngineOptions();
   const float fps = deltaTime > 0.0F ? 1.0F / deltaTime : 0.0F;
   const float frameMs = deltaTime * 1000.0F;
   RecordSample(fps, frameMs);
+  ++window_frames_;
+  window_seconds_ += deltaTime;
 
   overlay_refresh_timer_ -= deltaTime;
   if (overlay_refresh_timer_ <= 0.0F) {
+    const float windowFps = window_seconds_ > 0.0F ? static_cast<float>(window_frames_) / window_seconds_ : fps;
+    const float windowFrameMs =
+        window_frames_ > 0 ? (window_seconds_ * 1000.0F) / static_cast<float>(window_frames_) : frameMs;
+    window_frames_ = 0;
+    window_seconds_ = 0.0F;
     overlay_refresh_timer_ = kOverlayRefreshSeconds;
-    RefreshRows(font, sdlRenderer, registry, options, fps, frameMs);
+    RefreshRows(font, sdlRenderer, registry, options, windowFps, windowFrameMs);
   }
   if (active_count_ == 0) return;
 

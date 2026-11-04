@@ -60,6 +60,7 @@ class SceneLoader {
 
   Registry* registry_;
   sol::state& lua_;
+  bool loading_scene_ = false;
   bool scene_running_ = false;
   // Deferred-swap state. deferred_swaps_ flips on once the live loop is running; while set, LoadScene
   // only stashes pending_scene_path_ (last request wins) and FlushPendingSceneLoad does the work.

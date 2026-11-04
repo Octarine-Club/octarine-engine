@@ -157,6 +157,7 @@ endif ()
 # =============================================================================
 
 find_package(glm CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 find_package(SDL3 CONFIG REQUIRED)
 find_package(SDL3_image CONFIG REQUIRED)
 find_package(SDL3_ttf CONFIG REQUIRED)
@@ -316,6 +317,8 @@ if (OCTARINE_ENABLE_BENCHMARKS)
             tests/benchmarks/KDTreeCollisionSystemBenchmark.cpp
             tests/benchmarks/SpatialAudioBenchmark.cpp
             tests/benchmarks/TextCacheBenchmark.cpp
+            tests/benchmarks/TilemapBenchmark.cpp
+            tests/benchmarks/UIBenchmark.cpp
     )
     target_include_directories(OctarineBenchmarks PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmarks")
     if (TARGET octarine_game_module AND EXISTS "${OCTARINE_GAME_MODULE_DIR}/benchmarks/CMakeLists.txt")
@@ -346,6 +349,10 @@ if (OCTARINE_ENABLE_BENCHMARKS)
         target_compile_options(OctarineBenchmarks PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(OctarineBenchmarks PRIVATE
                 $<IF:$<CONFIG:Debug>,,-Werror ${OCTARINE_ARCH_FLAG} -ffast-math>
+                $<$<NOT:$<CONFIG:Debug>>:-ffunction-sections>
+                $<$<NOT:$<CONFIG:Debug>>:-fdata-sections>
+                $<$<NOT:$<CONFIG:Debug>>:-fvisibility=hidden>
+                $<$<NOT:$<CONFIG:Debug>>:-fvisibility-inlines-hidden>
         )
     endif ()
 

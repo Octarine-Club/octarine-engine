@@ -84,6 +84,8 @@ class Game : public LuaBindingContext {
   void SetUseManifest(bool useManifest) { use_manifest_ = useManifest; }
   void SetHeadless(bool headless) { headless_ = headless; }
   [[nodiscard]] bool IsHeadless() const { return headless_; }
+  void SetDevMode(bool dev) { dev_mode_ = dev; }
+  [[nodiscard]] bool IsDevMode() const { return dev_mode_; }
 
 #ifndef OCTARINE_SHIPPED
   // Dev-only: opt into the DevListenServer. port=0 leaves the server stopped; >0 binds on
@@ -157,6 +159,7 @@ class Game : public LuaBindingContext {
   bool bake_mode_ = false;
   bool use_manifest_ = false;
   bool headless_ = false;
+  bool dev_mode_ = false;
 #ifndef OCTARINE_SHIPPED
   int dev_listen_port_ = 0;
 #endif

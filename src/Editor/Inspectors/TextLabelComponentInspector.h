@@ -23,6 +23,10 @@ struct EditorInspector<TextLabelComponent> {
     if (tl.shadowOffset.x != 0.0f || tl.shadowOffset.y != 0.0f) {
       octarine::editor::inspectors::DrawColorEdit("Shadow Color", tl.shadowColor);
     }
+    ImGui::DragFloat("Outline Width", &tl.outlineWidth, 0.25f, 0.0f, 4.0f);
+    if (tl.outlineWidth > 0.0f) {
+      octarine::editor::inspectors::DrawColorEdit("Outline Color", tl.outlineColor);
+    }
     ImGui::Checkbox("Fixed", &tl.isFixed);
   }
   static std::optional<TextLabelComponent> makeDefault() { return TextLabelComponent{}; }

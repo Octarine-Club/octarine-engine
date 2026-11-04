@@ -25,6 +25,12 @@ function(octarine_add_test TARGET CTEST_NAME)
     if (ARG_LIBS)
         target_link_libraries(${TARGET} PRIVATE ${ARG_LIBS})
     endif ()
+    if (NOT MSVC)
+        target_compile_options(${TARGET} PRIVATE
+                $<$<NOT:$<CONFIG:Debug>>:-fvisibility=hidden>
+                $<$<NOT:$<CONFIG:Debug>>:-fvisibility-inlines-hidden>
+        )
+    endif ()
     add_test(NAME ${CTEST_NAME} COMMAND ${TARGET})
 endfunction()
 
@@ -176,6 +182,8 @@ octarine_add_engine_test(OctarineGameBakeTest GameBakeTest GameBakeTest.cpp
 )
 
 octarine_add_engine_test(OctarineRenderQueueTest RenderQueueTest RenderQueueTest.cpp)
+octarine_add_engine_test(OctarineTilemapSystemTest TilemapSystemTest TilemapSystemTest.cpp)
+octarine_add_engine_test(OctarineUILayoutTest UILayoutTest UILayoutTest.cpp)
 
 if (NOT OCTARINE_SHIPPED)
     set(_extra_dev_libs "")

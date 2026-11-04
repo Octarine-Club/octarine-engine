@@ -1582,6 +1582,10 @@ capsule_collider_component = {}
 capsule_primitive_component = {}
 
 
+---@class chunk_resident_component
+chunk_resident_component = {}
+
+
 ---@class circle_collider_component
 circle_collider_component = {}
 
@@ -1618,11 +1622,17 @@ function get_current_display_name(...) end
 
 function get_display_count(...) end
 
+function get_display_modes(...) end
+
+function get_displays(...) end
+
 function get_env(...) end
 
 function get_fixed_dt(...) end
 
 function get_fps_target(...) end
+
+function get_fullscreen_resolution(...) end
 
 function get_game_map_dimensions(...) end
 
@@ -1634,11 +1644,19 @@ function get_position(...) end
 
 function get_position_xy(...) end
 
+function get_presentation_mode(...) end
+
 function get_sim_substeps(...) end
 
 function get_state_hash(...) end
 
+function get_texture_scale_mode(...) end
+
 function get_user_setting(...) end
+
+function get_vsync(...) end
+
+function get_window_mode(...) end
 
 function get_window_position(...) end
 
@@ -1710,6 +1728,8 @@ function is_headless(...) end
 
 function is_maximized(...) end
 
+function is_window_resizable(...) end
+
 ---@class lifetime_component
 lifetime_component = {}
 
@@ -1773,6 +1793,8 @@ function registry.get_capsule(...) end
 
 function registry.get_capsule_collider(...) end
 
+function registry.get_chunk_resident(...) end
+
 function registry.get_circle(...) end
 
 function registry.get_circle_collider(...) end
@@ -1819,9 +1841,21 @@ function registry.get_ui_button(...) end
 
 function registry.get_ui_canvas(...) end
 
+function registry.get_ui_clip(...) end
+
 function registry.get_ui_flex(...) end
 
+function registry.get_ui_focus(...) end
+
+function registry.get_ui_layout_box(...) end
+
+function registry.get_ui_nine_slice(...) end
+
 function registry.get_ui_rect(...) end
+
+function registry.get_ui_scroll(...) end
+
+function registry.get_ui_style_state(...) end
 
 function registry.get_ui_z_index(...) end
 
@@ -1838,6 +1872,8 @@ function registry.has_camera_follow(...) end
 function registry.has_capsule(...) end
 
 function registry.has_capsule_collider(...) end
+
+function registry.has_chunk_resident(...) end
 
 function registry.has_circle(...) end
 
@@ -1883,9 +1919,21 @@ function registry.has_ui_button(...) end
 
 function registry.has_ui_canvas(...) end
 
+function registry.has_ui_clip(...) end
+
 function registry.has_ui_flex(...) end
 
+function registry.has_ui_focus(...) end
+
+function registry.has_ui_layout_box(...) end
+
+function registry.has_ui_nine_slice(...) end
+
 function registry.has_ui_rect(...) end
+
+function registry.has_ui_scroll(...) end
+
+function registry.has_ui_style_state(...) end
 
 function registry.has_ui_z_index(...) end
 
@@ -1936,6 +1984,8 @@ function set_fps_target(...) end
 
 function set_fullscreen(...) end
 
+function set_fullscreen_resolution(...) end
+
 function set_game_map_dimensions(...) end
 
 function set_headless(...) end
@@ -1950,6 +2000,8 @@ function set_perf_overlay(...) end
 
 function set_position(...) end
 
+function set_presentation_mode(...) end
+
 function set_rotation(...) end
 
 function set_sim_seed(...) end
@@ -1958,11 +2010,19 @@ function set_sim_substeps(...) end
 
 function set_sprite_src_rect(...) end
 
+function set_texture_scale_mode(...) end
+
 function set_user_setting(...) end
+
+function set_vsync(...) end
 
 function set_window_display(...) end
 
+function set_window_mode(...) end
+
 function set_window_position(...) end
+
+function set_window_resizable(...) end
 
 function set_window_size(...) end
 
@@ -2020,6 +2080,73 @@ function storage.write_table(...) end
 text_label_component = {}
 
 
+---@class tilemap
+---@field MASK_CHASM any
+---@field MASK_EMPTY any
+---@field MASK_GROUND_BLOCKED any
+---@field MASK_HAZARD any
+---@field MASK_SOLID any
+---@field TILE_CHASM any
+---@field TILE_EMPTY any
+---@field TILE_HAZARD any
+---@field TILE_SOLID any
+tilemap = {}
+
+function tilemap.clear_chunk_overrides(...) end
+
+function tilemap.clear_consumed_props(...) end
+
+function tilemap.get_active_chunk_count(...) end
+
+function tilemap.get_camera_chunk(...) end
+
+function tilemap.get_chunk_size(...) end
+
+function tilemap.get_chunk_template_id(...) end
+
+function tilemap.get_seed(...) end
+
+function tilemap.get_stitch_mode(...) end
+
+function tilemap.get_templates(...) end
+
+function tilemap.get_tile_at(...) end
+
+function tilemap.is_loaded(...) end
+
+function tilemap.is_prop_consumed(...) end
+
+function tilemap.is_solid_at(...) end
+
+function tilemap.load(...) end
+
+function tilemap.load_data(...) end
+
+function tilemap.load_json(...) end
+
+function tilemap.mark_prop_consumed(...) end
+
+function tilemap.raycast(...) end
+
+function tilemap.reload(...) end
+
+function tilemap.resolve_aabb(...) end
+
+function tilemap.resolve_circle(...) end
+
+function tilemap.set_chunk_override(...) end
+
+function tilemap.set_debug_overlay(...) end
+
+function tilemap.set_prop_spawner(...) end
+
+function tilemap.set_stitch_mode(...) end
+
+function tilemap.set_window_radii(...) end
+
+function tilemap.unload(...) end
+
+
 function toggle_debug_gui(...) end
 
 function toggle_perf_overlay(...) end
@@ -2037,9 +2164,29 @@ ui = {}
 
 function ui.anchor(...) end
 
+function ui.box(...) end
+
 function ui.canvas(...) end
 
+function ui.clip(...) end
+
+function ui.debug_draw(...) end
+
 function ui.flex(...) end
+
+function ui.focus(...) end
+
+function ui.get_focused(...) end
+
+function ui.mount(...) end
+
+function ui.nine_slice(...) end
+
+function ui.observable(...) end
+
+function ui.register_widget(...) end
+
+function ui.scroll(...) end
 
 function ui.z_index(...) end
 
@@ -2056,12 +2203,40 @@ ui_button_component = {}
 ui_canvas_component = {}
 
 
+---@class ui_clip_component
+ui_clip_component = {}
+
+
 ---@class ui_flex_component
 ui_flex_component = {}
 
 
+---@class ui_focus_component
+ui_focus_component = {}
+
+
+---@class ui_layout_box_component
+ui_layout_box_component = {}
+
+
+---@class ui_nine_slice_component
+ui_nine_slice_component = {}
+
+
 ---@class ui_rect_component
 ui_rect_component = {}
+
+
+---@class ui_scroll_component
+ui_scroll_component = {}
+
+
+---@class ui_style_patch
+ui_style_patch = {}
+
+
+---@class ui_style_state_component
+ui_style_state_component = {}
 
 
 ---@class ui_z_index_component

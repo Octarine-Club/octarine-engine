@@ -79,6 +79,15 @@ int main() {
     m.applyDefaults();
     Check(m.sizes.size() == 2, "font sizes preserved when provided");
   }
+  // Font: explicit size entries with custom id preserved.
+  {
+    FontMeta m;
+    m.sizes = {FontSizeEntry{"custom-id", 20.0F}, 30.0F};
+    m.applyDefaults();
+    Check(m.sizes.size() == 2, "font sizes with custom entry preserved");
+    Check(m.sizes[0].id == "custom-id" && m.sizes[0].size == 20.0F, "custom font size id and size preserved");
+    Check(!m.sizes[1].id.has_value() && m.sizes[1].size == 30.0F, "unnamed font size preserved");
+  }
   // Audio: stream defaults to false (full decode).
   {
     AudioMeta m;
@@ -89,6 +98,9 @@ int main() {
   std::cout << "[scale-mode] string conversion\n";
   Check(std::string(toScaleModeString(ScaleMode::Nearest)) == "nearest", "ScaleMode::Nearest -> \"nearest\"");
   Check(std::string(toScaleModeString(ScaleMode::Linear)) == "linear", "ScaleMode::Linear -> \"linear\"");
+  Check(std::string(toScaleModeString(ScaleMode::PixelArt)) == "pixelart", "ScaleMode::PixelArt -> \"pixelart\"");
+  Check(ParseScaleModeString("pixelart") == ScaleMode::PixelArt, "ParseScaleModeString(\"pixelart\") -> PixelArt");
+  Check(ParseScaleModeString("pixel_art") == ScaleMode::PixelArt, "ParseScaleModeString(\"pixel_art\") -> PixelArt");
 
 #ifdef ASSET_TEST_FIXTURE_DIR
   std::cout << "[catalog] build against fixture dir\n";
@@ -125,6 +137,40 @@ int main() {
     const CatalogEntry* music = catalog.Find("music");
     Check(music != nullptr && music->type == AssetType::Audio, "music.wav is audio");
     Check(music != nullptr && music->stream, "music.wav meta.stream=true propagates to catalog");
+  }
+
+  std::cout << "[catalog] font sidecar table entries + generated bake dir exclusion\n";
+  {
+    const std::filesystem::path tmpDir = std::filesystem::temp_directory_path() / "octarine_font_sidecar_scan_test";
+    std::error_code ec;
+    std::filesystem::remove_all(tmpDir, ec);
+    std::filesystem::create_directories(tmpDir / "assets" / "fonts", ec);
+    std::filesystem::create_directories(tmpDir / "assets" / "atlases", ec);
+    std::filesystem::create_directories(tmpDir / "_atlases", ec);
+    std::filesystem::create_directories(tmpDir / "normalized", ec);
+
+    std::ofstream(tmpDir / "assets" / "fonts" / "ui.ttf") << "stub";
+    std::ofstream(tmpDir / "assets" / "fonts" / "ui.ttf.meta")
+        << "return { sizes = { { id = \"ui-heading\", size = 20 }, 30 } }\n";
+    // Generated bake artifacts that must be ignored by ScanFilesystem:
+    std::ofstream(tmpDir / "assets" / "atlases" / "ui-heading.atlas.png") << "stub";
+    std::ofstream(tmpDir / "_atlases" / "packed.png") << "stub";
+    std::ofstream(tmpDir / "normalized" / "sfx.wav") << "stub";
+
+    sol::state lua;
+    lua.open_libraries(sol::lib::base, sol::lib::table);
+    AssetCatalog catalog;
+    Check(catalog.Build(tmpDir.string(), lua, std::optional<ScaleMode>(ScaleMode::Nearest)),
+          "catalog builds with table-based font sizes and generated bake dirs present");
+    Check(catalog.Size() == 2, "only the 2 font size entries are cataloged (generated bake dirs ignored)");
+    const CatalogEntry* heading = catalog.Find("ui-heading");
+    Check(heading != nullptr && heading->type == AssetType::Font && heading->fontSize == 20.0F,
+          "table font size entry uses explicit id 'ui-heading' and size 20");
+    const CatalogEntry* body = catalog.Find("ui-30");
+    Check(body != nullptr && body->type == AssetType::Font && body->fontSize == 30.0F,
+          "numeric font size entry falls back to '<stem>-30'");
+
+    std::filesystem::remove_all(tmpDir, ec);
   }
 
   std::cout << "[manifest] baked manifest matches the directory scan\n";

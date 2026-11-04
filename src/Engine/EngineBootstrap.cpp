@@ -24,6 +24,7 @@
 #include "Renderer/SpriteRenderCache.h"
 #include "Systems/EntityPoolSystem.h"
 #include "Systems/InputSystem.h"
+#include "Systems/TilemapSystem.h"
 
 #ifdef OCTARINE_WITH_EDITOR
 #include "Editor/Inspectors/RegisterAllInspectors.h"
@@ -89,6 +90,7 @@ void InstallCoreSingletons(Registry& registry, EngineContext& context, const int
 
   registry.Set<RenderQueue>(RenderQueue());
   registry.Set<CameraComponent>(CameraComponent{camera});
+  registry.Set<TilemapSystem>(TilemapSystem());
   auto& assetManager = registry.Set<AssetManager>(AssetManager());
   registry.Set<ViewportInfo>(ViewportInfo{0, 0, static_cast<float>(windowWidth), static_cast<float>(windowHeight)});
   if (withFramePathCaches) {
@@ -143,9 +145,10 @@ void InstallLuaModules(sol::state& lua, Game& game) {
   game_module::InstallLuaFunctions(lua, game);
 }
 
-void SetCommonLuaGlobals(sol::state& lua, const GameConfig& config, const std::string& startupMode) {
+void SetCommonLuaGlobals(sol::state& lua, const GameConfig& config, const std::string& startupMode, bool devMode) {
   lua["game_window_width"] = config.windowWidth;
   lua["game_window_height"] = config.windowHeight;
   lua["oct_startup_mode"] = startupMode;
+  lua["oct_dev_mode"] = devMode;
 }
 }  // namespace engine_bootstrap

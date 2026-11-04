@@ -141,6 +141,7 @@ int main() {
       std::filesystem::remove(manifestPath, ec);
       std::filesystem::remove(fixtureDir / "asset_bundle.pak", ec);
       std::filesystem::remove_all(fixtureDir / "atlases", ec);
+      std::filesystem::remove_all(fixtureDir / "assets" / "atlases", ec);
     };
 
     CleanBakeOutputs();

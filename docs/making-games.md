@@ -708,6 +708,8 @@ OCTARINE_GAME_MODULE_DIR=/path/to/MyGame/native scripts/octarine-verify.sh --fas
 
 | Doc | What's in it |
 |---|---|
+| [`docs/ui-framework.md`](ui-framework.md) | Declarative `.oxml` layouts, `.oss` stylesheets, data binding, reactive MVVM, and custom widgets |
+| [`docs/ui-layout.md`](ui-layout.md) | Procedural canvas/anchor UI layout and low-level `ui.*` helpers |
 | [`docs/ecs-components.md`](ecs-components.md) | Every component — all fields, types, and defaults |
 | [`docs/lua-scripting.md`](lua-scripting.md) | Full Lua scripting guide |
 | [`docs/scenes.md`](scenes.md) | Scene lifecycle, declarative vs. procedural forms |
@@ -715,7 +717,7 @@ OCTARINE_GAME_MODULE_DIR=/path/to/MyGame/native scripts/octarine-verify.sh --fas
 | [`docs/systems.md`](systems.md) | Built-in systems and the order they run |
 | [`docs/events.md`](events.md) | The event bus — every event type and how to use them |
 | [`docs/editor.md`](editor.md) | Editor panels, hotkeys, export workflow |
-| [`docs/tilemaps.md`](tilemaps.md) | Tilemap scene field |
+| [`docs/tilemaps.md`](tilemaps.md) | Infinite LDtk chunked tilemaps, spatial queries, collision, and prop streaming |
 | [`docs/device-builds.md`](device-builds.md) | Shipping for desktop and Android |
 
 ### Lua API reference

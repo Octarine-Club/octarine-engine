@@ -7,6 +7,7 @@
 // desktop that wrapper is a thin shim; on Android it is what SDLActivity calls into via JNI (the
 // activity dlopens libmain.so and invokes "SDL_main"), so the include is required for the mobile build
 // and harmless on desktop.
+// Sequential CLI flag dispatch table for engine startup options.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int main(const int argc, char* argv[]) {
   Logger::Init();
@@ -16,6 +17,7 @@ int main(const int argc, char* argv[]) {
   std::string scriptsDir;
   bool useManifest = false;
   bool headless = false;
+  bool devMode = false;
   int devListenPort = 0;  // 0 = disabled; >0 = bind on that TCP port
 
   // Parse command-line arguments
@@ -41,6 +43,13 @@ int main(const int argc, char* argv[]) {
     } else if (currentArg == "--headless") {
       headless = true;
       Logger::Info("Headless mode enabled (--headless).");
+    } else if (currentArg == "--dev" || currentArg == "-dev") {
+#ifdef OCTARINE_SHIPPED
+      Logger::Warn("--dev is disabled in shipped builds; ignoring.");
+#else
+      devMode = true;
+      Logger::Info("Developer mode enabled (--dev).");
+#endif
     } else if (currentArg == "--scripts-dir") {
       if (i + 1 < argc) {
         scriptsDir = argv[++i];
@@ -107,6 +116,7 @@ int main(const int argc, char* argv[]) {
   game.SetStartupMode(startupMode);
   game.SetUseManifest(useManifest);
   game.SetHeadless(headless);
+  game.SetDevMode(devMode);
 #ifndef OCTARINE_SHIPPED
   game.SetDevListen(devListenPort);
 #else

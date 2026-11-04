@@ -34,6 +34,8 @@ set(OCTARINE_CORE_SOURCES
         Deploy/Adb.cpp
         Process/Process.cpp
         Project/ProjectIni.cpp
+        UI/OxmlParser.cpp
+        UI/OssParser.cpp
 )
 if (NOT OCTARINE_SHIPPED)
     list(APPEND OCTARINE_CORE_SOURCES Editor/EditorPersistence.cpp)
@@ -142,7 +144,9 @@ octarine_library(octarine_lua
         Lua/Modules/RegisterAllModules.cpp
         Lua/Modules/SceneModuleLuaBinding.cpp
         Lua/Modules/StorageModuleLuaBinding.cpp
+        Lua/Modules/TilemapModuleLuaBinding.cpp
         Lua/Modules/UIModuleLuaBinding.cpp
+        UI/UIRuntime.cpp
 )
 target_link_libraries(octarine_lua PUBLIC
         octarine_core
@@ -159,6 +163,9 @@ octarine_library(octarine_systems
         Systems/AudioSystem.cpp
         Systems/InputSystem.cpp
         Systems/PerfOverlaySystem.cpp
+        Systems/TilemapSystem.cpp
+        Tilemap/LdtkParser.cpp
+        Tilemap/TilemapLoader.cpp
 )
 target_link_libraries(octarine_systems PUBLIC
         octarine_core
@@ -166,6 +173,9 @@ target_link_libraries(octarine_systems PUBLIC
         octarine_renderer
         octarine_lua
 )
+target_link_libraries(octarine_systems PRIVATE nlohmann_json::nlohmann_json)
+# TilemapModuleLuaBinding (in octarine_lua) invokes TilemapSystem methods (in octarine_systems).
+target_link_libraries(octarine_lua PUBLIC octarine_systems)
 
 # -----------------------------------------------------------------------------
 # Optional private GameModule (native game systems and components)
@@ -188,7 +198,10 @@ endif ()
 if (OCTARINE_WITH_IMGUI OR OCTARINE_WITH_EDITOR)
     set(OCTARINE_EDITOR_SOURCES "")
     if (OCTARINE_WITH_IMGUI)
-        list(APPEND OCTARINE_EDITOR_SOURCES Systems/RenderDebugGUISystem.cpp)
+        list(APPEND OCTARINE_EDITOR_SOURCES
+                Editor/Panels/TilemapDebugPanel.cpp
+                Systems/RenderDebugGUISystem.cpp
+        )
     endif ()
     if (OCTARINE_WITH_EDITOR)
         list(APPEND OCTARINE_EDITOR_SOURCES

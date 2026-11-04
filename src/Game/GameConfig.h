@@ -4,7 +4,7 @@
 #include <string>
 #include <unordered_map>
 
-#include "EngineOptions.h"
+#include "Game/EngineOptions.h"
 #include "General/Constants.h"
 #include "General/Logger.h"
 
@@ -37,6 +37,7 @@ class GameConfig {
   [[nodiscard]] std::string GetGameTitle() const;
   [[nodiscard]] std::string GetStartupScript() const;
   [[nodiscard]] std::optional<std::string> GetDefaultScaleMode() const;
+  void SetDefaultScaleMode(const std::string& defaultScaleMode);
   [[nodiscard]] int GetDefaultWidth() const;
   [[nodiscard]] int GetDefaultHeight() const;
 
@@ -106,9 +107,13 @@ class GameConfig {
   void SetAssetPath(const std::string& assetPath);
   void SetGameTitle(const std::string& gameTitle);
   void SetStartupScript(const std::string& startupScript);
-  void SetDefaultScaleMode(const std::string& defaultScaleMode);
   void SetDefaultWidth(int defaultWidth);
   void SetDefaultHeight(int defaultHeight);
+  void SetDefaultWindowMode(const std::string& windowMode);
+  void SetDefaultFullscreen(bool fullscreen);
+  void SetDefaultPresentationMode(const std::string& presentationMode);
+  void SetDefaultVSync(bool vsync);
+  void SetWindowResizable(bool resizable);
   void SetFpsTarget(int fpsTarget);
   void SetHotReloadEnabled(bool enabled);
   void SetHotReloadPollSeconds(float seconds);

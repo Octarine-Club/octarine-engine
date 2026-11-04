@@ -54,7 +54,7 @@ Subscriptions are wired once during startup (`Game::Setup`, each system's `Init`
 
 | Event | Payload | Emitted by | Subscribed by |
 |-------|---------|------------|---------------|
-| `AudioPlayEvent` | `clipId: string`, `volume: float` | Lua `play_sound()` (`AudioModuleLuaBinding.cpp`) | `AudioSystem::OnAudioPlay` |
+| `AudioPlayEvent` | `clipId: string`, `volume: float` | Lua `play_sound()` (`AudioModuleLuaBinding.cpp`), `UIButtonSystem` (button hover/click/focus sound hooks) | `AudioSystem::OnAudioPlay` |
 | `CollisionBatchEvent` | `pairs: const std::vector<std::pair<Entity, Entity>>&` (frame's *entering* pairs — first-contact overlaps not seen last frame) | `KDTreeCollisionSystem` (narrowphase) | `ScriptCollisionSystem::OnCollisionBatch` (plus optional native game module systems) |
 | `CollisionExitBatchEvent` | `pairs: const std::vector<std::pair<Entity, Entity>>&` (frame's *exiting* pairs — overlaps active last frame that separated this frame) | `KDTreeCollisionSystem` (narrowphase) | `ScriptCollisionSystem::OnCollisionExitBatch` |
 | `GamepadButtonEvent` | `which: SDL_JoystickID`, `button: SDL_GamepadButton`, `buttonName: string`, `isPressed: bool` | `Game::ProcessInput` / `FrameLoop` (SDL gamepad button events) | `InputSystem::OnGamepadButton`, `UIButtonSystem::OnGamepadButton` |

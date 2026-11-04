@@ -21,6 +21,6 @@ struct LuaBinding<UIRectComponent> {
         sol::property([](const UIRectComponent& r) { return r.bottom; }), "layer",
         sol::property([](const UIRectComponent& r) { return r.layer; }), "width",
         sol::property(&UIRectComponent::Width), "height", sol::property(&UIRectComponent::Height), "center",
-        sol::property(&UIRectComponent::Center));
+        sol::property(&UIRectComponent::Center), "blocks_pointer", &UIRectComponent::blocksPointer);
   }
 };

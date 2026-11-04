@@ -27,20 +27,20 @@ class SpriteRenderCache {
   // Returns the cached entry pointer iff present and generation matches; nullptr otherwise.
   // Caller resolves + Store()s on a miss (warm-pass only — emit is read-only).
   [[nodiscard]] const Entry* Lookup(Entity entity, std::uint64_t currentGen) const {
-    if (const auto it = entries_.find(entity.GetId()); it != entries_.end() && it->second.generation == currentGen) {
+    if (const auto it = entries_.find(entity.id); it != entries_.end() && it->second.generation == currentGen) {
       return &it->second;
     }
     return nullptr;
   }
 
   void Store(Entity entity, SDL_Texture* texture, SDL_FRect atlasOffset, std::uint64_t generation) {
-    entries_[entity.GetId()] = {texture, atlasOffset, generation};
+    entries_[entity.id] = {texture, atlasOffset, generation};
   }
 
-  void Forget(Entity entity) { entries_.erase(entity.GetId()); }
+  void Forget(Entity entity) { entries_.erase(entity.id); }
 
   void Clear() { entries_.clear(); }
 
  private:
-  std::unordered_map<EcsId, Entry> entries_;
+  std::unordered_map<std::uint64_t, Entry> entries_;
 };

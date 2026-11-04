@@ -1,8 +1,12 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
+
+#include "Game/EngineOptions.h"
 
 // Per-file asset metadata, parsed from an optional `<file>.meta` Lua sidecar. A missing sidecar
 // means "all defaults". Each struct owns an `applyDefaults(...)` that fills any unset field from
@@ -10,14 +14,8 @@
 // fully-resolved struct. These types depend on nothing engine-specific (no SDL) so they can be
 // unit-tested in isolation.
 
-// Texture scale filtering. Mirrors SDL_ScaleMode but kept engine-side so the metadata layer does
-// not pull in SDL headers. Converted to the engine's string form via toScaleModeString.
-enum class ScaleMode { Nearest, Linear };
-
 // Glyph size baked when a font sidecar omits `sizes`.
 inline constexpr float kDefaultFontSize = 16.0F;
-
-inline const char* toScaleModeString(ScaleMode mode) { return mode == ScaleMode::Linear ? "linear" : "nearest"; }
 
 struct TextureMeta {
   std::optional<std::string> id;       // override the derived id (filename stem)
@@ -36,13 +34,26 @@ struct TextureMeta {
   }
 };
 
+struct FontSizeEntry {
+  std::optional<std::string> id{};
+  float size{kDefaultFontSize};
+
+  FontSizeEntry() = default;
+  // Implicit conversion from float keeps `meta.sizes = {12.0f, 16.0f}` ergonomic at call sites.
+  // NOLINTNEXTLINE(google-explicit-constructor)
+  FontSizeEntry(float s) : size(s) {}
+  FontSizeEntry(std::optional<std::string> i, float s) : id(std::move(i)), size(s) {}
+
+  bool operator==(float s) const { return size == s; }
+};
+
 struct FontMeta {
-  std::optional<std::string> id;  // override the derived id base (filename stem)
-  std::vector<float> sizes;       // one catalog entry per size; defaults to { kDefaultFontSize }
+  std::optional<std::string> id{};     // override the derived id base (filename stem)
+  std::vector<FontSizeEntry> sizes{};  // one catalog entry per size; defaults to { kDefaultFontSize }
 
   void applyDefaults() {
     if (sizes.empty()) {
-      sizes.push_back(kDefaultFontSize);
+      sizes.emplace_back(std::nullopt, kDefaultFontSize);
     }
   }
 };

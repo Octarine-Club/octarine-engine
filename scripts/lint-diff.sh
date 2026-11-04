@@ -80,6 +80,6 @@ fi
 
 # -p1 strips the a/ b/ diff prefixes; -path points at compile_commands.json; the diff's -U0 hunks
 # limit diagnostics to touched lines; any diagnostic there is promoted to an error and fails the run.
-git diff -U0 "$base"...HEAD -- 'src/*' 'tests/*' \
-  | python3 "$diff_tool" -p1 -path "$build_dir" \
+git diff -U0 "$base"...HEAD -- $changed \
+  | python3 "$diff_tool" -p1 -j0 -path "$build_dir" \
       -clang-tidy-binary "$tidy_bin" -warnings-as-errors='*'

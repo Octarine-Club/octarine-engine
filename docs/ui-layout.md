@@ -3,7 +3,7 @@
 How Octarine positions UI: a canvas root, anchored children, and the
 `UILayoutSystem` that resolves them into pixel rectangles every frame.
 
-Audience: project authors building menus, HUDs, and overlays in Lua. The
+Audience: project authors building menus, HUDs, and overlays in Lua. For the declarative `.oxml` + `.oss` UI framework (`ui.mount`, data binding, reactive MVVM, and reusable widgets), see [`docs/ui-framework.md`](ui-framework.md). The
 underlying scene/entity model is in [`docs/scenes.md`](scenes.md); the Lua
 surface as a whole is in [`docs/lua-scripting.md`](lua-scripting.md).
 
@@ -55,7 +55,7 @@ hierarchy-cycle errors.
 
 ## The API
 
-All four live on the global `ui` table, installed by the UI Lua module.
+Procedural layout helpers live on the global `ui` table, installed by the UI Lua module:
 
 ### `ui.canvas(entity, opts?)`
 
@@ -126,6 +126,70 @@ Adds `z` to the entity's render layer. Layers **accumulate down the hierarchy**:
 a child's final layer is `canvas.base_layer` + the sum of every `z_index` on the
 path from the canvas to that child. Use it to lift a panel and its contents
 above the background in one place.
+
+### `ui.flex(entity, opts?)`
+
+Attaches or configures `UIFlexComponent` on `entity` for flexbox or grid layout. `opts` (optional):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `direction` | `"row"` | `"row"` or `"column"`. |
+| `gap` | `0.0` | Spacing in pixels between children along the main axis. |
+| `cross_gap` | `-1.0` (uses `gap`) | Spacing in pixels between wrapped lines or rows/columns. |
+| `wrap` | `false` | When `true`, children that exceed container extent wrap onto new lines. |
+| `columns` | `0` | When `> 0`, enables fixed-column grid partitioning into $N$ equal-width columns. |
+| `padding` | `0.0` | Shorthand padding applied to all four edges. |
+| `padding_left`, `padding_top`, `padding_right`, `padding_bottom` | `padding` | Explicit per-edge padding in pixels. |
+| `justify` | `"stretch"` | Main-axis distribution (`"start"`, `"center"`, `"end"`, `"space_between"`, `"space_around"`, `"stretch"`). |
+| `align` | `"stretch"` | Cross-axis alignment (`"start"`, `"center"`, `"end"`, `"stretch"`). |
+
+### `ui.box(entity, opts?)`
+
+Attaches or configures `UILayoutBoxComponent` on `entity` for explicit, percentage, or fractional box constraints. `opts` accepts numbers or strings with unit suffixes (`"200px"`, `"50%"`, `"1fr"`, `"auto"`):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `width`, `height` | `auto` | Primary box dimensions (`"px"`, `"%"`, `"fr"`, or `"auto"`). |
+| `min_width`, `min_height` | `0` | Minimum clamp bounds. |
+| `max_width`, `max_height` | `0` (unbounded) | Maximum clamp bounds. |
+| `margin` | `0.0` | Shorthand outer spacing on all four edges. |
+| `margin_left`, `margin_top`, `margin_right`, `margin_bottom` | `margin` | Explicit per-edge outer margin in pixels. |
+| `visible` | `true` | When `false`, element is hidden and skipped by layout. |
+
+### `ui.clip(entity, enabled_or_table?)`
+
+Attaches `UIClipComponent` on `entity` to enable hardware scissor clipping for the entity and all of its descendants during rendering and pointer hit-testing. Accepts a boolean `true`/`false` or `{ enabled = bool }`.
+
+### `ui.nine_slice(entity, slice_or_table)`
+
+Attaches `UINineSliceComponent` on `entity` to draw an image or panel using 9-patch border slicing:
+- Number shorthand: `ui.nine_slice(e, 8)` sets an 8px border on all four edges.
+- Table form: `ui.nine_slice(e, { left = 8, top = 8, right = 8, bottom = 8 })` sets explicit border insets in source texels.
+
+### `ui.scroll(entity, opts?)`
+
+Attaches `UIScrollComponent` and `UIClipComponent` to create a scrollable container responding to mouse-wheel input. `opts` (optional):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `scroll_x`, `scroll_y` | `0.0` | Initial scroll offset in pixels. |
+| `wheel_step` | `36.0` | Pixels to scroll per mouse-wheel notch. |
+| `horizontal` | `false` | Enables horizontal scrolling. |
+| `vertical` | `true` | Enables vertical scrolling. |
+
+### `ui.focus(entity)` & `ui.get_focused()`
+
+- `ui.focus(entity)`: Moves UI keyboard and gamepad focus to `entity` via `UIButtonSystem`.
+- `ui.get_focused() -> entity?`: Returns the currently focused UI `Entity` handle, or `nil` if none is focused.
+
+### `ui.debug_draw(enabled?)`
+
+Toggles or explicitly sets (`true`/`false`) the engine's built-in UI wireframe debug overlay. Returns the updated boolean status. When enabled, bounding box wireframes are drawn on top of the UI (`rect.layer + 1000`):
+- **Gold / Yellow** (`#ffcc00`, 2px): Currently focused element (`UIFocusComponent.isFocused`).
+- **Green** (`#44d060`, 1px): Interactive buttons (`UIButtonComponent`).
+- **Magenta** (`#ff40ff`, 1px): Hardware scissor clip viewports (`UIClipComponent`).
+- **Cyan** (`#00e5ff`, 1px): Flex or Grid containers (`UIFlexComponent`).
+- **Lavender / Purple** (`#8870a0`, 1px): Other UI rects (`UIRectComponent`).
 
 ---
 
@@ -247,13 +311,20 @@ ui.z_index(label, 1)                                      -- draw the text above
 
 ## Related components
 
-| Lua key      | Set by                      | Holds                                             |
-|--------------|-----------------------------|---------------------------------------------------|
-| `ui_canvas`  | `ui.canvas`                 | Canvas flags + size + base layer.                 |
-| `ui_anchor`  | `ui.anchor`                 | The four anchors and four offsets.                |
-| `ui_rect`    | `UILayoutSystem` (computed) | Resolved `left/top/right/bottom/layer` in pixels. |
-| `ui_z_index` | `ui.z_index`                | Per-entity layer delta.                           |
-| `ui_button`  | project scripts             | Interactive state (`registry.get_ui_button`).     |
+| Lua key          | Set by                      | Holds                                                                |
+|------------------|-----------------------------|----------------------------------------------------------------------|
+| `ui_canvas`      | `ui.canvas`                 | Canvas flags + size + base layer.                                    |
+| `ui_anchor`      | `ui.anchor`                 | The four anchors and four offsets.                                   |
+| `ui_flex`        | `ui.flex`                   | Flex direction, gap, cross gap, wrap, columns, padding, alignment.   |
+| `ui_layout_box`  | `ui.box`                    | Width, height, min/max dimensions, margin, visibility.               |
+| `ui_clip`        | `ui.clip`                   | Hardware scissor clipping enable flag.                               |
+| `ui_nine_slice`  | `ui.nine_slice`             | 9-patch border insets (`left`, `top`, `right`, `bottom`).            |
+| `ui_scroll`      | `ui.scroll`                 | Scroll offsets (`scroll_x`, `scroll_y`), wheel step, content size.   |
+| `ui_focus`       | `ui.focus` / `UIButtonSystem` | Tab index, focused/focusable/disabled/inert flags, nav directions.  |
+| `ui_style_state` | `UIRuntime`                 | Pseudo-state style overrides (`hover`, `press`, `focus`, `checked`, `disabled`). |
+| `ui_rect`        | `UILayoutSystem` (computed) | Resolved `left/top/right/bottom/layer`, `width`, `height`, `center`, and `blocks_pointer`. |
+| `ui_z_index`     | `ui.z_index`                | Per-entity layer delta.                                              |
+| `ui_button`      | project scripts             | Interactive state (`registry.get_ui_button`), click sound, key shortcuts. |
 
 `ui_rect` is output, not input — read it if you need an element's resolved
-screen position, but do not author it by hand.
+screen position or hit testing, but do not author it by hand. When `blocks_pointer` is true (via `pointer-events: stop`), pointer hits on lower render layers are blocked.

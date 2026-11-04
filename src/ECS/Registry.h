@@ -297,6 +297,9 @@ class Registry {
   // System Management
   template <typename... TArgs, typename Func>
   SystemHandle<std::decay_t<Func>> RegisterSystem(Func&& func) {
+    static_assert(
+        sizeof...(TArgs) > 0,
+        "RegisterSystem requires at least one queried component; use RegisterBulkSystem for custom-query systems");
     using StoredFunc = std::decay_t<Func>;
     struct SystemState {
       StoredFunc func;
@@ -308,11 +311,19 @@ class Registry {
     sys.name = PrettifyTypeName(typeid(StoredFunc).name());
     sys.update = [state](const Registry& registry) {
       state->query->Update();
+      auto* regPtr = const_cast<Registry*>(&registry);
+      if constexpr (requires {
+                      { state->func.Prepare(regPtr) } -> std::same_as<bool>;
+                    }) {
+        if (!state->func.Prepare(regPtr)) return;
+      } else if constexpr (requires { state->func.Prepare(regPtr); }) {
+        state->func.Prepare(regPtr);
+      }
       // Pass by reference so captured state in the system lambda persists across invocations.
       state->query->ForEach(state->func);
 
       if constexpr (requires { state->func.GetCommandBuffer(); }) {
-        state->func.GetCommandBuffer().Playback(const_cast<Registry*>(&registry));
+        state->func.GetCommandBuffer().Playback(regPtr);
       }
     };
 

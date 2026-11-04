@@ -410,5 +410,32 @@ int main() {
           "rescaling a pivoted child under a rotated parent holds its anchor still");
   }
 
+  // ClearUserEntities must skip descendants already cascade-destroyed when their ancestor was blammed.
+  {
+    Logger::Init();
+    Registry registry;
+    const Entity root = registry.CreateEntity();
+    const Entity childA = registry.CreateEntity();
+    const Entity childB = registry.CreateEntity();
+    const Entity grandchild = registry.CreateEntity();
+    registry.SetParent(childA, root);
+    registry.SetParent(childB, root);
+    registry.SetParent(grandchild, childA);
+
+    Logger::ClearHistory();
+    registry.ClearUserEntities();
+
+    bool warnedBlam = false;
+    for (const std::string& msg : Logger::GetHistory()) {
+      if (msg.find("to blam") != std::string::npos) {
+        warnedBlam = true;
+        break;
+      }
+    }
+    Check(!warnedBlam, "ClearUserEntities does not double-blam cascade-destroyed hierarchy descendants");
+    Check(registry.GetUserEntityCount() == 0, "ClearUserEntities leaves zero user entities");
+    registry.ValidateInvariants();
+  }
+
   return octarine::test::Result();
 }
