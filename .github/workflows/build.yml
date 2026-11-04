@@ -262,8 +262,8 @@ jobs:
           # compile_commands carries but clang rejects. Under `set -e -o pipefail` that non-zero would
           # abort the capture *before* we print/grep, so the step would die with no diagnostics shown.
           # We judge on real `file:line:col:` diagnostics below, not on the wrapper's exit code.
-          report="$(git diff -U0 "$base"...HEAD -- 'src/*' 'tests/*' \
-            | python3 "$diff_tool" -p1 -path "build/${{ matrix.preset }}" -clang-tidy-binary clang-tidy-18 2>&1)" || true
+          report="$(git diff -U0 "$base"...HEAD -- $changed \
+            | python3 "$diff_tool" -p1 -j0 -path "build/${{ matrix.preset }}" -clang-tidy-binary clang-tidy-18 2>&1)" || true
           printf '%s\n' "$report"
           # Count only clang-tidy CHECK findings on the changed lines. Drop [clang-diagnostic-*]:
           # those are the clang *frontend's* own diagnostics that clang-tidy passes through — clang

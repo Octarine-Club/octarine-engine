@@ -532,7 +532,7 @@ void BindInspectionFunctions(sol::table& tm, LuaBindingContext& ctx) {
 void BindCollisionQueryFunctions(sol::table& tm, LuaBindingContext& ctx) {
   tm.set_function("get_tile_at", [&ctx](const float wx, const float wy) -> int {
     const auto* sys = EnsureTilemap(ctx.GetRegistry());
-    return static_cast<int>(sys != nullptr ? sys->GetTileAt(wx, wy) : kTileEmpty);
+    return static_cast<int>(sys != nullptr ? sys->GetTileAt(wx, wy) : static_cast<uint8_t>(kTileEmpty));
   });
 
   tm.set_function("is_solid_at", [&ctx](const float wx, const float wy, const sol::optional<uint8_t>& maskOpt) -> bool {

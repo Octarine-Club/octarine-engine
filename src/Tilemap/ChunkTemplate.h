@@ -130,7 +130,7 @@ struct ChunkTemplate {
       return kTileEmpty;
     }
     const auto idx = static_cast<size_t>(localTy) * static_cast<size_t>(gridWidth) + static_cast<size_t>(localTx);
-    return idx < kMaxChunkArea ? collisions[idx] : kTileEmpty;
+    return idx < kMaxChunkArea ? collisions[idx] : static_cast<uint8_t>(kTileEmpty);
   }
 
   static ChunkTemplate CreateSolidBorder(const int32_t tileSize = kDefaultTileSize,
