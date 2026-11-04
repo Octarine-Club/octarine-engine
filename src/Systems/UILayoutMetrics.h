@@ -35,12 +35,12 @@
 namespace octarine::ui {
 
 inline float ParseFontPixelSize(const std::string& fontId) {
-  static constexpr float kDefaultFontSize = 16.0f;
+  static constexpr float kFallbackFontPixelSize = 16.0f;
   const auto dash = fontId.rfind('-');
-  if (dash == std::string::npos || dash + 1 >= fontId.size()) return kDefaultFontSize;
+  if (dash == std::string::npos || dash + 1 >= fontId.size()) return kFallbackFontPixelSize;
   char* endPtr = nullptr;
   const float parsed = std::strtof(fontId.c_str() + dash + 1, &endPtr);
-  return (endPtr != fontId.c_str() + dash + 1 && parsed > 0.0f) ? parsed : kDefaultFontSize;
+  return (endPtr != fontId.c_str() + dash + 1 && parsed > 0.0f) ? parsed : kFallbackFontPixelSize;
 }
 
 inline bool IsUtf8ContinuationByte(const char c) {

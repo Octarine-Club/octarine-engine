@@ -134,7 +134,7 @@ sol::object EvalBindingExpr(sol::state& lua, std::string_view rawExpr, const sol
   if (!chunk.valid()) {
     return sol::lua_nil;
   }
-  sol::protected_function fn = chunk.get<sol::protected_function>();
+  auto fn = chunk.get<sol::protected_function>();
   sol::environment env(lua, sol::create);
   sol::table meta = lua.create_table();
   meta.set_function("__index", [scope, &lua](const sol::table&, const std::string& key) -> sol::object {
@@ -1353,6 +1353,11 @@ void SetEntityVisibility(Registry* r, Entity entity, bool vis) {
   }
 }
 
+bool IsEntityVisible(Registry* r, Entity entity) {
+  if (!r->IsAlive(entity) || !r->HasComponent<UIRectComponent>(entity)) return false;
+  return r->GetComponent<UIRectComponent>(entity).visible;
+}
+
 std::string UnwrapBindingOrRaw(std::string rawAttr) {
   std::string unwrapped;
   if (OxmlParser::IsPureBinding(rawAttr, unwrapped)) {
@@ -1643,11 +1648,7 @@ void AttachRefStateMethods(sol::table& h, const std::weak_ptr<UIViewInstance>& w
 
   h.set_function("is_visible", [weakView, entity](const sol::table&) -> bool {
     auto v = weakView.lock();
-    if (!v) return false;
-    Registry* r = v->runtime->GetRegistry();
-    return (r->IsAlive(entity) && r->HasComponent<UIRectComponent>(entity))
-               ? r->GetComponent<UIRectComponent>(entity).visible
-               : false;
+    return v ? IsEntityVisible(v->runtime->GetRegistry(), entity) : false;
   });
 
   h.set_function("set_disabled", [weakView, entity](const sol::table&, const bool disabled) {
@@ -1722,14 +1723,8 @@ Entity InstantiateNode(const std::shared_ptr<UIViewInstance>& view, const OxmlNo
                        const sol::table& scope, const SlotProjection* slotProjection,
                        const std::shared_ptr<RadioGroupState>& activeRadioGroup);
 
-// Repeater rebuild instantiates child OXML trees which may contain nested repeaters.
-// NOLINTNEXTLINE(misc-no-recursion)
-void RebuildRepeaterItems(const std::shared_ptr<UIViewInstance>& v, const std::shared_ptr<RepeaterRecord>& rec,
-                          const sol::table& scope, const SlotProjection* projPtr,
-                          const std::shared_ptr<RadioGroupState>& activeRadioGroup) {
+void ClearRepeaterSpawnedItems(const std::shared_ptr<UIViewInstance>& v, const std::shared_ptr<RepeaterRecord>& rec) {
   Registry* r = v->runtime->GetRegistry();
-  if (!r->IsAlive(rec->parentEntity)) return;
-
   for (const Entity e : rec->spawnedEntities) {
     if (r->IsAlive(e)) {
       r->BlamEntity(e);
@@ -1739,6 +1734,17 @@ void RebuildRepeaterItems(const std::shared_ptr<UIViewInstance>& v, const std::s
   rec->itemRefreshFns.clear();
   std::erase_if(v->sliders, [r](const auto& kv) { return !r->IsAlive(kv.second->entity); });
   std::erase_if(v->changeCallbacks, [r](const auto& kv) { return !r->IsAlive(Entity(kv.first)); });
+}
+
+// Repeater rebuild instantiates child OXML trees which may contain nested repeaters.
+// NOLINTNEXTLINE(misc-no-recursion)
+void RebuildRepeaterItems(const std::shared_ptr<UIViewInstance>& v, const std::shared_ptr<RepeaterRecord>& rec,
+                          const sol::table& scope, const SlotProjection* projPtr,
+                          const std::shared_ptr<RadioGroupState>& activeRadioGroup) {
+  Registry* r = v->runtime->GetRegistry();
+  if (!r->IsAlive(rec->parentEntity)) return;
+
+  ClearRepeaterSpawnedItems(v, rec);
 
   sol::state& lua = *v->runtime->GetLua();
   const sol::object listObj = EvalBindingExpr(lua, rec->clause.listExpr, scope);

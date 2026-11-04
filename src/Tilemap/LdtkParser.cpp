@@ -342,12 +342,9 @@ bool ContainsCaseInsensitive(const std::string& haystack, const std::string& nee
 }
 
 bool LevelHasExplicitCollisionLayer(const Json& layers) {
-  for (const auto& layer : layers) {
-    if (layer.is_object() && ContainsCaseInsensitive(layer.value("__identifier", std::string{}), "collision")) {
-      return true;
-    }
-  }
-  return false;
+  return std::ranges::any_of(layers, [](const Json& layer) {
+    return layer.is_object() && ContainsCaseInsensitive(layer.value("__identifier", std::string{}), "collision");
+  });
 }
 
 void ParseLevelLayer(const Json& layer, const std::unordered_map<int32_t, TilesetDef>& tilesets,

@@ -47,9 +47,6 @@ concurrency:
   group: build-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-env:
-  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
-
 jobs:
   plan:
     name: Plan build matrix
