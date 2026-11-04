@@ -528,7 +528,7 @@ void TilemapSystem::SpawnChunkProps(Registry& registry, ActiveChunk& chunk) cons
       continue;
     }
     if (res.return_count() > 0) {
-      RecordSpawnedResult(registry, chunk, res[0], prop.propIndex);
+      RecordSpawnedResult(registry, chunk, res.get<sol::object>(), prop.propIndex);
     }
   }
 }

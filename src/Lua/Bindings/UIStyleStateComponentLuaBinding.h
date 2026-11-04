@@ -28,11 +28,11 @@ struct LuaBinding<UIStyleStateComponent> {
     UIStyleStateComponent st;
     if (!data.is<sol::table>()) return st;
     const auto t = data.as<sol::table>();
-    st.hover = ParsePatch(t["hover"]);
-    st.press = ParsePatch(t["press"]);
-    st.focus = ParsePatch(t["focus"]);
-    st.checked = ParsePatch(t["checked"]);
-    st.disabled = ParsePatch(t["disabled"]);
+    st.hover = ParsePatch(t.get<sol::object>("hover"));
+    st.press = ParsePatch(t.get<sol::object>("press"));
+    st.focus = ParsePatch(t.get<sol::object>("focus"));
+    st.checked = ParsePatch(t.get<sol::object>("checked"));
+    st.disabled = ParsePatch(t.get<sol::object>("disabled"));
     return st;
   }
 

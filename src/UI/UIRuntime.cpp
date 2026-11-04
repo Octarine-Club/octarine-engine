@@ -72,7 +72,7 @@ sol::object GetPathValue(const sol::table& root, std::string_view path) {
     const std::size_t dot = path.find('.', start);
     const std::string key(path.substr(start, dot == std::string_view::npos ? std::string_view::npos : dot - start));
     sol::table tbl = current.as<sol::table>();
-    current = tbl[key];
+    current = tbl.get<sol::object>(key);
     if (dot == std::string_view::npos) break;
     start = dot + 1;
   }
@@ -91,7 +91,7 @@ void SetPathValue(sol::table& root, std::string_view path, const sol::object& va
       return;
     }
     const std::string segment(path.substr(start, dot - start));
-    sol::object nextObj = current[segment];
+    sol::object nextObj = current.get<sol::object>(segment);
     if (!nextObj.is<sol::table>()) {
       return;
     }
@@ -134,15 +134,15 @@ sol::object EvalBindingExpr(sol::state& lua, std::string_view rawExpr, const sol
   if (!chunk.valid()) {
     return sol::lua_nil;
   }
-  sol::protected_function fn = chunk;
+  sol::protected_function fn = chunk.get<sol::protected_function>();
   sol::environment env(lua, sol::create);
   sol::table meta = lua.create_table();
   meta.set_function("__index", [scope, &lua](const sol::table&, const std::string& key) -> sol::object {
     if (scope.valid()) {
-      sol::object v = scope[key];
+      sol::object v = scope.get<sol::object>(key);
       if (v.valid() && v != sol::lua_nil) return v;
     }
-    return lua[key];
+    return lua.get<sol::object>(key);
   });
   env[sol::metatable_key] = meta;
   sol::set_environment(env, fn);
@@ -151,7 +151,7 @@ sol::object EvalBindingExpr(sol::state& lua, std::string_view rawExpr, const sol
   if (!res.valid() || res.return_count() == 0) {
     return sol::lua_nil;
   }
-  return res[0];
+  return res.get<sol::object>();
 }
 
 std::string ObjectToString(const sol::object& obj) {
@@ -488,7 +488,7 @@ struct RepeaterRecord {
 
 sol::object LookupKeyInTable(const sol::table& tbl, const std::string& key) {
   if (!tbl.valid()) return sol::lua_nil;
-  sol::object v = tbl[key];
+  sol::object v = tbl.get<sol::object>(key);
   return (v.valid() && v != sol::lua_nil) ? v : sol::object(sol::lua_nil);
 }
 
@@ -556,7 +556,7 @@ struct UIViewInstance : std::enable_shared_from_this<UIViewInstance> {
 
   void InvokeController(const std::string& methodName, const sol::object& arg1 = sol::lua_nil) {
     if (methodName.empty() || !controller.valid()) return;
-    sol::object fnObj = controller[methodName];
+    sol::object fnObj = controller.get<sol::object>(methodName);
     if (!fnObj.is<sol::protected_function>()) return;
     sol::protected_function fn = fnObj.as<sol::protected_function>();
     const auto res = arg1.valid() && arg1 != sol::lua_nil ? fn(controller, arg1, viewTable) : fn(controller, viewTable);
@@ -985,15 +985,17 @@ void ConfigureButtonEntity(const std::shared_ptr<UIViewInstance>& view, Entity e
 
   const std::string onClickMethod = node.GetAttr("on-click");
   std::weak_ptr<UIViewInstance> weakView = view;
-  btn.clickFunction = lua.create_table_with("fn", [weakView, onClickMethod, scope]() {
-    if (auto v = weakView.lock()) {
-      sol::object itemArg = LookupKeyInTable(scope, "item");
-      if (itemArg == sol::lua_nil) {
-        itemArg = LookupKeyInTable(scope, "__item");
-      }
-      v->InvokeController(onClickMethod, itemArg);
-    }
-  })["fn"];
+  btn.clickFunction = lua.create_table_with("fn",
+                                            [weakView, onClickMethod, scope]() {
+                                              if (auto v = weakView.lock()) {
+                                                sol::object itemArg = LookupKeyInTable(scope, "item");
+                                                if (itemArg == sol::lua_nil) {
+                                                  itemArg = LookupKeyInTable(scope, "__item");
+                                                }
+                                                v->InvokeController(onClickMethod, itemArg);
+                                              }
+                                            })
+                          .get<sol::protected_function>("fn");
 
   ApplyButtonSounds(node, resolved, btn);
   reg->AddComponent(entity, btn);
@@ -1128,11 +1130,13 @@ void ConfigureToggleEntity(const std::shared_ptr<UIViewInstance>& view, Entity e
   UIButtonComponent btn;
   btn.isActive = !isDisabled;
   std::weak_ptr<UIViewInstance> weakView = view;
-  btn.clickFunction = lua.create_table_with("fn", [weakView, entity, bindPath, onChangeMethod]() {
-    if (auto v = weakView.lock()) {
-      HandleToggleClick(v, entity, bindPath, onChangeMethod);
-    }
-  })["fn"];
+  btn.clickFunction = lua.create_table_with("fn",
+                                            [weakView, entity, bindPath, onChangeMethod]() {
+                                              if (auto v = weakView.lock()) {
+                                                HandleToggleClick(v, entity, bindPath, onChangeMethod);
+                                              }
+                                            })
+                          .get<sol::protected_function>("fn");
 
   ApplyButtonSounds(node, resolved, btn);
   reg->AddComponent(entity, btn);
@@ -1195,11 +1199,14 @@ void ConfigureRadioButtonEntity(const std::shared_ptr<UIViewInstance>& view, Ent
   UIButtonComponent btn;
   btn.isActive = !isDisabled;
   std::weak_ptr<UIViewInstance> weakView = view;
-  btn.clickFunction = lua.create_table_with("fn", [weakView, entity, optionValue, radioGroup, onClickMethod]() {
-    if (auto v = weakView.lock()) {
-      HandleRadioButtonClick(v, entity, optionValue, radioGroup, onClickMethod);
-    }
-  })["fn"];
+  btn.clickFunction =
+      lua.create_table_with("fn",
+                            [weakView, entity, optionValue, radioGroup, onClickMethod]() {
+                              if (auto v = weakView.lock()) {
+                                HandleRadioButtonClick(v, entity, optionValue, radioGroup, onClickMethod);
+                              }
+                            })
+          .get<sol::protected_function>("fn");
 
   ApplyButtonSounds(node, resolved, btn);
   reg->AddComponent(entity, btn);
@@ -1313,11 +1320,13 @@ void ConfigureSliderEntity(const std::shared_ptr<UIViewInstance>& view, Entity e
   UIButtonComponent btn;
   btn.isActive = !isDisabled;
   std::weak_ptr<UIViewInstance> weakView = view;
-  btn.clickFunction = lua.create_table_with("fn", [weakView, st]() {
-    if (auto v = weakView.lock()) {
-      HandleSliderClick(v, st);
-    }
-  })["fn"];
+  btn.clickFunction = lua.create_table_with("fn",
+                                            [weakView, st]() {
+                                              if (auto v = weakView.lock()) {
+                                                HandleSliderClick(v, st);
+                                              }
+                                            })
+                          .get<sol::protected_function>("fn");
 
   ApplyButtonSounds(node, resolved, btn);
   reg->AddComponent(entity, btn);
@@ -1667,10 +1676,13 @@ void RegisterRefEventHandler(const std::shared_ptr<UIViewInstance>& v, Entity en
   if (eventName == "click" && r->HasComponent<UIButtonComponent>(entity)) {
     auto& btn = r->GetComponent<UIButtonComponent>(entity);
     const sol::protected_function prev = btn.clickFunction;
-    btn.clickFunction = v->runtime->GetLua()->create_table_with("fn", [prev, fn]() {
-      if (prev.valid()) prev();
-      fn();
-    })["fn"];
+    btn.clickFunction = v->runtime->GetLua()
+                            ->create_table_with("fn",
+                                                [prev, fn]() {
+                                                  if (prev.valid()) prev();
+                                                  fn();
+                                                })
+                            .get<sol::protected_function>("fn");
   } else if (eventName == "change") {
     if (const auto sIt = v->sliders.find(entity.GetId()); sIt != v->sliders.end()) {
       sIt->second->changeListeners.push_back(fn);
@@ -1737,7 +1749,7 @@ void RebuildRepeaterItems(const std::shared_ptr<UIViewInstance>& v, const std::s
   const sol::table listTbl = listObj.as<sol::table>();
   const std::size_t len = listTbl.size();
   for (std::size_t idx = 1; idx <= len; ++idx) {
-    sol::object itemVal = listTbl[idx];
+    sol::object itemVal = listTbl.get<sol::object>(idx);
     if (!itemVal.valid() || itemVal == sol::lua_nil) continue;
     sol::table itemVars = lua.create_table();
     itemVars.set(rec->clause.itemVar, itemVal);
@@ -2012,15 +2024,17 @@ void ConfigureContainerEntity(const std::shared_ptr<UIViewInstance>& view, Entit
     btn.key = node.GetAttr("key");
     const std::string onClickMethod = node.GetAttr("on-click");
     std::weak_ptr<UIViewInstance> weakView = view;
-    btn.clickFunction = lua.create_table_with("fn", [weakView, onClickMethod, scope]() {
-      if (auto v = weakView.lock()) {
-        sol::object itemArg = LookupKeyInTable(scope, "item");
-        if (itemArg == sol::lua_nil) {
-          itemArg = LookupKeyInTable(scope, "__item");
-        }
-        v->InvokeController(onClickMethod, itemArg);
-      }
-    })["fn"];
+    btn.clickFunction = lua.create_table_with("fn",
+                                              [weakView, onClickMethod, scope]() {
+                                                if (auto v = weakView.lock()) {
+                                                  sol::object itemArg = LookupKeyInTable(scope, "item");
+                                                  if (itemArg == sol::lua_nil) {
+                                                    itemArg = LookupKeyInTable(scope, "__item");
+                                                  }
+                                                  v->InvokeController(onClickMethod, itemArg);
+                                                }
+                                              })
+                            .get<sol::protected_function>("fn");
     ApplyButtonSounds(node, resolved, btn);
     reg->AddComponent(entity, btn);
     SetEntityDisabled(reg, entity, isDisabled);
@@ -2377,7 +2391,7 @@ namespace {
 void NotifyObservableListeners(const sol::table& listeners, const std::string& key) {
   const std::size_t n = listeners.size();
   for (std::size_t i = 1; i <= n; ++i) {
-    sol::object fnObj = listeners[i];
+    sol::object fnObj = listeners.get<sol::object>(i);
     if (fnObj.is<sol::protected_function>()) {
       fnObj.as<sol::protected_function>()(key);
     }
@@ -2422,8 +2436,9 @@ sol::table UIRuntime::CreateObservable(const sol::table& rawTable) {
   });
 
   sol::table meta = lua_->create_table();
-  meta.set_function("__index",
-                    [backing](const sol::table&, const sol::object& key) -> sol::object { return backing[key]; });
+  meta.set_function("__index", [backing](const sol::table&, const sol::object& key) -> sol::object {
+    return backing.get<sol::object>(key);
+  });
   meta.set_function("__newindex", [this, backing, listeners](const sol::table&, const sol::object& key,
                                                              const sol::object& val) mutable {
     if (backing[key] == val && !val.is<sol::table>()) return;

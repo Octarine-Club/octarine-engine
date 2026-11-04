@@ -32,7 +32,7 @@ struct LuaBinding<UILayoutBoxComponent> {
   }
 
   static void ApplyDim(const sol::table& t, const char* key, float& outVal, UIUnit& outUnit) {
-    const sol::object obj = t[key];
+    const sol::object obj = t.get<sol::object>(key);
     if (!obj.valid() || obj == sol::lua_nil) return;
     const auto [val, unit] = ParseLength(obj);
     outVal = val;
