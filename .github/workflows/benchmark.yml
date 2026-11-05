@@ -9,9 +9,6 @@ concurrency:
   group: benchmark-${{ github.ref }}
   cancel-in-progress: false
 
-env:
-  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
-
 permissions:
   contents: write
   pull-requests: write

@@ -723,6 +723,49 @@ void ParseAllLevels(const Json& levelsArray, const std::unordered_map<int, Tiles
   NormalizeLevelGridCoords(projectData.templates, rawCoords, projectData);
 }
 
+const CatalogEntry* FindLdtkCatalogEntry(const AssetManager* assetManager, const std::string& path) {
+  if (assetManager == nullptr) {
+    return nullptr;
+  }
+  const auto& catalog = assetManager->GetCatalog();
+  if (const auto* entry = catalog.Find(path)) {
+    return entry;
+  }
+  const std::filesystem::path fsPath(path);
+  if (const auto* entry = catalog.Find(fsPath.filename().string())) {
+    return entry;
+  }
+  return catalog.Find(fsPath.stem().string());
+}
+
+std::string ResolveLdtkFullPath(const std::string& ldtkPath, const AssetManager* assetManager) {
+  if (const auto* entry = FindLdtkCatalogEntry(assetManager, ldtkPath)) {
+    return entry->fullPath;
+  }
+  const std::filesystem::path fsPath(ldtkPath);
+  if (assetManager != nullptr && !fsPath.is_absolute()) {
+    return assetManager->GetFullPath(ldtkPath);
+  }
+  return ldtkPath;
+}
+
+std::string ResolveLdtkDirRelPath(const std::string& ldtkPath, const std::string& fullPath,
+                                  const AssetManager* assetManager) {
+  const std::filesystem::path relParent = std::filesystem::path(ldtkPath).parent_path();
+  if (!relParent.empty() && !relParent.is_absolute()) {
+    return relParent.generic_string();
+  }
+  if (assetManager != nullptr && !assetManager->GetBasePath().empty()) {
+    std::error_code ec;
+    const auto rel = std::filesystem::relative(std::filesystem::path(fullPath).parent_path(),
+                                               std::filesystem::path(assetManager->GetBasePath()), ec);
+    if (!ec && rel != ".") {
+      return rel.generic_string();
+    }
+  }
+  return {};
+}
+
 }  // namespace
 
 std::optional<TilemapData> LdtkParser::ParseFromJsonString(const std::string& jsonText,
@@ -756,10 +799,7 @@ std::optional<TilemapData> LdtkParser::ParseFromJsonString(const std::string& js
 }
 
 std::optional<TilemapData> LdtkParser::ParseFromFile(const std::string& ldtkPath, const AssetManager* assetManager) {
-  std::string fullPath = ldtkPath;
-  if (assetManager != nullptr && !std::filesystem::path(ldtkPath).is_absolute()) {
-    fullPath = assetManager->GetFullPath(ldtkPath);
-  }
+  const std::string fullPath = ResolveLdtkFullPath(ldtkPath, assetManager);
   if (fullPath.empty()) {
     Logger::Error("LdtkParser::ParseFromFile: invalid path '" + ldtkPath + "'");
     return std::nullopt;
@@ -771,19 +811,7 @@ std::optional<TilemapData> LdtkParser::ParseFromFile(const std::string& ldtkPath
     return std::nullopt;
   }
 
-  std::string ldtkDirRelPath;
-  const std::filesystem::path relParent = std::filesystem::path(ldtkPath).parent_path();
-  if (!relParent.empty() && !relParent.is_absolute()) {
-    ldtkDirRelPath = relParent.generic_string();
-  } else if (assetManager != nullptr && !assetManager->GetBasePath().empty()) {
-    std::error_code ec;
-    const auto rel = std::filesystem::relative(std::filesystem::path(fullPath).parent_path(),
-                                               std::filesystem::path(assetManager->GetBasePath()), ec);
-    if (!ec && rel != ".") {
-      ldtkDirRelPath = rel.generic_string();
-    }
-  }
-
+  const std::string ldtkDirRelPath = ResolveLdtkDirRelPath(ldtkPath, fullPath, assetManager);
   return ParseFromJsonString(*bytes, ldtkDirRelPath);
 }
 

@@ -10,9 +10,6 @@ on:
   schedule:
     - cron: '0 6 * * *'   # 06:00 UTC nightly
 
-env:
-  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
-
 jobs:
   tidy:
     name: linux (clang-tidy, whole tree)

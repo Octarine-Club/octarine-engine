@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <unordered_map>
 
+#include "AssetManager/AssetManager.h"
 #include "General/Logger.h"
 #include "Tilemap/LdtkParser.h"
 
@@ -80,6 +81,45 @@ LoaderRegistryState& GetRegistryState() {
   return state;
 }
 
+const CatalogEntry* FindCatalogEntry(const AssetManager* assetManager, const std::string& path) {
+  if (assetManager == nullptr) {
+    return nullptr;
+  }
+  const auto& catalog = assetManager->GetCatalog();
+  if (const CatalogEntry* entry = catalog.Find(path)) {
+    return entry;
+  }
+  const std::filesystem::path fsPath(path);
+  if (const CatalogEntry* entry = catalog.Find(fsPath.filename().string())) {
+    return entry;
+  }
+  return catalog.Find(fsPath.stem().string());
+}
+
+const TilemapFormatLoader* ResolveLoaderForFile(const LoaderRegistryState& state, const std::string& path,
+                                                const AssetManager* assetManager, const std::string& formatHint) {
+  if (!formatHint.empty()) {
+    if (const auto* loader = state.Resolve(formatHint)) {
+      return loader;
+    }
+  }
+  const std::string ext = std::filesystem::path(path).extension().string();
+  if (!ext.empty()) {
+    if (const auto* loader = state.Resolve(ext)) {
+      return loader;
+    }
+  }
+  if (const auto* entry = FindCatalogEntry(assetManager, path)) {
+    const std::string entryExt = std::filesystem::path(entry->fullPath).extension().string();
+    if (!entryExt.empty()) {
+      if (const auto* loader = state.Resolve(entryExt)) {
+        return loader;
+      }
+    }
+  }
+  return state.Resolve("ldtk");
+}
+
 }  // namespace
 
 void TilemapLoaderRegistry::RegisterFormat(TilemapFormatLoader loader) {
@@ -105,20 +145,7 @@ std::optional<TilemapData> TilemapLoaderRegistry::LoadFromFile(const std::string
                                                                const AssetManager* assetManager,
                                                                const std::string& formatHint) {
   const auto& state = GetRegistryState();
-  const TilemapFormatLoader* loader = nullptr;
-
-  if (!formatHint.empty()) {
-    loader = state.Resolve(formatHint);
-  }
-  if (loader == nullptr) {
-    const std::string ext = std::filesystem::path(path).extension().string();
-    if (!ext.empty()) {
-      loader = state.Resolve(ext);
-    }
-  }
-  if (loader == nullptr) {
-    loader = state.Resolve("ldtk");
-  }
+  const TilemapFormatLoader* loader = ResolveLoaderForFile(state, path, assetManager, formatHint);
   if (loader == nullptr || !loader->loadFromFile) {
     Logger::Error("TilemapLoaderRegistry::LoadFromFile: no loader registered for '" + path + "'");
     return std::nullopt;

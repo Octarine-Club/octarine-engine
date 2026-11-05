@@ -205,6 +205,46 @@ inline void ApplyStylePatch(const UIStylePatch& patch, ResolvedVisualColors& out
   if (patch.HasOpacity()) opacity = patch.opacity;
 }
 
+// When a widget is checked and hovered/pressed without an explicit :checked:hover or :checked:press
+// background override, synthesize a subtle luminance delta on the checked background while still
+// honoring any non-background properties (border, text, opacity) from the base :hover/:press rule.
+inline constexpr int kCheckedHoverBgDelta = 24;
+
+inline octarine::Color OffsetColorRgb(octarine::Color c, const int delta) noexcept {
+  c.r = static_cast<std::uint8_t>(std::clamp(static_cast<int>(c.r) + delta, 0, 255));
+  c.g = static_cast<std::uint8_t>(std::clamp(static_cast<int>(c.g) + delta, 0, 255));
+  c.b = static_cast<std::uint8_t>(std::clamp(static_cast<int>(c.b) + delta, 0, 255));
+  return c;
+}
+
+inline void ApplyNonBgStylePatch(const UIStylePatch& patch, ResolvedVisualColors& out, std::uint8_t& opacity) {
+  if (patch.HasBorder()) out.border = patch.borderColor;
+  if (patch.HasText()) out.text = patch.textColor;
+  if (patch.HasOpacity()) opacity = patch.opacity;
+}
+
+inline void ApplyCheckedVisualState(const UIStyleStateComponent& st, const InteractiveEntityFlags& flags,
+                                    ResolvedVisualColors& out, std::uint8_t& opacity) {
+  ApplyStylePatch(st.checked, out, opacity);
+  if (flags.isFocused) ApplyStylePatch(st.focus, out, opacity);
+  if (flags.isHovered) {
+    if (st.checkedHover.flags != 0) {
+      ApplyStylePatch(st.checkedHover, out, opacity);
+    } else {
+      ApplyNonBgStylePatch(st.hover, out, opacity);
+      out.bg = OffsetColorRgb(out.bg, kCheckedHoverBgDelta);
+    }
+  }
+  if (flags.isPressed) {
+    if (st.checkedPress.flags != 0) {
+      ApplyStylePatch(st.checkedPress, out, opacity);
+    } else if (st.press.flags != 0) {
+      ApplyNonBgStylePatch(st.press, out, opacity);
+      out.bg = OffsetColorRgb(out.bg, -kCheckedHoverBgDelta);
+    }
+  }
+}
+
 inline InteractiveEntityFlags ReadInteractiveFlags(Registry* registry, const Entity entity, ResolvedVisualColors& out) {
   InteractiveEntityFlags flags{};
   if (registry->HasComponent<UIButtonComponent>(entity)) {
@@ -239,10 +279,13 @@ inline ResolvedVisualColors ResolveVisualState(Registry* registry, const Entity 
   std::uint8_t opacity = 255;
   if (registry->HasComponent<UIStyleStateComponent>(entity)) {
     const auto& st = registry->GetComponent<UIStyleStateComponent>(entity);
-    if (flags.isChecked) ApplyStylePatch(st.checked, out, opacity);
-    if (flags.isFocused) ApplyStylePatch(st.focus, out, opacity);
-    if (flags.isHovered) ApplyStylePatch(st.hover, out, opacity);
-    if (flags.isPressed) ApplyStylePatch(st.press, out, opacity);
+    if (flags.isChecked) {
+      ApplyCheckedVisualState(st, flags, out, opacity);
+    } else {
+      if (flags.isFocused) ApplyStylePatch(st.focus, out, opacity);
+      if (flags.isHovered) ApplyStylePatch(st.hover, out, opacity);
+      if (flags.isPressed) ApplyStylePatch(st.press, out, opacity);
+    }
     if (flags.isDisabled) ApplyStylePatch(st.disabled, out, opacity);
   }
   out.bg = ApplyOpacityMod(out.bg, opacity);

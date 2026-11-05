@@ -10,31 +10,48 @@ description: |
 runs:
   using: composite
   steps:
-    - name: Configure vcpkg binary cache directory
+    - name: Configure vcpkg binary and downloads cache directories
       shell: bash
       run: |
         cache_dir="${RUNNER_TEMP}/vcpkg-bincache"
-        mkdir -p "$cache_dir"
+        dl_dir="${RUNNER_TEMP}/vcpkg-downloads"
+        mkdir -p "$cache_dir" "$dl_dir"
         if command -v cygpath >/dev/null 2>&1; then
           cache_dir="$(cygpath -w "$cache_dir")"
+          dl_dir="$(cygpath -w "$dl_dir")"
         fi
         echo "VCPKG_BINARY_SOURCES=clear;files,${cache_dir},readwrite" >> "$GITHUB_ENV"
-    - name: Restore/save vcpkg binary cache
+        echo "VCPKG_DOWNLOADS=${dl_dir}" >> "$GITHUB_ENV"
+    - name: Restore/save vcpkg binary and downloads cache
       uses: actions/cache@v4
       with:
-        path: ${{ runner.temp }}/vcpkg-bincache
+        path: |
+          ${{ runner.temp }}/vcpkg-bincache
+          ${{ runner.temp }}/vcpkg-downloads/lua-5.4.7.tar.gz
         key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-overlay-ports/**') }}
         restore-keys: |
           vcpkg-${{ runner.os }}-
-    - name: Pre-fetch Lua 5.4.7 tarball with retry
+    - name: Pre-fetch and verify Lua 5.4.7 tarball
       shell: bash
       run: |
-        dl_dir="${VCPKG_DOWNLOADS:-${VCPKG_INSTALLATION_ROOT:-$VCPKG_ROOT}/downloads}"
-        if [ -n "$dl_dir" ]; then
-          mkdir -p "$dl_dir"
-          if [ ! -f "$dl_dir/lua-5.4.7.tar.gz" ]; then
-            curl -fL --retry 5 --retry-all-errors --retry-delay 3 \
-              "https://www.lua.org/ftp/lua-5.4.7.tar.gz" \
-              -o "$dl_dir/lua-5.4.7.tar.gz" || rm -f "$dl_dir/lua-5.4.7.tar.gz"
+        dl_dir="${RUNNER_TEMP}/vcpkg-downloads"
+        tarball="$dl_dir/lua-5.4.7.tar.gz"
+        expected_sha512="98c5c8978dfdf867e37e9eb3b3ec83dee92d199243b5119505da83895e33f10d43c841be6a7d3b106daba8a0b2bd25fe099ebff8f87831dcc55c79c78b97d8b8"
+
+        verify_lua_tarball() {
+          [ -f "$tarball" ] || return 1
+          actual="$(python3 -c "import hashlib, sys; print(hashlib.sha512(open(sys.argv[1], 'rb').read()).hexdigest())" "$tarball")"
+          [ "$actual" = "$expected_sha512" ]
+        }
+
+        if ! verify_lua_tarball; then
+          rm -f "$tarball"
+          curl -fL --connect-timeout 15 --max-time 60 --retry 8 --retry-all-errors --retry-delay 5 \
+            "https://www.lua.org/ftp/lua-5.4.7.tar.gz" \
+            -o "$tarball"
+          if ! verify_lua_tarball; then
+            echo "::error::Failed to verify SHA512 of downloaded $tarball"
+            rm -f "$tarball"
+            exit 1
           fi
         fi

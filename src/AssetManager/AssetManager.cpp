@@ -138,6 +138,7 @@ bool AssetManager::LoadFromCatalog(const CatalogEntry& entry, const std::string&
       return audio_store_.Contains(assetId);
     case AssetType::UIView:
     case AssetType::UIStyle:
+    case AssetType::Tilemap:
       return true;
   }
   return false;

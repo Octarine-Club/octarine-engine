@@ -1427,6 +1427,114 @@ void TestViewSetInertSuspendsInputAndPreservesVisuals() {
   lua.script("bg_view:unmount()");
 }
 
+void TestCheckedHoverPressPseudoStatesAndControllerParenStrip() {
+  std::cout << "[ui] :checked:hover / :checked:press pseudo states + controller method() stripping\n";
+  Registry registry;
+  registry.Set<GameConfig>(GameConfig{});
+  registry.Set<RenderQueue>(RenderQueue(64));
+  registry.RegisterBulkSystem(UILayoutSystem());
+
+  auto eventBus = std::make_unique<EventBus>();
+  auto& btnSys = registry.Set<UIButtonSystem>(UIButtonSystem{});
+  btnSys.Init(&registry, eventBus);
+
+  sol::state lua;
+  lua.open_libraries(sol::lib::base, sol::lib::math, sol::lib::string, sol::lib::table);
+
+  UIRuntime uiRuntime(&lua, &registry, nullptr);
+  sol::table uiTbl = lua.create_table();
+  uiRuntime.InstallLuaFunctions(uiTbl);
+  lua["ui"] = uiTbl;
+
+  // 1. Parse explicit :checked:hover and :checked:press rules via OssParser
+  const OssParseResult ossRes = OssParser::Parse(R"(
+    .toggle {
+      background-color: #202030;
+      border-color: #404050;
+    }
+    .toggle:hover {
+      background-color: #303045;
+      border-color: #8080a0;
+    }
+    .toggle:press {
+      background-color: #151520;
+    }
+    .toggle:focus {
+      border-color: #ffd166;
+    }
+    .toggle:checked {
+      background-color: #06d6a0;
+    }
+    .toggle:checked:hover {
+      background-color: #26f6c0;
+    }
+    .toggle:checked:press {
+      background-color: #049670;
+    }
+  )");
+  Check(ossRes.ok, "OssParser parses :checked:hover and :checked:press rules");
+  const auto resolvedStyle = ossRes.stylesheet.Resolve("Button", {"toggle"}, "", {});
+  Check(resolvedStyle.HasPseudoStates(), "OssResolvedStyle detects checkedHover/checkedPress pseudo states");
+  const UIStyleStateComponent explicitComp = resolvedStyle.BuildStyleStateComponent();
+  Check(explicitComp.checkedHover.HasBg() && explicitComp.checkedHover.bgColor.r == 0x26,
+        ":checked:hover patch parsed with background #26f6c0");
+  Check(explicitComp.checkedPress.HasBg() && explicitComp.checkedPress.bgColor.g == 0x96,
+        ":checked:press patch parsed with background #049670");
+
+  // 2. Verify ResolveVisualState with explicit :checked:hover / :checked:press and focus preservation
+  UIButtonComponent btn;
+  UIFocusComponent foc;
+  foc.isChecked = true;
+  foc.isFocused = true;
+  btn.isHovered = true;
+  const Entity explicitEnt = registry.CreateEntityWithBundle(btn, foc, explicitComp);
+  const auto explicitHoverColors = octarine::ui::ResolveVisualState(&registry, explicitEnt, {0x20, 0x20, 0x30, 255},
+                                                                    {0x40, 0x40, 0x50, 255}, {255, 255, 255, 255});
+  CheckEq(explicitHoverColors.bg.r, static_cast<uint8_t>(0x26),
+          "Explicit :checked:hover background overrides :checked background");
+  CheckEq(explicitHoverColors.border.r, static_cast<uint8_t>(0xff),
+          "Checked + focused element preserves :focus border color");
+
+  // 3. Verify fallback luminance delta (+24 on hover, -24 on press) when no explicit :checked:hover/:checked:press
+  UIStyleStateComponent fallbackComp{};
+  fallbackComp.checked.SetBg({100, 120, 140, 255});
+  fallbackComp.hover.SetBg({50, 50, 50, 255});
+  fallbackComp.hover.SetBorder({200, 210, 220, 255});
+  fallbackComp.press.SetBg({20, 20, 20, 255});
+  const Entity fallbackEnt = registry.CreateEntityWithBundle(btn, foc, fallbackComp);
+  const auto synthHover =
+      octarine::ui::ResolveVisualState(&registry, fallbackEnt, {10, 10, 10, 255}, {0, 0, 0, 255}, {255, 255, 255, 255});
+  CheckEq(synthHover.bg.r, static_cast<uint8_t>(124),
+          "Fallback :checked + hover brightens checked bg R by +24 instead of using unchecked :hover bg");
+  CheckEq(synthHover.border.r, static_cast<uint8_t>(200),
+          "Fallback :checked + hover still applies border from :hover patch");
+
+  registry.GetComponent<UIButtonComponent>(fallbackEnt).isHovered = false;
+  registry.GetComponent<UIButtonComponent>(fallbackEnt).isPressed = true;
+  const auto synthPress =
+      octarine::ui::ResolveVisualState(&registry, fallbackEnt, {10, 10, 10, 255}, {0, 0, 0, 255}, {255, 255, 255, 255});
+  CheckEq(synthPress.bg.r, static_cast<uint8_t>(76), "Fallback :checked + press darkens checked bg R by -24");
+
+  // 4. Verify InvokeController strips trailing "()" on on-click="on_action()"
+  lua.script(R"lua(
+    paren_calls = 0
+    local ctrl = {
+      on_action = function(self) paren_calls = paren_calls + 1 end
+    }
+    paren_view = ui.mount([[
+      <OXML>
+        <Canvas width="400px" height="300px">
+          <Button ref="ActBtn" width="100px" height="40px" text="Go" key="escape" on-click="on_action()" />
+        </Canvas>
+      </OXML>
+    ]], { controller = ctrl })
+  )lua");
+  registry.Update(0.016f);
+  eventBus->EmitEvent<KeyInputEvent>(SDLK_ESCAPE, SDL_KMOD_NONE, true);
+  CheckEq(lua.get<int>("paren_calls"), 1, "on-click=\"on_action()\" strips parens and invokes controller.on_action");
+  lua.script("paren_view:unmount()");
+}
+
 }  // namespace
 
 int main() {
@@ -1446,5 +1554,6 @@ int main() {
   TestTextOutlineAndShadowOxmlAndLuaBindings();
   TestPointerEventsStopBlocksHoverClickAndWheel();
   TestViewSetInertSuspendsInputAndPreservesVisuals();
+  TestCheckedHoverPressPseudoStatesAndControllerParenStrip();
   return octarine::test::ReportSummary("UILayoutTest");
 }

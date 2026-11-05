@@ -49,8 +49,10 @@ struct UIStyleStateComponent {
   UIStylePatch press{};
   UIStylePatch focus{};
   UIStylePatch checked{};
+  UIStylePatch checkedHover{};
+  UIStylePatch checkedPress{};
   UIStylePatch disabled{};
 };
 
 static_assert(std::is_trivially_copyable_v<UIStyleStateComponent>);
-static_assert(sizeof(UIStyleStateComponent) == 80);
+static_assert(sizeof(UIStyleStateComponent) == 112);
