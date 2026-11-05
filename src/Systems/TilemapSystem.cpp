@@ -114,6 +114,17 @@ void ComputeCameraCenter(Registry& registry, float& outCamX, float& outCamY, flo
   }
 }
 
+SDL_Texture* FindTextureByStemOrCatalog(AssetManager* assetManager, const std::string& relPath) {
+  const std::string stem = std::filesystem::path(relPath).stem().string();
+  if (SDL_Texture* tex = assetManager->GetTexture(stem)) {
+    return tex;
+  }
+  if (const auto* entry = assetManager->GetCatalog().Find(stem)) {
+    return assetManager->GetTexture(entry->id);
+  }
+  return nullptr;
+}
+
 }  // namespace
 
 bool TilemapSystem::LoadFromData(Registry& registry, TilemapData data, const TilemapLoadOptions& options,
@@ -419,16 +430,7 @@ SDL_Texture* TilemapSystem::ResolveTilesetTexture(AssetManager* assetManager, co
   }
   for (const auto& [aid, relPath] : project_data_.tilesetAssets) {
     if (aid == assetId) {
-      const std::string stem = std::filesystem::path(relPath).stem().string();
-      if (SDL_Texture* tex = assetManager->GetTexture(stem)) {
-        return tex;
-      }
-      if (const auto* entry = assetManager->GetCatalog().Find(stem)) {
-        if (SDL_Texture* tex = assetManager->GetTexture(entry->id)) {
-          return tex;
-        }
-      }
-      break;
+      return FindTextureByStemOrCatalog(assetManager, relPath);
     }
   }
   return nullptr;
