@@ -1,6 +1,7 @@
 #include "Tilemap/LdtkParser.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <filesystem>
 #include <limits>
@@ -11,6 +12,7 @@
 #include "Engine/SdlFileReader.h"
 #include "General/Logger.h"
 #include "Tilemap/TilemapBuilder.h"
+#include "Tilemap/TilemapLoader.h"
 #include "Tilemap/TilemapMath.h"
 
 namespace octarine::tilemap {
@@ -192,25 +194,32 @@ void ParseYSortLayer(const Json& layer, const TilesetDef& ts, ChunkTemplate& out
   }
 }
 
-void ParseIntGridCsv(const Json& csv, const size_t maxCells, std::vector<uint8_t>& outCollisions) {
+void ParseIntGridCsv(const Json& csv, const size_t maxCells, std::vector<uint8_t>& outCollisions,
+                     const uint8_t overrideTileValue = 0) {
   const size_t count = std::min(csv.size(), maxCells);
   for (size_t i = 0; i < count; ++i) {
     const int32_t val = csv[i].is_number_integer() ? csv[i].get<int32_t>() : 0;
-    outCollisions[i] = static_cast<uint8_t>(std::clamp(val, 0, 255));
+    if (val != 0) {
+      outCollisions[i] = (overrideTileValue != 0) ? overrideTileValue : static_cast<uint8_t>(std::clamp(val, 0, 255));
+    }
   }
 }
 
-void ParseLegacyIntGrid(const Json& cells, const size_t maxCells, std::vector<uint8_t>& outCollisions) {
+void ParseLegacyIntGrid(const Json& cells, const size_t maxCells, std::vector<uint8_t>& outCollisions,
+                        const uint8_t overrideTileValue = 0) {
   for (const auto& cell : cells) {
     if (!cell.is_object()) continue;
     const int32_t coordId = cell.value("coordId", -1);
     if (coordId < 0 || static_cast<size_t>(coordId) >= maxCells) continue;
     const int32_t val = cell.value("v", 0);
-    outCollisions[static_cast<size_t>(coordId)] = static_cast<uint8_t>(std::clamp(val, 0, 255));
+    if (val != 0) {
+      outCollisions[static_cast<size_t>(coordId)] =
+          (overrideTileValue != 0) ? overrideTileValue : static_cast<uint8_t>(std::clamp(val, 0, 255));
+    }
   }
 }
 
-void ParseCollisionsLayer(const Json& layer, ParsedLevelRaw& outRaw) {
+void ParseCollisionsLayer(const Json& layer, ParsedLevelRaw& outRaw, const uint8_t overrideTileValue = 0) {
   const int32_t cWid = std::clamp(layer.value("__cWid", outRaw.rawGridW), 1, 512);
   const int32_t cHei = std::clamp(layer.value("__cHei", outRaw.rawGridH), 1, 512);
   outRaw.rawGridW = cWid;
@@ -221,9 +230,9 @@ void ParseCollisionsLayer(const Json& layer, ParsedLevelRaw& outRaw) {
   }
 
   if (layer.contains("intGridCsv") && layer["intGridCsv"].is_array()) {
-    ParseIntGridCsv(layer["intGridCsv"], maxCells, outRaw.rawCollisions);
+    ParseIntGridCsv(layer["intGridCsv"], maxCells, outRaw.rawCollisions, overrideTileValue);
   } else if (layer.contains("intGrid") && layer["intGrid"].is_array()) {
-    ParseLegacyIntGrid(layer["intGrid"], maxCells, outRaw.rawCollisions);
+    ParseLegacyIntGrid(layer["intGrid"], maxCells, outRaw.rawCollisions, overrideTileValue);
   }
 }
 
@@ -300,6 +309,8 @@ void ApplyKnownLevelField(const std::string& id, const Json& val, ChunkTemplate&
     outTemplate.weight = std::max(0.0f, val.get<float>());
   } else if ((id == "is_border" || id == "IsBorder") && val.is_boolean()) {
     outTemplate.isBorder = val.get<bool>();
+  } else if ((id == "is_palette" || id == "IsPalette") && val.is_boolean()) {
+    outTemplate.isPalette = val.get<bool>();
   } else if (val.is_string()) {
     ApplyStringLevelField(id, val.get<std::string>(), outTemplate);
   }
@@ -319,37 +330,99 @@ void ParseLevelFields(const Json& level, ChunkTemplate& outTemplate) {
   }
 }
 
-bool ContainsCaseInsensitive(const std::string& haystack, const std::string& needleLower) noexcept {
-  if (needleLower.empty() || haystack.size() < needleLower.size()) {
+TilemapParseOptions EffectiveOptions(const TilemapParseOptions& explicitOpts) {
+  const auto& defaultOpts = TilemapLoaderRegistry::GetDefaultParseOptions();
+  TilemapParseOptions result = defaultOpts;
+  if (!explicitOpts.collisionLayerRules.empty()) {
+    result.collisionLayerRules = explicitOpts.collisionLayerRules;
+  }
+  if (!explicitOpts.ysortLayerMatches.empty()) {
+    result.ysortLayerMatches = explicitOpts.ysortLayerMatches;
+  }
+  if (!explicitOpts.paletteMatches.empty()) {
+    result.paletteMatches = explicitOpts.paletteMatches;
+  }
+  if (explicitOpts.socketAnchorTileValue != kTileSurface || defaultOpts.socketAnchorTileValue != kTileSurface) {
+    result.socketAnchorTileValue = (explicitOpts.socketAnchorTileValue != kTileSurface)
+                                       ? explicitOpts.socketAnchorTileValue
+                                       : defaultOpts.socketAnchorTileValue;
+  }
+  if (!explicitOpts.sliceMultiChunkLevels) {
+    result.sliceMultiChunkLevels = false;
+  }
+  return result;
+}
+
+bool ContainsCaseInsensitive(const std::string& haystack, const std::string& needle) noexcept {
+  if (needle.empty()) {
+    return true;
+  }
+  if (haystack.size() < needle.size()) {
     return false;
   }
-  for (size_t i = 0; i + needleLower.size() <= haystack.size(); ++i) {
-    bool match = true;
-    for (size_t j = 0; j < needleLower.size(); ++j) {
-      const char c = (haystack[i + j] >= 'A' && haystack[i + j] <= 'Z')
-                         ? static_cast<char>(haystack[i + j] + ('a' - 'A'))
-                         : haystack[i + j];
-      if (c != needleLower[j]) {
-        match = false;
-        break;
-      }
-    }
-    if (match) {
+  const auto it =
+      std::search(haystack.begin(), haystack.end(), needle.begin(), needle.end(), [](const char c1, const char c2) {
+        return std::tolower(static_cast<unsigned char>(c1)) == std::tolower(static_cast<unsigned char>(c2));
+      });
+  return it != haystack.end();
+}
+
+bool MatchesAnySubstringCaseInsensitive(const std::string& haystack, const std::vector<std::string>& needles) noexcept {
+  for (const auto& needle : needles) {
+    if (!needle.empty() && ContainsCaseInsensitive(haystack, needle)) {
       return true;
     }
   }
   return false;
 }
 
-bool LevelHasExplicitCollisionLayer(const Json& layers) {
-  return std::ranges::any_of(layers, [](const Json& layer) {
-    return layer.is_object() && ContainsCaseInsensitive(layer.value("__identifier", std::string{}), "collision");
+struct CollisionMatchResult {
+  bool matched = false;
+  uint8_t overrideTileValue = 0;
+};
+
+CollisionMatchResult FindMatchingCollisionRule(const std::string& layerId, const std::string& layerType,
+                                               const bool hasExplicitCollisionLayer,
+                                               const std::vector<CollisionLayerRule>& rules) {
+  if (!rules.empty()) {
+    for (const auto& rule : rules) {
+      if (!rule.layerMatch.empty() && ContainsCaseInsensitive(layerId, rule.layerMatch)) {
+        return {true, rule.overrideTileValue};
+      }
+    }
+    if (!hasExplicitCollisionLayer && layerType == "IntGrid") {
+      return {true, 0};
+    }
+    return {false, 0};
+  }
+  if (ContainsCaseInsensitive(layerId, "collision")) {
+    return {true, 0};
+  }
+  if (!hasExplicitCollisionLayer && layerType == "IntGrid") {
+    return {true, 0};
+  }
+  return {false, 0};
+}
+
+bool LevelHasExplicitCollisionLayer(const Json& layers, const std::vector<CollisionLayerRule>& rules) {
+  return std::ranges::any_of(layers, [&](const Json& layer) {
+    if (!layer.is_object()) return false;
+    const std::string id = layer.value("__identifier", std::string{});
+    if (!rules.empty()) {
+      for (const auto& rule : rules) {
+        if (!rule.layerMatch.empty() && ContainsCaseInsensitive(id, rule.layerMatch)) {
+          return true;
+        }
+      }
+      return false;
+    }
+    return ContainsCaseInsensitive(id, "collision");
   });
 }
 
 void ParseLevelLayer(const Json& layer, const std::unordered_map<int32_t, TilesetDef>& tilesets,
-                     const std::string& ldtkDirRelPath, const bool hasExplicitCollisionLayer, float& nextStaticDepth,
-                     ParsedLevelRaw& outRaw) {
+                     const std::string& ldtkDirRelPath, const bool hasExplicitCollisionLayer,
+                     const TilemapParseOptions& options, float& nextStaticDepth, ParsedLevelRaw& outRaw) {
   const std::string id = layer.value("__identifier", std::string{});
   const std::string type = layer.value("__type", std::string{});
 
@@ -359,7 +432,7 @@ void ParseLevelLayer(const Json& layer, const std::unordered_map<int32_t, Tilese
   }
 
   const TilesetDef ts = ResolveLayerTileset(layer, tilesets, ldtkDirRelPath);
-  if (ContainsCaseInsensitive(id, "ysort")) {
+  if (MatchesAnySubstringCaseInsensitive(id, options.ysortLayerMatches)) {
     ParseYSortLayer(layer, ts, outRaw.tmpl);
     return;
   }
@@ -367,16 +440,17 @@ void ParseLevelLayer(const Json& layer, const std::unordered_map<int32_t, Tilese
   const float layerDepth = nextStaticDepth;
   nextStaticDepth += 1.0f;
 
-  const bool isCollisionLayer =
-      ContainsCaseInsensitive(id, "collision") || (!hasExplicitCollisionLayer && type == "IntGrid");
-  if (isCollisionLayer) {
-    ParseCollisionsLayer(layer, outRaw);
+  const auto collisionMatch =
+      FindMatchingCollisionRule(id, type, hasExplicitCollisionLayer, options.collisionLayerRules);
+  if (collisionMatch.matched) {
+    ParseCollisionsLayer(layer, outRaw, collisionMatch.overrideTileValue);
   }
   ParseStaticTileLayer(layer, ts, 0u, layerDepth, outRaw.tmpl);
 }
 
 ParsedLevelRaw ParseSingleLevel(const Json& level, const std::unordered_map<int32_t, TilesetDef>& tilesets,
-                                const std::string& ldtkDirRelPath, const int32_t defaultTileSize) {
+                                const std::string& ldtkDirRelPath, const int32_t defaultTileSize,
+                                const TilemapParseOptions& options) {
   ParsedLevelRaw raw;
   raw.tmpl.identifier = level.value("identifier", std::string{"Level"});
   raw.tmpl.tileSize = defaultTileSize;
@@ -396,12 +470,12 @@ ParsedLevelRaw ParseSingleLevel(const Json& level, const std::unordered_map<int3
 
   if (level.contains("layerInstances") && level["layerInstances"].is_array()) {
     const auto& layers = level["layerInstances"];
-    const bool hasExplicitCollisionLayer = LevelHasExplicitCollisionLayer(layers);
+    const bool hasExplicitCollisionLayer = LevelHasExplicitCollisionLayer(layers, options.collisionLayerRules);
     float nextStaticDepth = 0.0f;
     // Iterate in reverse so background layers (last in LDtk's array) are parsed before foreground layers.
     for (auto it = layers.rbegin(); it != layers.rend(); ++it) {
       if (it->is_object()) {
-        ParseLevelLayer(*it, tilesets, ldtkDirRelPath, hasExplicitCollisionLayer, nextStaticDepth, raw);
+        ParseLevelLayer(*it, tilesets, ldtkDirRelPath, hasExplicitCollisionLayer, options, nextStaticDepth, raw);
       }
     }
   }
@@ -532,29 +606,29 @@ std::string FindOpenEdgeTag(const ChunkTemplate& tmpl) {
   return {};
 }
 
-int32_t FindSurfaceSubXOnRow(const ParsedLevelRaw& raw, const int32_t gy, const int32_t baseGridW,
-                             const int32_t cols) noexcept {
+int32_t FindSurfaceSubXOnRow(const ParsedLevelRaw& raw, const int32_t gy, const int32_t baseGridW, const int32_t cols,
+                             const uint8_t socketAnchorTileValue) noexcept {
   if (gy < 0 || gy >= raw.rawGridH) {
     return cols / 2;
   }
   const auto rowOffset = static_cast<size_t>(gy) * static_cast<size_t>(raw.rawGridW);
   for (int32_t lx = 0; lx < raw.rawGridW; ++lx) {
     const size_t idx = rowOffset + static_cast<size_t>(lx);
-    if (idx < raw.rawCollisions.size() && raw.rawCollisions[idx] == kTileSurface) {
+    if (idx < raw.rawCollisions.size() && raw.rawCollisions[idx] == socketAnchorTileValue) {
       return std::clamp(lx / baseGridW, 0, cols - 1);
     }
   }
   return cols / 2;
 }
 
-int32_t FindSurfaceSubYOnCol(const ParsedLevelRaw& raw, const int32_t gx, const int32_t baseGridH,
-                             const int32_t rows) noexcept {
+int32_t FindSurfaceSubYOnCol(const ParsedLevelRaw& raw, const int32_t gx, const int32_t baseGridH, const int32_t rows,
+                             const uint8_t socketAnchorTileValue) noexcept {
   if (gx < 0 || gx >= raw.rawGridW) {
     return rows / 2;
   }
   for (int32_t ly = 0; ly < raw.rawGridH; ++ly) {
     const size_t idx = static_cast<size_t>(ly) * static_cast<size_t>(raw.rawGridW) + static_cast<size_t>(gx);
-    if (idx < raw.rawCollisions.size() && raw.rawCollisions[idx] == kTileSurface) {
+    if (idx < raw.rawCollisions.size() && raw.rawCollisions[idx] == socketAnchorTileValue) {
       return std::clamp(ly / baseGridH, 0, rows - 1);
     }
   }
@@ -563,26 +637,27 @@ int32_t FindSurfaceSubYOnCol(const ParsedLevelRaw& raw, const int32_t gx, const 
 
 std::string ResolveHorizontalOuterEdge(const ParsedLevelRaw& raw, const int32_t sx, const int32_t cols,
                                        const int32_t baseGridW, const int32_t boundaryGy,
-                                       const std::string& levelEdgeTag) {
+                                       const std::string& levelEdgeTag, const uint8_t socketAnchorTileValue) {
   if (ChunkTemplate::IsOpenSocketTag(levelEdgeTag)) {
     return levelEdgeTag;
   }
-  const int32_t targetSubX = FindSurfaceSubXOnRow(raw, boundaryGy, baseGridW, cols);
+  const int32_t targetSubX = FindSurfaceSubXOnRow(raw, boundaryGy, baseGridW, cols, socketAnchorTileValue);
   return (sx == targetSubX) ? levelEdgeTag : FindOpenEdgeTag(raw.tmpl);
 }
 
 std::string ResolveVerticalOuterEdge(const ParsedLevelRaw& raw, const int32_t sy, const int32_t rows,
-                                     const int32_t baseGridH, const int32_t boundaryGx,
-                                     const std::string& levelEdgeTag) {
+                                     const int32_t baseGridH, const int32_t boundaryGx, const std::string& levelEdgeTag,
+                                     const uint8_t socketAnchorTileValue) {
   if (ChunkTemplate::IsOpenSocketTag(levelEdgeTag)) {
     return levelEdgeTag;
   }
-  const int32_t targetSubY = FindSurfaceSubYOnCol(raw, boundaryGx, baseGridH, rows);
+  const int32_t targetSubY = FindSurfaceSubYOnCol(raw, boundaryGx, baseGridH, rows, socketAnchorTileValue);
   return (sy == targetSubY) ? levelEdgeTag : FindOpenEdgeTag(raw.tmpl);
 }
 
 ChunkTemplate BuildSubChunkTemplate(const ParsedLevelRaw& raw, const int32_t sx, const int32_t sy, const int32_t cols,
-                                    const int32_t rows, const int32_t baseGridW, const int32_t baseGridH) {
+                                    const int32_t rows, const int32_t baseGridW, const int32_t baseGridH,
+                                    const uint8_t socketAnchorTileValue) {
   ChunkTemplate sub;
   sub.identifier = raw.tmpl.identifier + "__" + std::to_string(sx) + "_" + std::to_string(sy);
   sub.tileSize = raw.tmpl.tileSize;
@@ -598,14 +673,17 @@ ChunkTemplate BuildSubChunkTemplate(const ParsedLevelRaw& raw, const int32_t sx,
   sub.fields["span_h"] = static_cast<int64_t>(rows);
 
   sub.edgeNorth =
-      (sy == 0) ? ResolveHorizontalOuterEdge(raw, sx, cols, baseGridW, 0, raw.tmpl.edgeNorth) : "__Internal";
-  sub.edgeSouth = (sy == rows - 1)
-                      ? ResolveHorizontalOuterEdge(raw, sx, cols, baseGridW, raw.rawGridH - 1, raw.tmpl.edgeSouth)
-                      : "__Internal";
-  sub.edgeWest = (sx == 0) ? ResolveVerticalOuterEdge(raw, sy, rows, baseGridH, 0, raw.tmpl.edgeWest) : "__Internal";
-  sub.edgeEast = (sx == cols - 1)
-                     ? ResolveVerticalOuterEdge(raw, sy, rows, baseGridH, raw.rawGridW - 1, raw.tmpl.edgeEast)
+      (sy == 0) ? ResolveHorizontalOuterEdge(raw, sx, cols, baseGridW, 0, raw.tmpl.edgeNorth, socketAnchorTileValue)
+                : "__Internal";
+  sub.edgeSouth = (sy == rows - 1) ? ResolveHorizontalOuterEdge(raw, sx, cols, baseGridW, raw.rawGridH - 1,
+                                                                raw.tmpl.edgeSouth, socketAnchorTileValue)
+                                   : "__Internal";
+  sub.edgeWest = (sx == 0)
+                     ? ResolveVerticalOuterEdge(raw, sy, rows, baseGridH, 0, raw.tmpl.edgeWest, socketAnchorTileValue)
                      : "__Internal";
+  sub.edgeEast = (sx == cols - 1) ? ResolveVerticalOuterEdge(raw, sy, rows, baseGridH, raw.rawGridW - 1,
+                                                             raw.tmpl.edgeEast, socketAnchorTileValue)
+                                  : "__Internal";
 
   const auto chunkPxW = static_cast<float>(baseGridW * raw.tmpl.tileSize);
   const auto chunkPxH = static_cast<float>(baseGridH * raw.tmpl.tileSize);
@@ -620,9 +698,10 @@ ChunkTemplate BuildSubChunkTemplate(const ParsedLevelRaw& raw, const int32_t sx,
 }
 
 void AppendParsedLevelOrSlices(ParsedLevelRaw&& raw, const int32_t baseGridW, const int32_t baseGridH,
-                               std::vector<LevelRawCoord>& outCoords, TilemapData& projectData) {
-  const int32_t cols = std::max(1, raw.rawGridW / baseGridW);
-  const int32_t rows = std::max(1, raw.rawGridH / baseGridH);
+                               const TilemapParseOptions& options, std::vector<LevelRawCoord>& outCoords,
+                               TilemapData& projectData) {
+  const int32_t cols = options.sliceMultiChunkLevels ? std::max(1, raw.rawGridW / baseGridW) : 1;
+  const int32_t rows = options.sliceMultiChunkLevels ? std::max(1, raw.rawGridH / baseGridH) : 1;
   if (cols <= 1 && rows <= 1) {
     CopyRawCollisionsToSingleChunk(raw, raw.tmpl);
     outCoords.push_back(raw.coord);
@@ -640,7 +719,8 @@ void AppendParsedLevelOrSlices(ParsedLevelRaw&& raw, const int32_t baseGridW, co
       subCoord.pxWid = chunkPxW;
       subCoord.pxHei = chunkPxH;
       outCoords.push_back(subCoord);
-      projectData.templates.push_back(BuildSubChunkTemplate(raw, sx, sy, cols, rows, baseGridW, baseGridH));
+      projectData.templates.push_back(
+          BuildSubChunkTemplate(raw, sx, sy, cols, rows, baseGridW, baseGridH, options.socketAnchorTileValue));
     }
   }
 }
@@ -673,7 +753,7 @@ void NormalizeLevelGridCoords(std::vector<ChunkTemplate>& templates, const std::
 }
 
 void ParseAllLevels(const Json& levelsArray, const std::unordered_map<int, TilesetDef>& tilesets,
-                    const std::string& ldtkDirRelPath, TilemapData& projectData) {
+                    const std::string& ldtkDirRelPath, const TilemapParseOptions& options, TilemapData& projectData) {
   std::vector<ParsedLevelRaw> playableLevels;
   bool foundExplicitBorder = false;
   int32_t minGridW = std::numeric_limits<int32_t>::max();
@@ -681,14 +761,16 @@ void ParseAllLevels(const Json& levelsArray, const std::unordered_map<int, Tiles
 
   for (const auto& level : levelsArray) {
     if (!level.is_object()) continue;
-    ParsedLevelRaw raw = ParseSingleLevel(level, tilesets, ldtkDirRelPath, projectData.tileSize);
+    ParsedLevelRaw raw = ParseSingleLevel(level, tilesets, ldtkDirRelPath, projectData.tileSize, options);
     if (raw.tmpl.isBorder) {
       CopyRawCollisionsToSingleChunk(raw, raw.tmpl);
       projectData.borderTemplate = raw.tmpl;
       foundExplicitBorder = true;
       continue;
     }
-    if (TilemapBuilder::IsPaletteTemplateName(raw.tmpl.identifier)) {
+    if (raw.tmpl.isPalette || MatchesAnySubstringCaseInsensitive(raw.tmpl.identifier, options.paletteMatches) ||
+        TilemapBuilder::IsPaletteTemplateName(raw.tmpl.identifier)) {
+      raw.tmpl.isPalette = true;
       CopyRawCollisionsToSingleChunk(raw, raw.tmpl);
       projectData.paletteTemplates.push_back(std::move(raw.tmpl));
       continue;
@@ -705,8 +787,8 @@ void ParseAllLevels(const Json& levelsArray, const std::unordered_map<int, Tiles
 
   std::vector<LevelRawCoord> rawCoords;
   for (auto& raw : playableLevels) {
-    AppendParsedLevelOrSlices(std::move(raw), projectData.chunkGridWidth, projectData.chunkGridHeight, rawCoords,
-                              projectData);
+    AppendParsedLevelOrSlices(std::move(raw), projectData.chunkGridWidth, projectData.chunkGridHeight, options,
+                              rawCoords, projectData);
   }
 
   if (!foundExplicitBorder) {
@@ -769,7 +851,8 @@ std::string ResolveLdtkDirRelPath(const std::string& ldtkPath, const std::string
 }  // namespace
 
 std::optional<TilemapData> LdtkParser::ParseFromJsonString(const std::string& jsonText,
-                                                           const std::string& ldtkDirRelPath) {
+                                                           const std::string& ldtkDirRelPath,
+                                                           const TilemapParseOptions& options) {
   if (jsonText.empty()) {
     Logger::Error("LdtkParser: empty JSON string.");
     return std::nullopt;
@@ -794,11 +877,13 @@ std::optional<TilemapData> LdtkParser::ParseFromJsonString(const std::string& js
     return std::nullopt;
   }
 
-  ParseAllLevels(root["levels"], tilesets, ldtkDirRelPath, projectData);
+  const TilemapParseOptions effectiveOpts = EffectiveOptions(options);
+  ParseAllLevels(root["levels"], tilesets, ldtkDirRelPath, effectiveOpts, projectData);
   return projectData;
 }
 
-std::optional<TilemapData> LdtkParser::ParseFromFile(const std::string& ldtkPath, const AssetManager* assetManager) {
+std::optional<TilemapData> LdtkParser::ParseFromFile(const std::string& ldtkPath, const AssetManager* assetManager,
+                                                     const TilemapParseOptions& options) {
   const std::string fullPath = ResolveLdtkFullPath(ldtkPath, assetManager);
   if (fullPath.empty()) {
     Logger::Error("LdtkParser::ParseFromFile: invalid path '" + ldtkPath + "'");
@@ -812,7 +897,7 @@ std::optional<TilemapData> LdtkParser::ParseFromFile(const std::string& ldtkPath
   }
 
   const std::string ldtkDirRelPath = ResolveLdtkDirRelPath(ldtkPath, fullPath, assetManager);
-  return ParseFromJsonString(*bytes, ldtkDirRelPath);
+  return ParseFromJsonString(*bytes, ldtkDirRelPath, options);
 }
 
 }  // namespace octarine::tilemap

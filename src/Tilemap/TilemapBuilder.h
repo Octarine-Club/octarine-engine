@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <string>
@@ -38,7 +39,15 @@ class TilemapBuilder {
   static constexpr float kUvInsetPx = 0.002f;
 
   [[nodiscard]] static bool IsPaletteTemplateName(const std::string& identifier) noexcept {
-    return identifier == "Chunk_Palette" || identifier == "Palette" || identifier == "__Palette";
+    if (identifier == "Chunk_Palette" || identifier == "Palette" || identifier == "__Palette") {
+      return true;
+    }
+    const std::string needle = "palette";
+    const auto it = std::search(
+        identifier.begin(), identifier.end(), needle.begin(), needle.end(), [](const char c1, const char c2) {
+          return std::tolower(static_cast<unsigned char>(c1)) == std::tolower(static_cast<unsigned char>(c2));
+        });
+    return it != identifier.end();
   }
 
   static void ReserveLayerMesh(TileLayerMesh& mesh, const size_t additionalTileCount) {
@@ -133,7 +142,8 @@ class TilemapBuilder {
   static bool ExtractPaletteTemplates(TilemapData& data) {
     bool extracted = false;
     for (auto it = data.templates.begin(); it != data.templates.end();) {
-      if (IsPaletteTemplateName(it->identifier)) {
+      if (it->isPalette || IsPaletteTemplateName(it->identifier)) {
+        it->isPalette = true;
         data.paletteTemplates.push_back(std::move(*it));
         it = data.templates.erase(it);
         extracted = true;

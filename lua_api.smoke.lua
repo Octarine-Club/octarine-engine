@@ -2081,15 +2081,34 @@ text_label_component = {}
 
 
 ---@class tilemap
+---@field MASK_1 any
+---@field MASK_2 any
+---@field MASK_3 any
+---@field MASK_4 any
+---@field MASK_5 any
+---@field MASK_6 any
+---@field MASK_7 any
 ---@field MASK_CHASM any
 ---@field MASK_EMPTY any
 ---@field MASK_GROUND_BLOCKED any
 ---@field MASK_HAZARD any
+---@field MASK_PROJECTILE_BLOCKED any
 ---@field MASK_SOLID any
+---@field MASK_SURFACE any
+---@field MASK_WALL any
+---@field TILE_1 any
+---@field TILE_2 any
+---@field TILE_3 any
+---@field TILE_4 any
+---@field TILE_5 any
+---@field TILE_6 any
+---@field TILE_7 any
 ---@field TILE_CHASM any
 ---@field TILE_EMPTY any
 ---@field TILE_HAZARD any
 ---@field TILE_SOLID any
+---@field TILE_SURFACE any
+---@field TILE_WALL any
 tilemap = {}
 
 function tilemap.clear_chunk_overrides(...) end
@@ -2103,6 +2122,8 @@ function tilemap.get_camera_chunk(...) end
 function tilemap.get_chunk_size(...) end
 
 function tilemap.get_chunk_template_id(...) end
+
+function tilemap.get_default_masks(...) end
 
 function tilemap.get_seed(...) end
 
@@ -2137,6 +2158,8 @@ function tilemap.resolve_circle(...) end
 function tilemap.set_chunk_override(...) end
 
 function tilemap.set_debug_overlay(...) end
+
+function tilemap.set_default_masks(...) end
 
 function tilemap.set_prop_spawner(...) end
 

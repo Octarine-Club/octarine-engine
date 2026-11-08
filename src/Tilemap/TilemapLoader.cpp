@@ -30,6 +30,7 @@ struct LoaderRegistryState {
   std::unordered_map<std::string, TilemapFormatLoader> byFormatId{};
   std::unordered_map<std::string, std::string> extToFormatId{};
   VariantGeneratorFn defaultVariantGenerator{};
+  TilemapParseOptions defaultParseOptions{};
 
   void Register(TilemapFormatLoader loader) {
     const std::string id = NormalizeKey(loader.formatId);
@@ -69,6 +70,14 @@ LoaderRegistryState& GetRegistryState() {
     TilemapFormatLoader ldtkLoader;
     ldtkLoader.formatId = "ldtk";
     ldtkLoader.extensions = {".ldtk"};
+    ldtkLoader.loadFromFileWithOptions = [](const std::string& path, const AssetManager* assetManager,
+                                            const TilemapParseOptions& options) {
+      return LdtkParser::ParseFromFile(path, assetManager, options);
+    };
+    ldtkLoader.loadFromMemoryWithOptions = [](const std::string& content, const std::string& baseDirRelPath,
+                                              const TilemapParseOptions& options) {
+      return LdtkParser::ParseFromJsonString(content, baseDirRelPath, options);
+    };
     ldtkLoader.loadFromFile = [](const std::string& path, const AssetManager* assetManager) {
       return LdtkParser::ParseFromFile(path, assetManager);
     };
@@ -130,6 +139,14 @@ bool TilemapLoaderRegistry::HasFormat(const std::string& formatOrExt) {
   return GetRegistryState().Resolve(formatOrExt) != nullptr;
 }
 
+void TilemapLoaderRegistry::SetDefaultParseOptions(TilemapParseOptions options) {
+  GetRegistryState().defaultParseOptions = std::move(options);
+}
+
+const TilemapParseOptions& TilemapLoaderRegistry::GetDefaultParseOptions() {
+  return GetRegistryState().defaultParseOptions;
+}
+
 void TilemapLoaderRegistry::SetDefaultVariantGenerator(VariantGeneratorFn generator) {
   GetRegistryState().defaultVariantGenerator = std::move(generator);
 }
@@ -143,15 +160,17 @@ void TilemapLoaderRegistry::ApplyVariantGenerator(TilemapData& data, const int32
 
 std::optional<TilemapData> TilemapLoaderRegistry::LoadFromFile(const std::string& path,
                                                                const AssetManager* assetManager,
-                                                               const std::string& formatHint) {
+                                                               const std::string& formatHint,
+                                                               const TilemapParseOptions& parseOptions) {
   const auto& state = GetRegistryState();
   const TilemapFormatLoader* loader = ResolveLoaderForFile(state, path, assetManager, formatHint);
-  if (loader == nullptr || !loader->loadFromFile) {
+  if (loader == nullptr || (!loader->loadFromFile && !loader->loadFromFileWithOptions)) {
     Logger::Error("TilemapLoaderRegistry::LoadFromFile: no loader registered for '" + path + "'");
     return std::nullopt;
   }
 
-  auto dataOpt = loader->loadFromFile(path, assetManager);
+  auto dataOpt = loader->loadFromFileWithOptions ? loader->loadFromFileWithOptions(path, assetManager, parseOptions)
+                                                 : loader->loadFromFile(path, assetManager);
   if (dataOpt.has_value() && (dataOpt->sourceFormat.empty() || dataOpt->sourceFormat == "custom")) {
     dataOpt->sourceFormat = loader->formatId;
   }
@@ -160,17 +179,20 @@ std::optional<TilemapData> TilemapLoaderRegistry::LoadFromFile(const std::string
 
 std::optional<TilemapData> TilemapLoaderRegistry::LoadFromMemory(const std::string& content,
                                                                  const std::string& baseDirRelPath,
-                                                                 const std::string& formatHint) {
+                                                                 const std::string& formatHint,
+                                                                 const TilemapParseOptions& parseOptions) {
   const auto& state = GetRegistryState();
   const std::string effectiveFormat = formatHint.empty() ? "ldtk" : formatHint;
   const TilemapFormatLoader* loader = state.Resolve(effectiveFormat);
-  if (loader == nullptr || !loader->loadFromMemory) {
+  if (loader == nullptr || (!loader->loadFromMemory && !loader->loadFromMemoryWithOptions)) {
     Logger::Error("TilemapLoaderRegistry::LoadFromMemory: no memory loader registered for format '" + effectiveFormat +
                   "'");
     return std::nullopt;
   }
 
-  auto dataOpt = loader->loadFromMemory(content, baseDirRelPath);
+  auto dataOpt = loader->loadFromMemoryWithOptions
+                     ? loader->loadFromMemoryWithOptions(content, baseDirRelPath, parseOptions)
+                     : loader->loadFromMemory(content, baseDirRelPath);
   if (dataOpt.has_value() && (dataOpt->sourceFormat.empty() || dataOpt->sourceFormat == "custom")) {
     dataOpt->sourceFormat = loader->formatId;
   }

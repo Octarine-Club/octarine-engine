@@ -43,6 +43,24 @@ struct TilemapLoadOptions {
       1.0f;  // World-space multiplier applied to tile/chunk dimensions (e.g. 2.0f => 16px tiles become 32px in world)
   int32_t variantCount = 1;  // > 1 generates randomized prop/decal variants per template at load time
   std::string formatHint{};  // Optional format id override (e.g. "ldtk"); empty auto-detects by extension
+  TilemapParseOptions parseOptions{};
+  uint8_t defaultSolidMask = kTileMaskGroundBlocked;
+  uint8_t defaultRaycastMask = kTileMaskProjectileBlocked;
+};
+
+struct ConsumedPropMask {
+  std::array<uint64_t, 4> words{};
+
+  [[nodiscard]] constexpr bool Test(const uint32_t index) const noexcept {
+    if (index >= 256u) return false;
+    return (words[index / 64u] & (1ULL << (index % 64u))) != 0ULL;
+  }
+
+  constexpr void Set(const uint32_t index) noexcept {
+    if (index < 256u) {
+      words[index / 64u] |= (1ULL << (index % 64u));
+    }
+  }
 };
 
 }  // namespace octarine::tilemap
@@ -104,18 +122,24 @@ class TilemapSystem {
   [[nodiscard]] bool IsPropConsumed(int32_t chunkX, int32_t chunkY, uint32_t propIndex) const noexcept;
   void ClearConsumedProps() noexcept { consumed_props_.clear(); }
 
+  void SetDefaultMasks(const uint8_t solidMask, const uint8_t raycastMask) noexcept {
+    default_solid_mask_ = solidMask;
+    default_raycast_mask_ = raycastMask;
+  }
+  [[nodiscard]] uint8_t GetDefaultSolidMask() const noexcept { return default_solid_mask_; }
+  [[nodiscard]] uint8_t GetDefaultRaycastMask() const noexcept { return default_raycast_mask_; }
+
   // O(1) spatial & collision queries (seamlessly support negative coordinates across (0, 0)).
   [[nodiscard]] uint8_t GetTileByGlobalCoord(int32_t globalTx, int32_t globalTy) const noexcept;
   [[nodiscard]] uint8_t GetTileAt(float worldX, float worldY) const noexcept;
   [[nodiscard]] bool IsSolidAt(float worldX, float worldY,
-                               uint8_t collisionMask = octarine::tilemap::kTileMaskGroundBlocked) const noexcept;
+                               std::optional<uint8_t> collisionMask = std::nullopt) const noexcept;
   [[nodiscard]] octarine::tilemap::TileRaycastHit Raycast(
-      float x0, float y0, float x1, float y1, uint8_t collisionMask = octarine::tilemap::kTileMaskSolid) const noexcept;
-  [[nodiscard]] glm::vec2 ResolveCircle(
-      float worldX, float worldY, float radius,
-      uint8_t collisionMask = octarine::tilemap::kTileMaskGroundBlocked) const noexcept;
+      float x0, float y0, float x1, float y1, std::optional<uint8_t> collisionMask = std::nullopt) const noexcept;
+  [[nodiscard]] glm::vec2 ResolveCircle(float worldX, float worldY, float radius,
+                                        std::optional<uint8_t> collisionMask = std::nullopt) const noexcept;
   [[nodiscard]] glm::vec2 ResolveAABB(float worldX, float worldY, float width, float height,
-                                      uint8_t collisionMask = octarine::tilemap::kTileMaskGroundBlocked) const noexcept;
+                                      std::optional<uint8_t> collisionMask = std::nullopt) const noexcept;
 
   // Inspection & debug overlay state.
   [[nodiscard]] bool IsLoaded() const noexcept { return is_loaded_; }
@@ -186,9 +210,13 @@ class TilemapSystem {
   std::unordered_map<int64_t, octarine::tilemap::ActiveChunk> active_chunks_{};
   std::unordered_map<int64_t, std::string> chunk_overrides_{};
   mutable std::unordered_map<int64_t, const octarine::tilemap::ChunkTemplate*> resolved_templates_{};
-  std::unordered_map<int64_t, uint64_t> consumed_props_{};
+  std::unordered_map<int64_t, octarine::tilemap::ConsumedPropMask> consumed_props_{};
   sol::protected_function prop_spawner_{};
   octarine::tilemap::VariantGeneratorFn variant_generator_{};
+
+  octarine::tilemap::TilemapParseOptions loaded_parse_options_{};
+  uint8_t default_solid_mask_ = octarine::tilemap::kTileMaskGroundBlocked;
+  uint8_t default_raycast_mask_ = octarine::tilemap::kTileMaskProjectileBlocked;
 
   FileWatcher file_watcher_{};
   float hot_reload_accum_ = 0.0f;
