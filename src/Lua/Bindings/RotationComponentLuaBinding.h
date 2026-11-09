@@ -32,7 +32,7 @@ struct LuaBinding<RotationComponent> {
   static void bindUsertype(sol::state& lua) {
     // A property, not a direct member binding, so reads and writes convert against AngleUnit.
     lua.new_usertype<RotationComponent>(
-        kUsertypeName, "value",
+        kUsertypeName, sol::no_constructor, "value",
         sol::property([](const RotationComponent& r) { return octarine::AngleUnits::ToAuthored(r.value); },
                       [](RotationComponent& r, const float v) { r.value = octarine::AngleUnits::ToRadians(v); }));
   }

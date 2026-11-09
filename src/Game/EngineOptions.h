@@ -89,24 +89,6 @@ enum class PresentationMode : std::uint8_t {
   return "letterbox";
 }
 
-// Screen anchor for the built-in perf overlay. config.ini: PerfOverlayCorner=top-left|top-right|
-// bottom-left|bottom-right.
-enum class PerfOverlayCorner : std::uint8_t { TopLeft, TopRight, BottomLeft, BottomRight };
-
-// Which metrics the perf overlay draws. config.ini: PerfOverlayMetrics takes a comma-separated
-// list of fps|frametime|entities|memory, or all ("both" accepted as a legacy alias).
-enum class PerfOverlayMetrics : std::uint8_t {
-  Fps = 1 << 0,
-  FrameTime = 1 << 1,
-  Entities = 1 << 2,
-  Memory = 1 << 3,
-  All = Fps | FrameTime | Entities | Memory
-};
-
-inline PerfOverlayMetrics operator|(PerfOverlayMetrics lhs, PerfOverlayMetrics rhs) {
-  return static_cast<PerfOverlayMetrics>(static_cast<std::uint8_t>(lhs) | static_cast<std::uint8_t>(rhs));
-}
-
 struct EngineOptions {
   // Frame-rate cap enforced by FrameLoop::WaitTime. config.ini: FpsTarget= (0 = uncapped — the
   // loop runs as fast as it can and deltaTime carries the real elapsed time).
@@ -118,13 +100,6 @@ struct EngineOptions {
   bool showDebugGUI = false;
   bool drawColliders = false;
   bool showEntityInfo = false;
-  // Built-in renderer FPS + frame-time overlay (no ImGui). Ships in packaged builds,
-  // so it's the player-facing perf readout. Off by default; opt in via the
-  // `PerfOverlay` config.ini key or set_perf_overlay() from Lua.
-  bool showPerfOverlay = false;
-  // Placement + content of the perf overlay (config.ini only: PerfOverlayCorner=, PerfOverlayMetrics=).
-  PerfOverlayCorner perfOverlayCorner = PerfOverlayCorner::TopLeft;
-  PerfOverlayMetrics perfOverlayMetrics = PerfOverlayMetrics::All;
   octarine::Color debugOverlayBackgroundColor = {0, 0, 0, 0};
   bool showImGuiDemoWindow = false;
   bool logInputEvents = false;

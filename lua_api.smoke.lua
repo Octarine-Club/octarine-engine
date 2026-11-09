@@ -1638,6 +1638,8 @@ function find_entity_by_name(...) end
 
 function get_asset_path(...) end
 
+function get_avg_fps(...) end
+
 function get_camera_position(...) end
 
 function get_camera_zoom(...) end
@@ -1652,11 +1654,17 @@ function get_display_modes(...) end
 
 function get_displays(...) end
 
+function get_entity_count(...) end
+
 function get_env(...) end
 
 function get_fixed_dt(...) end
 
+function get_fps(...) end
+
 function get_fps_target(...) end
+
+function get_frame_time(...) end
 
 function get_fullscreen_resolution(...) end
 
@@ -1664,7 +1672,11 @@ function get_game_map_dimensions(...) end
 
 function get_master_volume(...) end
 
+function get_memory_usage(...) end
+
 function get_name(...) end
+
+function get_perf_stats(...) end
 
 function get_position(...) end
 
@@ -2022,8 +2034,6 @@ function set_maximized(...) end
 
 function set_name(...) end
 
-function set_perf_overlay(...) end
-
 function set_position(...) end
 
 function set_presentation_mode(...) end
@@ -2197,8 +2207,6 @@ function tilemap.unload(...) end
 
 
 function toggle_debug_gui(...) end
-
-function toggle_perf_overlay(...) end
 
 ---@class triangle_collider_component
 triangle_collider_component = {}

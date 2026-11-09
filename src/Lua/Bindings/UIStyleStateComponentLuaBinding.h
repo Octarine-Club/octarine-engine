@@ -41,13 +41,13 @@ struct LuaBinding<UIStyleStateComponent> {
   }
 
   static void bindUsertype(sol::state& lua) {
-    lua.new_usertype<UIStylePatch>("ui_style_patch", "bg_color", &UIStylePatch::bgColor, "border_color",
-                                   &UIStylePatch::borderColor, "text_color", &UIStylePatch::textColor, "opacity",
-                                   &UIStylePatch::opacity, "flags", &UIStylePatch::flags);
+    lua.new_usertype<UIStylePatch>("ui_style_patch", sol::no_constructor, "bg_color", &UIStylePatch::bgColor,
+                                   "border_color", &UIStylePatch::borderColor, "text_color", &UIStylePatch::textColor,
+                                   "opacity", &UIStylePatch::opacity, "flags", &UIStylePatch::flags);
     lua.new_usertype<UIStyleStateComponent>(
-        kUsertypeName, "hover", &UIStyleStateComponent::hover, "press", &UIStyleStateComponent::press, "focus",
-        &UIStyleStateComponent::focus, "checked", &UIStyleStateComponent::checked, "checked_hover",
-        &UIStyleStateComponent::checkedHover, "checked_press", &UIStyleStateComponent::checkedPress, "disabled",
-        &UIStyleStateComponent::disabled);
+        kUsertypeName, sol::no_constructor, "hover", &UIStyleStateComponent::hover, "press",
+        &UIStyleStateComponent::press, "focus", &UIStyleStateComponent::focus, "checked",
+        &UIStyleStateComponent::checked, "checked_hover", &UIStyleStateComponent::checkedHover, "checked_press",
+        &UIStyleStateComponent::checkedPress, "disabled", &UIStyleStateComponent::disabled);
   }
 };

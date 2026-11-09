@@ -46,10 +46,10 @@ struct LuaBinding<UIFlexComponent> {
 
   static void bindUsertype(sol::state& lua) {
     lua.new_usertype<UIFlexComponent>(
-        kUsertypeName, "gap", &UIFlexComponent::gap, "cross_gap", &UIFlexComponent::crossGap, "wrap",
-        &UIFlexComponent::wrap, "columns", &UIFlexComponent::columns, "padding_left", &UIFlexComponent::paddingLeft,
-        "padding_top", &UIFlexComponent::paddingTop, "padding_right", &UIFlexComponent::paddingRight, "padding_bottom",
-        &UIFlexComponent::paddingBottom, "direction",
+        kUsertypeName, sol::no_constructor, "gap", &UIFlexComponent::gap, "cross_gap", &UIFlexComponent::crossGap,
+        "wrap", &UIFlexComponent::wrap, "columns", &UIFlexComponent::columns, "padding_left",
+        &UIFlexComponent::paddingLeft, "padding_top", &UIFlexComponent::paddingTop, "padding_right",
+        &UIFlexComponent::paddingRight, "padding_bottom", &UIFlexComponent::paddingBottom, "direction",
         sol::property([](const UIFlexComponent& f) { return f.direction == FlexDirection::Column ? "column" : "row"; },
                       [](UIFlexComponent& f, const std::string& s) { f.direction = ParseDirection(s); }));
   }

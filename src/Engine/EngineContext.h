@@ -15,6 +15,7 @@ struct MIX_Mixer;
 class AssetManager;
 class EventBus;
 class GameConfig;
+struct PerformanceStats;
 namespace octarine {
 struct UserSettings;
 }
@@ -27,5 +28,6 @@ struct EngineContext {
   AssetManager* assets = nullptr;
   GameConfig* config = nullptr;
   octarine::UserSettings* userSettings = nullptr;
+  const PerformanceStats* perfStats = nullptr;
   float sceneRenderScale = 1.0F;
 };

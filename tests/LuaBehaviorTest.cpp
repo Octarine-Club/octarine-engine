@@ -28,12 +28,14 @@
 #include "Components/ScaleComponent.h"
 #include "Components/UIButtonComponent.h"
 #include "ECS/Registry.h"
+#include "Engine/EngineContext.h"
 #include "Events/GamepadButtonEvent.h"
 #include "Events/KeyInputEvent.h"
 #include "Game/Game.h"
 #include "Game/GameConfig.h"
 #include "General/AngleUnit.h"
 #include "General/Logger.h"
+#include "General/PerformanceTracker.h"
 #include "Lua/Bindings/LuaBinding.h"
 #include "Lua/Bindings/LuaComponentRegistry.h"
 #include "Lua/Bindings/RegisterAllBindings.h"
@@ -322,6 +324,76 @@ void TestUIButtonShapes(sol::state& lua, Registry* reg) {
   Check(lua["hit_transform_circle"] == false, "transform circle button ignores click outside radius");
   EmitLeftMouseClick(*eventBus, 310.0F, 310.0F);
   Check(lua["hit_transform_circle"] == true, "transform circle button fires via primitive fallback");
+}
+
+void TestPerformanceTelemetryBindings(sol::state& lua, Registry* reg) {
+  std::cout << "[performance telemetry diagnostics via Lua]\n";
+
+  // 1. Fallback behavior when EngineContext has no perfStats attached.
+  Check(RunLua(lua, R"LUA(
+    fallback_fps = get_fps()
+    fallback_avg_fps = get_avg_fps()
+    fallback_frame_time = get_frame_time()
+    fallback_entity_count = get_entity_count()
+    fallback_memory_usage = get_memory_usage()
+    fallback_stats = get_perf_stats()
+  )LUA"),
+        "Lua telemetry getters execute with null stats");
+
+  CheckEq(lua["fallback_fps"].get<float>(), 0.0F, "fallback get_fps is 0");
+  CheckEq(lua["fallback_avg_fps"].get<float>(), 0.0F, "fallback get_avg_fps is 0");
+  CheckEq(lua["fallback_frame_time"].get<float>(), 0.0F, "fallback get_frame_time is 0");
+  CheckEq(lua["fallback_memory_usage"].get<std::uint64_t>(), static_cast<std::uint64_t>(0),
+          "fallback get_memory_usage is 0");
+  Check(lua["fallback_stats"].is<sol::table>(), "fallback get_perf_stats returns table");
+
+  // 2. Populated telemetry behavior when EngineContext carries active PerformanceStats.
+  PerformanceStats dummyStats{};
+  dummyStats.fps = 144.0F;
+  dummyStats.avgFps = 143.5F;
+  dummyStats.p50Fps = 144.1F;
+  dummyStats.p95Fps = 139.8F;
+  dummyStats.p99Fps = 135.2F;
+  dummyStats.frameTimeMs = 6.94F;
+  dummyStats.avgFrameTimeMs = 6.97F;
+  dummyStats.p95FrameTimeMs = 7.15F;
+  dummyStats.entityCount = 42;
+  dummyStats.memoryBytes = 1024ULL * 1024ULL * 256ULL;
+  dummyStats.memoryMb = 256.0;
+
+  EngineContext ctx{};
+  ctx.perfStats = &dummyStats;
+  reg->Set<EngineContext>(ctx);
+
+  Check(RunLua(lua, R"LUA(
+    live_fps = get_fps()
+    live_avg_fps = get_avg_fps()
+    live_frame_time = get_frame_time()
+    live_entity_count = get_entity_count()
+    live_memory_usage = get_memory_usage()
+    live_stats = get_perf_stats()
+  )LUA"),
+        "Lua telemetry getters execute with active stats");
+
+  CheckEq(lua["live_fps"].get<float>(), 144.0F, "live get_fps is 144");
+  CheckEq(lua["live_avg_fps"].get<float>(), 143.5F, "live get_avg_fps is 143.5");
+  CheckEq(lua["live_frame_time"].get<float>(), 6.94F, "live get_frame_time is 6.94");
+  CheckEq(lua["live_entity_count"].get<std::size_t>(), static_cast<std::size_t>(42), "live get_entity_count is 42");
+  CheckEq(lua["live_memory_usage"].get<std::uint64_t>(), dummyStats.memoryBytes, "live get_memory_usage matches");
+
+  const sol::table stats = lua["live_stats"];
+  Check(stats.valid(), "live get_perf_stats returns valid table");
+  CheckEq(stats["fps"].get<float>(), 144.0F, "live_stats.fps matches");
+  CheckEq(stats["avg_fps"].get<float>(), 143.5F, "live_stats.avg_fps matches");
+  CheckEq(stats["p50_fps"].get<float>(), 144.1F, "live_stats.p50_fps matches");
+  CheckEq(stats["p95_fps"].get<float>(), 139.8F, "live_stats.p95_fps matches");
+  CheckEq(stats["p99_fps"].get<float>(), 135.2F, "live_stats.p99_fps matches");
+  CheckEq(stats["frame_ms"].get<float>(), 6.94F, "live_stats.frame_ms matches");
+  CheckEq(stats["avg_frame_ms"].get<float>(), 6.97F, "live_stats.avg_frame_ms matches");
+  CheckEq(stats["p95_frame_ms"].get<float>(), 7.15F, "live_stats.p95_frame_ms matches");
+  CheckEq(stats["entity_count"].get<std::size_t>(), static_cast<std::size_t>(42), "live_stats.entity_count matches");
+  CheckEq(stats["memory_bytes"].get<std::uint64_t>(), dummyStats.memoryBytes, "live_stats.memory_bytes matches");
+  CheckEq(stats["memory_mb"].get<double>(), 256.0, "live_stats.memory_mb matches");
 }
 }  // namespace
 
@@ -1040,6 +1112,7 @@ int main() {
   TestPrimitiveBindings(lua, reg);
   TestColliderBindings(lua, reg);
   TestUIButtonShapes(lua, reg);
+  TestPerformanceTelemetryBindings(lua, reg);
 
   return octarine::test::ReportSummary("Lua behavior test");
 }

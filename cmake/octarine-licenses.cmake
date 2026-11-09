@@ -18,9 +18,6 @@
 #       [REQUIRED_PORTS port1;port2]   # ports that MUST appear in the glob (FATAL_ERROR otherwise)
 #       [EXTRA_DIRS dir1;dir2])        # project-side drop-in dirs, each section keyed by filename stem
 #
-# The Apache-2.0 Roboto attribution (src/General/Fonts/LICENSE*) is always emitted: Roboto-Medium.ttf
-# is embedded into every binary (debug overlays + the renderer perf overlay), so the notice rides
-# along on every package.
 
 if (DEFINED _OCTARINE_LICENSES_INCLUDED)
     return()
@@ -273,18 +270,6 @@ function(octarine_collect_licenses OUT_FILE)
         foreach (_lp IN LISTS _vlic)
             _octarine_licenses_append_section("${OUT_FILE}" "${_vd} (vendored)" "${_lp}")
         endforeach ()
-    endforeach ()
-
-    # 3b. Embedded font asset. Roboto-Medium.ttf is compiled into Roboto_Medium.h and embedded into
-    # every binary — in-game ImGui debug overlays and the renderer performance overlay both use it, so it ships
-    # on shipped/Android/iOS builds too. Its Apache-2.0 attribution is therefore emitted unconditionally.
-    file(GLOB _embedded_font_licenses
-            "${OCL_ENGINE_ROOT}/src/General/Fonts/LICENSE"
-            "${OCL_ENGINE_ROOT}/src/General/Fonts/LICENSE.txt"
-            "${OCL_ENGINE_ROOT}/src/General/Fonts/LICENSE.md")
-    list(SORT _embedded_font_licenses)
-    foreach (_efl IN LISTS _embedded_font_licenses)
-        _octarine_licenses_append_section("${OUT_FILE}" "Embedded Fonts (Roboto)" "${_efl}")
     endforeach ()
 
     # 4. Downstream extras. Each EXTRA_DIRS entry is globbed for *.txt and LICENSE*; section

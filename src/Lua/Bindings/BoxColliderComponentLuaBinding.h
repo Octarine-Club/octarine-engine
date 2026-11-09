@@ -24,8 +24,8 @@ struct LuaBinding<BoxColliderComponent> {
   }
 
   static void bindUsertype(sol::state& lua) {
-    lua.new_usertype<BoxColliderComponent>(kUsertypeName, "width", &BoxColliderComponent::width, "height",
-                                           &BoxColliderComponent::height, "is_fixed", &BoxColliderComponent::isFixed,
-                                           "offset", &BoxColliderComponent::offset);
+    lua.new_usertype<BoxColliderComponent>(kUsertypeName, sol::no_constructor, "width", &BoxColliderComponent::width,
+                                           "height", &BoxColliderComponent::height, "is_fixed",
+                                           &BoxColliderComponent::isFixed, "offset", &BoxColliderComponent::offset);
   }
 };

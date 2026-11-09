@@ -24,8 +24,8 @@ struct LuaBinding<TriangleColliderComponent> {
   }
 
   static void bindUsertype(sol::state& lua) {
-    lua.new_usertype<TriangleColliderComponent>(kUsertypeName, "p1", &TriangleColliderComponent::p1, "p2",
-                                                &TriangleColliderComponent::p2, "p3", &TriangleColliderComponent::p3,
-                                                "is_fixed", &TriangleColliderComponent::isFixed);
+    lua.new_usertype<TriangleColliderComponent>(
+        kUsertypeName, sol::no_constructor, "p1", &TriangleColliderComponent::p1, "p2", &TriangleColliderComponent::p2,
+        "p3", &TriangleColliderComponent::p3, "is_fixed", &TriangleColliderComponent::isFixed);
   }
 };

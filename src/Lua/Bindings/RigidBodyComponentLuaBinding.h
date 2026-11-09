@@ -16,6 +16,6 @@ struct LuaBinding<RigidBodyComponent> {
   }
 
   static void bindUsertype(sol::state& lua) {
-    lua.new_usertype<RigidBodyComponent>(kUsertypeName, "velocity", &RigidBodyComponent::velocity);
+    lua.new_usertype<RigidBodyComponent>(kUsertypeName, sol::no_constructor, "velocity", &RigidBodyComponent::velocity);
   }
 };

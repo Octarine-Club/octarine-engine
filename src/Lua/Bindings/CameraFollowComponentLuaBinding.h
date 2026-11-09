@@ -12,5 +12,7 @@ struct LuaBinding<CameraFollowComponent> {
 
   static CameraFollowComponent fromLua(const sol::object& /*data*/) { return {}; }
 
-  static void bindUsertype(sol::state& lua) { lua.new_usertype<CameraFollowComponent>(kUsertypeName); }
+  static void bindUsertype(sol::state& lua) {
+    lua.new_usertype<CameraFollowComponent>(kUsertypeName, sol::no_constructor);
+  }
 };

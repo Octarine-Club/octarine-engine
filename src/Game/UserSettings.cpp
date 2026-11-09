@@ -115,10 +115,6 @@ void ApplyEngineKey(UserSettings& s, const std::string& key, const std::string& 
     s.fpsTarget = std::max(0, std::stoi(val));
     return;
   }
-  if (key == "perf_overlay" || key == "perfOverlay") {
-    s.showPerfOverlay = IniParser::ParseBool(val);
-    return;
-  }
   if (key == "vsync") {
     s.vsync = IniParser::ParseBool(val);
     return;
@@ -378,10 +374,6 @@ bool ResetBuiltInAudioOrEngineKey(UserSettings& s, const std::string& key) {
     s.fpsTarget = s.builtInDefaults.fpsTarget;
     return true;
   }
-  if (key == "perf_overlay" || key == "engine.perf_overlay") {
-    s.showPerfOverlay = s.builtInDefaults.showPerfOverlay;
-    return true;
-  }
   return false;
 }
 
@@ -583,7 +575,6 @@ void UserSettings::ResetAllSettings() {
   masterVolume = builtInDefaults.masterVolume;
   audioMuted = builtInDefaults.audioMuted;
   fpsTarget = builtInDefaults.fpsTarget;
-  showPerfOverlay = builtInDefaults.showPerfOverlay;
 
   customSettings.clear();
   for (const auto& [key, defVal] : defaultSettings) {
@@ -662,15 +653,12 @@ void SerializeWindowSection(std::ostringstream& ss, const UserSettings& s) {
 }
 
 void SerializeEngineSection(std::ostringstream& ss, const UserSettings& s) {
-  if (!s.fpsTarget.has_value() && !s.showPerfOverlay.has_value()) {
+  if (!s.fpsTarget.has_value()) {
     return;
   }
   ss << "\n[engine]\n";
   if (s.fpsTarget.has_value()) {
     ss << "fps_target = " << *s.fpsTarget << "\n";
-  }
-  if (s.showPerfOverlay.has_value()) {
-    ss << "perf_overlay = " << (*s.showPerfOverlay ? "true" : "false") << "\n";
   }
 }
 }  // namespace

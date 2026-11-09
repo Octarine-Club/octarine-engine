@@ -24,6 +24,7 @@ set(OCTARINE_CORE_SOURCES
         General/FileSandbox.cpp
         General/FileWatcher.cpp
         General/LuaEscape.cpp
+        General/PerformanceTracker.cpp
         General/SystemMemory.cpp
         Debug/DebugMenuRegistry.cpp
         ECS/Registry.cpp
@@ -50,6 +51,7 @@ target_link_libraries(octarine_core PUBLIC
 
 # Compile defines shared by every layer (consumers inherit via PUBLIC).
 target_compile_definitions(octarine_core PUBLIC GLM_FORCE_INTRINSICS)
+target_compile_definitions(octarine_core PUBLIC SOL_NO_CHECK_NUMBER_PRECISION=1)
 target_compile_definitions(octarine_core PUBLIC OCTARINE_LOG_LEVEL_NAME="${_octarine_default_log_level}")
 if (OCTARINE_ENABLE_PROFILING)
     target_compile_definitions(octarine_core PUBLIC OCTARINE_PROFILING)
@@ -105,6 +107,9 @@ target_link_libraries(octarine_assets PUBLIC
 # libs/stb is its own include root so TextureAtlasBaker.cpp / AtlasBaker.cpp / GlyphAtlas.cpp can
 # write `#include "stb_image.h"` (matches the pattern in scripts/octarine-icon-tool/).
 target_include_directories(octarine_assets PRIVATE ${CMAKE_SOURCE_DIR}/libs/stb)
+if (NOT MSVC)
+    target_compile_options(octarine_assets PRIVATE $<$<NOT:$<CONFIG:Debug>>:-Os>)
+endif ()
 
 # -----------------------------------------------------------------------------
 # octarine_renderer — render-queue producer drain + SDL_Renderer wrapper.
@@ -144,6 +149,9 @@ target_link_libraries(octarine_lua PUBLIC
         octarine_assets
         octarine_renderer
 )
+if (NOT MSVC)
+    target_compile_options(octarine_lua PRIVATE $<$<NOT:$<CONFIG:Debug>>:-Os>)
+endif ()
 
 # -----------------------------------------------------------------------------
 # octarine_systems — per-frame Update systems + event-driven systems.
@@ -153,12 +161,15 @@ set(OCTARINE_SYSTEMS_SOURCES
         Lua/Bindings/InputSystemLuaBinding.cpp
         Systems/AudioSystem.cpp
         Systems/InputSystem.cpp
-        Systems/PerfOverlaySystem.cpp
         Systems/TilemapSystem.cpp
         Tilemap/LdtkParser.cpp
         Tilemap/TilemapLoader.cpp
 )
 octarine_library(octarine_systems ${OCTARINE_SYSTEMS_SOURCES})
+if (NOT MSVC)
+    set_source_files_properties(Tilemap/LdtkParser.cpp PROPERTIES
+            COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:-Os>")
+endif ()
 target_link_libraries(octarine_systems PUBLIC
         octarine_core
         octarine_assets

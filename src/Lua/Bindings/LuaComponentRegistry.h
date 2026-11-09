@@ -12,11 +12,15 @@
 class LuaComponentRegistry {
  public:
   struct Entry {
+    using AttachFn = void (*)(Registry*, Entity, const sol::object&);
+    using BindUsertypeFn = void (*)(sol::state&);
+    using BindRegistryAccessorsFn = void (*)(sol::table&, Registry*);
+
     std::string luaKey;
     std::string usertypeName;
-    std::function<void(Registry*, Entity, const sol::object&)> attach;
-    std::function<void(sol::state&)> bindUsertype;
-    std::function<void(sol::table&, Registry*)> bindRegistryAccessors;
+    AttachFn attach = nullptr;
+    BindUsertypeFn bindUsertype = nullptr;
+    BindRegistryAccessorsFn bindRegistryAccessors = nullptr;
   };
 
   template <typename T>
@@ -27,9 +31,9 @@ class LuaComponentRegistry {
     entry.usertypeName = B::kUsertypeName;
     entry.attach = [](Registry* r, Entity e, const sol::object& d) { r->AddComponent(e, B::fromLua(d)); };
     entry.bindUsertype = [](sol::state& lua) { B::bindUsertype(lua); };
-    entry.bindRegistryAccessors = [key = std::string(B::kLuaKey)](sol::table& reg, Registry* r) {
-      reg.set_function("has_" + key, [r](Entity e) { return r->HasComponent<T>(e); });
-      reg.set_function("get_" + key, [r](Entity e) -> T& { return r->GetComponent<T>(e); });
+    entry.bindRegistryAccessors = [](sol::table& reg, Registry* r) {
+      reg.set_function(std::string("has_") + B::kLuaKey, [r](Entity e) { return r->HasComponent<T>(e); });
+      reg.set_function(std::string("get_") + B::kLuaKey, [r](Entity e) -> T& { return r->GetComponent<T>(e); });
     };
     entries().push_back(std::move(entry));
   }

@@ -37,7 +37,7 @@ struct LuaBinding<SpriteComponent> {
 
   static void bindUsertype(sol::state& lua) {
     lua.new_usertype<SpriteComponent>(
-        kUsertypeName, "width", sol::readonly(&SpriteComponent::width), "height",
+        kUsertypeName, sol::no_constructor, "width", sol::readonly(&SpriteComponent::width), "height",
         sol::readonly(&SpriteComponent::height), "layer", &SpriteComponent::layer, "asset_id",
         sol::readonly(&SpriteComponent::assetId), "color_mod", &SpriteComponent::colorMod, "alpha",
         sol::property([](const SpriteComponent& s) { return s.colorMod.a; },

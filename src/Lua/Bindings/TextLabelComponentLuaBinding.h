@@ -118,10 +118,10 @@ struct LuaBinding<TextLabelComponent> {
 
   static void bindUsertype(sol::state& lua) {
     lua.new_usertype<TextLabelComponent>(
-        kUsertypeName, "text", &TextLabelComponent::text, "color", &TextLabelComponent::color, "layer",
-        &TextLabelComponent::layer, "position", &TextLabelComponent::position, "is_fixed", &TextLabelComponent::isFixed,
-        "h_align", &TextLabelComponent::hAlign, "v_align", &TextLabelComponent::vAlign, "wrap_width",
-        &TextLabelComponent::wrapWidth, "wrap", &TextLabelComponent::wrapToRect, "shadow_offset",
+        kUsertypeName, sol::no_constructor, "text", &TextLabelComponent::text, "color", &TextLabelComponent::color,
+        "layer", &TextLabelComponent::layer, "position", &TextLabelComponent::position, "is_fixed",
+        &TextLabelComponent::isFixed, "h_align", &TextLabelComponent::hAlign, "v_align", &TextLabelComponent::vAlign,
+        "wrap_width", &TextLabelComponent::wrapWidth, "wrap", &TextLabelComponent::wrapToRect, "shadow_offset",
         &TextLabelComponent::shadowOffset, "shadow_color", &TextLabelComponent::shadowColor, "outline_width",
         &TextLabelComponent::outlineWidth, "outline_thickness", &TextLabelComponent::outlineWidth, "outline_color",
         &TextLabelComponent::outlineColor, "set_outline",

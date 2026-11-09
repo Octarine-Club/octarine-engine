@@ -24,6 +24,6 @@ struct LuaBinding<UIClipComponent> {
   }
 
   static void bindUsertype(sol::state& lua) {
-    lua.new_usertype<UIClipComponent>(kUsertypeName, "enabled", &UIClipComponent::enabled);
+    lua.new_usertype<UIClipComponent>(kUsertypeName, sol::no_constructor, "enabled", &UIClipComponent::enabled);
   }
 };

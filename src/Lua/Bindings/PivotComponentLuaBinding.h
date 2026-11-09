@@ -36,7 +36,7 @@ struct LuaBinding<PivotComponent> {
   }
 
   static void bindUsertype(sol::state& lua) {
-    lua.new_usertype<PivotComponent>(kUsertypeName, "value", &PivotComponent::value, "x",
+    lua.new_usertype<PivotComponent>(kUsertypeName, sol::no_constructor, "value", &PivotComponent::value, "x",
                                      sol::property([](const PivotComponent& p) { return p.get_x(); },
                                                    [](PivotComponent& p, float x) { p.set_x(x); }),
                                      "y",

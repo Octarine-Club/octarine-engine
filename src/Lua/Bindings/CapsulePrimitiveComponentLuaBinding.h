@@ -32,11 +32,11 @@ struct LuaBinding<CapsulePrimitiveComponent> {
 
   static void bindUsertype(sol::state& lua) {
     lua.new_usertype<CapsulePrimitiveComponent>(
-        kUsertypeName, "start", &CapsulePrimitiveComponent::start, "end", &CapsulePrimitiveComponent::end, "layer",
-        &CapsulePrimitiveComponent::layer, "radius", &CapsulePrimitiveComponent::radius, "thickness",
-        &CapsulePrimitiveComponent::thickness, "color", &CapsulePrimitiveComponent::color, "is_fixed",
-        &CapsulePrimitiveComponent::isFixed, "filled", &CapsulePrimitiveComponent::filled, "fill_ratio",
-        &CapsulePrimitiveComponent::fillRatio, "blend_mode",
+        kUsertypeName, sol::no_constructor, "start", &CapsulePrimitiveComponent::start, "end",
+        &CapsulePrimitiveComponent::end, "layer", &CapsulePrimitiveComponent::layer, "radius",
+        &CapsulePrimitiveComponent::radius, "thickness", &CapsulePrimitiveComponent::thickness, "color",
+        &CapsulePrimitiveComponent::color, "is_fixed", &CapsulePrimitiveComponent::isFixed, "filled",
+        &CapsulePrimitiveComponent::filled, "fill_ratio", &CapsulePrimitiveComponent::fillRatio, "blend_mode",
         sol::property([](const CapsulePrimitiveComponent& cp) { return octarine::ToString(cp.blendMode); },
                       [](CapsulePrimitiveComponent& cp, const std::string_view mode) {
                         cp.blendMode = octarine::BlendModeFromString(mode, cp.blendMode);

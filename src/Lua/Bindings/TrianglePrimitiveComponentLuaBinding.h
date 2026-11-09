@@ -31,10 +31,11 @@ struct LuaBinding<TrianglePrimitiveComponent> {
 
   static void bindUsertype(sol::state& lua) {
     lua.new_usertype<TrianglePrimitiveComponent>(
-        kUsertypeName, "p1", &TrianglePrimitiveComponent::p1, "p2", &TrianglePrimitiveComponent::p2, "p3",
-        &TrianglePrimitiveComponent::p3, "layer", &TrianglePrimitiveComponent::layer, "thickness",
-        &TrianglePrimitiveComponent::thickness, "color", &TrianglePrimitiveComponent::color, "is_fixed",
-        &TrianglePrimitiveComponent::isFixed, "filled", &TrianglePrimitiveComponent::filled, "blend_mode",
+        kUsertypeName, sol::no_constructor, "p1", &TrianglePrimitiveComponent::p1, "p2",
+        &TrianglePrimitiveComponent::p2, "p3", &TrianglePrimitiveComponent::p3, "layer",
+        &TrianglePrimitiveComponent::layer, "thickness", &TrianglePrimitiveComponent::thickness, "color",
+        &TrianglePrimitiveComponent::color, "is_fixed", &TrianglePrimitiveComponent::isFixed, "filled",
+        &TrianglePrimitiveComponent::filled, "blend_mode",
         sol::property([](const TrianglePrimitiveComponent& tr) { return octarine::ToString(tr.blendMode); },
                       [](TrianglePrimitiveComponent& tr, const std::string_view mode) {
                         tr.blendMode = octarine::BlendModeFromString(mode, tr.blendMode);

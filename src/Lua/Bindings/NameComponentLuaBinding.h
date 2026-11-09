@@ -24,6 +24,6 @@ struct LuaBinding<NameComponent> {
   }
 
   static void bindUsertype(sol::state& lua) {
-    lua.new_usertype<NameComponent>(kUsertypeName, "name", &NameComponent::name);
+    lua.new_usertype<NameComponent>(kUsertypeName, sol::no_constructor, "name", &NameComponent::name);
   }
 };

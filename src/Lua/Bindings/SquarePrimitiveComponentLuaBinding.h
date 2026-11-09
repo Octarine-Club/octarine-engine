@@ -38,12 +38,13 @@ struct LuaBinding<SquarePrimitiveComponent> {
 
   static void bindUsertype(sol::state& lua) {
     lua.new_usertype<SquarePrimitiveComponent>(
-        kUsertypeName, "width", &SquarePrimitiveComponent::width, "height", &SquarePrimitiveComponent::height, "color",
-        &SquarePrimitiveComponent::color, "position", &SquarePrimitiveComponent::position, "layer",
-        &SquarePrimitiveComponent::layer, "is_fixed", &SquarePrimitiveComponent::isFixed, "border_thickness",
-        &SquarePrimitiveComponent::borderThickness, "border_color", &SquarePrimitiveComponent::borderColor,
-        "track_color", &SquarePrimitiveComponent::trackColor, "corner_radius", &SquarePrimitiveComponent::cornerRadius,
-        "fill_ratio", &SquarePrimitiveComponent::fillRatio, "blend_mode",
+        kUsertypeName, sol::no_constructor, "width", &SquarePrimitiveComponent::width, "height",
+        &SquarePrimitiveComponent::height, "color", &SquarePrimitiveComponent::color, "position",
+        &SquarePrimitiveComponent::position, "layer", &SquarePrimitiveComponent::layer, "is_fixed",
+        &SquarePrimitiveComponent::isFixed, "border_thickness", &SquarePrimitiveComponent::borderThickness,
+        "border_color", &SquarePrimitiveComponent::borderColor, "track_color", &SquarePrimitiveComponent::trackColor,
+        "corner_radius", &SquarePrimitiveComponent::cornerRadius, "fill_ratio", &SquarePrimitiveComponent::fillRatio,
+        "blend_mode",
         sol::property([](const SquarePrimitiveComponent& s) { return octarine::ToString(s.blendMode); },
                       [](SquarePrimitiveComponent& s, const std::string_view mode) {
                         s.blendMode = octarine::BlendModeFromString(mode, s.blendMode);

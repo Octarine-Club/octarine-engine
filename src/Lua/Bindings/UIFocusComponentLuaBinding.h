@@ -33,11 +33,11 @@ struct LuaBinding<UIFocusComponent> {
   }
 
   static void bindUsertype(sol::state& lua) {
-    lua.new_usertype<UIFocusComponent>(kUsertypeName, "tab_index", &UIFocusComponent::tabIndex, "is_focused",
-                                       &UIFocusComponent::isFocused, "focusable", &UIFocusComponent::isFocusable,
-                                       "checked", &UIFocusComponent::isChecked, "disabled",
-                                       &UIFocusComponent::isDisabled, "inert", &UIFocusComponent::isInert, "nav_up",
-                                       &UIFocusComponent::navUp, "nav_down", &UIFocusComponent::navDown, "nav_left",
-                                       &UIFocusComponent::navLeft, "nav_right", &UIFocusComponent::navRight);
+    lua.new_usertype<UIFocusComponent>(
+        kUsertypeName, sol::no_constructor, "tab_index", &UIFocusComponent::tabIndex, "is_focused",
+        &UIFocusComponent::isFocused, "focusable", &UIFocusComponent::isFocusable, "checked",
+        &UIFocusComponent::isChecked, "disabled", &UIFocusComponent::isDisabled, "inert", &UIFocusComponent::isInert,
+        "nav_up", &UIFocusComponent::navUp, "nav_down", &UIFocusComponent::navDown, "nav_left",
+        &UIFocusComponent::navLeft, "nav_right", &UIFocusComponent::navRight);
   }
 };

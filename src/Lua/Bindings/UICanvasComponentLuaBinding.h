@@ -19,8 +19,8 @@ struct LuaBinding<UICanvasComponent> {
   }
 
   static void bindUsertype(sol::state& lua) {
-    lua.new_usertype<UICanvasComponent>(kUsertypeName, "is_fixed", &UICanvasComponent::isFixed, "width",
-                                        &UICanvasComponent::width, "height", &UICanvasComponent::height, "base_layer",
-                                        &UICanvasComponent::baseLayer);
+    lua.new_usertype<UICanvasComponent>(kUsertypeName, sol::no_constructor, "is_fixed", &UICanvasComponent::isFixed,
+                                        "width", &UICanvasComponent::width, "height", &UICanvasComponent::height,
+                                        "base_layer", &UICanvasComponent::baseLayer);
   }
 };

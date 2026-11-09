@@ -24,8 +24,9 @@ struct LuaBinding<CapsuleColliderComponent> {
   }
 
   static void bindUsertype(sol::state& lua) {
-    lua.new_usertype<CapsuleColliderComponent>(
-        kUsertypeName, "start", &CapsuleColliderComponent::start, "end", &CapsuleColliderComponent::end, "radius",
-        &CapsuleColliderComponent::radius, "is_fixed", &CapsuleColliderComponent::isFixed);
+    lua.new_usertype<CapsuleColliderComponent>(kUsertypeName, sol::no_constructor, "start",
+                                               &CapsuleColliderComponent::start, "end", &CapsuleColliderComponent::end,
+                                               "radius", &CapsuleColliderComponent::radius, "is_fixed",
+                                               &CapsuleColliderComponent::isFixed);
   }
 };

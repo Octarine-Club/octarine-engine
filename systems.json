@@ -169,16 +169,6 @@
       "lua_surface": false
     },
     {
-      "name": "PerfOverlaySystem",
-      "source": "src/Systems/PerfOverlaySystem.h",
-      "tier": null,
-      "setup_order": null,
-      "queried_components": [],
-      "emits": [],
-      "subscribes": [],
-      "lua_surface": false
-    },
-    {
       "name": "RenderCapsulePrimitiveSystem",
       "source": "src/Systems/RenderCapsulePrimitiveSystem.h",
       "tier": "parallel",

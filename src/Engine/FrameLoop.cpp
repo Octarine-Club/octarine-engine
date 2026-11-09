@@ -30,7 +30,6 @@
 #include "Renderer/Renderer.h"
 #include "Systems/DrawColliderSystem.h"
 #include "Systems/InputSystem.h"
-#include "Systems/PerfOverlaySystem.h"
 #include "Systems/TilemapSystem.h"
 #include "UI/UIRuntime.h"
 
@@ -361,6 +360,7 @@ int FrameLoop::Update(const float deltaTime) {
   SyncAudioGain(options);
 
   if (auto* ctx = registry_->TryGet<EngineContext>()) {
+    ctx->perfStats = &perf_tracker_.GetStats();
     const auto& gameConfig = registry_->Get<GameConfig>();
     const bool isHeadless = game_->IsHeadless() || options.headless;
     PrepareSceneTargetForWindow(*renderer_, runtime_->SdlRenderer(), gameConfig, isHeadless || !capture_path_.empty());
@@ -421,6 +421,7 @@ void FrameLoop::CheckHeadlessCapture() {
 
 void FrameLoop::Render(const float deltaTime) {
   PROFILE_NAMED_SCOPE("Game::Render (total)");
+  perf_tracker_.RecordFrame(deltaTime, registry_->GetUserEntityCount());
   auto& renderQueue = registry_->Get<RenderQueue>();
   auto& gameConfig = registry_->Get<GameConfig>();
 
@@ -455,12 +456,6 @@ void FrameLoop::Render(const float deltaTime) {
 
   if (gameConfig.GetEngineOptions().drawColliders) {
     draw_collider_system_.Draw(registry_);
-  }
-
-  // Built-in perf overlay (no ImGui). Drawn into the scene texture so it composites for
-  // the player (CompositeSceneToWindow), and rides along in --capture dumps.
-  if (gameConfig.GetEngineOptions().showPerfOverlay) {
-    perf_overlay_.Draw(*registry_, runtime_->SdlRenderer(), deltaTime);
   }
 
   renderer_->EndScene(runtime_->SdlRenderer());

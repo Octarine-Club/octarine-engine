@@ -15,8 +15,8 @@ struct LuaBinding<UIRectComponent> {
 
   static void bindUsertype(sol::state& lua) {
     lua.new_usertype<UIRectComponent>(
-        kUsertypeName, "left", sol::property([](const UIRectComponent& r) { return r.left; }), "top",
-        sol::property([](const UIRectComponent& r) { return r.top; }), "right",
+        kUsertypeName, sol::no_constructor, "left", sol::property([](const UIRectComponent& r) { return r.left; }),
+        "top", sol::property([](const UIRectComponent& r) { return r.top; }), "right",
         sol::property([](const UIRectComponent& r) { return r.right; }), "bottom",
         sol::property([](const UIRectComponent& r) { return r.bottom; }), "layer",
         sol::property([](const UIRectComponent& r) { return r.layer; }), "width",

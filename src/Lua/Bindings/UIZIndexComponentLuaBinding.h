@@ -20,6 +20,6 @@ struct LuaBinding<UIZIndexComponent> {
   }
 
   static void bindUsertype(sol::state& lua) {
-    lua.new_usertype<UIZIndexComponent>(kUsertypeName, "z", &UIZIndexComponent::z);
+    lua.new_usertype<UIZIndexComponent>(kUsertypeName, sol::no_constructor, "z", &UIZIndexComponent::z);
   }
 };

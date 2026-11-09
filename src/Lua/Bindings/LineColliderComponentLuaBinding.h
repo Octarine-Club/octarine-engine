@@ -23,7 +23,8 @@ struct LuaBinding<LineColliderComponent> {
   }
 
   static void bindUsertype(sol::state& lua) {
-    lua.new_usertype<LineColliderComponent>(kUsertypeName, "start", &LineColliderComponent::start, "end",
-                                            &LineColliderComponent::end, "is_fixed", &LineColliderComponent::isFixed);
+    lua.new_usertype<LineColliderComponent>(kUsertypeName, sol::no_constructor, "start", &LineColliderComponent::start,
+                                            "end", &LineColliderComponent::end, "is_fixed",
+                                            &LineColliderComponent::isFixed);
   }
 };

@@ -129,9 +129,6 @@ bool GameConfig::LoadConfig(const std::unordered_map<std::string, std::string>& 
   success &= SetValue(settings, "FpsTarget", &GameConfig::SetFpsTarget, false);
   success &= SetValue(settings, "HotReload", &GameConfig::SetHotReloadEnabled, false);
   success &= SetValue(settings, "HotReloadPollSeconds", &GameConfig::SetHotReloadPollSeconds, false);
-  success &= SetValue(settings, "PerfOverlay", &GameConfig::SetPerfOverlay, false);
-  success &= SetValue(settings, "PerfOverlayCorner", &GameConfig::SetPerfOverlayCorner, false);
-  success &= SetValue(settings, "PerfOverlayMetrics", &GameConfig::SetPerfOverlayMetrics, false);
   success &= SetValue(settings, "DebugOverlayBackgroundColor", &GameConfig::SetDebugOverlayBackgroundColor, false);
   success &= SetValue(settings, "AngleUnit", &GameConfig::SetAngleUnit, false);
 
@@ -269,28 +266,6 @@ void GameConfig::SetHotReloadEnabled(const bool enabled) {
   Logger::Info(std::string("Hot reload ") + (enabled ? "enabled" : "disabled"));
 }
 
-void GameConfig::SetPerfOverlay(const bool enabled) {
-  engine_options_.showPerfOverlay = enabled;
-  Logger::Info(std::string("Perf overlay ") + (enabled ? "enabled" : "disabled"));
-}
-
-void GameConfig::SetPerfOverlayCorner(const std::string& corner) {
-  if (corner == "top-left") {
-    engine_options_.perfOverlayCorner = PerfOverlayCorner::TopLeft;
-  } else if (corner == "top-right") {
-    engine_options_.perfOverlayCorner = PerfOverlayCorner::TopRight;
-  } else if (corner == "bottom-left") {
-    engine_options_.perfOverlayCorner = PerfOverlayCorner::BottomLeft;
-  } else if (corner == "bottom-right") {
-    engine_options_.perfOverlayCorner = PerfOverlayCorner::BottomRight;
-  } else {
-    Logger::Warn("Unknown PerfOverlayCorner '" + corner +
-                 "' (expected top-left|top-right|bottom-left|bottom-right); keeping current.");
-    return;
-  }
-  Logger::Info("Perf overlay corner: " + corner);
-}
-
 // Parses only; LoadConfig applies it to the process-wide AngleUnits once every key is read.
 void GameConfig::SetAngleUnit(const std::string& unit) {
   if (unit == "radians" || unit == "rad") {
@@ -300,32 +275,6 @@ void GameConfig::SetAngleUnit(const std::string& unit) {
   } else {
     Logger::Warn("Unknown AngleUnit '" + unit + "' (expected radians|degrees); keeping current.");
   }
-}
-
-void GameConfig::SetPerfOverlayMetrics(const std::string& metrics) {
-  const auto parts = SplitString(metrics, ',');
-  PerfOverlayMetrics perfOverlayMetrics = {};
-
-  for (const auto& metric : parts) {
-    if (metric == "fps") {
-      perfOverlayMetrics = perfOverlayMetrics | PerfOverlayMetrics::Fps;
-    } else if (metric == "frametime" || metric == "frame-time" || metric == "ms") {
-      perfOverlayMetrics = perfOverlayMetrics | PerfOverlayMetrics::FrameTime;
-    } else if (metric == "entities") {
-      perfOverlayMetrics = perfOverlayMetrics | PerfOverlayMetrics::Entities;
-    } else if (metric == "memory" || metric == "mem") {
-      perfOverlayMetrics = perfOverlayMetrics | PerfOverlayMetrics::Memory;
-    } else if (metric == "all" || metric == "both") {
-      perfOverlayMetrics = PerfOverlayMetrics::All;
-    } else {
-      Logger::Warn("Unknown PerfOverlayMetrics '" + metric +
-                   "' (expected fps|frametime|entities|memory|all); keeping current.");
-      return;
-    }
-  }
-
-  engine_options_.perfOverlayMetrics = perfOverlayMetrics;
-  Logger::Info("Perf overlay metrics: " + metrics);
 }
 
 void GameConfig::SetDebugOverlayBackgroundColor(const std::string& colorStr) {

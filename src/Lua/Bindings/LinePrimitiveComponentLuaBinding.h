@@ -29,9 +29,10 @@ struct LuaBinding<LinePrimitiveComponent> {
 
   static void bindUsertype(sol::state& lua) {
     lua.new_usertype<LinePrimitiveComponent>(
-        kUsertypeName, "start", &LinePrimitiveComponent::start, "end", &LinePrimitiveComponent::end, "layer",
-        &LinePrimitiveComponent::layer, "thickness", &LinePrimitiveComponent::thickness, "color",
-        &LinePrimitiveComponent::color, "is_fixed", &LinePrimitiveComponent::isFixed, "blend_mode",
+        kUsertypeName, sol::no_constructor, "start", &LinePrimitiveComponent::start, "end",
+        &LinePrimitiveComponent::end, "layer", &LinePrimitiveComponent::layer, "thickness",
+        &LinePrimitiveComponent::thickness, "color", &LinePrimitiveComponent::color, "is_fixed",
+        &LinePrimitiveComponent::isFixed, "blend_mode",
         sol::property([](const LinePrimitiveComponent& l) { return octarine::ToString(l.blendMode); },
                       [](LinePrimitiveComponent& l, const std::string_view mode) {
                         l.blendMode = octarine::BlendModeFromString(mode, l.blendMode);

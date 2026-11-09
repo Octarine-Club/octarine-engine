@@ -62,11 +62,11 @@ struct LuaBinding<UILayoutBoxComponent> {
 
   static void bindUsertype(sol::state& lua) {
     lua.new_usertype<UILayoutBoxComponent>(
-        kUsertypeName, "width", &UILayoutBoxComponent::width, "height", &UILayoutBoxComponent::height, "min_width",
-        &UILayoutBoxComponent::minWidth, "max_width", &UILayoutBoxComponent::maxWidth, "min_height",
-        &UILayoutBoxComponent::minHeight, "max_height", &UILayoutBoxComponent::maxHeight, "margin_left",
-        &UILayoutBoxComponent::marginLeft, "margin_top", &UILayoutBoxComponent::marginTop, "margin_right",
-        &UILayoutBoxComponent::marginRight, "margin_bottom", &UILayoutBoxComponent::marginBottom, "visible",
-        &UILayoutBoxComponent::visible);
+        kUsertypeName, sol::no_constructor, "width", &UILayoutBoxComponent::width, "height",
+        &UILayoutBoxComponent::height, "min_width", &UILayoutBoxComponent::minWidth, "max_width",
+        &UILayoutBoxComponent::maxWidth, "min_height", &UILayoutBoxComponent::minHeight, "max_height",
+        &UILayoutBoxComponent::maxHeight, "margin_left", &UILayoutBoxComponent::marginLeft, "margin_top",
+        &UILayoutBoxComponent::marginTop, "margin_right", &UILayoutBoxComponent::marginRight, "margin_bottom",
+        &UILayoutBoxComponent::marginBottom, "visible", &UILayoutBoxComponent::visible);
   }
 };
