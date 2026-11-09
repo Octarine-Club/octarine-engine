@@ -49,8 +49,7 @@ void InstallPoolAndSingletons(Registry& registry);
 // this phase wires the engine-side instance + EventBus subscriptions.
 InputSystem& InstallInputSystem(Registry& registry, const std::unique_ptr<EventBus>& eventBus);
 
-// RegisterAllLuaBindings + (when OCTARINE_WITH_EDITOR is on) RegisterAllComponentInspectors.
-// Both walk a static registry — idempotent; calling twice is a no-op for the second pass.
+// RegisterAllLuaBindings — walks a static registry; idempotent.
 // Must run before InstallLuaModules so usertypes exist when modules reference them.
 void RegisterAllComponentBindings();
 

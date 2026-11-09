@@ -98,9 +98,8 @@ jobs:
       # Stage the binary (+ any runtime dylibs/DLLs for dynamic triplets) into a flat directory
       # and pack it. Linux/macOS default vcpkg triplets are static so the lib glob hits nothing;
       # on Windows DLLs are always copied beside the exe by vcpkg app-local.
-      # The binary output name varies by preset (OctarineEngine for editor, OctarineEngine-player
-      # for player); find it dynamically and always archive it as "OctarineEngine" so consumers
-      # can invoke it by a consistent name regardless of flavor.
+      # Find it dynamically and always archive it as "OctarineEngine" so consumers
+      # can invoke it by a consistent name regardless of preset.
       - name: Archive SDK binary (Linux / macOS)
         if: matrix.platform != 'windows'
         shell: bash
@@ -165,7 +164,7 @@ jobs:
           # OctarineEngine-sdk.tar.gz or OctarineEngine-sdk.zip.
           # Rename → OctarineEngine-{version}-{platform}-{flavor}.{ext}
           for dir in release-assets/sdk/OctarineEngine-sdk-*/; do
-            suffix=$(basename "$dir" | sed 's/^OctarineEngine-sdk-//')   # e.g. linux-editor
+            suffix=$(basename "$dir" | sed 's/^OctarineEngine-sdk-//')   # e.g. linux-player
             src=$(ls "$dir" | head -n 1)
             case "$src" in *.tar.gz) ext=tar.gz ;; *.zip) ext=zip ;; esac
             cp "$dir/$src" "OctarineEngine-${version}-${suffix}.${ext}"

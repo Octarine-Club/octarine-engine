@@ -19,10 +19,9 @@ CMake presets live in `CMakePresets.json`. The common ones:
 | Preset            | When to use                                       |
 |-------------------|---------------------------------------------------|
 | `player-debug`    | Day-to-day dev with ImGui debug overlays & Lua UI |
-| `player-release`  | Optimized runtime, no editor/ImGui (live-scan catalog) |
+| `player-release`  | Optimized runtime, no ImGui (live-scan catalog) |
 | `player-profile`  | RelWithDebInfo + `OCTARINE_ENABLE_PROFILING` for timing |
 | `ship-release`    | Canonical shipping config (manifest-load catalog) |
-| `editor-debug`    | [Experimental] C++ editor dockspace (disabled by default) |
 
 ### Linux build prerequisites
 
@@ -113,7 +112,7 @@ CI (`.github/workflows/build.yml`) runs both on the Linux player-debug leg on ev
 | A **Lua module** (free-function globals) | `src/Lua/Modules/XModuleLuaBinding.{h,cpp}` + an `install` line in `src/Lua/Modules/RegisterAllModules.cpp` + add the `.cpp` to the `octarine_lua` list in `src/CMakeLists.txt`. |
 | A **system** | `src/Systems/X.h` + a registration call in `Game::Setup` (`RegisterSystem` / `RegisterParallelSystem` / `RegisterBulkSystem`). Optional `LuaSystemBinding<X>` if it exposes a Lua surface. Mind registration order — see [`docs/systems.md`](systems.md). |
 | An **event** | `src/Events/X.h` + `EmitEvent<X>(...)` in producers + `SubscribeEvent<X>(...)` in each consumer's `Init` — see [`docs/events.md`](events.md). |
-| A **new `.cpp`** under `src/` | Add it to the matching per-layer source list in `src/CMakeLists.txt` (`octarine_core`/`_assets`/`_renderer`/`_lua`/`_systems`/`_editor`/`_engine`). |
+| A **new `.cpp`** under `src/` | Add it to the matching per-layer source list in `src/CMakeLists.txt` (`octarine_core`/`_assets`/`_renderer`/`_lua`/`_systems`/`_engine`). |
 
 ## Deeper reading
 
@@ -122,7 +121,6 @@ CI (`.github/workflows/build.yml`) runs both on the Linux player-debug leg on ev
 - [`docs/lua-scripting.md`](lua-scripting.md) — how Lua scripts wire into the engine
 - [`docs/systems.md`](systems.md) — built-in systems and the order they run in
 - [`docs/events.md`](events.md) — the event bus and every event type
-- [`docs/editor.md`](editor.md) — editor windows, hotkeys, Run Player, Export Build
 - [`docs/scenes.md`](scenes.md) — scene file shape, lifecycle, `load_scene` / `reload_scene`
 - [`docs/tilemaps.md`](tilemaps.md) — what the scene `tilemap` field does (and doesn't) today
 - [`docs/asset-pipeline.md`](asset-pipeline.md) — `.meta` sidecars, bake step, atlases, audio normalize

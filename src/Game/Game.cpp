@@ -39,7 +39,6 @@
 #include "Components/ViewportInfo.h"
 #include "ECS/Query.h"
 #include "ECS/Registry.h"
-#include "Engine/EditorBootstrap.h"
 #include "Engine/EngineBootstrap.h"
 #include "Engine/LuaProtect.h"
 #include "Engine/Platform/PlatformPaths.h"
@@ -173,13 +172,10 @@ constexpr const char* kSavePathEnvVar = "OCTARINE_SAVE_PATH";
 constexpr const char* kDefaultOrgName = "Octarine";
 constexpr const char* kDefaultAppName = "Engine";
 constexpr const char* kDefaultWindowTitle = "Octarine Engine";
-constexpr const char* kDefaultEditorWindowTitle = "Octarine Engine - Editor";
 #ifdef OCTARINE_WITH_IMGUI
 constexpr const char* kImGuiIniFilename = "imgui.ini";
-constexpr const char* kImGuiEditorIniFilename = "imgui_editor.ini";
 #endif
 constexpr const char* kStartupModeBake = "bake";
-constexpr const char* kStartupModeEditor = "editor";
 constexpr const char* kAtlasesDirName = "atlases";
 constexpr const char* kAtlasPngSuffix = ".atlas.png";
 constexpr const char* kAtlasLuaSuffix = ".atlas.lua";
@@ -371,7 +367,6 @@ bool LoadProjectConfig(Registry& registry, GameConfig& gameConfig, const std::st
 
   if (engine_bootstrap::platform::ShouldAttemptProjectLoad(effectivePath)) {
     if (gameConfig.LoadConfigFromFile(effectivePath)) {
-      engine_bootstrap::editor::OnProjectLoaded(registry, effectivePath);
       return true;
     }
     Logger::Warn("Failed to load project from path: " + effectivePath);
@@ -426,36 +421,16 @@ bool Game::Initialize(const std::string& assetPath) {
   StartDevListenServer();
 
   std::string effectivePath = assetPath;
-  // Editor builds Set their editor singletons (persistence/launcher/export) and may default
-  // effectivePath to the last-opened project here; player builds no-op. See EditorBootstrap.
-  engine_bootstrap::editor::InstallSingletons(*registry_, effectivePath);
-
-  // With no explicit path (and, in editor builds, no remembered project) default the asset base to
-  // the executable/bundle dir on desktop; Android keeps it empty so assets resolve against the APK
-  // asset root. The Android/desktop fork lives in PlatformPaths, not here.
   engine_bootstrap::platform::ApplyDefaultBasePath(effectivePath);
 
   const bool projectLoaded = LoadProjectConfig(*registry_, gameConfig, effectivePath, use_manifest_);
 
   InitUserSettings(*registry_, gameConfig, GetSaveDataPath());
 
-  // Editor builds default into editor mode (unless a non-editor mode was requested); player builds
-  // never do and reject `--startup-mode editor` (ok=false → abort).
-  const auto startupDecision = engine_bootstrap::editor::DecideStartupMode(startup_mode_);
-  if (!startupDecision.ok) {
-    return false;
-  }
-
-  if (!projectLoaded && !startupDecision.defaultToEditor) {
+  if (!projectLoaded) {
     Logger::Error("Failed to load project from path: '" + effectivePath + "'. A valid project directory containing " +
                   GameConfig::kConfigFileName + " is required.");
     return false;
-  }
-  if (startupDecision.defaultToEditor) {
-    Logger::Info("Starting in Editor Mode.");
-    gameConfig.SetIsEditorMode(true);
-    engine_bootstrap::editor::ApplyAudioPrefs(*registry_);
-    engine_bootstrap::editor::PauseForEditorSession(*registry_);
   }
 
   if (headless_) {
@@ -486,29 +461,23 @@ bool Game::Initialize(const std::string& assetPath) {
 void Game::InitImGuiBackend() {
 #ifdef OCTARINE_WITH_IMGUI
   auto& gameConfig = registry_->Get<GameConfig>();
-  // io.IniFilename holds the raw pointer for the context's lifetime, so the backing string must
-  // outlive InitImGui — keep it static.
   static std::string imguiIniPath;
   if (gameConfig.HasLoadedConfig()) {
     imguiIniPath = gameConfig.GetAssetPath() + "/" + kImGuiIniFilename;
-  } else if (char* prefPath = SDL_GetPrefPath(kDefaultOrgName, kDefaultAppName)) {
-    imguiIniPath = std::string(prefPath) + kImGuiEditorIniFilename;
-    SDL_free(prefPath);
   } else {
-    imguiIniPath = kImGuiEditorIniFilename;
+    imguiIniPath = kImGuiIniFilename;
   }
   runtime_.InitImGui(imguiIniPath.c_str());
 
-  // Editor: bundled Roboto at the persisted size + theme + the default layout on first run.
-  // Player-with-ImGui: the built-in default font. The editor/player fork lives in EditorBootstrap.
-  engine_bootstrap::editor::SetupEditorImGui(*registry_);
+  ImGuiIO& io = ImGui::GetIO();
+  io.Fonts->AddFontDefault();
 #endif
 }
 
 void Game::StartDevListenServer() {
 #ifndef OCTARINE_SHIPPED
   // DevListenServer: TCP listener on 127.0.0.1:<port> when --dev-listen given. Compile-stripped
-  // from shipped builds. Available in editor + player presets alike so the standalone player can
+  // from shipped builds. Available in dev player presets so the standalone player can
   // host the dev-iterate loop too.
   auto& devListen = registry_->Set<octarine::dev::DevListenServer>(octarine::dev::DevListenServer());
   // Install the engine handler so parked eval/reload/push ops apply on the main thread in Pump().
@@ -529,7 +498,7 @@ std::pair<int, int> ResolveInitialWindowSize([[maybe_unused]] Registry& registry
   int initialWidth = gameConfig.windowWidth;
   int initialHeight = gameConfig.windowHeight;
 #ifndef OCTARINE_PLATFORM_MOBILE
-  if (!headless && !gameConfig.IsEditorMode()) {
+  if (!headless) {
     if (const auto* userSettings = registry.TryGet<octarine::UserSettings>()) {
       if (userSettings->windowWidth > 0 && userSettings->windowHeight > 0) {
         initialWidth = userSettings->windowWidth;
@@ -543,7 +512,7 @@ std::pair<int, int> ResolveInitialWindowSize([[maybe_unused]] Registry& registry
 
 void ApplyInitialWindowSettings(Registry& registry, const GameConfig& gameConfig, EngineRuntime& runtime,
                                 const bool headless) {
-  if (headless || gameConfig.IsEditorMode()) return;
+  if (headless) return;
   if (auto* userSettings = registry.TryGet<octarine::UserSettings>()) {
     userSettings->ApplyToWindow(runtime.Window(), gameConfig.windowWidth, gameConfig.windowHeight);
   }
@@ -557,12 +526,10 @@ bool Game::CreateWindowAndScene(bool projectLoaded) {
   auto& gameConfig = registry_->Get<GameConfig>();
   gameConfig.windowWidth = projectLoaded ? gameConfig.GetDefaultWidth() : Constants::kDefaultWindowWidth;
   gameConfig.windowHeight = projectLoaded ? gameConfig.GetDefaultHeight() : Constants::kDefaultWindowHeight;
-  const std::string title = projectLoaded
-                                ? gameConfig.GetGameTitle()
-                                : (gameConfig.IsEditorMode() ? kDefaultEditorWindowTitle : kDefaultWindowTitle);
+  const std::string title = projectLoaded ? gameConfig.GetGameTitle() : kDefaultWindowTitle;
 
   const auto [initialWidth, initialHeight] = ResolveInitialWindowSize(*registry_, gameConfig, headless_);
-  const bool resizable = gameConfig.IsEditorMode() || gameConfig.GetEngineOptions().windowResizable;
+  const bool resizable = gameConfig.GetEngineOptions().windowResizable;
   if (!runtime_.CreateWindow(title, initialWidth, initialHeight, headless_, resizable)) {
     return false;
   }
@@ -570,11 +537,6 @@ bool Game::CreateWindowAndScene(bool projectLoaded) {
   ApplyInitialWindowSettings(*registry_, gameConfig, runtime_, headless_);
 
   return renderer_->CreateScene(runtime_.SdlRenderer(), gameConfig.windowWidth, gameConfig.windowHeight);
-}
-
-bool Game::IsEditorMode() const {
-  const auto* config = registry_->TryGet<GameConfig>();
-  return config != nullptr && config->IsEditorMode();
 }
 
 std::string Game::GetProjectPath() const {
@@ -614,7 +576,7 @@ bool Game::SaveUserSettings() {
 
   const auto* config = registry_->TryGet<GameConfig>();
   const bool isHeadless = headless_ || (config != nullptr && config->GetEngineOptions().headless);
-  if (!isHeadless && !IsEditorMode()) {
+  if (!isHeadless) {
     if (runtime_.Window() != nullptr) {
       userSettings->CaptureWindow(runtime_.Window());
     }
@@ -641,14 +603,6 @@ void Game::Destroy() {
 
     if (!bake_mode_ && (!headless_ || HasExplicitSavePathEnv())) {
       static_cast<void>(SaveUserSettings());
-    }
-
-    // GameConfig is only Set once Initialize gets past subsystem init; a failed Initialize
-    // (e.g. SDL_Init with no video device) tears down here with the singleton absent, so guard
-    // against it rather than throwing out of Destroy.
-    if (registry_->TryGet<GameConfig>() != nullptr) {
-      // Persist editor prefs (audio + per-project layout); no-op in player builds.
-      engine_bootstrap::editor::SaveOnShutdown(*registry_);
     }
   }
 
@@ -935,15 +889,14 @@ bool Game::IsPaused() const {
 }
 
 namespace {
-void ApplyBenchModeOverlayOverrides(Registry& registry, GameConfig& gameConfig, const std::string& startupMode) {
-  if (startupMode == kStartupModeEditor) return;
+void ApplyBenchModeOverlayOverrides(Registry& /*registry*/, GameConfig& gameConfig,
+                                    const std::string& /*startupMode*/) {
   auto& options = gameConfig.GetEngineOptions();
   options.showDebugGUI = false;
   options.showFpsCounter = false;
   options.showEntityInfo = false;
   options.showImGuiDemoWindow = false;
   options.drawColliders = false;
-  engine_bootstrap::editor::DisableBenchOverlays(registry);
 }
 
 void RegisterEventAndHotReloadSingletons(Registry& registry, const std::unique_ptr<EventBus>& eventBus) {
@@ -979,15 +932,11 @@ void Game::Setup() {
   engine_bootstrap::SetCommonLuaGlobals(lua, gameConfig, startup_mode_, dev_mode_);
 
 #ifndef OCTARINE_SHIPPED
-  if (!LuaApiManifest::MaybeDumpFromEnv(lua, preBindingGlobals) &&
-      (gameConfig.IsEditorMode() || startup_mode_ == kStartupModeEditor)) {
+  if (!LuaApiManifest::MaybeDumpFromEnv(lua, preBindingGlobals) && dev_mode_) {
     LuaApiManifest::WriteProjectStub(lua, preBindingGlobals, gameConfig.GetAssetPath());
   }
 #endif
 
-  if (startup_mode_ == kStartupModeEditor) {
-    gameConfig.SetIsEditorMode(true);
-  }
   if (IsBenchMode()) {
     ApplyBenchModeOverlayOverrides(*registry_, gameConfig, startup_mode_);
   }

@@ -624,7 +624,6 @@ class TestLuaBindingContext final : public LuaBindingContext {
   void TrackSceneAssets(const std::vector<std::string>& /*assetIds*/) override {}
   [[nodiscard]] bool IsBakeMode() const override { return false; }
   void RecordBakeValidationFailures(int /*failures*/) override {}
-  [[nodiscard]] bool IsEditorMode() const override { return false; }
   [[nodiscard]] std::string GetProjectPath() const override { return {}; }
   std::string GetSaveDataPath() override { return {}; }
   void RequestQuit() override {}

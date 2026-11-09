@@ -19,8 +19,8 @@
 #       [EXTRA_DIRS dir1;dir2])        # project-side drop-in dirs, each section keyed by filename stem
 #
 # The Apache-2.0 Roboto attribution (src/General/Fonts/LICENSE*) is always emitted: Roboto-Medium.ttf
-# is embedded into every binary (editor UI font + the renderer perf overlay), so the notice rides
-# along on every package, shipped or editor.
+# is embedded into every binary (debug overlays + the renderer perf overlay), so the notice rides
+# along on every package.
 
 if (DEFINED _OCTARINE_LICENSES_INCLUDED)
     return()
@@ -276,7 +276,7 @@ function(octarine_collect_licenses OUT_FILE)
     endforeach ()
 
     # 3b. Embedded font asset. Roboto-Medium.ttf is compiled into Roboto_Medium.h and embedded into
-    # every binary — the editor UI font and the renderer performance overlay both use it, so it ships
+    # every binary — in-game ImGui debug overlays and the renderer performance overlay both use it, so it ships
     # on shipped/Android/iOS builds too. Its Apache-2.0 attribution is therefore emitted unconditionally.
     file(GLOB _embedded_font_licenses
             "${OCL_ENGINE_ROOT}/src/General/Fonts/LICENSE"

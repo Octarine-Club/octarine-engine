@@ -363,6 +363,16 @@
       "lua_surface": false
     },
     {
+      "name": "TilemapDebugPanel",
+      "source": "src/Systems/TilemapDebugPanel.h",
+      "tier": null,
+      "setup_order": null,
+      "queried_components": [],
+      "emits": [],
+      "subscribes": [],
+      "lua_surface": false
+    },
+    {
       "name": "TilemapSystem",
       "source": "src/Systems/TilemapSystem.h",
       "tier": null,

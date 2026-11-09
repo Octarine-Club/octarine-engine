@@ -75,7 +75,7 @@ class AssetManager {
   // resident its handle is destroyed and re-loaded from the catalog, preserving the acquire
   // count so existing references keep working (the texture store bumps its generation so cached
   // SDL_Texture* re-resolve). No-op (returns false) for unknown or non-resident ids. Dev-only:
-  // editor-driven content push, never on shipped builds.
+  // dev-driven content push, never on shipped builds.
   bool Reload(const std::string& assetId, SDL_Renderer* renderer, MIX_Mixer* mixer);
 
   // Reload every resident asset whose catalog source file is `absPath` (an absolute path). The

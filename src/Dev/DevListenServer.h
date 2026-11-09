@@ -2,7 +2,7 @@
 
 #ifndef OCTARINE_SHIPPED
 
-// DevListenServer — editor dev-iteration TCP listener (compile-time stripped from shipped builds
+// DevListenServer — dev-iteration TCP listener (compile-time stripped from shipped builds
 // via #ifndef OCTARINE_SHIPPED). When enabled, owns a background listener thread bound to
 // 127.0.0.1:<port> and serves a tiny length-prefixed
 // binary protocol:

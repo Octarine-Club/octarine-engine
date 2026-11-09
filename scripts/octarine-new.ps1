@@ -74,9 +74,8 @@ directory. Packaged builds append them to the engine's shipped THIRD_PARTY_LICEN
 '@
 
 $gitignore = @'
-# Engine-generated runtime/editor state
+# Engine-generated runtime state
 imgui.ini
-editor_prefs.ini
 *_prefs.ini
 
 # Asset bake outputs + caches

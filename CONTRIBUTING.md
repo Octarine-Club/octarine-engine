@@ -171,7 +171,7 @@ See [`docs/commenting-guide.md`](docs/commenting-guide.md) for full principles a
 
 The engine is split into per-layer static libraries, so every new `.cpp` under
 `src/` must be added to the matching layer's source list in `src/CMakeLists.txt`
-(`octarine_core`, `_assets`, `_renderer`, `_lua`, `_systems`, `_editor`, or
+(`octarine_core`, `_assets`, `_renderer`, `_lua`, `_systems`, or
 `_engine`) — not the root `CMakeLists.txt`. Header-only additions don't need
 this. Forgetting it means your file compiles locally but fails CI on the
 player-debug leg.
@@ -231,7 +231,7 @@ orphaned.
 
 Open a GitHub issue. For bugs, include:
 
-- The preset you built with (`editor-debug`, `ship-release`, …).
+- The preset you built with (`player-debug`, `ship-release`, …).
 - OS + compiler version.
 - Repro steps. Minimal `game.lua` snippet if it's reproducible in script.
 - Logs from the run's stdout/stderr (or `adb logcat -s Octarine OctarineLua`

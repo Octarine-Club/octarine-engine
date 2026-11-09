@@ -14,7 +14,6 @@ class LuaBindingContext;
 namespace game_module {
 
 void RegisterComponentBindings();
-void RegisterComponentInspectors();
 void InstallSingletons(Registry& registry);
 void RegisterSimulationSystems(Registry& registry, const std::unique_ptr<EventBus>& eventBus,
                                SystemId velocityIntegration);
@@ -28,7 +27,6 @@ void InstallLuaFunctions(sol::state& lua, LuaBindingContext& ctx);
 namespace game_module {
 
 inline void RegisterComponentBindings() {}
-inline void RegisterComponentInspectors() {}
 inline void InstallSingletons(Registry& /*registry*/) {}
 inline void RegisterSimulationSystems(Registry& /*registry*/, const std::unique_ptr<EventBus>& /*eventBus*/,
                                       SystemId /*velocityIntegration*/) {}

@@ -778,7 +778,7 @@ bool SaveSettingsToDisk(LuaBindingContext& ctx) {
   if (settings == nullptr) return false;
   const auto* config = ctx.GetRegistry()->TryGet<GameConfig>();
   const bool isHeadless = config != nullptr && config->GetEngineOptions().headless;
-  if (!isHeadless && !ctx.IsEditorMode()) {
+  if (!isHeadless) {
     if (auto* window = TryGetWindow(ctx)) {
       settings->CaptureWindow(window);
     }

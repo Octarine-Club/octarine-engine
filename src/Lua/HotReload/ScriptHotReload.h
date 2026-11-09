@@ -26,7 +26,7 @@ class ScriptHotReload {
 
   ScriptHotReload() = default;
 
-  // Called from main loop. dt is real time (not time-scaled) so paused editor sessions still
+  // Called from main loop. dt is real time (not time-scaled) so paused debug sessions still
   // iterate. lua state must be the same one ScriptComponents bound their tables against.
   void Tick(Registry& registry, sol::state& lua, float dt, float pollSeconds);
 

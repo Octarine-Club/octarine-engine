@@ -5,13 +5,11 @@
 #
 # Layer map:
 #   octarine_core      General/, ECS/, Components/, EventBus/, Events/, Game/GameConfig,
-#                      Process/, Project/  (POD/data + cross-cutting utilities)
+#                      Project/  (POD/data + cross-cutting utilities)
 #   octarine_assets    AssetManager/ (catalog, atlas bakers, audio normalizer, pak)
 #   octarine_renderer  Renderer/
 #   octarine_lua       Lua/Bindings, Lua/Modules, Lua/HotReload, Lua/LuaApiManifest
-#   octarine_systems   Systems/ (minus RenderDebugGUISystem.cpp; that's editor-only)
-#   octarine_editor    Editor/ + Systems/RenderDebugGUISystem.cpp + Secrets/* (per-platform)
-#                      (gated by OCTARINE_WITH_EDITOR / OCTARINE_WITH_IMGUI)
+#   octarine_systems   Systems/ (in-game debug overlays gated by OCTARINE_WITH_IMGUI)
 #   octarine_engine    Game/Game + Engine/EngineBootstrap (top-level coordinator)
 #
 # OctarineEngine (the desktop exe / Android shared lib) is declared in the root CMakeLists.txt
@@ -31,15 +29,10 @@ set(OCTARINE_CORE_SOURCES
         ECS/StateInspector.cpp
         Game/GameConfig.cpp
         Game/UserSettings.cpp
-        Deploy/Adb.cpp
-        Process/Process.cpp
         Project/ProjectIni.cpp
         UI/OxmlParser.cpp
         UI/OssParser.cpp
 )
-if (NOT OCTARINE_SHIPPED)
-    list(APPEND OCTARINE_CORE_SOURCES Editor/EditorPersistence.cpp)
-endif ()
 if (UNIX AND NOT APPLE AND NOT ANDROID)
     list(APPEND OCTARINE_CORE_SOURCES General/SDL3_Linux_Stubs.cpp)
 endif ()
@@ -62,9 +55,6 @@ if (OCTARINE_ENABLE_PROFILING)
 endif ()
 if (OCTARINE_WITH_IMGUI)
     target_compile_definitions(octarine_core PUBLIC OCTARINE_WITH_IMGUI)
-endif ()
-if (OCTARINE_WITH_EDITOR)
-    target_compile_definitions(octarine_core PUBLIC OCTARINE_WITH_EDITOR)
 endif ()
 if (OCTARINE_SHIPPED)
     target_compile_definitions(octarine_core PUBLIC OCTARINE_SHIPPED)
@@ -140,7 +130,6 @@ octarine_library(octarine_lua
         Lua/Modules/GameModuleLuaBinding.cpp
         Lua/Modules/IoModuleLuaBinding.cpp
         Lua/Modules/LogModuleLuaBinding.cpp
-        Lua/Modules/ProjectModuleLuaBinding.cpp
         Lua/Modules/RegisterAllModules.cpp
         Lua/Modules/SceneModuleLuaBinding.cpp
         Lua/Modules/StorageModuleLuaBinding.cpp
@@ -156,9 +145,9 @@ target_link_libraries(octarine_lua PUBLIC
 
 # -----------------------------------------------------------------------------
 # octarine_systems — per-frame Update systems + event-driven systems.
-# RenderDebugGUISystem (editor/IMGUI-only) lives in octarine_editor instead.
+# Debug GUI overlays (OCTARINE_WITH_IMGUI) live here too.
 # -----------------------------------------------------------------------------
-octarine_library(octarine_systems
+set(OCTARINE_SYSTEMS_SOURCES
         Lua/Bindings/InputSystemLuaBinding.cpp
         Systems/AudioSystem.cpp
         Systems/InputSystem.cpp
@@ -167,12 +156,22 @@ octarine_library(octarine_systems
         Tilemap/LdtkParser.cpp
         Tilemap/TilemapLoader.cpp
 )
+if (OCTARINE_WITH_IMGUI)
+    list(APPEND OCTARINE_SYSTEMS_SOURCES
+            Systems/RenderDebugGUISystem.cpp
+            Systems/TilemapDebugPanel.cpp
+    )
+endif ()
+octarine_library(octarine_systems ${OCTARINE_SYSTEMS_SOURCES})
 target_link_libraries(octarine_systems PUBLIC
         octarine_core
         octarine_assets
         octarine_renderer
         octarine_lua
 )
+if (OCTARINE_WITH_IMGUI)
+    target_link_libraries(octarine_systems PUBLIC imgui::imgui sol2_ImGui_Bindings::sol2_ImGui_Bindings ${LUA_LIBRARIES})
+endif ()
 target_link_libraries(octarine_systems PRIVATE nlohmann_json::nlohmann_json)
 # TilemapModuleLuaBinding (in octarine_lua) invokes TilemapSystem methods (in octarine_systems).
 target_link_libraries(octarine_lua PUBLIC octarine_systems)
@@ -189,95 +188,10 @@ endif ()
 
 
 # -----------------------------------------------------------------------------
-# octarine_editor — desktop-only editor UI + inspectors + RenderDebugGUISystem +
-# SecretStore (per-platform credential storage backing the editor's signing
-# secrets surface). Gated by OCTARINE_WITH_EDITOR; OCTARINE_WITH_IMGUI alone
-# (player-debug build) still needs RenderDebugGUISystem, so the lib is created
-# when EITHER is on and selectively compiles the editor-specific .cpps.
-# -----------------------------------------------------------------------------
-if (OCTARINE_WITH_IMGUI OR OCTARINE_WITH_EDITOR)
-    set(OCTARINE_EDITOR_SOURCES "")
-    if (OCTARINE_WITH_IMGUI)
-        list(APPEND OCTARINE_EDITOR_SOURCES
-                Editor/Panels/TilemapDebugPanel.cpp
-                Systems/RenderDebugGUISystem.cpp
-        )
-    endif ()
-    if (OCTARINE_WITH_EDITOR)
-        list(APPEND OCTARINE_EDITOR_SOURCES
-                Editor/EditorLayoutPresets.cpp
-                Editor/ExportBuilder.cpp
-                Editor/PlayerLauncher.cpp
-                Editor/Inspectors/RegisterAllInspectors.cpp
-                # Editor UI panels. Each owns one window or service; RenderDebugGUISystem keeps
-                # only the IMGUI-shared frame begin/end and game overlays, delegating the editor
-                # chrome to EditorPanelHost.
-                Editor/Panels/EditorAssetBrowserPanel.cpp
-                Editor/Panels/EditorBuildDialog.cpp
-                Editor/Panels/EditorConsolePanel.cpp
-                Editor/Panels/EditorDevicesPanel.cpp
-                Editor/Panels/EditorDialogService.cpp
-                Editor/Panels/EditorHierarchyPanel.cpp
-                Editor/Panels/EditorImGuiBackend.cpp
-                Editor/Panels/EditorOutputPanels.cpp
-                Editor/Panels/EditorPanelHost.cpp
-                Editor/Panels/EditorProjectPanels.cpp
-                Editor/Panels/EditorSceneWindow.cpp
-                Editor/Panels/EditorSettingsPanels.cpp
-                Editor/Panels/EditorSigningPanel.cpp
-                        Editor/Panels/EditorToolbarPanel.cpp
-                Dev/DevListenClient.cpp
-                Editor/HotPusher.cpp
-        )
-        # SecretStore: one backend per host so the OS-native API links cleanly without
-        # cross-platform shims. Linux backend is a no-op stub the editor UI falls back
-        # to env-var-only mode on.
-        if (WIN32)
-            list(APPEND OCTARINE_EDITOR_SOURCES Secrets/SecretStore_Windows.cpp)
-        elseif (APPLE)
-            list(APPEND OCTARINE_EDITOR_SOURCES Secrets/SecretStore_macOS.cpp)
-        else ()
-            list(APPEND OCTARINE_EDITOR_SOURCES Secrets/SecretStore_Linux.cpp)
-        endif ()
-    endif ()
-    octarine_library(octarine_editor ${OCTARINE_EDITOR_SOURCES})
-    target_link_libraries(octarine_editor PUBLIC
-            octarine_core
-            octarine_assets
-            octarine_renderer
-            octarine_lua
-            octarine_systems
-    )
-    # GameModuleLuaBinding (in octarine_lua) calls RenderDebugGUISystem::ReturnFocusToGame (in
-    # octarine_editor when OCTARINE_WITH_IMGUI is ON). Declaring the reciprocal link lets CMake
-    # repeat static archives for single-pass linkers (GNU ld on Linux) even in targets that don't
-    # pull in Game.cpp.o first.
-    target_link_libraries(octarine_lua PUBLIC octarine_editor)
-    if (OCTARINE_WITH_IMGUI)
-        target_link_libraries(octarine_editor PUBLIC imgui::imgui sol2_ImGui_Bindings::sol2_ImGui_Bindings ${LUA_LIBRARIES})
-    endif ()
-    # SecretStore backend libs. Crypt32 ships DPAPI's CryptProtectData/CryptUnprotectData on
-    # Windows; Security.framework ships SecItem* on macOS. Linux backend is a stub and needs no
-    # link. Editor-only — gated alongside the editor source compile above.
-    if (OCTARINE_WITH_EDITOR)
-        if (WIN32)
-            target_link_libraries(octarine_editor PUBLIC crypt32)
-        elseif (APPLE)
-            target_link_libraries(octarine_editor PUBLIC
-                    "-framework CoreFoundation"
-                    "-framework Security")
-        endif ()
-    endif ()
-endif ()
-
-# -----------------------------------------------------------------------------
 # octarine_engine — top-level coordinator. Owns Game/Game.cpp + EngineBootstrap, pulls every
-# downstream lib in transitively. Editor lives on the PUBLIC link line when built so its
-# symbols (RenderDebugGUISystem::Render, EditorPersistence::*, SecretStore::*) resolve at the
-# final exe link without forcing the engine TU to know about editor concretely.
+# downstream lib in transitively.
 # -----------------------------------------------------------------------------
 set(OCTARINE_ENGINE_SOURCES
-        Engine/EditorBootstrap.cpp
         Engine/EngineBootstrap.cpp
         Engine/SimulationSystems.cpp
         Engine/EngineRuntime.cpp
@@ -286,7 +200,7 @@ set(OCTARINE_ENGINE_SOURCES
         Engine/SceneLoader.cpp
         Game/Game.cpp
 )
-# DevListenServer: TCP listener for the dev iterate loop. Available in editor + player
+# DevListenServer: TCP listener for the dev iterate loop. Available in dev player
 # presets; compile-stripped from ship-release (OCTARINE_SHIPPED).
 if (NOT OCTARINE_SHIPPED)
     list(APPEND OCTARINE_ENGINE_SOURCES Dev/DevListenServer.cpp Dev/DevListenDispatch.cpp)
@@ -299,13 +213,6 @@ target_link_libraries(octarine_engine PUBLIC
         octarine_lua
         octarine_systems
 )
-if (TARGET octarine_editor)
-    target_link_libraries(octarine_engine PUBLIC octarine_editor)
-    # RenderDebugGUISystem (in octarine_editor) calls Game methods and under UBSan (-fsanitize=vptr)
-    # references `typeinfo for Game` (in octarine_engine). Declaring the reciprocal dependency ensures
-    # single-pass linkers rescan liboctarine_engine.a after liboctarine_editor.a in test binaries.
-    target_link_libraries(octarine_editor PUBLIC octarine_engine)
-endif ()
 if (TARGET octarine_game_module)
     target_link_libraries(octarine_engine PUBLIC octarine_game_module)
 endif ()

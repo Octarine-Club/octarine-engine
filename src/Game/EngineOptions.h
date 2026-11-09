@@ -121,7 +121,7 @@ struct EngineOptions {
   bool showEntityInfo = false;
   // Built-in renderer FPS + frame-time overlay (no ImGui). Unlike the ImGui FPS window this ships in
   // packaged builds, so it's the player-facing perf readout. Off by default; opt in via the
-  // `PerfOverlay` config.ini key, the editor settings toggle, or set_perf_overlay() from Lua.
+  // `PerfOverlay` config.ini key or set_perf_overlay() from Lua.
   bool showPerfOverlay = false;
   // Placement + content of the perf overlay (config.ini only: PerfOverlayCorner=, PerfOverlayMetrics=).
   PerfOverlayCorner perfOverlayCorner = PerfOverlayCorner::TopLeft;
@@ -155,11 +155,11 @@ struct EngineOptions {
   // When true, a scene whose asset references fail validation aborts the load (dev gate). Off by
   // default so players never hard-fail; the bake step is the CI enforcement point.
   bool assetValidationFatal = false;
-  // Lua script hot reload. Compiled out under OCTARINE_SHIPPED; in dev/editor builds this is the
+  // Lua script hot reload. Compiled out under OCTARINE_SHIPPED; in dev player builds this is the
   // runtime toggle. Poll cadence is mtime-based, single-threaded, on the main loop.
   bool hotReloadEnabled = true;
   float hotReloadPollSeconds = 0.25F;
-  // Unit that angles are authored and displayed in (Lua tables, set_rotation, the editor
-  // inspectors). Storage stays radians regardless. config.ini: AngleUnit=radians|degrees.
+  // Unit that angles are authored and displayed in (Lua tables, set_rotation).
+  // Storage stays radians regardless. config.ini: AngleUnit=radians|degrees.
   octarine::AngleUnit angleUnit = octarine::AngleUnit::Degrees;
 };

@@ -85,12 +85,7 @@ Not per-frame query systems, but part of the engine:
 | `PerfOverlaySystem` | Frame timing and stats overlay driven in `FrameLoop`. | `toggle_perf_overlay()` |
 | `EntityPoolManager` (`EntityPoolSystem.h`) | Object pool for recycling entities across archetypes without fresh allocations. | — |
 | `DrawColliderSystem` | Instantiated per frame in `Game::Render` only when the `drawColliders` option is on. Draws collider wireframes. | debug (ImGui builds) |
-| `RenderDebugGUISystem` | Called from `Game::Render`; renders the ImGui editor/profiler/hierarchy. Compiled out unless `OCTARINE_WITH_IMGUI`. | editor UI |
-|--------|---------------|-------------|
-| `InputSystem` | Installed at boot; subscribes to the input events and tracks per-frame key/mouse/wheel state and action bindings. | `input.*` (held/pressed/released, actions) |
-| `EntityPoolManager` (`EntityPoolSystem.h`) | Object pool for recycling entities across archetypes without fresh allocations. | — |
-| `DrawColliderSystem` | Instantiated per frame in `Game::Render` only when the `drawColliders` option is on. Draws collider wireframes. | debug (ImGui builds) |
-| `RenderDebugGUISystem` | Called from `Game::Render`; renders the ImGui editor/profiler/hierarchy. Compiled out unless `OCTARINE_WITH_IMGUI`. | editor UI |
+| `RenderDebugGUISystem` | Called from `Game::Render`; renders in-game ImGui debug overlays. Compiled out unless `OCTARINE_WITH_IMGUI`. | debug UI |
 
 ## Adding a system
 

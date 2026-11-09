@@ -49,7 +49,6 @@ class FakeSettingsHost : public LuaBindingContext {
   [[nodiscard]] bool IsBakeMode() const override { return false; }
   void RecordBakeValidationFailures(int /*failures*/) override {}
 
-  [[nodiscard]] bool IsEditorMode() const override { return false; }
   [[nodiscard]] std::string GetProjectPath() const override { return {}; }
   std::string GetSaveDataPath() override { return save_root_; }
 

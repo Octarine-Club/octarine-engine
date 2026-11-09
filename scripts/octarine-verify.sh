@@ -161,8 +161,7 @@ fi
 
 # --- configure + build -------------------------------------------------------
 test_targets=(
-  OctarineLuaApiTest OctarineAssetPipelineTest OctarineProcessTest OctarineProjectIniTest
-  OctarineAdbTest
+  OctarineLuaApiTest OctarineAssetPipelineTest OctarineProjectIniTest
   OctarineEcsTest OctarineEcsHierarchyTest OctarineSystemLogicTest OctarineEventBusTest OctarineCryptoTest
   OctarineKDTreeCollisionSystemTest OctarineCollisionResponseTest
   OctarineStateInspectorTest OctarineGoldenPathIntegrationTest OctarineSimulationFuzzTest OctarineScenarioRunnerTest

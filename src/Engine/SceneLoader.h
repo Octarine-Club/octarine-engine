@@ -28,7 +28,7 @@ class SceneLoader {
   // clear + recreate entities in the same archetype chunk UIButtonSystem is mid-iteration over,
   // re-firing the click on a freshly created (and not-yet-transformed, so positioned at the origin)
   // button. Before deferral is armed (bake + the initial startup load) the swap happens immediately.
-  // This is the entry the Lua `load_scene` global and the editor toolbar drive through.
+  // This is the entry the Lua `load_scene` global drives through.
   void RequestLoadScene(const std::string& scenePath);
 
   // Immediate, unconditional scene swap. RequestLoadScene/FlushPendingSceneLoad call this; external
@@ -48,8 +48,7 @@ class SceneLoader {
   // rather than returning a table). Safe to call repeatedly with overlapping sets.
   void TrackSceneAssets(const std::vector<std::string>& assetIds);
 
-  // True between a successful LoadScene/ReloadScene and the next StopScene. The editor toolbar
-  // uses this to decide whether Play should resume a paused scene or (re)start a stopped one.
+  // True between a successful LoadScene/ReloadScene and the next StopScene.
   [[nodiscard]] bool IsSceneRunning() const { return scene_running_; }
 
  private:
@@ -70,4 +69,5 @@ class SceneLoader {
   // Asset ids acquired for the currently loaded scene. StopScene releases these; LoadScene
   // acquires the next scene's set first (acquire-before-release) so shared assets never churn.
   std::vector<std::string> current_scene_assets_;
+  std::string current_scene_path_;
 };

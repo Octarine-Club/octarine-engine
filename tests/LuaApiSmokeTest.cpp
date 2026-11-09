@@ -21,15 +21,11 @@
 #include "Game/Game.h"
 #include "Game/GameConfig.h"
 #include "General/Logger.h"
-#include "Lua/HotReload/ScriptHotReload.h"
-#ifdef OCTARINE_WITH_EDITOR
-#include "Editor/Inspectors/ComponentInspectorRegistry.h"
-#include "Editor/Inspectors/RegisterAllInspectors.h"
-#endif
 #include "Lua/Bindings/InputSystemLuaBinding.h"
 #include "Lua/Bindings/LuaComponentRegistry.h"
 #include "Lua/Bindings/LuaSystemRegistry.h"
 #include "Lua/Bindings/RegisterAllBindings.h"
+#include "Lua/HotReload/ScriptHotReload.h"
 #include "Lua/LuaApiManifest.h"
 #include "Lua/Modules/LuaModuleRegistry.h"
 #include "Lua/Modules/RegisterAllModules.h"
@@ -75,19 +71,9 @@ int main() {
   // Mirror Game::Setup's binding order: component types, then free-function modules, then
   // system surfaces. Pass false so catalogs reflect the pure engine API surface.
   RegisterAllLuaBindings(false);
-#ifdef OCTARINE_WITH_EDITOR
-  RegisterAllComponentInspectors(false);
-#endif
 
   ScriptSystem scriptSystem;
   scriptSystem.CreateLuaBindings(lua);  // primitives + component usertypes
-
-#ifdef OCTARINE_WITH_EDITOR
-  // ProjectModule installs only in an editor session (its install() checks IsEditorMode).
-  // Force one here so the module registers its globals and modules.json captures them.
-  game.GetRegistry()->Set<GameConfig>(GameConfig());
-  game.GetRegistry()->Get<GameConfig>().SetIsEditorMode(true);
-#endif
 
   // Install modules one at a time, snapshotting globals around each call so LuaModuleRegistry
   // ends up with an exact "what globals did each module install" record — fed to modules.json.
@@ -118,29 +104,6 @@ int main() {
     Check(TableHasFunction(lua, "registry", "get_" + entry.luaKey), "registry.get_" + entry.luaKey);
   }
 
-#ifdef OCTARINE_WITH_EDITOR
-  std::cout << "[inspectors] component inspector registry\n";
-  {
-    const auto& inspectors = ComponentInspectorRegistry::all();
-    Check(!inspectors.empty(), "inspector registry is non-empty");
-
-    std::set<std::string> names;
-    for (const auto& entry : inspectors) {
-      Check(names.insert(entry.displayName).second, "inspector display name unique: " + entry.displayName);
-    }
-
-    // Every addable inspector's makeDefault() must yield a component that has() can find —
-    // catches a broken default ctor or a mis-wired registerComponent<T>().
-    auto* reg = game.GetRegistry();
-    for (const auto& entry : inspectors) {
-      if (!entry.addDefault) continue;
-      const Entity ent = reg->CreateEntity();
-      entry.addDefault(reg, ent);
-      Check(entry.has(reg, ent), "addDefault produces has(): " + entry.displayName);
-    }
-  }
-#endif
-
   std::cout << "[modules] each module installs at least one global\n";
   // If a module's install body becomes empty (or was removed), its captured global list is empty
   // and this fails. Catches "dropped from RegisterAllModules.cpp" without naming sentinels by hand.
@@ -158,15 +121,10 @@ int main() {
   Check(TableHasFunction(lua, "registry", "set_paused"), "registry.set_paused");
   Check(TableHasFunction(lua, "input", "is_key_down"), "input.is_key_down (InputSystem surface)");
 
-  std::cout << "[file write surface] storage.* (all builds) + project.* (editor sessions)\n";
+  std::cout << "[file write surface] storage.*\n";
   for (const auto* fn : {"write", "read", "write_table", "read_table", "exists", "remove", "list"}) {
     Check(TableHasFunction(lua, "storage", fn), std::string("storage.") + fn);
   }
-#ifdef OCTARINE_WITH_EDITOR
-  Check(TableHasFunction(lua, "project", "path"), "project.path (editor session)");
-  Check(TableHasFunction(lua, "project", "write_file"), "project.write_file (editor session)");
-  Check(TableHasFunction(lua, "project", "write_table"), "project.write_table (editor session)");
-#endif
 
   std::cout << "[manifest] generator runs\n";
 #ifdef LUA_API_SMOKE_OUTPUT

@@ -48,13 +48,11 @@ class Renderer {
   void DrawQueue(const RenderQueue& renderQueue, SDL_Renderer* sdlRenderer) const;
 
   // Phase 3: unbind the scene texture (RT becomes the window backbuffer) and clear that
-  // backbuffer to black. The editor/debug UI + final composite draw on top of the cleared
+  // backbuffer to black. Debug UI + final composite draw on top of the cleared
   // backbuffer.
   void EndScene(SDL_Renderer* sdlRenderer) const;
 
-  // Player-build composite: blit the full scene texture into the window backbuffer. Editor
-  // builds skip this — the Scene window inside ImGui draws the scene texture itself, so
-  // composing it to the window again would double-draw.
+  // Composite: blit the full scene texture into the window backbuffer.
   void CompositeSceneToWindow(SDL_Renderer* sdlRenderer, const SDL_FRect* destRect = nullptr) const;
 
   // Computes the destination rectangle inside the window backbuffer (`windowW` x `windowH`)
@@ -70,8 +68,8 @@ class Renderer {
   // (such as CAMetalLayer direct-display compositing on macOS).
   static void ApplyVSync(SDL_Renderer* sdlRenderer, bool enabled);
 
-  // Hand the editor / RenderDebugGUI access to the texture they composite into the Scene
-  // window. Returns nullptr when CreateScene never ran (headless / bake / pre-Init paths).
+  // Hand RenderDebugGUI access to the scene texture.
+  // Returns nullptr when CreateScene never ran (headless / bake / pre-Init paths).
   [[nodiscard]] SDL_Texture* GetSceneTexture() const { return scene_texture_; }
 
   [[nodiscard]] float GetRenderScale() const {

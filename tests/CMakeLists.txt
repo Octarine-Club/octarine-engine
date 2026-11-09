@@ -145,12 +145,6 @@ octarine_add_test(OctarineFileSandboxTest FileSandboxTest
 # Subsystems & Tooling Tests
 # -----------------------------------------------------------------------------
 
-octarine_add_test(OctarineProcessTest ProcessTest
-        SOURCES "${CMAKE_SOURCE_DIR}/src/Process/Process.cpp" ProcessTest.cpp
-        INCLUDES "${CMAKE_SOURCE_DIR}/src"
-        LIBS Threads::Threads
-)
-
 octarine_add_test(OctarineProjectIniTest ProjectIniTest
         SOURCES "${CMAKE_SOURCE_DIR}/src/General/IniParser.cpp"
                 "${CMAKE_SOURCE_DIR}/src/Project/ProjectIni.cpp"
@@ -166,15 +160,6 @@ octarine_add_test(OctarineFileWatcherTest FileWatcherTest
                 FileWatcherTest.cpp
         INCLUDES "${CMAKE_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}"
         LIBS spdlog::spdlog
-)
-
-octarine_add_test(OctarineAdbTest AdbTest
-        SOURCES "${CMAKE_SOURCE_DIR}/src/Deploy/Adb.cpp"
-                "${CMAKE_SOURCE_DIR}/src/Process/Process.cpp"
-                "${CMAKE_SOURCE_DIR}/src/General/Logger.cpp"
-                AdbTest.cpp
-        INCLUDES "${CMAKE_SOURCE_DIR}/src"
-        LIBS spdlog::spdlog Threads::Threads
 )
 
 octarine_add_engine_test(OctarineGameBakeTest GameBakeTest GameBakeTest.cpp
