@@ -12,7 +12,7 @@
 namespace octarine {
 
 // Generalized INI parser and typed value serializer shared across GameConfig (config.ini),
-// ProjectIni (project.ini), UserSettings (user_settings.ini), and EditorPersistence.
+// ProjectIni (project.ini) and UserSettings (user_settings.ini).
 class IniParser {
  public:
   using Value = std::variant<bool, int64_t, double, std::string>;

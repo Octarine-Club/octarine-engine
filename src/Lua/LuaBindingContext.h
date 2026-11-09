@@ -30,12 +30,8 @@ class LuaBindingContext {
   [[nodiscard]] virtual bool IsBakeMode() const = 0;
   virtual void RecordBakeValidationFailures(int failures) = 0;
 
-  // True when this session is the editor. The editor-only `project.*` Lua module consults this
-  // at install time so a player session never gets a project-folder write surface.
-  [[nodiscard]] virtual bool IsEditorMode() const = 0;
-
   // Root directory of the loaded game project (the GameConfig asset path); empty before a
-  // project loads. Sandbox root for the editor-only `project.*` writes.
+  // project loads.
   [[nodiscard]] virtual std::string GetProjectPath() const = 0;
 
   // Per-user writable save-data root (SDL pref path keyed by the project's identity). Sandbox

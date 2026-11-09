@@ -132,10 +132,6 @@ jobs:
         if: matrix.platform == 'linux'
         uses: ./.github/actions/linux-build-deps
 
-      - name: Install Ninja (Windows/macOS)
-        if: matrix.platform != 'linux'
-        uses: seanmiddleditch/gha-setup-ninja@v6
-
       - name: Setup MSVC dev environment (Windows)
         if: matrix.platform == 'windows'
         uses: ilammy/msvc-dev-cmd@v1
@@ -255,7 +251,7 @@ jobs:
           # we capture its output and fail the step ourselves on any diagnostic against a touched line.
           #
           # `|| true`: clang-tidy-diff.py exits non-zero whenever clang-tidy hits a file-level compiler
-          # error — including the harmless `-fno-fat-lto-objects` that a GCC-built (LTO) editor-release
+          # error — including the harmless `-fno-fat-lto-objects` that a GCC-built (LTO) release
           # compile_commands carries but clang rejects. Under `set -e -o pipefail` that non-zero would
           # abort the capture *before* we print/grep, so the step would die with no diagnostics shown.
           # We judge on real `file:line:col:` diagnostics below, not on the wrapper's exit code.

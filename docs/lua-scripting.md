@@ -58,7 +58,7 @@ engine calls two callbacks on it each frame:
 | `on_update(self, entity, dt)` | Every frame, in system order |
 | `on_collision(self, entity, other)` | When this entity's collider enters contact with `other` |
 | `on_collision_exit(self, entity, other)` | When this entity's collider separates from `other` |
-| `on_debug_gui(self, entity)` | Every frame, but only when editor debug UI is visible |
+| `on_debug_gui(self, entity)` | Every frame, but only when debug UI overlay is visible |
 | `on_click(self, entity)` | When the entity has a `ui_button` component and is clicked or input-triggered |
 
 - **`self`** is the script table itself — store per-entity state here.
@@ -250,7 +250,7 @@ load_entity({
 
 The engine exposes full [Dear ImGui](https://github.com/ocornut/imgui) bindings
 to Lua. Wire debug windows through the `on_debug_gui` callback — it only fires
-when the editor's debug UI is visible, so release builds pay zero cost.
+when the in-game debug UI is visible, so release builds pay zero cost.
 
 ```lua
 load_entity({

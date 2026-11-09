@@ -21,7 +21,6 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # =============================================================================
 
 # Engine features
-option(OCTARINE_WITH_EDITOR "Build with the experimental editor environment (work-in-progress)" OFF)
 option(OCTARINE_ENABLE_ANDROID "Build with experimental Android shipping support (work-in-progress)" OFF)
 option(OCTARINE_WITH_IMGUI "Build with Dear ImGui debug tools" ON)
 option(OCTARINE_ENABLE_PROFILING "Enable per-system performance instrumentation" OFF)
@@ -60,14 +59,8 @@ if (ANDROID)
     else ()
         message(STATUS "Octarine: Android shipping build support is ENABLED [Experimental]")
     endif ()
-    set(OCTARINE_WITH_EDITOR OFF CACHE BOOL "Disabled on Android" FORCE)
     set(OCTARINE_WITH_IMGUI OFF CACHE BOOL "Disabled on Android" FORCE)
     set(OCTARINE_SHIPPED ON CACHE BOOL "Forced ON on Android (manifest loading, no filesystem scan)" FORCE)
-endif ()
-
-# Editor requires ImGui
-if (OCTARINE_WITH_EDITOR)
-    set(OCTARINE_WITH_IMGUI ON CACHE BOOL "Forced ON by Editor" FORCE)
 endif ()
 
 # Output directories
@@ -145,9 +138,6 @@ endif ()
 if (OCTARINE_WITH_IMGUI)
     message(STATUS "Octarine: ImGui Debug UI ENABLED")
 endif ()
-if (OCTARINE_WITH_EDITOR)
-    message(STATUS "Octarine: Editor ENABLED")
-endif ()
 if (OCTARINE_SHIPPED)
     message(STATUS "Octarine: SHIPPED build — asset catalog loads baked manifest (no scan)")
 endif ()
@@ -182,7 +172,7 @@ include(cmake/octarine_library.cmake)
 # Engine Libraries
 # =============================================================================
 
-# Builds layered static libraries: octarine_{core,assets,renderer,lua,systems,editor,engine}
+# Builds layered static libraries: octarine_{core,assets,renderer,lua,systems,engine}
 add_subdirectory(src)
 
 # =============================================================================
@@ -275,7 +265,7 @@ if (OCTARINE_ENABLE_LINTING)
     find_program(CLANG_TIDY_EXE NAMES "clang-tidy")
     if (CLANG_TIDY_EXE)
         foreach (_tgt octarine_core octarine_assets octarine_renderer octarine_lua octarine_systems
-                octarine_editor octarine_engine ${PROJECT_NAME})
+                octarine_engine ${PROJECT_NAME})
             if (TARGET ${_tgt})
                 set_target_properties(${_tgt} PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_EXE}")
             endif ()

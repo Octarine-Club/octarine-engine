@@ -22,10 +22,6 @@
 #include "Systems/InputSystem.h"
 #include "Systems/TilemapSystem.h"
 
-#ifdef OCTARINE_WITH_EDITOR
-#include "Editor/EditorPersistence.h"
-#endif
-
 void SceneLoader::RequestLoadScene(const std::string& scenePath) {
   if (scenePath.empty()) {
     Logger::Warn("RequestLoadScene called with empty path.");
@@ -90,13 +86,6 @@ void SceneLoader::LoadScene(const std::string& scenePath) {
     LoadingScope(LoadingScope&&) = delete;
     LoadingScope& operator=(LoadingScope&&) = delete;
   } const loadingScope(loading_scene_);
-
-#ifdef OCTARINE_WITH_EDITOR
-  if (auto* editorPersistence = registry_->TryGet<EditorPersistence>()) {
-    editorPersistence->currentScenePath = scenePath;
-    editorPersistence->showSceneWindow = true;
-  }
-#endif
 
   auto sceneBytes = ReadFileViaSDL(fullPath, &assetManager);
   sol::protected_function_result result;
@@ -226,16 +215,14 @@ void SceneLoader::LoadScene(const std::string& scenePath) {
   }
 
   scene_running_ = true;
+  current_scene_path_ = scenePath;
 }
 
 void SceneLoader::ReloadScene() {
-#ifdef OCTARINE_WITH_EDITOR
-  if (auto* editorPersistence = registry_->TryGet<EditorPersistence>();
-      editorPersistence != nullptr && !editorPersistence->currentScenePath.empty()) {
-    RequestLoadScene(editorPersistence->currentScenePath);
+  if (!current_scene_path_.empty()) {
+    RequestLoadScene(current_scene_path_);
     return;
   }
-#endif
   Logger::Warn("ReloadScene called but no scene is currently loaded.");
 }
 
@@ -293,5 +280,6 @@ void SceneLoader::StopScene() {
     current_scene_assets_.clear();
   }
 
+  current_scene_path_.clear();
   scene_running_ = false;
 }

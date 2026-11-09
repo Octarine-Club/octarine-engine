@@ -29,7 +29,7 @@ struct KeyInputEvent;
 // the four phases plus the key-event handler that toggles the debug GUI / requests quit.
 //
 // Holds non-owning pointers to the engine pieces it touches (registry, event bus, renderer, the
-// SDL runtime) plus the Game it renders the editor overlay for. Constructed by Game once those
+// SDL runtime) plus the Game it runs the frame loop for. Constructed by Game once those
 // exist; the debug-collider query is built here so it isn't reallocated per frame.
 class FrameLoop {
  public:
@@ -57,7 +57,7 @@ class FrameLoop {
  private:
   static KeyInputEvent GetKeyInputEvent(SDL_KeyboardEvent* event);
   void HandleWindowEvent(const SDL_Event& event);
-  void UpdateViewportInfo(bool editorSession, bool showDebugGUI);
+  void UpdateViewportInfo(bool showDebugGUI);
   void CheckHeadlessCapture();
   void SyncAudioGain(const EngineOptions& options);
   void PollHotReload(const EngineOptions& options, float deltaTime);

@@ -13,7 +13,7 @@ class AssetManager;
 
 #ifndef OCTARINE_SHIPPED
 
-// Local-disk asset hot reload: the editor/player counterpart to ScriptHotReload, but for content
+// Local-disk asset hot reload: counterpart to ScriptHotReload, but for content
 // instead of code. Owns a FileWatcher over the source files of every currently-resident asset
 // (textures / fonts / audio clips) and, when one changes on disk, calls AssetManager::ReloadByPath
 // to swap the underlying SDL_Texture* / TTF_Font* / MIX_Audio*. Consumers re-resolve for free:
@@ -24,7 +24,7 @@ class AssetManager;
 // behind the same EngineOptions.hotReloadEnabled gate the script reloader uses. Compiled out under
 // OCTARINE_SHIPPED.
 //
-// Scope: this watches the loose source tree, so it is the dev/editor inner-loop path. The remote
+// Scope: this watches the loose source tree, so it is the dev inner-loop path. The remote
 // hot-push path (DevListenDispatch) drives the same AssetManager::ReloadByPath directly.
 class AssetHotReload {
  public:
@@ -36,7 +36,7 @@ class AssetHotReload {
 
   AssetHotReload() = default;
 
-  // Called from the main loop. `dt` is real (non-time-scaled) time so paused editor sessions still
+  // Called from the main loop. `dt` is real (non-time-scaled) time so paused debug sessions still
   // iterate. Re-syncs the watch set against the resident assets, then reloads any file whose mtime
   // advanced since the last poll.
   void Tick(AssetManager& assets, SDL_Renderer* renderer, MIX_Mixer* mixer, float dt, float pollSeconds);

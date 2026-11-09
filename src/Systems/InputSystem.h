@@ -59,7 +59,7 @@ class InputSystem {
 
   // Called near the top of Game::Update so polling APIs see a fresh cursor position
   // for systems that run this frame. Reads viewport + window dims to map raw SDL coords
-  // to game-space (editor's scene-window pan/zoom would alias raw coords).
+  // to game-space (letterboxing and viewport scaling would alias raw coords).
   void BeginFrame();
 
   // Called at the end of Game::Update — pressed/released are per-frame edges, wheel
@@ -98,9 +98,8 @@ class InputSystem {
     wheelDy_ = 0.0f;
   }
 
-#ifdef OCTARINE_WITH_EDITOR
-  // Editor-only diagnostic logging for input events. Gated behind EngineOptions::logInputEvents so it
-  // stays quiet until someone is actually debugging input. Compiled out entirely in player builds.
+#ifndef OCTARINE_SHIPPED
+  // Diagnostic logging for input events in dev builds. Gated behind EngineOptions::logInputEvents.
   [[nodiscard]] bool ShouldLogInput() const;
 #endif
 

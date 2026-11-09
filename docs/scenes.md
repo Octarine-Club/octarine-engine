@@ -198,9 +198,8 @@ shared by both scenes never unloads/reloads across the swap.
 
 ### `reload_scene()`
 
-Re-runs the script at the currently loaded path. Editor-only
-(`OCTARINE_WITH_EDITOR`-gated): logs a warning otherwise. Useful for
-iteration — edit the file, press the reload hotkey, see the change.
+Re-runs the script at the currently loaded path (logs a warning if no scene is loaded). Useful for
+iteration — edit the file, reload the scene, see the change.
 
 ### `stop_scene()` / `clear_scene()`
 
@@ -320,15 +319,11 @@ Bind a key to `reload_scene` in your dev `setup`:
 
 ```lua
 setup = function(scene)
-    -- editor-only convenience
+    -- dev convenience
     input.on_key_down(function(key)
         if key == "f5" then reload_scene() end
     end)
 end,
-```
-
-The editor toolbar also exposes a reload action; this is the equivalent
-from within the game.
 
 ---
 
@@ -407,10 +402,8 @@ across the swap. Likely the asset id you're using in scene A differs from
 scene B's (typo, or a `meta.id` override on one side). Acquire-before-release
 only protects ids that match exactly.
 
-**`reload_scene` warns "no scene currently loaded"** — the editor's
-`EditorPersistence.currentScenePath` is empty because no `load_scene`
-has run yet (or the build wasn't editor-gated). Call `load_scene` once
-to seed it.
+**`reload_scene` warns "no scene currently loaded"** — no `load_scene`
+has run yet. Call `load_scene` once to seed it.
 
 **`setup` runs twice** — likely a `load_scene` chain that re-enters the
 same path. Guard `setup` against double-install:

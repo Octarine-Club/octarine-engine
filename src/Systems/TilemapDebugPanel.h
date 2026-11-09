@@ -2,8 +2,8 @@
 
 class Registry;
 
-namespace octarine::editor::panels {
+namespace octarine::systems {
 
 void DrawTilemapDebugPanel(Registry* registry);
 
-}  // namespace octarine::editor::panels
+}  // namespace octarine::systems

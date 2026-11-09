@@ -13,6 +13,7 @@
 #include "Engine/EngineContext.h"
 #include "Engine/GameModuleHooks.h"
 #include "Engine/LuaProtect.h"
+#include "Engine/SdlFileReader.h"
 #include "EventBus/EventBus.h"
 #include "Game/Game.h"
 #include "Game/GameConfig.h"
@@ -25,12 +26,6 @@
 #include "Systems/EntityPoolSystem.h"
 #include "Systems/InputSystem.h"
 #include "Systems/TilemapSystem.h"
-
-#ifdef OCTARINE_WITH_EDITOR
-#include "Editor/Inspectors/RegisterAllInspectors.h"
-#endif
-
-#include "Engine/SdlFileReader.h"
 
 namespace {
 int LuaDofileViaSDL(lua_State* L) {
@@ -133,11 +128,6 @@ void RegisterAllComponentBindings() {
   // ScriptSystem's CreateLuaBindings runs — usertypes + registry.has_/get_ are populated
   // from LuaComponentRegistry at that point.
   RegisterAllLuaBindings();
-
-#ifdef OCTARINE_WITH_EDITOR
-  // Editor inspector surface — declarative parallel to the Lua bindings.
-  RegisterAllComponentInspectors();
-#endif
 }
 
 void InstallLuaModules(sol::state& lua, Game& game) {

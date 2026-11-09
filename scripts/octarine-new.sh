@@ -8,7 +8,7 @@
 #   cmake --build --preset ship-release --target package
 #
 # Or run from a debug build:
-#   ./build/editor-debug/bin/debug/OctarineEngine <dir>
+#   ./build/player-debug/bin/debug/OctarineEngine <dir>
 set -euo pipefail
 
 usage() {
@@ -101,9 +101,8 @@ directory. Packaged builds append them to the engine's shipped THIRD_PARTY_LICEN
 EOF
 
 cat > "$dir/.gitignore" <<'EOF'
-# Engine-generated runtime/editor state
+# Engine-generated runtime state
 imgui.ini
-editor_prefs.ini
 *_prefs.ini
 
 # Asset bake outputs + caches

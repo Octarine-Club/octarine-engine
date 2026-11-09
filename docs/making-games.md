@@ -23,10 +23,9 @@ it alongside this guide whenever an example would help.
 9. [Assets](#9-assets)
 10. [Audio](#10-audio)
 11. [Camera](#11-camera)
-12. [Using the Editor](#12-using-the-editor)
-13. [Game CI](#13-game-ci)
-14. [Native C++ Game Modules](#14-native-c-game-modules)
-15. [Further Reading](#15-further-reading)
+12. [Game CI](#12-game-ci)
+13. [Native C++ Game Modules](#13-native-c-game-modules)
+14. [Further Reading](#14-further-reading)
 
 ---
 
@@ -130,10 +129,10 @@ AngleUnit=degrees               # 'degrees' (default) or 'radians' for authored 
 ```
 
 `AngleUnit` picks the unit you write and read angles in — `rotation` in component
-tables, `set_rotation()`, the `rotation` component's `value`, and the editor
-inspectors. The engine always stores and composes in radians; the unit is a
-conversion applied at those boundaries, so it costs nothing at runtime and
-changing it never alters engine behaviour, only how your numbers are spelled.
+tables, `set_rotation()`, and the `rotation` component's `value`. The engine always
+stores and composes in radians; the unit is a conversion applied at those boundaries,
+so it costs nothing at runtime and changing it never alters engine behaviour, only how your
+numbers are spelled.
 
 **It defaults to `degrees`.** A project written against radians must say
 `AngleUnit=radians` explicitly — otherwise a `rotation` of `1.57` is read as
@@ -333,7 +332,7 @@ batches and custom health/damage components natively in C++ via a
 
 Attach a `script` component to give an entity per-frame Lua behaviour. The
 engine calls `on_update(self, entity, dt)` every frame and `on_debug_gui(self,
-entity)` when editor debug UI is visible. `self` is the script table — store
+entity)` when in-game debug UI is visible. `self` is the script table — store
 per-entity state there.
 
 See [`docs/lua-scripting.md`](lua-scripting.md) for the full scripting guide:
@@ -444,21 +443,7 @@ elements.
 
 ---
 
-## 12. Using the Editor
-
-Launch an editor build against your project:
-
-```bash
-./OctarineEngine path/to/MyGame
-```
-
-The editor adds a toolbar, entity inspector, scene hierarchy, and your
-`on_debug_gui` windows. See [`docs/editor.md`](editor.md) for the full panel
-reference and keyboard shortcuts.
-
----
-
-## 13. Game CI
+## 12. Game CI
 
 The `setup-engine` composite action downloads the right SDK binary for the
 current runner platform and adds it to `PATH`. Use it in game repo workflows to
@@ -550,8 +535,6 @@ MyGame/
     │   └── DamageDealtEvent.h
     ├── Lua/Bindings/
     │   └── HealthComponentLuaBinding.h
-    ├── Editor/Inspectors/          # Optional editor component inspectors
-    │   └── HealthInspector.h
     ├── tests/                      # Optional CTest suite
     │   ├── CMakeLists.txt
     │   └── CombatSystemTest.cpp
@@ -584,15 +567,11 @@ target_link_libraries(octarine_game_module PUBLIC
     octarine_lua
     octarine_systems
 )
-
-if (OCTARINE_WITH_EDITOR)
-    target_link_libraries(octarine_game_module PUBLIC octarine_editor)
-endif ()
 ```
 
 ### 3. Implementing the Game Module Hooks (`native/GameModule.cpp`)
 
-Implement the six entry points declared in `Engine/GameModuleHooks.h`:
+Implement the entry points declared in `Engine/GameModuleHooks.h`:
 
 ```cpp
 // MyGame/native/GameModule.cpp
@@ -610,12 +589,6 @@ namespace game_module {
 
 void RegisterComponentBindings() {
   ComponentBindingsRegistry::Instance().Register<HealthComponent>();
-}
-
-void RegisterComponentInspectors() {
-#ifdef OCTARINE_WITH_EDITOR
-  // Register custom ImGui component inspectors here if using OCTARINE_WITH_EDITOR
-#endif
 }
 
 void InstallSingletons(Registry& registry) {
@@ -716,7 +689,6 @@ OCTARINE_GAME_MODULE_DIR=/path/to/MyGame/native scripts/octarine-verify.sh --fas
 | [`docs/asset-pipeline.md`](asset-pipeline.md) | `.meta` sidecars, baking, atlases, audio normalisation |
 | [`docs/systems.md`](systems.md) | Built-in systems and the order they run |
 | [`docs/events.md`](events.md) | The event bus — every event type and how to use them |
-| [`docs/editor.md`](editor.md) | Editor panels, hotkeys, export workflow |
 | [`docs/tilemaps.md`](tilemaps.md) | Infinite LDtk chunked tilemaps, spatial queries, collision, and prop streaming |
 | [`docs/device-builds.md`](device-builds.md) | Shipping for desktop and Android |
 

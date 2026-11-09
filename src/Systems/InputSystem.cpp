@@ -26,7 +26,7 @@ void InputSystem::BeginFrame() {
   }
 }
 
-#ifdef OCTARINE_WITH_EDITOR
+#ifndef OCTARINE_SHIPPED
 bool InputSystem::ShouldLogInput() const {
   if (!registry_) return false;
   const auto* config = registry_->TryGet<GameConfig>();
@@ -43,7 +43,7 @@ void InputSystem::OnKeyInput(const KeyInputEvent& event) {
   }
 
   const std::string key = MakeKey(SDL_GetKeyName(event.inputKey));
-#ifdef OCTARINE_WITH_EDITOR
+#ifndef OCTARINE_SHIPPED
   if (ShouldLogInput()) {
     Logger::Info("[input] key " + std::string(event.isPressed ? "down" : "up") + ": " + key);
   }
@@ -83,7 +83,7 @@ void InputSystem::OnMouseInput(const MouseInputEvent& event) {
     y = transformed.y;
   }
 
-#ifdef OCTARINE_WITH_EDITOR
+#ifndef OCTARINE_SHIPPED
   if (ShouldLogInput()) {
     const bool down = event.event.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
     Logger::Info("[input] mouse " + std::string(down ? "down" : "up") + " btn " + std::to_string(btn) + " at (" +
@@ -113,7 +113,7 @@ void InputSystem::OnMouseWheel(const MouseWheelEvent& event) {
     }
   }
 
-#ifdef OCTARINE_WITH_EDITOR
+#ifndef OCTARINE_SHIPPED
   if (ShouldLogInput()) {
     Logger::Info("[input] wheel " + std::to_string(event.dx) + ", " + std::to_string(event.dy));
   }
@@ -200,7 +200,7 @@ void InputSystem::OnGamepadButton(const GamepadButtonEvent& event) {
   const std::string btn = MakeKey(event.buttonName);
   if (btn.empty()) return;
 
-#ifdef OCTARINE_WITH_EDITOR
+#ifndef OCTARINE_SHIPPED
   if (ShouldLogInput()) {
     Logger::Info("[input] gamepad " + std::string(event.isPressed ? "down" : "up") + ": " + btn);
   }

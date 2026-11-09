@@ -5,7 +5,7 @@
 #include <unordered_set>
 
 // Generates an EmmyLua-annotated stub of the engine's scripting surface by introspecting a live
-// sol::state after all bindings are installed. Drives editor autocomplete and serves as a living
+// sol::state after all bindings are installed. Drives IDE autocomplete and serves as a living
 // reference that cannot drift from the C++ that produced it — there is no hand-maintained name
 // list. Add a global/usertype anywhere and it shows up here automatically.
 namespace LuaApiManifest {
@@ -23,7 +23,7 @@ bool Write(sol::state& lua, const std::unordered_set<std::string>& before, const
 // No-op (returns false) when the var is unset. Called from Game::Setup.
 bool MaybeDumpFromEnv(sol::state& lua, const std::unordered_set<std::string>& before);
 
-// Editor-mode default: write the stub to <assetPath>/types/octarine_api.lua, creating the
+// Dev default: write the stub to <assetPath>/types/octarine_api.lua, creating the
 // directory if needed. Lets a project's LuaLS setup (workspace.library = ["types"]) track the
 // live engine surface with zero per-project wiring. Called from Game::Setup when the env var
 // is unset.

@@ -12,7 +12,7 @@
 
 class Logger {
  public:
-  // Captured Lua script error for editor toast notifications.
+  // Captured Lua script error for debug toast notifications.
   struct ScriptError {
     std::uint64_t sequence{};
     std::string message;
@@ -50,6 +50,6 @@ class Logger {
   static void ForEachHistory(const std::function<void(const std::string&)>& callback);
   static void ClearHistory();
 
-  // Returns snapshot of recent script errors for editor UI.
+  // Returns snapshot of recent script errors for debug overlay.
   static std::vector<ScriptError> RecentScriptErrors();
 };

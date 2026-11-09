@@ -22,11 +22,10 @@ inputs:
     required: true
   flavor:
     description: >
-      Which SDK variant to download: 'editor' (full editor UI, for local game
-      development) or 'player' (no editor/ImGui, lighter binary for game
-      packaging CI and end-user builds).
+      Which SDK variant to download: 'player' (player-debug, for game development)
+      or 'ship' (shipping artifact).
     required: false
-    default: 'editor'
+    default: 'player'
   token:
     description: >
       GitHub token used to authenticate the release download. Defaults to the

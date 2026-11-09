@@ -89,7 +89,7 @@ function Test-Tidy {
 if ($FormatOnly) { Write-Host '== clang-format (changed files) =='; Test-Format; Write-Verdict; exit $script:FirstFailCode }
 
 $testTargets = @(
-  'OctarineLuaApiTest', 'OctarineAssetPipelineTest', 'OctarineProcessTest', 'OctarineProjectIniTest',
+  'OctarineLuaApiTest', 'OctarineAssetPipelineTest', 'OctarineProjectIniTest',
   'OctarineEcsTest', 'OctarineEcsHierarchyTest', 'OctarineSystemLogicTest', 'OctarineEventBusTest'
 )
 

@@ -107,7 +107,7 @@ class Game : public LuaBindingContext {
   [[nodiscard]] const EngineContext& GetContext() const { return registry_->Get<EngineContext>(); }
 
   // Scene lifecycle lives in SceneLoader; these LuaBindingContext overrides delegate so the
-  // `scene.*` Lua module (and the editor toolbar) drive it through Game unchanged.
+  // `scene.*` Lua module drives it through Game unchanged.
   void LoadScene(const std::string& scenePath) override { scene_loader_->RequestLoadScene(scenePath); }
   void ReloadScene() override { scene_loader_->ReloadScene(); }
   void StopScene() override { scene_loader_->StopScene(); }
@@ -115,15 +115,9 @@ class Game : public LuaBindingContext {
     scene_loader_->TrackSceneAssets(assetIds);
   }
 
-  // True between a successful LoadScene/ReloadScene and the next StopScene. The editor toolbar
-  // uses this to decide whether Play should resume a paused scene or (re)start a stopped one.
   [[nodiscard]] bool IsSceneRunning() const { return scene_loader_->IsSceneRunning(); }
 
-  // Sandbox roots + session kind for the Lua file-write modules (storage.* / project.*). All
-  // three tolerate a missing GameConfig singleton (headless tests construct Game without
-  // Initialize). GetSaveDataPath resolves once and caches — see the .cpp for the identity
-  // precedence (project.ini vendor/name > config.ini GameTitle > engine defaults).
-  [[nodiscard]] bool IsEditorMode() const override;
+  // Sandbox roots for the Lua file-write module (storage.*).
   [[nodiscard]] std::string GetProjectPath() const override;
   std::string GetSaveDataPath() override;
 
@@ -131,14 +125,12 @@ class Game : public LuaBindingContext {
   // this at the top of Update, before systems run, so the swap happens outside any ForEach.
   void FlushPendingSceneLoad() { scene_loader_->FlushPendingSceneLoad(); }
 
-  // Captures live window/audio state (when not headless/editor) and writes user_settings.ini.
+  // Captures live window/audio state (when not headless) and writes user_settings.ini.
   bool SaveUserSettings();
 
  private:
   void Setup();
-  // Resolve the ImGui ini path (project dir / pref dir / cwd fallback), init the backend, and hand
-  // off to EditorBootstrap for font + style. Empty in non-ImGui builds; called unconditionally from
-  // Initialize so the feature gate stays out of that function.
+  // Resolve the ImGui ini path, init the backend. Empty in non-ImGui builds.
   void InitImGuiBackend();
   // Start the dev-iterate TCP listener when --dev-listen was passed. Empty in shipped builds.
   // Non-const: installs the engine command handler capturing the non-const sol::state.

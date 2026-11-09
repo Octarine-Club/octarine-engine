@@ -912,7 +912,7 @@ int main() {
     }
     reg->Get<GameConfig>().GetEngineOptions().showDebugGUI = false;
 #ifdef OCTARINE_WITH_IMGUI
-    RenderDebugGUISystem::ReturnFocusToGame(&game);
+    RenderDebugGUISystem::ReturnFocusToGame(reg);
 #else
     viewport->isFocused = true;
 #endif

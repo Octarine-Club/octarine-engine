@@ -2,8 +2,8 @@
 
 // C++ reader for the game project's `project.ini` — third corner alongside the CMake parser
 // (`cmake/OctarinePackage.cmake :: octarine_read_project_ini`) and the Gradle parser
-// (`android/app/build.gradle :: java.util.Properties`). Used by the editor to surface project
-// identity in panels and to validate before Export Build spawns a packaging script.
+// (`android/app/build.gradle :: java.util.Properties`). Used to surface project
+// identity and to validate shipping package identity.
 //
 // Schema matches the other two parsers; validation mirrors the shipping-build identity rules
 // (required: name, version_name, package_id; package_id must be reverse-DNS).
@@ -34,7 +34,7 @@ struct ProjectIni {
   std::string icon;
 
   // Every parsed key (including the named ones above), preserved verbatim so callers can
-  // read keys the editor doesn't know about yet.
+  // read keys not explicitly named.
   std::unordered_map<std::string, std::string> all;
 
   // Source path the file was loaded from (empty for in-memory parses).

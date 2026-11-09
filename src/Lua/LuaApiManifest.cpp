@@ -117,7 +117,7 @@ bool Write(sol::state& lua, const std::unordered_set<std::string>& before, const
 
   out << "-- AUTO-GENERATED Octarine Lua API surface. Do not edit by hand.\n"
       << "-- Introspected from the live sol::state after all bindings install.\n"
-      << "-- Refreshed automatically on every editor-mode launch (types/octarine_api.lua);\n"
+      << "-- Refreshed automatically on every dev launch (types/octarine_api.lua);\n"
       << "-- OCTARINE_DUMP_LUA_API=<path> overrides the destination.\n"
       << "---@meta\n"
       << "---@diagnostic disable: lowercase-global, missing-return\n\n";

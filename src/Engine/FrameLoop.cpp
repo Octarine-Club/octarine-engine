@@ -62,10 +62,9 @@ std::string GetEnvVar(const char* name) {
 }
 
 std::optional<SDL_FRect> PrepareSceneTargetForWindow(Renderer& renderer, SDL_Renderer* sdlRenderer,
-                                                     const GameConfig& gameConfig, const bool editorSession,
-                                                     const bool isHeadlessOrCapture) {
+                                                     const GameConfig& gameConfig, const bool isHeadlessOrCapture) {
   if (sdlRenderer == nullptr) return std::nullopt;
-  if (editorSession || isHeadlessOrCapture) {
+  if (isHeadlessOrCapture) {
     renderer.EnsureSceneTargetSize(sdlRenderer, gameConfig.windowWidth, gameConfig.windowHeight);
     return std::nullopt;
   }
@@ -84,18 +83,11 @@ std::optional<SDL_FRect> PrepareSceneTargetForWindow(Renderer& renderer, SDL_Ren
 }
 
 void SyncViewportRectFromWindow(SDL_Window* window, SDL_Renderer* sdlRenderer, const GameConfig& config,
-                                const bool editorSession, ViewportInfo& viewportInfo) {
+                                ViewportInfo& viewportInfo) {
   if (window == nullptr) return;
   int windowW = 0;
   int windowH = 0;
   SDL_GetWindowSize(window, &windowW, &windowH);
-  if (editorSession) {
-    viewportInfo.x = 0.0F;
-    viewportInfo.y = 0.0F;
-    viewportInfo.width = static_cast<float>(windowW);
-    viewportInfo.height = static_cast<float>(windowH);
-    return;
-  }
   int outPixelW = 0;
   int outPixelH = 0;
   if (sdlRenderer != nullptr && SDL_GetRenderOutputSize(sdlRenderer, &outPixelW, &outPixelH) && outPixelW > 0 &&
@@ -258,18 +250,15 @@ void FrameLoop::ProcessInput() {
 }
 
 void FrameLoop::HandleWindowEvent(const SDL_Event& event) {
-  if (!game_->IsEditorMode()) {
-    if (auto* userSettings = registry_->TryGet<octarine::UserSettings>()) {
-      CaptureWindowStateOnEvent(*userSettings, runtime_->Window(), event.type);
-    }
+  if (auto* userSettings = registry_->TryGet<octarine::UserSettings>()) {
+    CaptureWindowStateOnEvent(*userSettings, runtime_->Window(), event.type);
   }
   if (event.type == SDL_EVENT_WINDOW_RESIZED || event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED ||
       event.type == SDL_EVENT_WINDOW_DISPLAY_CHANGED) {
     auto* viewportInfo = registry_->TryGet<ViewportInfo>();
     const auto* config = registry_->TryGet<GameConfig>();
     if (viewportInfo != nullptr && config != nullptr) {
-      SyncViewportRectFromWindow(runtime_->Window(), runtime_->SdlRenderer(), *config, config->IsEditorMode(),
-                                 *viewportInfo);
+      SyncViewportRectFromWindow(runtime_->Window(), runtime_->SdlRenderer(), *config, *viewportInfo);
     }
     if (event.type == SDL_EVENT_WINDOW_DISPLAY_CHANGED && runtime_->SdlRenderer() != nullptr && config != nullptr) {
       Renderer::ApplyVSync(runtime_->SdlRenderer(), config->GetEngineOptions().vsync);
@@ -289,7 +278,7 @@ void FrameLoop::SyncAudioGain(const EngineOptions& options) {
 
 void FrameLoop::PollHotReload([[maybe_unused]] const EngineOptions& options, [[maybe_unused]] const float deltaTime) {
 #ifndef OCTARINE_SHIPPED
-  // Run hot reload even when paused — authors iterate code with the editor paused all the time,
+  // Run hot reload even when paused — authors iterate code with the game paused all the time,
   // and the swap is cheap. Uses real deltaTime (not time-scaled) so the poll cadence is stable.
   if (options.hotReloadEnabled) {
     if (auto* hotReload = registry_->TryGet<ScriptHotReload>()) {
@@ -359,7 +348,7 @@ int FrameLoop::Update(const float deltaTime) {
   // Apply any scene swap requested during ProcessInput (UIButton clicks fire there) or by a script
   // last frame. Done here — before systems run, after event dispatch finished — so the swap is
   // outside every ForEach and the new scene's entities get their global transforms this same frame.
-  // Runs regardless of pause so menu navigation works while the editor is paused.
+  // Runs regardless of pause so menu navigation works while the game is paused.
   game_->FlushPendingSceneLoad();
 
 #ifndef OCTARINE_SHIPPED
@@ -374,9 +363,7 @@ int FrameLoop::Update(const float deltaTime) {
   if (auto* ctx = registry_->TryGet<EngineContext>()) {
     const auto& gameConfig = registry_->Get<GameConfig>();
     const bool isHeadless = game_->IsHeadless() || options.headless;
-    const bool editorSession = gameConfig.IsEditorMode() || !gameConfig.HasLoadedConfig();
-    PrepareSceneTargetForWindow(*renderer_, runtime_->SdlRenderer(), gameConfig, editorSession,
-                                isHeadless || !capture_path_.empty());
+    PrepareSceneTargetForWindow(*renderer_, runtime_->SdlRenderer(), gameConfig, isHeadless || !capture_path_.empty());
     ctx->sceneRenderScale = renderer_->GetRenderScale();
   }
 
@@ -397,17 +384,14 @@ int FrameLoop::Update(const float deltaTime) {
   return stepsExecuted;
 }
 
-void FrameLoop::UpdateViewportInfo([[maybe_unused]] const bool editorSession,
-                                   [[maybe_unused]] const bool showDebugGUI) {
-  // Update viewport info for non-editor sessions or when ImGui is disabled.
-  // In editor mode with ImGui, RenderDebugGUISystem::Render will override this with the Scene window bounds.
+void FrameLoop::UpdateViewportInfo([[maybe_unused]] const bool showDebugGUI) {
   auto& viewportInfo = registry_->Get<ViewportInfo>();
   const auto& gameConfig = registry_->Get<GameConfig>();
-  SyncViewportRectFromWindow(runtime_->Window(), runtime_->SdlRenderer(), gameConfig, editorSession, viewportInfo);
+  SyncViewportRectFromWindow(runtime_->Window(), runtime_->SdlRenderer(), gameConfig, viewportInfo);
 
 #ifdef OCTARINE_WITH_IMGUI
   const auto& io = ImGui::GetIO();
-  if (!editorSession && !showDebugGUI && !RenderDebugGUISystem::HasActiveScriptErrorToast()) {
+  if (!showDebugGUI && !RenderDebugGUISystem::HasActiveScriptErrorToast()) {
     viewportInfo.isHovered = true;
     viewportInfo.isFocused = true;
   } else {
@@ -415,7 +399,6 @@ void FrameLoop::UpdateViewportInfo([[maybe_unused]] const bool editorSession,
     viewportInfo.isFocused = !io.WantCaptureKeyboard;
   }
 #else
-  (void)editorSession;
   (void)showDebugGUI;
   viewportInfo.isHovered = true;
   viewportInfo.isFocused = true;
@@ -451,8 +434,7 @@ void FrameLoop::Render(const float deltaTime) {
     return;
   }
 
-  const bool editorSession = gameConfig.IsEditorMode() || !gameConfig.HasLoadedConfig();
-  const auto compositeRect = PrepareSceneTargetForWindow(*renderer_, runtime_->SdlRenderer(), gameConfig, editorSession,
+  const auto compositeRect = PrepareSceneTargetForWindow(*renderer_, runtime_->SdlRenderer(), gameConfig,
                                                          isHeadless || !capture_path_.empty());
 
   renderer_->BeginScene(runtime_->SdlRenderer());
@@ -475,31 +457,27 @@ void FrameLoop::Render(const float deltaTime) {
     draw_collider_system_.Draw(registry_);
   }
 
-  // Built-in perf overlay (no ImGui). Drawn into the scene texture so it composites for both the
-  // player (CompositeSceneToWindow) and the editor Scene panel, and rides along in --capture dumps.
+  // Built-in perf overlay (no ImGui). Drawn into the scene texture so it composites for
+  // the player (CompositeSceneToWindow), and rides along in --capture dumps.
   if (gameConfig.GetEngineOptions().showPerfOverlay) {
     perf_overlay_.Draw(*registry_, runtime_->SdlRenderer(), deltaTime);
   }
 
   renderer_->EndScene(runtime_->SdlRenderer());
 
-  UpdateViewportInfo(editorSession, gameConfig.GetEngineOptions().showDebugGUI);
+  UpdateViewportInfo(gameConfig.GetEngineOptions().showDebugGUI);
 
-  // Only draw the game texture to the full window if we are NOT in an editor session.
-  // In editor mode, the Scene window handles drawing this texture.
-  if (!editorSession) {
-    if (compositeRect.has_value()) {
-      renderer_->CompositeSceneToWindow(runtime_->SdlRenderer(), &*compositeRect);
-    } else {
-      const auto& viewportInfo = registry_->Get<ViewportInfo>();
-      const SDL_FRect destRect{viewportInfo.x, viewportInfo.y, viewportInfo.width, viewportInfo.height};
-      renderer_->CompositeSceneToWindow(runtime_->SdlRenderer(), &destRect);
-    }
+  if (compositeRect.has_value()) {
+    renderer_->CompositeSceneToWindow(runtime_->SdlRenderer(), &*compositeRect);
+  } else {
+    const auto& viewportInfo = registry_->Get<ViewportInfo>();
+    const SDL_FRect destRect{viewportInfo.x, viewportInfo.y, viewportInfo.width, viewportInfo.height};
+    renderer_->CompositeSceneToWindow(runtime_->SdlRenderer(), &destRect);
   }
 
   if (!game_->IsBenchMode()) {
 #ifdef OCTARINE_WITH_IMGUI
-    RenderDebugGUISystem::Render(game_, runtime_->SdlRenderer(), renderer_->GetSceneTexture(), deltaTime);
+    RenderDebugGUISystem::Render(registry_, runtime_->SdlRenderer(), deltaTime);
 #endif
   }
 

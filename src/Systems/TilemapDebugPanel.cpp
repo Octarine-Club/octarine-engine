@@ -1,4 +1,4 @@
-#include "Editor/Panels/TilemapDebugPanel.h"
+#include "Systems/TilemapDebugPanel.h"
 
 #ifdef OCTARINE_WITH_IMGUI
 
@@ -9,7 +9,7 @@
 #include "Tilemap/ChunkTemplate.h"
 #include "imgui.h"
 
-namespace octarine::editor::panels {
+namespace octarine::systems {
 
 void DrawTilemapDebugPanel(Registry* registry) {
   if (registry == nullptr) {
@@ -68,6 +68,6 @@ void DrawTilemapDebugPanel(Registry* registry) {
   ImGui::End();
 }
 
-}  // namespace octarine::editor::panels
+}  // namespace octarine::systems
 
 #endif  // OCTARINE_WITH_IMGUI

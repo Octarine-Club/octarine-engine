@@ -50,7 +50,7 @@ The engine uses **CMake Presets** to manage different build configurations. The 
 - **Player (Debug with UI):** Day-to-day development with Dear ImGui debug overlays and Lua ImGui bindings (`player-debug`).
 - **Player (Dev, live-scan):** Minimal, optimized dev player runtime without ImGui (`player-release`).
 - **Profile:** Optimized player with performance instrumentation (`spdlog` timers) enabled (`player-profile`).
-- **Editor [Experimental]:** The C++ editor (`OCTARINE_WITH_EDITOR`) is currently experimental and disabled by default. Active game development uses Lua-based ImGui debug tools (`onDebugGUI`) instead.
+- **In-Game Debug Overlays:** Development builds include Dear ImGui and Lua-based debug tooling (`on_debug_gui`) for inspection and profiling. Compiled out on shipping builds.
 - **Mobile Shipping (Android / iOS) [Experimental]:** Shipping build support for Android and iOS is experimental and deferred into the future. Current engine development and production shipping workflows target desktop platforms (Windows, Linux, macOS).
 
 ### Build Commands

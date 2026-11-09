@@ -1,6 +1,6 @@
 -- AUTO-GENERATED Octarine Lua API surface. Do not edit by hand.
 -- Introspected from the live sol::state after all bindings install.
--- Refreshed automatically on every editor-mode launch (types/octarine_api.lua);
+-- Refreshed automatically on every dev launch (types/octarine_api.lua);
 -- OCTARINE_DUMP_LUA_API=<path> overrides the destination.
 ---@meta
 ---@diagnostic disable: lowercase-global, missing-return

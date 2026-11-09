@@ -1,4 +1,4 @@
-#include "RenderDebugGUISystem.h"
+#include "Systems/RenderDebugGUISystem.h"
 
 #ifdef OCTARINE_WITH_IMGUI
 #include <algorithm>
@@ -6,72 +6,32 @@
 #include <vector>
 
 #include "Components/ViewportInfo.h"
-#include "Editor/Panels/TilemapDebugPanel.h"
-#include "Game/Game.h"
+#include "ECS/Query.h"
 #include "Game/GameConfig.h"
 #include "General/PerfUtils.h"
+#include "Systems/TilemapDebugPanel.h"
 #include "imgui.h"
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_internal.h"
 
-#ifdef OCTARINE_WITH_EDITOR
-#include "AssetManager/AssetManager.h"
-#include "Editor/EditorPersistence.h"
-#include "Editor/ExportBuilder.h"
-#include "Editor/HotPusher.h"
-#include "Editor/Panels/EditorPanelHost.h"
-#include "Editor/PlayerLauncher.h"
-#endif
-
-void RenderDebugGUISystem::ReturnFocusToGame(Game* game) {
-  if (!game) return;
-  ReturnFocusToGame(game->GetRegistry());
-}
-
 void RenderDebugGUISystem::ReturnFocusToGame(Registry* registry) {
   if (!registry) return;
   auto& viewportInfo = registry->Get<ViewportInfo>();
 
-#ifdef OCTARINE_WITH_IMGUI
   if (ImGui::GetCurrentContext()) {
     ImGuiIO& io = ImGui::GetIO();
     io.ClearInputKeys();
     io.ClearEventsQueue();
     ImGui::ClearActiveID();
 
-#ifdef OCTARINE_WITH_EDITOR
-    auto& gameConfig = registry->Get<GameConfig>();
-    const bool projectLoaded = gameConfig.HasLoadedConfig();
-    const bool showEditorUI = gameConfig.IsEditorMode() || !projectLoaded;
-    if (showEditorUI) {
-      auto* editorPersistence = registry->TryGet<EditorPersistence>();
-      if (!editorPersistence || editorPersistence->showSceneWindow) {
-        ImGui::SetWindowFocus("Scene View");
-        viewportInfo.isFocused = true;
-      } else {
-        ImGui::SetWindowFocus(nullptr);
-        viewportInfo.isFocused = false;
-      }
-    } else {
-      ImGui::SetWindowFocus(nullptr);
-      viewportInfo.isFocused = true;
-      io.WantCaptureKeyboard = false;
-      io.NavActive = false;
-    }
-#else
     ImGui::SetWindowFocus(nullptr);
     viewportInfo.isFocused = true;
     io.WantCaptureKeyboard = false;
     io.NavActive = false;
-#endif
   } else {
     viewportInfo.isFocused = true;
   }
-
-#else
-  viewportInfo.isFocused = true;
-#endif
 }
 
 namespace {
@@ -85,7 +45,7 @@ ImVec4 ColorToImVec4(const octarine::Color& color) {
 
 void RenderDebugGUISystem::DrawDebugOverlays(Registry* registry, const EngineOptions& engineOptions,
                                              const bool showGameOverlays, const bool projectLoaded,
-                                             [[maybe_unused]] const float deltaTime) {
+                                             const float deltaTime) {
   if (!showGameOverlays && !engineOptions.showFpsCounter) {
     return;
   }
@@ -101,42 +61,22 @@ void RenderDebugGUISystem::DrawDebugOverlays(Registry* registry, const EngineOpt
     if (engineOptions.showEntityInfo) {
       EntityInfoWindow(registry);
     }
-    octarine::editor::panels::DrawTilemapDebugPanel(registry);
-#ifdef OCTARINE_WITH_EDITOR
+    octarine::systems::DrawTilemapDebugPanel(registry);
     FPSWindow(deltaTime);
-#endif
-  }
-#ifdef OCTARINE_WITH_EDITOR
-  else if (engineOptions.showFpsCounter) {
+  } else if (engineOptions.showFpsCounter) {
     FPSWindow(deltaTime);
   }
-#endif
 
   ImGui::PopStyleColor();
 }
 
-void RenderDebugGUISystem::Render(Game* game, SDL_Renderer* renderer, [[maybe_unused]] SDL_Texture* gameTexture,
-                                  [[maybe_unused]] const float deltaTime) {
-  auto* registry = game->GetRegistry();
+void RenderDebugGUISystem::Render(Registry* registry, SDL_Renderer* renderer, const float deltaTime) {
+  if (!registry || !renderer) return;
+
   auto& gameConfig = registry->Get<GameConfig>();
   auto& engineOptions = gameConfig.GetEngineOptions();
   const bool projectLoaded = gameConfig.HasLoadedConfig();
-#ifdef OCTARINE_WITH_EDITOR
-  auto& editorPersistence = registry->Get<EditorPersistence>();
-  auto& playerLauncher = registry->Get<octarine::editor::PlayerLauncher>();
-  playerLauncher.Pump();
-  auto& exportBuilder = registry->Get<octarine::editor::ExportBuilder>();
-  exportBuilder.Pump();
-  auto& hotPusher = registry->Get<octarine::editor::HotPusher>();
-  const std::string& projectBase = registry->Get<AssetManager>().GetBasePath();
-  hotPusher.Tick(ImGui::GetTime(), std::filesystem::path(projectBase));
-  const bool showEditorUI = gameConfig.IsEditorMode() || !projectLoaded;
-#endif
   const bool showGameOverlays = engineOptions.showDebugGUI;
-
-  // The toast must survive every "nothing else to draw" early-out below, otherwise a script
-  // error in a from-editor play session (editor chrome hidden, overlays off) stays invisible —
-  // the exact failure mode it exists to surface.
   const bool toastActive = HasActiveScriptErrorToast();
 
   static bool wasShowingGameOverlays = false;
@@ -144,47 +84,24 @@ void RenderDebugGUISystem::Render(Game* game, SDL_Renderer* renderer, [[maybe_un
   wasShowingGameOverlays = showGameOverlays;
 
   if (justClosedOverlays) {
-    ReturnFocusToGame(game);
+    ReturnFocusToGame(registry);
   }
 
-#ifdef OCTARINE_WITH_EDITOR
-  if (!showEditorUI && !showGameOverlays && !engineOptions.showFpsCounter && !toastActive && !justClosedOverlays) {
+  if (!showGameOverlays && !engineOptions.showFpsCounter && !toastActive && !justClosedOverlays) {
     return;
   }
-#else
-  // Player-with-ImGui build: the ImGui FPS window is editor-only (showFpsCounter is ignored here);
-  // the player-facing FPS readout is the renderer perf overlay (PerfOverlay config). So nothing
-  // ImGui draws unless the in-game debug overlays are toggled on or a script error is toasting.
-  if (!showGameOverlays && !toastActive && !justClosedOverlays) {
-    return;
-  }
-#endif
 
   PROFILE_NAMED_SCOPE("RenderDebugGUISystem::Render");
-
-#ifdef OCTARINE_WITH_EDITOR
-  octarine::editor::panels::ApplyPendingLayout(editorPersistence);
-#endif
 
   ImGui_ImplSDLRenderer3_NewFrame();
   ImGui_ImplSDL3_NewFrame();
   ImGui::NewFrame();
 
   if (justClosedOverlays) {
-    ReturnFocusToGame(game);
+    ReturnFocusToGame(registry);
   }
-
-#ifdef OCTARINE_WITH_EDITOR
-  if (showEditorUI) {
-    octarine::editor::panels::DrawEditorChrome(game, gameTexture);
-  }
-#endif
 
   DrawDebugOverlays(registry, engineOptions, showGameOverlays, projectLoaded, deltaTime);
-
-#ifdef OCTARINE_WITH_EDITOR
-  octarine::editor::panels::DrawProjectSelectorIfNeeded(game, projectLoaded);
-#endif
 
   if (toastActive) {
     ScriptErrorToastWindow();
@@ -192,10 +109,6 @@ void RenderDebugGUISystem::Render(Game* game, SDL_Renderer* renderer, [[maybe_un
 
   ImGui::Render();
   ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer);
-
-#ifdef OCTARINE_WITH_EDITOR
-  octarine::editor::panels::ProcessFontRebuild(editorPersistence);
-#endif
 }
 
 void RenderDebugGUISystem::FPSWindow(const float deltaTime) {
@@ -225,8 +138,6 @@ void RenderDebugGUISystem::EntityInfoWindow(const Registry* registry) {
 }
 
 namespace {
-// How long one script error stays on screen. Each new error restarts the clock for itself only,
-// so a burst shows its tail and quiet errors age out individually.
 constexpr double kScriptErrorToastSeconds = 10.0;
 constexpr float kToastBgAlpha = 0.85f;
 constexpr float kToastWrapWidthPx = 420.0f;
@@ -252,7 +163,6 @@ void RenderDebugGUISystem::ScriptErrorToastWindow() {
   }
   if (fresh.empty()) return;
 
-  // Bottom-right overlay: no decoration, no focus steal, no input capture — purely informative.
   const ImGuiViewport* viewport = ImGui::GetMainViewport();
   constexpr float kMargin = 12.0f;
   ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - kMargin,
