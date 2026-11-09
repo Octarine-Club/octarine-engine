@@ -254,7 +254,18 @@ void RegisterUIInspectors() {
                                                                });
 }
 
-void InspectLuaPrimitive(const std::string& key, const sol::object& val, sol::table parentTable, sol::type type) {
+void InspectLuaUserdata(const std::string& key, const sol::object& val, sol::table& parentTable) {
+  if (val.is<glm::vec2>()) {
+    glm::vec2 v = val.as<glm::vec2>();
+    if (ImGui::DragFloat2(key.c_str(), &v.x, 0.1f)) {
+      parentTable[key] = v;
+    }
+  } else {
+    ImGui::Text("%s: <userdata>", key.c_str());
+  }
+}
+
+void InspectLuaPrimitive(const std::string& key, const sol::object& val, sol::table& parentTable, sol::type type) {
   if (type == sol::type::number) {
     double num = val.as<double>();
     if (ImGui::DragScalar(key.c_str(), ImGuiDataType_Double, &num, 0.1f)) {
@@ -271,20 +282,14 @@ void InspectLuaPrimitive(const std::string& key, const sol::object& val, sol::ta
       parentTable[key] = s;
     }
   } else if (type == sol::type::userdata) {
-    if (val.is<glm::vec2>()) {
-      glm::vec2 v = val.as<glm::vec2>();
-      if (ImGui::DragFloat2(key.c_str(), &v.x, 0.1f)) {
-        parentTable[key] = v;
-      }
-    } else {
-      ImGui::Text("%s: <userdata>", key.c_str());
-    }
+    InspectLuaUserdata(key, val, parentTable);
   }
 }
 
 // Forward declare for recursion
-void InspectLuaValue(const std::string& key, const sol::object& val, sol::table parentTable, int depth);
+void InspectLuaValue(const std::string& key, const sol::object& val, sol::table& parentTable, int depth);
 
+// NOLINTNEXTLINE(misc-no-recursion)
 void InspectLuaTable(const std::string& key, const sol::table& tbl, int depth) {
   if (!ImGui::TreeNode(key.c_str())) return;
   std::vector<std::string> keys;
@@ -295,14 +300,15 @@ void InspectLuaTable(const std::string& key, const sol::table& tbl, int depth) {
     }
   }
   std::sort(keys.begin(), keys.end());
+  sol::table mutableTbl = tbl;
   for (const auto& subKey : keys) {
-    InspectLuaValue(subKey, tbl.get<sol::object>(subKey), tbl, depth + 1);
+    InspectLuaValue(subKey, mutableTbl.get<sol::object>(subKey), mutableTbl, depth + 1);
   }
   ImGui::TreePop();
 }
 
 // NOLINTNEXTLINE(misc-no-recursion)
-void InspectLuaValue(const std::string& key, const sol::object& val, sol::table parentTable, int depth) {
+void InspectLuaValue(const std::string& key, const sol::object& val, sol::table& parentTable, int depth) {
   if (depth > 4) {
     ImGui::Text("%s: <max depth>", key.c_str());
     return;

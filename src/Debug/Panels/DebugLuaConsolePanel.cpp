@@ -75,6 +75,25 @@ int TextEditCallbackStub(ImGuiInputTextCallbackData* data) {
   return 0;
 }
 
+void LogLuaResult(const sol::protected_function_result& result) {
+  if (result.return_count() == 0) return;
+
+  const sol::object obj = result.get<sol::object>(0);
+  if (obj.is<std::string>()) {
+    Logger::InfoLua(obj.as<std::string>());
+    return;
+  }
+
+  sol::state_view sv(obj.lua_state());
+  auto tostring = sv["tostring"].get<sol::protected_function>();
+  if (tostring.valid()) {
+    auto strRes = tostring(obj);
+    Logger::InfoLua(strRes.valid() && strRes.get_type() == sol::type::string ? strRes.get<std::string>() : "<result>");
+  } else {
+    Logger::InfoLua("<result>");
+  }
+}
+
 void ExecuteLuaCommand(Registry& registry, const std::string& command) {
   Logger::LogLua("> " + command);
 
@@ -101,22 +120,7 @@ void ExecuteLuaCommand(Registry& registry, const std::string& command) {
     return;
   }
 
-  if (result.return_count() > 0) {
-    const sol::object obj = result.get<sol::object>(0);
-    if (obj.is<std::string>()) {
-      Logger::InfoLua(obj.as<std::string>());
-    } else {
-      sol::state_view sv(obj.lua_state());
-      auto tostring = sv["tostring"].get<sol::protected_function>();
-      if (tostring.valid()) {
-        auto strRes = tostring(obj);
-        Logger::InfoLua(strRes.valid() && strRes.get_type() == sol::type::string ? strRes.get<std::string>()
-                                                                                 : "<result>");
-      } else {
-        Logger::InfoLua("<result>");
-      }
-    }
-  }
+  LogLuaResult(result);
 }
 
 bool MatchesSeverity(const std::string& line, SeverityFilter filter) {
