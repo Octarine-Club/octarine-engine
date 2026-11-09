@@ -260,6 +260,14 @@ bool IsGeneratedBakeDirectory(const fs::path& dirPath) {
   return name == "atlases" || name == "_atlases" || name == "normalized";
 }
 
+bool ShouldSkipCatalogDirectory(const fs::path& dirPath) {
+  if (IsGeneratedBakeDirectory(dirPath)) {
+    return true;
+  }
+  const std::string name = dirPath.filename().string();
+  return name == "backups" || name == ".git";
+}
+
 bool IsGeneratedAtlasArtifact(const fs::path& path) {
   const std::string filename = path.filename().string();
   return filename.ends_with(".atlas.png") || filename.ends_with(".atlas.lua");
@@ -385,7 +393,7 @@ bool AssetCatalog::ScanFilesystem(const std::string& basePath, sol::state& lua,
       ec.clear();
       continue;
     }
-    if (it->is_directory(ec) && IsGeneratedBakeDirectory(it->path())) {
+    if (it->is_directory(ec) && ShouldSkipCatalogDirectory(it->path())) {
       it.disable_recursion_pending();
       continue;
     }

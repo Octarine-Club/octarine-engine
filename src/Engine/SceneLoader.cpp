@@ -11,6 +11,7 @@
 #include "AssetManager/AssetManager.h"
 #include "AssetManager/SceneAssetScanner.h"
 #include "Audio/AudioTrackCache.h"
+#include "Debug/DebugMenuRegistry.h"
 #include "ECS/Registry.h"
 #include "Engine/EngineContext.h"
 #include "Engine/LuaProtect.h"
@@ -282,4 +283,7 @@ void SceneLoader::StopScene() {
 
   current_scene_path_.clear();
   scene_running_ = false;
+  if (auto* debugReg = registry_->TryGet<octarine::debug::DebugMenuRegistry>()) {
+    debugReg->ClearLuaOwned();
+  }
 }

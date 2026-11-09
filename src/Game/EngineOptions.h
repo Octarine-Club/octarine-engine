@@ -117,10 +117,9 @@ struct EngineOptions {
   bool windowResizable = true;
   bool showDebugGUI = false;
   bool drawColliders = false;
-  bool showFpsCounter = false;
   bool showEntityInfo = false;
-  // Built-in renderer FPS + frame-time overlay (no ImGui). Unlike the ImGui FPS window this ships in
-  // packaged builds, so it's the player-facing perf readout. Off by default; opt in via the
+  // Built-in renderer FPS + frame-time overlay (no ImGui). Ships in packaged builds,
+  // so it's the player-facing perf readout. Off by default; opt in via the
   // `PerfOverlay` config.ini key or set_perf_overlay() from Lua.
   bool showPerfOverlay = false;
   // Placement + content of the perf overlay (config.ini only: PerfOverlayCorner=, PerfOverlayMetrics=).

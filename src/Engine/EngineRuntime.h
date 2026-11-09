@@ -30,6 +30,10 @@ class EngineRuntime {
   [[nodiscard]] bool CreateWindow(const std::string& title, int width, int height, bool headless = false,
                                   bool resizable = true);
 
+  // Set or replace the window icon from an in-memory PNG payload.
+  // Returns false on invalid input or decoding failure.
+  bool SetWindowIcon(const void* pngData, size_t pngSize);
+
 #ifdef OCTARINE_WITH_IMGUI
   // Stand up the ImGui context + SDL3/SDLRenderer3 backends and the docking/nav config flags.
   // `iniPath` becomes io.IniFilename (must outlive the context). Fonts/style are the caller's

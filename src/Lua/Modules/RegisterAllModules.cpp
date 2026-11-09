@@ -2,6 +2,7 @@
 
 #include "Lua/Modules/AssetsModuleLuaBinding.h"
 #include "Lua/Modules/AudioModuleLuaBinding.h"
+#include "Lua/Modules/DevModuleLuaBinding.h"
 #include "Lua/Modules/EntityModuleLuaBinding.h"
 #include "Lua/Modules/GameModuleLuaBinding.h"
 #include "Lua/Modules/IoModuleLuaBinding.h"
@@ -18,6 +19,7 @@ const std::vector<LuaModuleDescriptor> kLuaModules = {
     {"Entity", &LuaModuleBinding<EntityModule>::install},   {"Scene", &LuaModuleBinding<SceneModule>::install},
     {"Game", &LuaModuleBinding<GameModule>::install},       {"UI", &LuaModuleBinding<UIModule>::install},
     {"Storage", &LuaModuleBinding<StorageModule>::install}, {"Tilemap", &LuaModuleBinding<TilemapModule>::install},
+    {"Dev", &LuaModuleBinding<DevModule>::install},
 };
 
 void RegisterAllLuaModules(sol::state& lua, LuaBindingContext& ctx) {

@@ -15,17 +15,51 @@ namespace octarine::tilemap {
 
 enum TileCollision : uint8_t {
   kTileEmpty = 0,
-  kTileSolid = 1,
-  kTileChasm = 2,
-  kTileHazard = 3,
-  kTileSurface = 4,
+  kTileChannel1 = 1,
+  kTileChannel2 = 2,
+  kTileChannel3 = 3,
+  kTileChannel4 = 4,
+  kTileChannel5 = 5,
+  kTileChannel6 = 6,
+  kTileChannel7 = 7,
+
+  // Semantic aliases for built-in conventions
+  kTileSolid = kTileChannel1,
+  kTileChasm = kTileChannel2,
+  kTileHazard = kTileChannel3,
+  kTileSurface = kTileChannel4,
+  kTileWall = kTileChannel5,
 };
 
 constexpr uint8_t kTileMaskEmpty = static_cast<uint8_t>(1u << kTileEmpty);
-constexpr uint8_t kTileMaskSolid = static_cast<uint8_t>(1u << kTileSolid);
-constexpr uint8_t kTileMaskChasm = static_cast<uint8_t>(1u << kTileChasm);
-constexpr uint8_t kTileMaskHazard = static_cast<uint8_t>(1u << kTileHazard);
-constexpr uint8_t kTileMaskGroundBlocked = static_cast<uint8_t>(kTileMaskSolid | kTileMaskChasm);
+constexpr uint8_t kTileMaskChannel1 = static_cast<uint8_t>(1u << kTileChannel1);
+constexpr uint8_t kTileMaskChannel2 = static_cast<uint8_t>(1u << kTileChannel2);
+constexpr uint8_t kTileMaskChannel3 = static_cast<uint8_t>(1u << kTileChannel3);
+constexpr uint8_t kTileMaskChannel4 = static_cast<uint8_t>(1u << kTileChannel4);
+constexpr uint8_t kTileMaskChannel5 = static_cast<uint8_t>(1u << kTileChannel5);
+constexpr uint8_t kTileMaskChannel6 = static_cast<uint8_t>(1u << kTileChannel6);
+constexpr uint8_t kTileMaskChannel7 = static_cast<uint8_t>(1u << kTileChannel7);
+
+constexpr uint8_t kTileMaskSolid = kTileMaskChannel1;
+constexpr uint8_t kTileMaskChasm = kTileMaskChannel2;
+constexpr uint8_t kTileMaskHazard = kTileMaskChannel3;
+constexpr uint8_t kTileMaskSurface = kTileMaskChannel4;
+constexpr uint8_t kTileMaskWall = kTileMaskChannel5;
+constexpr uint8_t kTileMaskGroundBlocked = static_cast<uint8_t>(kTileMaskSolid | kTileMaskChasm | kTileMaskWall);
+constexpr uint8_t kTileMaskProjectileBlocked = static_cast<uint8_t>(kTileMaskSolid | kTileMaskWall);
+
+struct CollisionLayerRule {
+  std::string layerMatch{};
+  uint8_t overrideTileValue = 0;  // 0 = preserve cell's raw IntGrid value
+};
+
+struct TilemapParseOptions {
+  std::vector<CollisionLayerRule> collisionLayerRules{};
+  std::vector<std::string> ysortLayerMatches{"ysort"};
+  std::vector<std::string> paletteMatches{"palette"};
+  uint8_t socketAnchorTileValue = kTileSurface;
+  bool sliceMultiChunkLevels = true;
+};
 
 constexpr int32_t kDefaultTileSize = 16;
 constexpr int32_t kDefaultChunkGridSize = 32;
@@ -86,6 +120,7 @@ struct ChunkTemplate {
   int32_t gridHeight = kDefaultChunkGridSize;
   float weight = 1.0f;
   bool isBorder = false;
+  bool isPalette = false;
   std::string biome{};
   std::string edgeNorth{};
   std::string edgeEast{};

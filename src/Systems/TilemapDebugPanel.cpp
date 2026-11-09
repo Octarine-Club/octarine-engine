@@ -11,16 +11,27 @@
 
 namespace octarine::systems {
 
-void DrawTilemapDebugPanel(Registry* registry) {
+namespace {
+void DrawEmptyTilemapNotice(bool* pOpen) {
+  if (pOpen == nullptr) return;
+  if (ImGui::Begin("Tilemap Inspector", pOpen, ImGuiWindowFlags_AlwaysAutoResize)) {
+    ImGui::TextDisabled("No tilemap is currently loaded in this scene.");
+  }
+  ImGui::End();
+}
+}  // namespace
+
+void DrawTilemapDebugPanel(Registry* registry, bool* pOpen) {
   if (registry == nullptr) {
     return;
   }
   auto* tilemap = registry->TryGet<TilemapSystem>();
   if (tilemap == nullptr || !tilemap->IsLoaded()) {
+    DrawEmptyTilemapNotice(pOpen);
     return;
   }
 
-  if (!ImGui::Begin("Tilemap Inspector", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+  if (!ImGui::Begin("Tilemap Inspector", pOpen, ImGuiWindowFlags_AlwaysAutoResize)) {
     ImGui::End();
     return;
   }

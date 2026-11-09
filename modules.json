@@ -50,6 +50,11 @@
       "name": "Tilemap",
       "binding_header": "src/Lua/Modules/TilemapModuleLuaBinding.h",
       "globals": ["tilemap"]
+    },
+    {
+      "name": "Dev",
+      "binding_header": "src/Lua/Modules/DevModuleLuaBinding.h",
+      "globals": ["dev"]
     }
   ]
 }

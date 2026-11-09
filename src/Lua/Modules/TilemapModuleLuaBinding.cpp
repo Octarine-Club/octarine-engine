@@ -16,22 +16,43 @@
 #include "Tilemap/TilemapBuilder.h"
 
 using octarine::tilemap::ChunkTemplate;
+using octarine::tilemap::CollisionLayerRule;
 using octarine::tilemap::kDefaultChunkGridSize;
 using octarine::tilemap::kDefaultTileSize;
 using octarine::tilemap::kMaxChunkArea;
 using octarine::tilemap::kMaxChunkGridSize;
+using octarine::tilemap::kTileChannel1;
+using octarine::tilemap::kTileChannel2;
+using octarine::tilemap::kTileChannel3;
+using octarine::tilemap::kTileChannel4;
+using octarine::tilemap::kTileChannel5;
+using octarine::tilemap::kTileChannel6;
+using octarine::tilemap::kTileChannel7;
 using octarine::tilemap::kTileEmpty;
+using octarine::tilemap::kTileMaskChannel1;
+using octarine::tilemap::kTileMaskChannel2;
+using octarine::tilemap::kTileMaskChannel3;
+using octarine::tilemap::kTileMaskChannel4;
+using octarine::tilemap::kTileMaskChannel5;
+using octarine::tilemap::kTileMaskChannel6;
+using octarine::tilemap::kTileMaskChannel7;
 using octarine::tilemap::kTileMaskChasm;
 using octarine::tilemap::kTileMaskEmpty;
 using octarine::tilemap::kTileMaskGroundBlocked;
 using octarine::tilemap::kTileMaskHazard;
+using octarine::tilemap::kTileMaskProjectileBlocked;
 using octarine::tilemap::kTileMaskSolid;
+using octarine::tilemap::kTileMaskSurface;
+using octarine::tilemap::kTileMaskWall;
+using octarine::tilemap::kTileSurface;
+using octarine::tilemap::kTileWall;
 using octarine::tilemap::PropSpawnDesc;
 using octarine::tilemap::StitchMode;
 using octarine::tilemap::TileLayerMesh;
 using octarine::tilemap::TilemapBuilder;
 using octarine::tilemap::TilemapData;
 using octarine::tilemap::TilemapLoadOptions;
+using octarine::tilemap::TilemapParseOptions;
 using octarine::tilemap::TileQuadDesc;
 using octarine::tilemap::TilesetDesc;
 using octarine::tilemap::YSortTileCmd;
@@ -77,6 +98,40 @@ std::string GetStringOr(const sol::table& t, const char* key, std::string fallba
   return fallback;
 }
 
+void ParseLuaCollisionLayerRules(const sol::table& t, std::vector<CollisionLayerRule>& outRules) {
+  const sol::optional<sol::table> rulesOpt = t.get<sol::optional<sol::table>>("collision_layers");
+  if (!rulesOpt.has_value()) {
+    return;
+  }
+  for (const auto& [_, val] : *rulesOpt) {
+    if (val.is<std::string>()) {
+      outRules.push_back(CollisionLayerRule{val.as<std::string>(), 0});
+    } else if (val.is<sol::table>()) {
+      const sol::table ruleTbl = val.as<sol::table>();
+      const std::string match = GetStringOr(ruleTbl, "match", GetStringOr(ruleTbl, "name", ""));
+      if (!match.empty()) {
+        const uint8_t overrideVal = static_cast<uint8_t>(ruleTbl.get_or("value", 0));
+        outRules.push_back(CollisionLayerRule{match, overrideVal});
+      }
+    }
+  }
+}
+
+void ParseLuaStringListOption(const sol::table& t, const char* key, std::vector<std::string>& outList) {
+  const sol::optional<sol::table> listOpt = t.get<sol::optional<sol::table>>(key);
+  if (!listOpt.has_value()) {
+    return;
+  }
+  for (const auto& [_, val] : *listOpt) {
+    if (val.is<std::string>()) {
+      const std::string s = val.as<std::string>();
+      if (!s.empty()) {
+        outList.push_back(s);
+      }
+    }
+  }
+}
+
 TilemapLoadOptions ParseLoadOptions(const sol::optional<sol::table>& opts) {
   TilemapLoadOptions parsed;
   if (!opts.has_value()) {
@@ -94,6 +149,23 @@ TilemapLoadOptions ParseLoadOptions(const sol::optional<sol::table>& opts) {
   parsed.tileScale = t.get_or("tile_scale", parsed.tileScale);
   parsed.variantCount = t.get_or("variant_count", parsed.variantCount);
   parsed.formatHint = GetStringOr(t, "format", parsed.formatHint);
+
+  ParseLuaCollisionLayerRules(t, parsed.parseOptions.collisionLayerRules);
+  ParseLuaStringListOption(t, "ysort_layers", parsed.parseOptions.ysortLayerMatches);
+  ParseLuaStringListOption(t, "palette_names", parsed.parseOptions.paletteMatches);
+
+  if (const auto anchorOpt = t.get<sol::optional<uint8_t>>("socket_anchor_tile"); anchorOpt.has_value()) {
+    parsed.parseOptions.socketAnchorTileValue = *anchorOpt;
+  }
+  if (const auto sliceOpt = t.get<sol::optional<bool>>("slice_multi_chunk"); sliceOpt.has_value()) {
+    parsed.parseOptions.sliceMultiChunkLevels = *sliceOpt;
+  }
+  if (const auto solidOpt = t.get<sol::optional<uint8_t>>("solid_mask"); solidOpt.has_value()) {
+    parsed.defaultSolidMask = *solidOpt;
+  }
+  if (const auto raycastOpt = t.get<sol::optional<uint8_t>>("raycast_mask"); raycastOpt.has_value()) {
+    parsed.defaultRaycastMask = *raycastOpt;
+  }
   return parsed;
 }
 
@@ -537,7 +609,9 @@ void BindCollisionQueryFunctions(sol::table& tm, LuaBindingContext& ctx) {
 
   tm.set_function("is_solid_at", [&ctx](const float wx, const float wy, const sol::optional<uint8_t>& maskOpt) -> bool {
     const auto* sys = EnsureTilemap(ctx.GetRegistry());
-    return (sys != nullptr) && sys->IsSolidAt(wx, wy, maskOpt.value_or(kTileMaskGroundBlocked));
+    if (sys == nullptr) return false;
+    const uint8_t mask = maskOpt.value_or(sys->GetDefaultSolidMask());
+    return sys->IsSolidAt(wx, wy, mask);
   });
 
   tm.set_function(
@@ -548,7 +622,8 @@ void BindCollisionQueryFunctions(sol::table& tm, LuaBindingContext& ctx) {
         if (sys == nullptr) {
           return {false, x1, y1, 0.0f, 0.0f, 0.0f, 0};
         }
-        const auto hit = sys->Raycast(x0, y0, x1, y1, maskOpt.value_or(kTileMaskSolid));
+        const uint8_t mask = maskOpt.value_or(sys->GetDefaultRaycastMask());
+        const auto hit = sys->Raycast(x0, y0, x1, y1, mask);
         return {hit.hit, hit.hitX, hit.hitY, hit.normalX, hit.normalY, hit.distance, static_cast<int>(hit.tileValue)};
       });
 
@@ -557,7 +632,8 @@ void BindCollisionQueryFunctions(sol::table& tm, LuaBindingContext& ctx) {
                          const sol::optional<uint8_t>& maskOpt) -> std::tuple<float, float> {
                     const auto* sys = EnsureTilemap(ctx.GetRegistry());
                     if (sys == nullptr) return {wx, wy};
-                    const glm::vec2 res = sys->ResolveCircle(wx, wy, radius, maskOpt.value_or(kTileMaskGroundBlocked));
+                    const uint8_t mask = maskOpt.value_or(sys->GetDefaultSolidMask());
+                    const glm::vec2 res = sys->ResolveCircle(wx, wy, radius, mask);
                     return {res.x, res.y};
                   });
 
@@ -566,9 +642,24 @@ void BindCollisionQueryFunctions(sol::table& tm, LuaBindingContext& ctx) {
                          const sol::optional<uint8_t>& maskOpt) -> std::tuple<float, float> {
                     const auto* sys = EnsureTilemap(ctx.GetRegistry());
                     if (sys == nullptr) return {wx, wy};
-                    const glm::vec2 res = sys->ResolveAABB(wx, wy, w, h, maskOpt.value_or(kTileMaskGroundBlocked));
+                    const uint8_t mask = maskOpt.value_or(sys->GetDefaultSolidMask());
+                    const glm::vec2 res = sys->ResolveAABB(wx, wy, w, h, mask);
                     return {res.x, res.y};
                   });
+
+  tm.set_function("set_default_masks", [&ctx](const uint8_t solidMask, const uint8_t raycastMask) {
+    if (auto* sys = EnsureTilemap(ctx.GetRegistry())) {
+      sys->SetDefaultMasks(solidMask, raycastMask);
+    }
+  });
+
+  tm.set_function("get_default_masks", [&ctx]() -> std::tuple<uint8_t, uint8_t> {
+    const auto* sys = EnsureTilemap(ctx.GetRegistry());
+    if (sys == nullptr) {
+      return {octarine::tilemap::kTileMaskGroundBlocked, octarine::tilemap::kTileMaskProjectileBlocked};
+    }
+    return {sys->GetDefaultSolidMask(), sys->GetDefaultRaycastMask()};
+  });
 }
 
 }  // namespace
@@ -577,15 +668,36 @@ void LuaModuleBinding<TilemapModule>::install(sol::state& lua, LuaBindingContext
   sol::table tm = lua.create_table();
 
   tm.set("TILE_EMPTY", static_cast<int>(octarine::tilemap::kTileEmpty));
+  tm.set("TILE_1", static_cast<int>(kTileChannel1));
+  tm.set("TILE_2", static_cast<int>(kTileChannel2));
+  tm.set("TILE_3", static_cast<int>(kTileChannel3));
+  tm.set("TILE_4", static_cast<int>(kTileChannel4));
+  tm.set("TILE_5", static_cast<int>(kTileChannel5));
+  tm.set("TILE_6", static_cast<int>(kTileChannel6));
+  tm.set("TILE_7", static_cast<int>(kTileChannel7));
+
   tm.set("TILE_SOLID", static_cast<int>(octarine::tilemap::kTileSolid));
   tm.set("TILE_CHASM", static_cast<int>(octarine::tilemap::kTileChasm));
   tm.set("TILE_HAZARD", static_cast<int>(octarine::tilemap::kTileHazard));
+  tm.set("TILE_SURFACE", static_cast<int>(kTileSurface));
+  tm.set("TILE_WALL", static_cast<int>(kTileWall));
 
   tm.set("MASK_EMPTY", static_cast<int>(kTileMaskEmpty));
+  tm.set("MASK_1", static_cast<int>(kTileMaskChannel1));
+  tm.set("MASK_2", static_cast<int>(kTileMaskChannel2));
+  tm.set("MASK_3", static_cast<int>(kTileMaskChannel3));
+  tm.set("MASK_4", static_cast<int>(kTileMaskChannel4));
+  tm.set("MASK_5", static_cast<int>(kTileMaskChannel5));
+  tm.set("MASK_6", static_cast<int>(kTileMaskChannel6));
+  tm.set("MASK_7", static_cast<int>(kTileMaskChannel7));
+
   tm.set("MASK_SOLID", static_cast<int>(kTileMaskSolid));
   tm.set("MASK_CHASM", static_cast<int>(kTileMaskChasm));
   tm.set("MASK_HAZARD", static_cast<int>(kTileMaskHazard));
+  tm.set("MASK_SURFACE", static_cast<int>(kTileMaskSurface));
+  tm.set("MASK_WALL", static_cast<int>(kTileMaskWall));
   tm.set("MASK_GROUND_BLOCKED", static_cast<int>(kTileMaskGroundBlocked));
+  tm.set("MASK_PROJECTILE_BLOCKED", static_cast<int>(kTileMaskProjectileBlocked));
 
   BindLoadFunctions(tm, ctx);
   BindStitchFunctions(tm, ctx);

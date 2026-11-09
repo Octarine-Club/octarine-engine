@@ -16,6 +16,12 @@ using VariantGeneratorFn = std::function<void(TilemapData& data, int32_t variant
 struct TilemapFormatLoader {
   std::string formatId{};
   std::vector<std::string> extensions{};
+  std::function<std::optional<TilemapData>(const std::string& path, const AssetManager* assetManager,
+                                           const TilemapParseOptions& options)>
+      loadFromFileWithOptions{};
+  std::function<std::optional<TilemapData>(const std::string& content, const std::string& baseDirRelPath,
+                                           const TilemapParseOptions& options)>
+      loadFromMemoryWithOptions{};
   std::function<std::optional<TilemapData>(const std::string& path, const AssetManager* assetManager)> loadFromFile{};
   std::function<std::optional<TilemapData>(const std::string& content, const std::string& baseDirRelPath)>
       loadFromMemory{};
@@ -26,6 +32,10 @@ class TilemapLoaderRegistry {
   static void RegisterFormat(TilemapFormatLoader loader);
   [[nodiscard]] static bool HasFormat(const std::string& formatOrExt);
 
+  // Registers an optional process-wide default parse options (e.g. from a native game module).
+  static void SetDefaultParseOptions(TilemapParseOptions options);
+  [[nodiscard]] static const TilemapParseOptions& GetDefaultParseOptions();
+
   // Registers an optional process-wide default variant generator (e.g. from a native game module).
   static void SetDefaultVariantGenerator(VariantGeneratorFn generator);
   static void ApplyVariantGenerator(TilemapData& data, int32_t variantCount, uint32_t seed);
@@ -33,12 +43,14 @@ class TilemapLoaderRegistry {
   // Auto-detects format by file extension (or explicit formatHint override) and parses via SDL/AssetManager.
   [[nodiscard]] static std::optional<TilemapData> LoadFromFile(const std::string& path,
                                                                const AssetManager* assetManager = nullptr,
-                                                               const std::string& formatHint = "");
+                                                               const std::string& formatHint = "",
+                                                               const TilemapParseOptions& parseOptions = {});
 
   // Parses in-memory text/bytes using formatHint (defaults to "ldtk" if empty).
   [[nodiscard]] static std::optional<TilemapData> LoadFromMemory(const std::string& content,
                                                                  const std::string& baseDirRelPath = "",
-                                                                 const std::string& formatHint = "ldtk");
+                                                                 const std::string& formatHint = "ldtk",
+                                                                 const TilemapParseOptions& parseOptions = {});
 };
 
 }  // namespace octarine::tilemap

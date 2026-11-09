@@ -25,6 +25,7 @@ set(OCTARINE_CORE_SOURCES
         General/FileWatcher.cpp
         General/LuaEscape.cpp
         General/SystemMemory.cpp
+        Debug/DebugMenuRegistry.cpp
         ECS/Registry.cpp
         ECS/StateInspector.cpp
         Game/GameConfig.cpp
@@ -126,6 +127,7 @@ octarine_library(octarine_lua
         Lua/HotReload/ScriptHotReload.cpp
         Lua/Modules/AssetsModuleLuaBinding.cpp
         Lua/Modules/AudioModuleLuaBinding.cpp
+        Lua/Modules/DevModuleLuaBinding.cpp
         Lua/Modules/EntityModuleLuaBinding.cpp
         Lua/Modules/GameModuleLuaBinding.cpp
         Lua/Modules/IoModuleLuaBinding.cpp
@@ -156,12 +158,6 @@ set(OCTARINE_SYSTEMS_SOURCES
         Tilemap/LdtkParser.cpp
         Tilemap/TilemapLoader.cpp
 )
-if (OCTARINE_WITH_IMGUI)
-    list(APPEND OCTARINE_SYSTEMS_SOURCES
-            Systems/RenderDebugGUISystem.cpp
-            Systems/TilemapDebugPanel.cpp
-    )
-endif ()
 octarine_library(octarine_systems ${OCTARINE_SYSTEMS_SOURCES})
 target_link_libraries(octarine_systems PUBLIC
         octarine_core
@@ -205,6 +201,22 @@ set(OCTARINE_ENGINE_SOURCES
 if (NOT OCTARINE_SHIPPED)
     list(APPEND OCTARINE_ENGINE_SOURCES Dev/DevListenServer.cpp Dev/DevListenDispatch.cpp)
 endif ()
+if (OCTARINE_WITH_IMGUI)
+    list(APPEND OCTARINE_ENGINE_SOURCES
+            Debug/DebugComponentInspectors.cpp
+            Debug/DebugTheme.cpp
+            Debug/Panels/DebugAssetScenePanel.cpp
+            Debug/Panels/DebugEngineOptionsPanel.cpp
+            Debug/Panels/DebugEntityInspectorPanel.cpp
+            Debug/Panels/DebugLuaConsolePanel.cpp
+            Debug/Panels/DebugMainMenuBar.cpp
+            Debug/Panels/DebugSystemProfilerPanel.cpp
+            Debug/Panels/DebugUIPanel.cpp
+            Debug/Panels/DebugViewportGizmos.cpp
+            Systems/RenderDebugGUISystem.cpp
+            Systems/TilemapDebugPanel.cpp
+    )
+endif ()
 octarine_library(octarine_engine ${OCTARINE_ENGINE_SOURCES})
 target_link_libraries(octarine_engine PUBLIC
         octarine_core
@@ -213,6 +225,9 @@ target_link_libraries(octarine_engine PUBLIC
         octarine_lua
         octarine_systems
 )
+if (OCTARINE_WITH_IMGUI)
+    target_link_libraries(octarine_engine PUBLIC imgui::imgui sol2_ImGui_Bindings::sol2_ImGui_Bindings ${LUA_LIBRARIES})
+endif ()
 if (TARGET octarine_game_module)
     target_link_libraries(octarine_engine PUBLIC octarine_game_module)
 endif ()

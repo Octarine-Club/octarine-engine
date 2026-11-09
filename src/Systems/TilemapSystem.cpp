@@ -26,11 +26,14 @@ using octarine::tilemap::ChunkTemplate;
 using octarine::tilemap::FloorDiv;
 using octarine::tilemap::GlobalTileToChunk;
 using octarine::tilemap::GlobalTileToLocalTile;
+using octarine::tilemap::kTileChannel6;
+using octarine::tilemap::kTileChannel7;
 using octarine::tilemap::kTileChasm;
 using octarine::tilemap::kTileEmpty;
 using octarine::tilemap::kTileHazard;
 using octarine::tilemap::kTileSolid;
 using octarine::tilemap::kTileSurface;
+using octarine::tilemap::kTileWall;
 using octarine::tilemap::MatchesCollisionMask;
 using octarine::tilemap::PackChunkKey;
 using octarine::tilemap::PropFieldVal;
@@ -137,6 +140,9 @@ bool TilemapSystem::LoadFromData(Registry& registry, TilemapData data, const Til
   loaded_path_ = sourceLabel.empty() ? "<data>" : sourceLabel;
   loaded_full_path_.clear();
   loaded_format_hint_ = options.formatHint;
+  loaded_parse_options_ = options.parseOptions;
+  default_solid_mask_ = options.defaultSolidMask;
+  default_raycast_mask_ = options.defaultRaycastMask;
   tile_scale_ = std::clamp(options.tileScale, 0.25f, 16.0f);
   variant_count_ = std::clamp(options.variantCount, 1, 16);
   TilemapBuilder::ApplyWorldTileScale(data, tile_scale_);
@@ -162,7 +168,7 @@ bool TilemapSystem::LoadFromData(Registry& registry, TilemapData data, const Til
 
 bool TilemapSystem::Load(Registry& registry, const std::string& path, const TilemapLoadOptions& options) {
   const auto* assetManager = registry.TryGet<AssetManager>();
-  auto parsed = TilemapLoaderRegistry::LoadFromFile(path, assetManager, options.formatHint);
+  auto parsed = TilemapLoaderRegistry::LoadFromFile(path, assetManager, options.formatHint, options.parseOptions);
   if (!parsed.has_value()) {
     return false;
   }
@@ -175,6 +181,7 @@ bool TilemapSystem::Load(Registry& registry, const std::string& path, const Tile
   loaded_full_path_ =
       (assetManager != nullptr && !std::filesystem::path(path).is_absolute()) ? assetManager->GetFullPath(path) : path;
   loaded_format_hint_ = options.formatHint;
+  loaded_parse_options_ = options.parseOptions;
 
   if (!loaded_full_path_.empty()) {
     file_watcher_.Track(loaded_full_path_);
@@ -185,7 +192,7 @@ bool TilemapSystem::Load(Registry& registry, const std::string& path, const Tile
 bool TilemapSystem::LoadFromJsonString(Registry& registry, const std::string& jsonText,
                                        const TilemapLoadOptions& options, const std::string& baseDirRelPath) {
   const std::string formatHint = options.formatHint.empty() ? "ldtk" : options.formatHint;
-  auto parsed = TilemapLoaderRegistry::LoadFromMemory(jsonText, baseDirRelPath, formatHint);
+  auto parsed = TilemapLoaderRegistry::LoadFromMemory(jsonText, baseDirRelPath, formatHint, options.parseOptions);
   if (!parsed.has_value()) {
     return false;
   }
@@ -213,7 +220,8 @@ bool TilemapSystem::Reload(Registry& registry) {
     return false;
   }
   const auto* assetManager = registry.TryGet<AssetManager>();
-  auto parsed = TilemapLoaderRegistry::LoadFromFile(loaded_path_, assetManager, loaded_format_hint_);
+  auto parsed =
+      TilemapLoaderRegistry::LoadFromFile(loaded_path_, assetManager, loaded_format_hint_, loaded_parse_options_);
   if (!parsed.has_value()) {
     Logger::Warn("TilemapSystem::Reload: keeping existing templates after parse failure in '" + loaded_path_ + "'");
     return false;
@@ -354,22 +362,22 @@ std::string TilemapSystem::GetChunkTemplateId(const int32_t chunkX, const int32_
 }
 
 void TilemapSystem::MarkPropConsumed(const int32_t chunkX, const int32_t chunkY, const uint32_t propIndex) noexcept {
-  if (propIndex >= 64u) {
+  if (propIndex >= 256u) {
     return;
   }
-  consumed_props_[PackChunkKey(chunkX, chunkY)] |= (1ULL << propIndex);
+  consumed_props_[PackChunkKey(chunkX, chunkY)].Set(propIndex);
 }
 
 bool TilemapSystem::IsPropConsumed(const int32_t chunkX, const int32_t chunkY,
                                    const uint32_t propIndex) const noexcept {
-  if (propIndex >= 64u) {
+  if (propIndex >= 256u) {
     return false;
   }
   const auto it = consumed_props_.find(PackChunkKey(chunkX, chunkY));
   if (it == consumed_props_.end()) {
     return false;
   }
-  return (it->second & (1ULL << propIndex)) != 0ULL;
+  return it->second.Test(propIndex);
 }
 
 void TilemapSystem::EnsureTilesetTexturesLoaded(Registry& registry) {
@@ -647,16 +655,23 @@ void SubmitChunkBoundsOverlay(RenderQueue& renderQueue, const float sx, const fl
 }
 
 SDL_Color CollisionValueToDebugColor(const uint8_t val) noexcept {
-  if (val == kTileChasm) {
-    return SDL_Color{70, 110, 255, 110};
+  switch (val) {
+    case kTileChasm:
+      return SDL_Color{70, 110, 255, 110};
+    case kTileHazard:
+      return SDL_Color{255, 180, 30, 120};
+    case kTileSurface:
+      return SDL_Color{235, 210, 120, 90};
+    case kTileWall:
+      return SDL_Color{160, 80, 220, 140};
+    case kTileChannel6:
+      return SDL_Color{50, 205, 50, 120};
+    case kTileChannel7:
+      return SDL_Color{255, 105, 180, 120};
+    case kTileSolid:
+    default:
+      return SDL_Color{255, 60, 60, 110};
   }
-  if (val == kTileHazard) {
-    return SDL_Color{255, 180, 30, 120};
-  }
-  if (val == kTileSurface) {
-    return SDL_Color{235, 210, 120, 90};
-  }
-  return SDL_Color{255, 60, 60, 110};
 }
 
 void SubmitChunkCollisionOverlay(RenderQueue& renderQueue, const ChunkTemplate& tmpl, const float sx, const float sy,
@@ -736,6 +751,9 @@ const ChunkTemplate* TilemapSystem::GetTemplateAtChunk(const int32_t chunkX, con
     return cacheIt->second;
   }
   if (const auto it = active_chunks_.find(key); it != active_chunks_.end() && it->second.templatePtr != nullptr) {
+    if (resolved_templates_.size() > 4096u) {
+      resolved_templates_.clear();
+    }
     resolved_templates_.emplace(key, it->second.templatePtr);
     return it->second.templatePtr;
   }
@@ -753,6 +771,9 @@ const ChunkTemplate* TilemapSystem::GetTemplateAtChunk(const int32_t chunkX, con
       const uint64_t h = octarine::tilemap::HashChunkCoord(chunkX, chunkY, seed_ ^ 0xA5A55A5Au);
       resolvedTmpl = &varIt->second[static_cast<size_t>(h % varIt->second.size())];
     }
+  }
+  if (resolved_templates_.size() > 4096u) {
+    resolved_templates_.clear();
   }
   resolved_templates_.emplace(key, resolvedTmpl);
   return resolvedTmpl;
@@ -782,34 +803,39 @@ uint8_t TilemapSystem::GetTileAt(const float worldX, const float worldY) const n
   return GetTileByGlobalCoord(gx, gy);
 }
 
-bool TilemapSystem::IsSolidAt(const float worldX, const float worldY, const uint8_t collisionMask) const noexcept {
-  return MatchesCollisionMask(GetTileAt(worldX, worldY), collisionMask);
+bool TilemapSystem::IsSolidAt(const float worldX, const float worldY,
+                              const std::optional<uint8_t> collisionMask) const noexcept {
+  const uint8_t mask = collisionMask.value_or(default_solid_mask_);
+  return MatchesCollisionMask(GetTileAt(worldX, worldY), mask);
 }
 
 TileRaycastHit TilemapSystem::Raycast(const float x0, const float y0, const float x1, const float y1,
-                                      const uint8_t collisionMask) const noexcept {
+                                      const std::optional<uint8_t> collisionMask) const noexcept {
   if (!is_loaded_) {
     return TileRaycastHit{false, x1, y1, 0.0f, 0.0f, std::hypot(x1 - x0, y1 - y0), kTileEmpty, 0, 0};
   }
-  return RaycastTilemap(x0, y0, x1, y1, project_data_.tileSize, collisionMask,
+  const uint8_t mask = collisionMask.value_or(default_raycast_mask_);
+  return RaycastTilemap(x0, y0, x1, y1, project_data_.tileSize, mask,
                         [this](const int32_t gx, const int32_t gy) { return GetTileByGlobalCoord(gx, gy); });
 }
 
 glm::vec2 TilemapSystem::ResolveCircle(const float worldX, const float worldY, const float radius,
-                                       const uint8_t collisionMask) const noexcept {
+                                       const std::optional<uint8_t> collisionMask) const noexcept {
   if (!is_loaded_) {
     return {worldX, worldY};
   }
-  return ResolveCircleVsTilemap(worldX, worldY, radius, project_data_.tileSize, collisionMask,
+  const uint8_t mask = collisionMask.value_or(default_solid_mask_);
+  return ResolveCircleVsTilemap(worldX, worldY, radius, project_data_.tileSize, mask,
                                 [this](const int32_t gx, const int32_t gy) { return GetTileByGlobalCoord(gx, gy); });
 }
 
 glm::vec2 TilemapSystem::ResolveAABB(const float worldX, const float worldY, const float width, const float height,
-                                     const uint8_t collisionMask) const noexcept {
+                                     const std::optional<uint8_t> collisionMask) const noexcept {
   if (!is_loaded_) {
     return {worldX, worldY};
   }
-  return ResolveAABBVsTilemap(worldX, worldY, width, height, project_data_.tileSize, collisionMask,
+  const uint8_t mask = collisionMask.value_or(default_solid_mask_);
+  return ResolveAABBVsTilemap(worldX, worldY, width, height, project_data_.tileSize, mask,
                               [this](const int32_t gx, const int32_t gy) { return GetTileByGlobalCoord(gx, gy); });
 }
 

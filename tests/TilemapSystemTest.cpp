@@ -49,6 +49,7 @@ using octarine::tilemap::TilemapData;
 using octarine::tilemap::TilemapFormatLoader;
 using octarine::tilemap::TilemapLoaderRegistry;
 using octarine::tilemap::TilemapLoadOptions;
+using octarine::tilemap::TilemapParseOptions;
 using octarine::tilemap::TileQuadDesc;
 using octarine::tilemap::TilesetDesc;
 using octarine::tilemap::WorldToChunk;
@@ -427,6 +428,14 @@ void TestPropStreamingPoolingAndConsumedBitmask() {
   sys.MarkPropConsumed(0, 0, 0u);
   Check(sys.IsPropConsumed(0, 0, 0u), "propIndex 0 marked consumed");
   Check(!sys.IsPropConsumed(0, 0, 1u), "propIndex 1 still unconsumed");
+
+  // Also test high prop indices (> 64 and up to 255) supported by ConsumedPropMask
+  sys.MarkPropConsumed(0, 0, 65u);
+  sys.MarkPropConsumed(0, 0, 199u);
+  Check(sys.IsPropConsumed(0, 0, 65u), "propIndex 65 marked consumed (words[1])");
+  Check(!sys.IsPropConsumed(0, 0, 64u), "propIndex 64 still unconsumed");
+  Check(sys.IsPropConsumed(0, 0, 199u), "propIndex 199 marked consumed (words[3])");
+  Check(!sys.IsPropConsumed(0, 0, 200u), "propIndex 200 still unconsumed");
 
   // Move camera to chunk (5, 5) (out-of-bounds border chunk with 0 props) -> chunk (0,0) unloads and parks its 3 props!
   sys.UpdateActiveWindow(registry, 5, 5);
@@ -953,6 +962,146 @@ void TestMultiChunkLevelSlicing() {
   }
 }
 
+void TestDataDrivenCollisionLayersAndOptions() {
+  std::cout << "[data-driven] Data-driven collision layers, custom channels, default masks, and palette flags\n";
+
+  const std::string multiLayerJson = R"JSON({
+    "defaultGridSize": 16,
+    "defs": { "tilesets": [] },
+    "levels": [
+      {
+        "identifier": "Level_Arena", "worldX": 0, "worldY": 0, "pxWid": 64, "pxHei": 64,
+        "fieldInstances": [],
+        "layerInstances": [
+          {
+            "__identifier": "GroundCollisions", "__type": "IntGrid", "__cWid": 4, "__cHei": 4, "__gridSize": 16,
+            "intGridCsv": [
+              1, 0, 0, 0,
+              0, 0, 0, 0,
+              0, 0, 0, 0,
+              0, 0, 0, 0
+            ]
+          },
+          {
+            "__identifier": "WallCollisions", "__type": "IntGrid", "__cWid": 4, "__cHei": 4, "__gridSize": 16,
+            "intGridCsv": [
+              0, 1, 0, 0,
+              0, 0, 0, 0,
+              0, 0, 0, 0,
+              0, 0, 0, 0
+            ]
+          },
+          {
+            "__identifier": "HazardCollisions", "__type": "IntGrid", "__cWid": 4, "__cHei": 4, "__gridSize": 16,
+            "intGridCsv": [
+              0, 0, 1, 0,
+              0, 0, 0, 0,
+              0, 0, 0, 0,
+              0, 0, 0, 0
+            ]
+          }
+        ]
+      },
+      {
+        "identifier": "Custom_Palette_Room", "worldX": 100, "worldY": 0, "pxWid": 64, "pxHei": 64,
+        "fieldInstances": [
+          { "__identifier": "is_palette", "__value": true }
+        ],
+        "layerInstances": []
+      }
+    ]
+  })JSON";
+
+  TilemapParseOptions parseOpts;
+  parseOpts.collisionLayerRules = {
+      {"ground", 0},
+      {"wall", octarine::tilemap::kTileWall},
+      {"hazard", octarine::tilemap::kTileHazard},
+  };
+
+  auto dataOpt = LdtkParser::ParseFromJsonString(multiLayerJson, "", parseOpts);
+  Check(dataOpt.has_value(), "Parsed multi-layer JSON with custom collisionLayerRules");
+  if (!dataOpt.has_value()) return;
+
+  const auto& data = *dataOpt;
+  CheckEq(data.paletteTemplates.size(), static_cast<size_t>(1), "Custom_Palette_Room extracted as palette template");
+  if (!data.paletteTemplates.empty()) {
+    CheckEq(data.paletteTemplates[0].identifier, std::string{"Custom_Palette_Room"},
+            "Extracted palette template identifier matches");
+    Check(data.paletteTemplates[0].isPalette, "Template isPalette flag is true");
+  }
+
+  CheckEq(data.templates.size(), static_cast<size_t>(1), "1 playable level template");
+  if (!data.templates.empty()) {
+    const auto& tmpl = data.templates[0];
+    CheckEq(tmpl.GetCollisionLocal(0, 0), octarine::tilemap::kTileSolid, "Cell (0,0) is kTileSolid");
+    CheckEq(tmpl.GetCollisionLocal(1, 0), octarine::tilemap::kTileWall, "Cell (1,0) is kTileWall");
+    CheckEq(tmpl.GetCollisionLocal(2, 0), octarine::tilemap::kTileHazard, "Cell (2,0) is kTileHazard");
+    CheckEq(tmpl.GetCollisionLocal(3, 0), octarine::tilemap::kTileEmpty, "Cell (3,0) is kTileEmpty");
+  }
+
+  Registry registry;
+  registry.Set<GameConfig>(GameConfig{});
+  registry.Set<CameraComponent>(CameraComponent{octarine::Rect{0, 0, 64, 64}, 1.0f});
+
+  sol::state lua;
+  lua.open_libraries(sol::lib::base, sol::lib::table, sol::lib::math);
+  TestLuaBindingContext bindCtx(&registry);
+  LuaModuleBinding<TilemapModule>::install(lua, bindCtx);
+
+  CheckEq(lua["tilemap"]["TILE_WALL"].get<int>(), 5, "Lua TILE_WALL is 5");
+  CheckEq(lua["tilemap"]["TILE_SURFACE"].get<int>(), 4, "Lua TILE_SURFACE is 4");
+  CheckEq(lua["tilemap"]["TILE_1"].get<int>(), 1, "Lua TILE_1 is 1");
+  CheckEq(lua["tilemap"]["TILE_7"].get<int>(), 7, "Lua TILE_7 is 7");
+  CheckEq(lua["tilemap"]["MASK_WALL"].get<int>(), 1 << 5, "Lua MASK_WALL is 32");
+
+  lua["multi_json"] = multiLayerJson;
+  auto loadRes = lua.safe_script(R"LUA(
+    return tilemap.load_json(multi_json, {
+      collision_layers = {
+        { match = "ground", value = tilemap.TILE_SOLID },
+        { match = "wall", value = tilemap.TILE_WALL },
+        { match = "hazard", value = tilemap.TILE_HAZARD },
+      },
+      solid_mask = tilemap.MASK_SOLID,
+      raycast_mask = tilemap.MASK_WALL,
+    })
+  )LUA");
+  Check(loadRes.valid() && loadRes.get<bool>(),
+        "tilemap.load_json succeeded with Lua collision_layers & default masks");
+
+  auto* sys = registry.TryGet<TilemapSystem>();
+  Check(sys != nullptr, "TilemapSystem singleton exists in Registry");
+  if (sys != nullptr) {
+    CheckEq(sys->GetDefaultSolidMask(), static_cast<uint8_t>(octarine::tilemap::kTileMaskSolid),
+            "sys default solid mask is MASK_SOLID");
+    CheckEq(sys->GetDefaultRaycastMask(), static_cast<uint8_t>(octarine::tilemap::kTileMaskWall),
+            "sys default raycast mask is MASK_WALL");
+
+    Check(sys->IsSolidAt(8.0f, 8.0f), "Tile (0,0) is solid under default mask MASK_SOLID");
+    Check(!sys->IsSolidAt(24.0f, 8.0f), "Tile (1,0) Wall is NOT solid under default mask MASK_SOLID");
+    Check(sys->IsSolidAt(24.0f, 8.0f, octarine::tilemap::kTileMaskWall),
+          "Tile (1,0) is solid when explicitly querying MASK_WALL");
+
+    const auto hit = sys->Raycast(0.0f, 8.0f, 60.0f, 8.0f);
+    Check(hit.hit, "Raycast hits wall under default raycast mask MASK_WALL");
+    CheckEq(static_cast<int>(hit.tileValue), static_cast<int>(octarine::tilemap::kTileWall),
+            "Raycast hit tileValue is kTileWall");
+
+    auto maskScriptRes = lua.safe_script(R"LUA(
+      tilemap.set_default_masks(tilemap.MASK_WALL, tilemap.MASK_SOLID)
+      local s, r = tilemap.get_default_masks()
+      return s, r
+    )LUA");
+    Check(maskScriptRes.valid(), "tilemap.set_default_masks / get_default_masks ran in Lua");
+    CheckEq(maskScriptRes.get<int>(0), static_cast<int>(octarine::tilemap::kTileMaskWall),
+            "Lua reported updated solid mask");
+    CheckEq(maskScriptRes.get<int>(1), static_cast<int>(octarine::tilemap::kTileMaskSolid),
+            "Lua reported updated raycast mask");
+    Check(sys->IsSolidAt(24.0f, 8.0f), "Tile (1,0) Wall is now solid under updated default solid mask MASK_WALL");
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -969,6 +1118,7 @@ int main() {
   TestLuaLoadDataProcedural();
   TestPaletteAndProceduralVariants();
   TestMultiChunkLevelSlicing();
+  TestDataDrivenCollisionLayersAndOptions();
 
   return octarine::test::ReportSummary("TilemapSystemTest");
 }
