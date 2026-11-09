@@ -20,8 +20,8 @@ struct LuaBinding<ScriptCallbackComponent> {
   }
 
   static void bindUsertype(sol::state& lua) {
-    lua.new_usertype<ScriptCallbackComponent>(kUsertypeName, "script_table", &ScriptCallbackComponent::script_table,
-                                              "on_hit", &ScriptCallbackComponent::on_hit_function, "on_death",
-                                              &ScriptCallbackComponent::on_death_function);
+    lua.new_usertype<ScriptCallbackComponent>(
+        kUsertypeName, sol::no_constructor, "script_table", &ScriptCallbackComponent::script_table, "on_hit",
+        &ScriptCallbackComponent::on_hit_function, "on_death", &ScriptCallbackComponent::on_death_function);
   }
 };

@@ -83,7 +83,6 @@ void TestDefaults() {
   Check(s.masterVolume == 1.0F, "default masterVolume is 1.0");
   Check(!s.audioMuted, "default audioMuted is false");
   Check(!s.fpsTarget.has_value(), "default fpsTarget is nullopt");
-  Check(!s.showPerfOverlay.has_value(), "default showPerfOverlay is nullopt");
   Check(s.customSettings.empty(), "default customSettings is empty");
 }
 
@@ -107,7 +106,6 @@ muted = true
 
 [engine]
 fps_target = 144
-perf_overlay = true
 
 [settings]
 difficulty = "nightmare"
@@ -132,7 +130,6 @@ numeric_string = "12345"
   Check(s.audioMuted, "audioMuted is true");
 
   Check(s.fpsTarget.has_value() && *s.fpsTarget == 144, "fpsTarget parsed");
-  Check(s.showPerfOverlay.has_value() && *s.showPerfOverlay, "showPerfOverlay parsed");
 
   const auto diff = s.GetSetting("difficulty");
   Check(diff.has_value() && std::holds_alternative<std::string>(*diff) && std::get<std::string>(*diff) == "nightmare",
@@ -201,7 +198,6 @@ void TestSerializationRoundTrip() {
   original.masterVolume = 0.6F;
   original.audioMuted = false;
   original.fpsTarget = 60;
-  original.showPerfOverlay = false;
   original.DefineSetting("screen_shake", true);
   original.SetSetting("screen_shake", false);
   original.DefineSetting("sfx_volume", 1.0);
@@ -231,7 +227,6 @@ void TestSerializationRoundTrip() {
   Check(std::abs(reloaded.masterVolume - original.masterVolume) < 0.001F, "roundtrip masterVolume");
   Check(reloaded.audioMuted == original.audioMuted, "roundtrip audioMuted");
   Check(reloaded.fpsTarget == original.fpsTarget, "roundtrip fpsTarget");
-  Check(reloaded.showPerfOverlay == original.showPerfOverlay, "roundtrip showPerfOverlay");
   Check(!std::get<bool>(*reloaded.GetSetting("screen_shake")), "roundtrip bool setting");
   Check(std::holds_alternative<double>(*reloaded.GetSetting("sfx_volume")) &&
             std::abs(std::get<double>(*reloaded.GetSetting("sfx_volume")) - 1.0) < 0.001,
@@ -284,7 +279,6 @@ void TestLuaSettingsModule() {
       assert(settings.set("master_volume", 0.65) == true)
       assert(settings.set("audio_muted", true) == true)
       assert(settings.set("fps_target", 120) == true)
-      assert(settings.set("perf_overlay", true) == true)
 
       -- Reject invalid type for defined setting
       assert(settings.set("screen_shake", "not_a_bool") == false)

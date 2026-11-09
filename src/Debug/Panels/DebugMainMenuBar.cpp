@@ -80,7 +80,6 @@ void DrawWorldMenu(Registry& registry, DebugMenuRegistry& debugReg, EngineOption
     DrawCategoryPanelsAndActions(registry, debugReg, "World");
     ImGui::Separator();
     ImGui::MenuItem("Draw Colliders", nullptr, &opts.drawColliders);
-    ImGui::MenuItem("Built-in Perf Overlay", nullptr, &opts.showPerfOverlay);
 
     bool pick = debugReg.IsWorldPickerEnabled();
     if (ImGui::MenuItem("Pick Entity in Viewport", "Alt+Click", &pick)) {

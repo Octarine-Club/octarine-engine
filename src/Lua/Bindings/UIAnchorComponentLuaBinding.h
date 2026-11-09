@@ -22,9 +22,10 @@ struct LuaBinding<UIAnchorComponent> {
 
   static void bindUsertype(sol::state& lua) {
     lua.new_usertype<UIAnchorComponent>(
-        kUsertypeName, "anchor_left", &UIAnchorComponent::anchorLeft, "anchor_top", &UIAnchorComponent::anchorTop,
-        "anchor_right", &UIAnchorComponent::anchorRight, "anchor_bottom", &UIAnchorComponent::anchorBottom,
-        "offset_left", &UIAnchorComponent::offsetLeft, "offset_top", &UIAnchorComponent::offsetTop, "offset_right",
-        &UIAnchorComponent::offsetRight, "offset_bottom", &UIAnchorComponent::offsetBottom);
+        kUsertypeName, sol::no_constructor, "anchor_left", &UIAnchorComponent::anchorLeft, "anchor_top",
+        &UIAnchorComponent::anchorTop, "anchor_right", &UIAnchorComponent::anchorRight, "anchor_bottom",
+        &UIAnchorComponent::anchorBottom, "offset_left", &UIAnchorComponent::offsetLeft, "offset_top",
+        &UIAnchorComponent::offsetTop, "offset_right", &UIAnchorComponent::offsetRight, "offset_bottom",
+        &UIAnchorComponent::offsetBottom);
   }
 };

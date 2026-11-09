@@ -27,6 +27,7 @@
 #include "Game/UserSettings.h"
 #include "General/FileSandbox.h"
 #include "General/Logger.h"
+#include "General/PerformanceTracker.h"
 #include "General/SimRandom.h"
 #include "General/ThreadPool.h"
 #include "Lua/LuaBindingContext.h"
@@ -107,13 +108,11 @@ std::string FormatLuaTable(const sol::table& table, size_t indent_level = 0, siz
   return result.str();
 }
 
-void SetPerfOverlayValue(LuaBindingContext& ctx, const bool enabled) {
-  if (auto* config = ctx.GetRegistry()->TryGet<GameConfig>()) {
-    config->GetEngineOptions().showPerfOverlay = enabled;
-  }
-  if (auto* settings = GetOrCreateUserSettings(ctx)) {
-    settings->showPerfOverlay = enabled;
-  }
+const PerformanceStats* GetPerfStatsFromCtx(LuaBindingContext& ctx) {
+  auto* reg = ctx.GetRegistry();
+  if (reg == nullptr) return nullptr;
+  const auto* engineCtx = reg->TryGet<EngineContext>();
+  return engineCtx != nullptr ? engineCtx->perfStats : nullptr;
 }
 
 void BindDiagnostics(sol::state& lua, LuaBindingContext& ctx) {
@@ -124,15 +123,51 @@ void BindDiagnostics(sol::state& lua, LuaBindingContext& ctx) {
 
   lua.set_function("quit_game", [&ctx]() { ctx.RequestQuit(); });
 
-  lua.set_function("set_perf_overlay", [&ctx](const bool enabled) { SetPerfOverlayValue(ctx, enabled); });
+  lua.set_function("get_fps", [&ctx]() -> float {
+    const auto* stats = GetPerfStatsFromCtx(ctx);
+    return stats != nullptr ? stats->fps : 0.0F;
+  });
 
-  lua.set_function("toggle_perf_overlay", [&ctx]() {
-    auto& options = ctx.GetRegistry()->Get<GameConfig>().GetEngineOptions();
-    options.showPerfOverlay = !options.showPerfOverlay;
-    if (auto* settings = GetOrCreateUserSettings(ctx)) {
-      settings->showPerfOverlay = options.showPerfOverlay;
-    }
-    return options.showPerfOverlay;
+  lua.set_function("get_avg_fps", [&ctx]() -> float {
+    const auto* stats = GetPerfStatsFromCtx(ctx);
+    return stats != nullptr ? stats->avgFps : 0.0F;
+  });
+
+  lua.set_function("get_frame_time", [&ctx]() -> float {
+    const auto* stats = GetPerfStatsFromCtx(ctx);
+    return stats != nullptr ? stats->frameTimeMs : 0.0F;
+  });
+
+  lua.set_function("get_entity_count", [&ctx]() -> std::size_t {
+    const auto* stats = GetPerfStatsFromCtx(ctx);
+    if (stats != nullptr) return stats->entityCount;
+    auto* reg = ctx.GetRegistry();
+    return reg != nullptr ? reg->GetUserEntityCount() : 0;
+  });
+
+  lua.set_function("get_memory_usage", [&ctx]() -> std::uint64_t {
+    const auto* stats = GetPerfStatsFromCtx(ctx);
+    return stats != nullptr ? stats->memoryBytes : 0;
+  });
+
+  lua.set_function("get_perf_stats", [&ctx](sol::this_state ts) -> sol::table {
+    sol::state_view sv(ts);
+    sol::table t = sv.create_table();
+    const auto* stats = GetPerfStatsFromCtx(ctx);
+    if (stats == nullptr) return t;
+
+    t["fps"] = stats->fps;
+    t["avg_fps"] = stats->avgFps;
+    t["p50_fps"] = stats->p50Fps;
+    t["p95_fps"] = stats->p95Fps;
+    t["p99_fps"] = stats->p99Fps;
+    t["frame_ms"] = stats->frameTimeMs;
+    t["avg_frame_ms"] = stats->avgFrameTimeMs;
+    t["p95_frame_ms"] = stats->p95FrameTimeMs;
+    t["entity_count"] = stats->entityCount;
+    t["memory_bytes"] = stats->memoryBytes;
+    t["memory_mb"] = stats->memoryMb;
+    return t;
   });
 
   lua.set_function("set_debug_gui", [&ctx](const bool enabled) {
@@ -831,7 +866,7 @@ std::optional<octarine::UserSettings::SettingValue> LuaObjectToSettingValue(cons
 }
 
 std::string NormalizeBuiltInKey(std::string_view key) {
-  static constexpr std::array<std::pair<std::string_view, std::string_view>, 31> kAliases = {{
+  static constexpr std::array<std::pair<std::string_view, std::string_view>, 30> kAliases = {{
       {"window.fullscreen", "fullscreen"},
       {"window.mode", "window_mode"},
       {"window.window_mode", "window_mode"},
@@ -862,7 +897,6 @@ std::string NormalizeBuiltInKey(std::string_view key) {
       {"audio.audio_muted", "audio_muted"},
       {"muted", "audio_muted"},
       {"engine.fps_target", "fps_target"},
-      {"engine.perf_overlay", "perf_overlay"},
   }};
   for (const auto& [alias, canonical] : kAliases) {
     if (key == alias) return std::string(canonical);
@@ -970,20 +1004,11 @@ bool TryGetBuiltInSetting(LuaBindingContext& ctx, std::string_view rawKey, const
     out = sol::make_object(lua, (s && s->fpsTarget.has_value()) ? *s->fpsTarget : 0);
     return true;
   }
-  if (key == "perf_overlay") {
-    if (const auto* config = ctx.GetRegistry()->TryGet<GameConfig>()) {
-      out = sol::make_object(lua, config->GetEngineOptions().showPerfOverlay);
-      return true;
-    }
-    const auto* s = GetOrCreateUserSettings(ctx);
-    out = sol::make_object(lua, (s && s->showPerfOverlay.has_value()) ? *s->showPerfOverlay : false);
-    return true;
-  }
   return false;
 }
 
 bool TrySetBuiltInBool(LuaBindingContext& ctx, const std::string& key, const sol::object& val, bool& handled) {
-  if (key != "fullscreen" && key != "maximized" && key != "audio_muted" && key != "perf_overlay" && key != "vsync" &&
+  if (key != "fullscreen" && key != "maximized" && key != "audio_muted" && key != "vsync" &&
       key != "window_resizable") {
     handled = false;
     return false;
@@ -994,7 +1019,6 @@ bool TrySetBuiltInBool(LuaBindingContext& ctx, const std::string& key, const sol
   if (key == "fullscreen") SetFullscreenState(ctx, b);
   if (key == "maximized") SetMaximizedState(ctx, b);
   if (key == "audio_muted") SetAudioMutedState(ctx, b);
-  if (key == "perf_overlay") SetPerfOverlayValue(ctx, b);
   if (key == "vsync") SetVSyncState(ctx, b);
   if (key == "window_resizable") SetWindowResizableState(ctx, b);
   return true;
@@ -1064,7 +1088,7 @@ bool TrySetBuiltInNumber(LuaBindingContext& ctx, const std::string& key, const s
   return true;
 }
 
-constexpr std::array<std::string_view, 20> kBuiltInSettingKeys = {"fullscreen",
+constexpr std::array<std::string_view, 19> kBuiltInSettingKeys = {"fullscreen",
                                                                   "window_mode",
                                                                   "maximized",
                                                                   "window_width",
@@ -1082,8 +1106,7 @@ constexpr std::array<std::string_view, 20> kBuiltInSettingKeys = {"fullscreen",
                                                                   "display_name",
                                                                   "master_volume",
                                                                   "audio_muted",
-                                                                  "fps_target",
-                                                                  "perf_overlay"};
+                                                                  "fps_target"};
 
 bool IsBuiltInSettingKey(std::string_view rawKey) {
   const std::string key = NormalizeBuiltInKey(rawKey);
@@ -1156,10 +1179,6 @@ bool TryGetBuiltInDefault(LuaBindingContext& ctx, std::string_view rawKey, const
     out = sol::make_object(lua, d.fpsTarget);
     return true;
   }
-  if (key == "perf_overlay") {
-    out = sol::make_object(lua, d.showPerfOverlay);
-    return true;
-  }
   return false;
 }
 
@@ -1171,7 +1190,6 @@ void CopySettingsToEngineOptions(const octarine::UserSettings& settings, EngineO
   opts.masterVolume = settings.masterVolume;
   opts.audioEnabled = !settings.audioMuted;
   opts.fpsTarget = settings.fpsTarget.value_or(settings.builtInDefaults.fpsTarget);
-  opts.showPerfOverlay = settings.showPerfOverlay.value_or(settings.builtInDefaults.showPerfOverlay);
 }
 
 void ApplyTextureScaleSetting(Registry& registry, const octarine::UserSettings& settings) {

@@ -30,10 +30,10 @@ struct LuaBinding<CirclePrimitiveComponent> {
 
   static void bindUsertype(sol::state& lua) {
     lua.new_usertype<CirclePrimitiveComponent>(
-        kUsertypeName, "position", &CirclePrimitiveComponent::position, "layer", &CirclePrimitiveComponent::layer,
-        "radius", &CirclePrimitiveComponent::radius, "thickness", &CirclePrimitiveComponent::thickness, "color",
-        &CirclePrimitiveComponent::color, "is_fixed", &CirclePrimitiveComponent::isFixed, "filled",
-        &CirclePrimitiveComponent::filled, "blend_mode",
+        kUsertypeName, sol::no_constructor, "position", &CirclePrimitiveComponent::position, "layer",
+        &CirclePrimitiveComponent::layer, "radius", &CirclePrimitiveComponent::radius, "thickness",
+        &CirclePrimitiveComponent::thickness, "color", &CirclePrimitiveComponent::color, "is_fixed",
+        &CirclePrimitiveComponent::isFixed, "filled", &CirclePrimitiveComponent::filled, "blend_mode",
         sol::property([](const CirclePrimitiveComponent& c) { return octarine::ToString(c.blendMode); },
                       [](CirclePrimitiveComponent& c, const std::string_view mode) {
                         c.blendMode = octarine::BlendModeFromString(mode, c.blendMode);

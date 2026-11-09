@@ -41,8 +41,8 @@ struct LuaBinding<ColorGridComponent> {
 
   static void bindUsertype(sol::state& lua) {
     lua.new_usertype<ColorGridComponent>(
-        kUsertypeName, "cell_width", &ColorGridComponent::cellWidth, "cell_height", &ColorGridComponent::cellHeight,
-        "cell_size",
+        kUsertypeName, sol::no_constructor, "cell_width", &ColorGridComponent::cellWidth, "cell_height",
+        &ColorGridComponent::cellHeight, "cell_size",
         sol::property([](const ColorGridComponent& g) { return g.GetCellSize(); },
                       [](ColorGridComponent& g, const float s) { g.SetCellSize(s); }),
         "color1", &ColorGridComponent::color1, "color2", &ColorGridComponent::color2, "color_a",

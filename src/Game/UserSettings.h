@@ -42,7 +42,6 @@ struct UserSettings {
     bool vsync = false;
     bool windowResizable = true;
     int fpsTarget = Constants::kFps;
-    bool showPerfOverlay = false;
     float masterVolume = 1.0F;
     bool audioMuted = false;
   };
@@ -72,7 +71,6 @@ struct UserSettings {
 
   // Engine configuration overrides
   std::optional<int> fpsTarget{};
-  std::optional<bool> showPerfOverlay{};
 
   // Shipped defaults from config.ini (not serialized to user_settings.ini)
   BuiltInDefaults builtInDefaults{};

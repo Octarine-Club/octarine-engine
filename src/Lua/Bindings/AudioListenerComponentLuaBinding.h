@@ -22,9 +22,9 @@ struct LuaBinding<AudioListenerComponent> {
   }
 
   static void bindUsertype(sol::state& lua) {
-    lua.new_usertype<AudioListenerComponent>(kUsertypeName, "max_distance", &AudioListenerComponent::maxDistance,
-                                             "rolloff", &AudioListenerComponent::rolloff, "doppler_factor",
-                                             &AudioListenerComponent::dopplerFactor, "speed_of_sound",
-                                             &AudioListenerComponent::speedOfSound);
+    lua.new_usertype<AudioListenerComponent>(
+        kUsertypeName, sol::no_constructor, "max_distance", &AudioListenerComponent::maxDistance, "rolloff",
+        &AudioListenerComponent::rolloff, "doppler_factor", &AudioListenerComponent::dopplerFactor, "speed_of_sound",
+        &AudioListenerComponent::speedOfSound);
   }
 };

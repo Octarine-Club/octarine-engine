@@ -49,12 +49,13 @@ struct LuaBinding<UIButtonComponent> {
 
   static void bindUsertype(sol::state& lua) {
     lua.new_usertype<UIButtonComponent>(
-        kUsertypeName, "is_active", &UIButtonComponent::isActive, "is_fixed", &UIButtonComponent::isFixed, "is_hovered",
-        &UIButtonComponent::isHovered, "is_pressed", &UIButtonComponent::isPressed, "has_hover_color",
-        &UIButtonComponent::hasHoverColor, "has_press_color", &UIButtonComponent::hasPressColor, "hover_color",
-        &UIButtonComponent::hoverColor, "press_color", &UIButtonComponent::pressColor, "key", &UIButtonComponent::key,
-        "input_key", &UIButtonComponent::key, "controller_button", &UIButtonComponent::controllerButton,
-        "gamepad_button", &UIButtonComponent::controllerButton, "action", &UIButtonComponent::action, "hover_sound",
+        kUsertypeName, sol::no_constructor, "is_active", &UIButtonComponent::isActive, "is_fixed",
+        &UIButtonComponent::isFixed, "is_hovered", &UIButtonComponent::isHovered, "is_pressed",
+        &UIButtonComponent::isPressed, "has_hover_color", &UIButtonComponent::hasHoverColor, "has_press_color",
+        &UIButtonComponent::hasPressColor, "hover_color", &UIButtonComponent::hoverColor, "press_color",
+        &UIButtonComponent::pressColor, "key", &UIButtonComponent::key, "input_key", &UIButtonComponent::key,
+        "controller_button", &UIButtonComponent::controllerButton, "gamepad_button",
+        &UIButtonComponent::controllerButton, "action", &UIButtonComponent::action, "hover_sound",
         &UIButtonComponent::hoverSound, "click_sound", &UIButtonComponent::clickSound, "focus_sound",
         &UIButtonComponent::focusSound, "on_click", &UIButtonComponent::clickFunction, "trigger",
         [](UIButtonComponent& self, sol::optional<Entity> entity) {

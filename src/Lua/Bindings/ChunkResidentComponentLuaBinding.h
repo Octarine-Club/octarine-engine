@@ -22,8 +22,8 @@ struct LuaBinding<ChunkResidentComponent> {
   }
 
   static void bindUsertype(sol::state& lua) {
-    lua.new_usertype<ChunkResidentComponent>(kUsertypeName, "chunk_x", &ChunkResidentComponent::chunkX, "chunk_y",
-                                             &ChunkResidentComponent::chunkY, "prop_index",
-                                             &ChunkResidentComponent::propIndex);
+    lua.new_usertype<ChunkResidentComponent>(
+        kUsertypeName, sol::no_constructor, "chunk_x", &ChunkResidentComponent::chunkX, "chunk_y",
+        &ChunkResidentComponent::chunkY, "prop_index", &ChunkResidentComponent::propIndex);
   }
 };

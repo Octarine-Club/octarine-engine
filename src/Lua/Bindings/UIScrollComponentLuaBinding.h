@@ -25,9 +25,9 @@ struct LuaBinding<UIScrollComponent> {
 
   static void bindUsertype(sol::state& lua) {
     lua.new_usertype<UIScrollComponent>(
-        kUsertypeName, "scroll_x", &UIScrollComponent::scrollX, "scroll_y", &UIScrollComponent::scrollY,
-        "content_width", &UIScrollComponent::contentWidth, "content_height", &UIScrollComponent::contentHeight,
-        "wheel_step", &UIScrollComponent::wheelStep, "horizontal", &UIScrollComponent::scrollHorizontal, "vertical",
-        &UIScrollComponent::scrollVertical);
+        kUsertypeName, sol::no_constructor, "scroll_x", &UIScrollComponent::scrollX, "scroll_y",
+        &UIScrollComponent::scrollY, "content_width", &UIScrollComponent::contentWidth, "content_height",
+        &UIScrollComponent::contentHeight, "wheel_step", &UIScrollComponent::wheelStep, "horizontal",
+        &UIScrollComponent::scrollHorizontal, "vertical", &UIScrollComponent::scrollVertical);
   }
 };

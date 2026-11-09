@@ -43,7 +43,7 @@ struct LuaBinding<ScaleComponent> {
   static void bindUsertype(sol::state& lua) {
     // `scale` is the uniform-scale view: it reads the x axis, so ask is_uniform() before trusting
     // it on an entity that may have been scaled per-axis.
-    lua.new_usertype<ScaleComponent>(kUsertypeName, "value", &ScaleComponent::value, "x",
+    lua.new_usertype<ScaleComponent>(kUsertypeName, sol::no_constructor, "value", &ScaleComponent::value, "x",
                                      sol::property([](const ScaleComponent& s) { return s.get_x(); },
                                                    [](ScaleComponent& s, float x) { s.set_x(x); }),
                                      "y",

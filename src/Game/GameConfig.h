@@ -115,9 +115,6 @@ class GameConfig {
   void SetFpsTarget(int fpsTarget);
   void SetHotReloadEnabled(bool enabled);
   void SetHotReloadPollSeconds(float seconds);
-  void SetPerfOverlay(bool enabled);
-  void SetPerfOverlayCorner(const std::string& corner);
-  void SetPerfOverlayMetrics(const std::string& metrics);
   void SetDebugOverlayBackgroundColor(const std::string& color);
   void SetAngleUnit(const std::string& unit);
   // Runtime override of the compile-time default log level. Invoked from LoadConfig; pushes the

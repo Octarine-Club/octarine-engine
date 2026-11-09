@@ -74,7 +74,6 @@ void DrawDisplaySection(EngineOptions& opts) {
 
     ImGui::Checkbox("VSync", &opts.vsync);
     ImGui::DragInt("FPS Target (0 = uncapped)", &opts.fpsTarget, 1.0f, 0, 360);
-    ImGui::Checkbox("Perf Overlay", &opts.showPerfOverlay);
     ImGui::Checkbox("Draw Colliders Wireframe", &opts.drawColliders);
   }
 }

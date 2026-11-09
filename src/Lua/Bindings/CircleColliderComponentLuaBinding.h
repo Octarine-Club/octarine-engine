@@ -24,8 +24,8 @@ struct LuaBinding<CircleColliderComponent> {
   }
 
   static void bindUsertype(sol::state& lua) {
-    lua.new_usertype<CircleColliderComponent>(kUsertypeName, "radius", &CircleColliderComponent::radius, "offset",
-                                              &CircleColliderComponent::offset, "is_fixed",
-                                              &CircleColliderComponent::isFixed);
+    lua.new_usertype<CircleColliderComponent>(
+        kUsertypeName, sol::no_constructor, "radius", &CircleColliderComponent::radius, "offset",
+        &CircleColliderComponent::offset, "is_fixed", &CircleColliderComponent::isFixed);
   }
 };

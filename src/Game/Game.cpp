@@ -208,7 +208,6 @@ void ApplyHeadlessOptions(EngineOptions& opts) {
   opts.fpsTarget = 0;
   opts.audioEnabled = false;
   opts.showDebugGUI = false;
-  opts.showPerfOverlay = false;
   opts.hotReloadEnabled = false;
 }
 
@@ -229,7 +228,6 @@ void InitUserSettings(Registry& registry, GameConfig& gameConfig, const std::str
   userSettings.builtInDefaults.vsync = opts.vsync;
   userSettings.builtInDefaults.windowResizable = opts.windowResizable;
   userSettings.builtInDefaults.fpsTarget = opts.fpsTarget;
-  userSettings.builtInDefaults.showPerfOverlay = opts.showPerfOverlay;
   userSettings.builtInDefaults.masterVolume = opts.masterVolume;
   userSettings.builtInDefaults.audioMuted = !opts.audioEnabled;
 
@@ -256,9 +254,6 @@ void InitUserSettings(Registry& registry, GameConfig& gameConfig, const std::str
   }
   if (userSettings.fpsTarget.has_value()) {
     opts.fpsTarget = *userSettings.fpsTarget;
-  }
-  if (userSettings.showPerfOverlay.has_value()) {
-    opts.showPerfOverlay = *userSettings.showPerfOverlay;
   }
   registry.Set<octarine::UserSettings>(userSettings);
 }

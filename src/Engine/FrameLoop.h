@@ -10,8 +10,8 @@
 #include "Components/GlobalTransformComponent.h"
 #include "ECS/Query.h"
 #include "EventBus/EventBus.h"
+#include "General/PerformanceTracker.h"
 #include "Systems/DrawColliderSystem.h"
-#include "Systems/PerfOverlaySystem.h"
 
 class Game;
 class Registry;
@@ -73,9 +73,7 @@ class FrameLoop {
   // deltaTime when FpsTarget=0 lets the loop run uncapped.
   Uint64 nanoseconds_previous_frame_ = 0;
   DrawColliderSystem draw_collider_system_;
-  // Built-in (no-ImGui) FPS + frame-time overlay. Holds a small per-line text-texture cache, so it
-  // is a long-lived member rather than reconstructed each frame.
-  PerfOverlaySystem perf_overlay_;
+  PerformanceTracker perf_tracker_;
 
   // Headless frame-capture (env-driven). When OCTARINE_CAPTURE_PATH is set, the
   // loop renders up to OCTARINE_CAPTURE_FRAME (default 180 ≈ 3s @60fps, past the stress warmup),

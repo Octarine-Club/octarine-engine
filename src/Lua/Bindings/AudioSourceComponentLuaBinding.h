@@ -29,10 +29,11 @@ struct LuaBinding<AudioSourceComponent> {
 
   static void bindUsertype(sol::state& lua) {
     lua.new_usertype<AudioSourceComponent>(
-        kUsertypeName, "clip_id", &AudioSourceComponent::clipId, "volume", &AudioSourceComponent::volume, "pitch",
-        &AudioSourceComponent::pitch, "loop", &AudioSourceComponent::loop, "play_on_spawn",
-        &AudioSourceComponent::playOnSpawn, "despawn_on_finish", &AudioSourceComponent::despawnOnFinish, "spatial",
-        &AudioSourceComponent::spatial, "min_distance", &AudioSourceComponent::minDistance, "max_distance",
-        &AudioSourceComponent::maxDistance, "doppler", &AudioSourceComponent::doppler);
+        kUsertypeName, sol::no_constructor, "clip_id", &AudioSourceComponent::clipId, "volume",
+        &AudioSourceComponent::volume, "pitch", &AudioSourceComponent::pitch, "loop", &AudioSourceComponent::loop,
+        "play_on_spawn", &AudioSourceComponent::playOnSpawn, "despawn_on_finish",
+        &AudioSourceComponent::despawnOnFinish, "spatial", &AudioSourceComponent::spatial, "min_distance",
+        &AudioSourceComponent::minDistance, "max_distance", &AudioSourceComponent::maxDistance, "doppler",
+        &AudioSourceComponent::doppler);
   }
 };

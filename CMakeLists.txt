@@ -227,6 +227,8 @@ else ()
     target_compile_options(${PROJECT_NAME} PRIVATE
             $<$<NOT:$<CONFIG:Debug>>:-ffunction-sections>
             $<$<NOT:$<CONFIG:Debug>>:-fdata-sections>
+            $<$<NOT:$<CONFIG:Debug>>:-fvisibility=hidden>
+            $<$<NOT:$<CONFIG:Debug>>:-fvisibility-inlines-hidden>
     )
     if (APPLE)
         target_link_options(${PROJECT_NAME} PRIVATE

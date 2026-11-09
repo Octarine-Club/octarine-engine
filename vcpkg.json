@@ -52,7 +52,6 @@
     {
       "name": "sdl3-image",
       "features": [
-        "jpeg",
         "png"
       ],
       "version>=": "3.2.4"

@@ -23,8 +23,8 @@ struct LuaBinding<UINineSliceComponent> {
   }
 
   static void bindUsertype(sol::state& lua) {
-    lua.new_usertype<UINineSliceComponent>(kUsertypeName, "left", &UINineSliceComponent::left, "top",
-                                           &UINineSliceComponent::top, "right", &UINineSliceComponent::right, "bottom",
-                                           &UINineSliceComponent::bottom);
+    lua.new_usertype<UINineSliceComponent>(kUsertypeName, sol::no_constructor, "left", &UINineSliceComponent::left,
+                                           "top", &UINineSliceComponent::top, "right", &UINineSliceComponent::right,
+                                           "bottom", &UINineSliceComponent::bottom);
   }
 };

@@ -82,7 +82,7 @@ Not per-frame query systems, but part of the engine:
 | `InputSystem` | Installed at boot; subscribes to input events and tracks per-frame key/mouse/wheel state and action bindings. | `input.*` (held/pressed/released, actions) |
 | `TilemapSystem` | Managed singleton; drives LDtk chunk streaming, 2D DDA raycasting, IntGrid bitmask queries, circle/AABB collision resolution, and prop persistence. | `tilemap.*` (load, raycast, collision, props) |
 | `UIRuntime` | Managed singleton; drives `.oxml` and `.oss` parsing, view mounting, reactive observable binding, and live hot reloading. | `ui.*` (mount, observable, register_widget) |
-| `PerfOverlaySystem` | Frame timing and stats overlay driven in `FrameLoop`. | `toggle_perf_overlay()` |
+| `PerformanceTracker` | Frame timing, memory, and telemetry tracking driven in `FrameLoop`. | `get_perf_stats()`, `get_fps()`, `get_frame_time()` |
 | `EntityPoolManager` (`EntityPoolSystem.h`) | Object pool for recycling entities across archetypes without fresh allocations. | — |
 | `DrawColliderSystem` | Instantiated per frame in `Game::Render` only when the `drawColliders` option is on. Draws collider wireframes. | debug (ImGui builds) |
 | `RenderDebugGUISystem` | Called from `Game::Render`; renders in-game ImGui debug overlays. Compiled out unless `OCTARINE_WITH_IMGUI`. | debug UI |

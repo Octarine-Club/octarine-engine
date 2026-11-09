@@ -20,8 +20,8 @@ struct LuaBinding<AnimationComponent> {
 
   static void bindUsertype(sol::state& lua) {
     lua.new_usertype<AnimationComponent>(
-        kUsertypeName, "num_frames", &AnimationComponent::numFrames, "current_frame", &AnimationComponent::currentFrame,
-        "frame_rate_speed", &AnimationComponent::frameRateSpeed, "should_loop", &AnimationComponent::shouldLoop,
-        "is_finished", &AnimationComponent::isFinished);
+        kUsertypeName, sol::no_constructor, "num_frames", &AnimationComponent::numFrames, "current_frame",
+        &AnimationComponent::currentFrame, "frame_rate_speed", &AnimationComponent::frameRateSpeed, "should_loop",
+        &AnimationComponent::shouldLoop, "is_finished", &AnimationComponent::isFinished);
   }
 };
