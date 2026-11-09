@@ -29,54 +29,57 @@
 
 namespace octarine::debug {
 
+void* SettingsReadOpen(ImGuiContext*, ImGuiSettingsHandler*, const char* name) {
+  if (std::strcmp(name, "OpenState") == 0) {
+    return reinterpret_cast<void*>(1);
+  }
+  return nullptr;
+}
+
+void SettingsReadLine(ImGuiContext*, ImGuiSettingsHandler* handler, void* entry, const char* line) {
+  if (entry == nullptr || handler->UserData == nullptr) return;
+  auto* reg = static_cast<Registry*>(handler->UserData);
+  auto* debugReg = reg->TryGet<DebugMenuRegistry>();
+  if (debugReg == nullptr) return;
+
+  std::string_view sv(line);
+  const auto eq = sv.find('=');
+  if (eq != std::string_view::npos) {
+    const std::string key(sv.substr(0, eq));
+    const std::string_view val = sv.substr(eq + 1);
+    const bool isOpen = (val == "1" || val == "true");
+    debugReg->ApplyPersistedOpenState(key, isOpen);
+  }
+}
+
+void SettingsWriteAll(ImGuiContext*, ImGuiSettingsHandler* handler, ImGuiTextBuffer* buf) {
+  if (handler->UserData == nullptr) return;
+  auto* reg = static_cast<Registry*>(handler->UserData);
+  auto* debugReg = reg->TryGet<DebugMenuRegistry>();
+  if (debugReg == nullptr) return;
+
+  buf->appendf("[%s][OpenState]\n", handler->TypeName);
+  std::string serialized = debugReg->SerializeOpenStates();
+  buf->append(serialized.c_str());
+  buf->append("\n");
+}
+
 void InstallImGuiSettingsHandler(Registry& registry) {
   ImGuiContext* ctx = ImGui::GetCurrentContext();
   if (ctx == nullptr) return;
 
-  for (const auto& existing : ctx->SettingsHandlers) {
-    if (std::strcmp(existing.TypeName, "OctarineDebugPanels") == 0) return;
-  }
+  const bool alreadyInstalled = std::ranges::any_of(ctx->SettingsHandlers, [](const auto& existing) {
+    return std::strcmp(existing.TypeName, "OctarineDebugPanels") == 0;
+  });
+  if (alreadyInstalled) return;
 
   ImGuiSettingsHandler iniHandler;
   iniHandler.TypeName = "OctarineDebugPanels";
   iniHandler.TypeHash = ImHashStr("OctarineDebugPanels");
   iniHandler.UserData = &registry;
-
-  iniHandler.ReadOpenFn = [](ImGuiContext*, ImGuiSettingsHandler*, const char* name) -> void* {
-    if (std::strcmp(name, "OpenState") == 0) {
-      return reinterpret_cast<void*>(1);
-    }
-    return nullptr;
-  };
-
-  iniHandler.ReadLineFn = [](ImGuiContext*, ImGuiSettingsHandler* handler, void* entry, const char* line) {
-    if (entry == nullptr || handler->UserData == nullptr) return;
-    auto* reg = static_cast<Registry*>(handler->UserData);
-    auto* debugReg = reg->TryGet<DebugMenuRegistry>();
-    if (debugReg == nullptr) return;
-
-    std::string_view sv(line);
-    const auto eq = sv.find('=');
-    if (eq != std::string_view::npos) {
-      const std::string key(sv.substr(0, eq));
-      const std::string_view val = sv.substr(eq + 1);
-      const bool isOpen = (val == "1" || val == "true");
-      debugReg->ApplyPersistedOpenState(key, isOpen);
-    }
-  };
-
-  iniHandler.WriteAllFn = [](ImGuiContext*, ImGuiSettingsHandler* handler, ImGuiTextBuffer* buf) {
-    if (handler->UserData == nullptr) return;
-    auto* reg = static_cast<Registry*>(handler->UserData);
-    auto* debugReg = reg->TryGet<DebugMenuRegistry>();
-    if (debugReg == nullptr) return;
-
-    buf->appendf("[%s][OpenState]\n", handler->TypeName);
-    std::string serialized = debugReg->SerializeOpenStates();
-    buf->append(serialized.c_str());
-    buf->append("\n");
-  };
-
+  iniHandler.ReadOpenFn = SettingsReadOpen;
+  iniHandler.ReadLineFn = SettingsReadLine;
+  iniHandler.WriteAllFn = SettingsWriteAll;
   ctx->SettingsHandlers.push_back(iniHandler);
 }
 
@@ -173,17 +176,21 @@ void InstallBuiltInDebugPanels(octarine::debug::DebugMenuRegistry& debugReg) {
   });
 }
 
-void DrawRegisteredPanels(Registry& registry, octarine::debug::DebugMenuRegistry& debugReg) {
-  for (auto& panel : debugReg.Panels()) {
-    if (!panel.isOpen) continue;
-    if (panel.autoWindow) {
-      if (ImGui::Begin(panel.title.c_str(), &panel.isOpen)) {
-        if (panel.drawCallback) panel.drawCallback(registry);
-      }
-      ImGui::End();
-    } else {
+void DrawSinglePanel(Registry& registry, octarine::debug::DebugPanelDescriptor& panel) {
+  if (!panel.isOpen) return;
+  if (panel.autoWindow) {
+    if (ImGui::Begin(panel.title.c_str(), &panel.isOpen)) {
       if (panel.drawCallback) panel.drawCallback(registry);
     }
+    ImGui::End();
+  } else if (panel.drawCallback) {
+    panel.drawCallback(registry);
+  }
+}
+
+void DrawRegisteredPanels(Registry& registry, octarine::debug::DebugMenuRegistry& debugReg) {
+  for (auto& panel : debugReg.Panels()) {
+    DrawSinglePanel(registry, panel);
   }
 }
 }  // namespace

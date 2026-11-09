@@ -17,13 +17,15 @@ namespace octarine::debug {
 
 namespace {
 
-void DrawCategoryPanelsAndActions(Registry& registry, DebugMenuRegistry& debugReg, std::string_view category) {
+void DrawCategoryPanels(DebugMenuRegistry& debugReg, std::string_view category) {
   for (auto& panel : debugReg.Panels()) {
     if (panel.category == category) {
       ImGui::MenuItem(panel.title.c_str(), panel.shortcut.empty() ? nullptr : panel.shortcut.c_str(), &panel.isOpen);
     }
   }
+}
 
+void DrawCategoryToggles(DebugMenuRegistry& debugReg, std::string_view category) {
   for (const auto& toggle : debugReg.Toggles()) {
     if (toggle.category == category) {
       bool state = toggle.getter();
@@ -32,7 +34,9 @@ void DrawCategoryPanelsAndActions(Registry& registry, DebugMenuRegistry& debugRe
       }
     }
   }
+}
 
+void DrawCategoryActions(Registry& registry, DebugMenuRegistry& debugReg, std::string_view category) {
   for (const auto& action : debugReg.Actions()) {
     if (action.category == category) {
       if (ImGui::MenuItem(action.label.c_str(), action.shortcut.empty() ? nullptr : action.shortcut.c_str())) {
@@ -40,6 +44,12 @@ void DrawCategoryPanelsAndActions(Registry& registry, DebugMenuRegistry& debugRe
       }
     }
   }
+}
+
+void DrawCategoryPanelsAndActions(Registry& registry, DebugMenuRegistry& debugReg, std::string_view category) {
+  DrawCategoryPanels(debugReg, category);
+  DrawCategoryToggles(debugReg, category);
+  DrawCategoryActions(registry, debugReg, category);
 }
 
 void DrawEngineMenu(Registry& registry, DebugMenuRegistry& debugReg) {
@@ -118,13 +128,7 @@ void DrawGameMenu(Registry& registry, DebugMenuRegistry& debugReg) {
   }
 }
 
-void DrawTransportControls(Registry& registry, EngineOptions& opts, float deltaTime) {
-  constexpr float kRightPadding = 420.0f;
-  const float avail = ImGui::GetContentRegionAvail().x;
-  if (avail > kRightPadding) {
-    ImGui::SameLine(ImGui::GetWindowWidth() - kRightPadding);
-  }
-
+void DrawPlaybackButtons(EngineOptions& opts) {
   if (ImGui::Button(opts.isPaused ? " Play " : " Pause ")) {
     opts.isPaused = !opts.isPaused;
   }
@@ -142,8 +146,9 @@ void DrawTransportControls(Registry& registry, EngineOptions& opts, float deltaT
   ImGui::DragFloat("##speed", &opts.timeScale, 0.05f, 0.05f, 8.0f, "%.2fx");
   if (ImGui::IsItemHovered()) ImGui::SetTooltip("Simulation time scale (Right-click to reset)");
   if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) opts.timeScale = 1.0f;
+}
 
-  ImGui::SameLine();
+void DrawStateHashSection(Registry& registry, EngineOptions& opts, float deltaTime) {
   const float fps = deltaTime > 0.0f ? 1.0f / deltaTime : 0.0f;
   static uint64_t cachedHash = 0;
   static bool hasCachedHash = false;
@@ -176,6 +181,18 @@ void DrawTransportControls(Registry& registry, EngineOptions& opts, float deltaT
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip("Canonical state hash (auto-computed while paused, click to recompute/copy)");
   }
+}
+
+void DrawTransportControls(Registry& registry, EngineOptions& opts, float deltaTime) {
+  constexpr float kRightPadding = 420.0f;
+  const float avail = ImGui::GetContentRegionAvail().x;
+  if (avail > kRightPadding) {
+    ImGui::SameLine(ImGui::GetWindowWidth() - kRightPadding);
+  }
+
+  DrawPlaybackButtons(opts);
+  ImGui::SameLine();
+  DrawStateHashSection(registry, opts, deltaTime);
 }
 
 }  // namespace

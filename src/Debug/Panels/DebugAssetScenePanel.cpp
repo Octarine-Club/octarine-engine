@@ -18,6 +18,27 @@ namespace octarine::debug {
 
 namespace {
 
+void DrawAvailableScenes(const std::string& basePath, SceneLoader* loader) {
+  const std::filesystem::path scenesDir = std::filesystem::path(basePath) / "scripts" / "scenes";
+  std::error_code ec;
+  if (!std::filesystem::is_directory(scenesDir, ec)) return;
+
+  ImGui::Separator();
+  ImGui::TextDisabled("Available Scenes (scripts/scenes/):");
+  for (const auto& entry : std::filesystem::directory_iterator(scenesDir, ec)) {
+    if (entry.is_regular_file(ec) && entry.path().extension() == ".lua") {
+      const std::string rel = "scripts/scenes/" + entry.path().filename().string();
+      ImGui::PushID(rel.c_str());
+      ImGui::TextUnformatted(entry.path().filename().string().c_str());
+      ImGui::SameLine();
+      if (ImGui::SmallButton("Load") && loader != nullptr) {
+        loader->RequestLoadScene(rel);
+      }
+      ImGui::PopID();
+    }
+  }
+}
+
 void DrawScenesTab(Registry& registry, AssetManager* assets) {
   auto* loaderPtr = registry.TryGet<SceneLoader*>();
   SceneLoader* loader = loaderPtr ? *loaderPtr : nullptr;
@@ -38,25 +59,41 @@ void DrawScenesTab(Registry& registry, AssetManager* assets) {
   }
 
   if (assets != nullptr) {
-    const std::filesystem::path scenesDir = std::filesystem::path(assets->GetBasePath()) / "scripts" / "scenes";
-    std::error_code ec;
-    if (std::filesystem::is_directory(scenesDir, ec)) {
-      ImGui::Separator();
-      ImGui::TextDisabled("Available Scenes (scripts/scenes/):");
-      for (const auto& entry : std::filesystem::directory_iterator(scenesDir, ec)) {
-        if (entry.is_regular_file(ec) && entry.path().extension() == ".lua") {
-          const std::string rel = "scripts/scenes/" + entry.path().filename().string();
-          ImGui::PushID(rel.c_str());
-          ImGui::TextUnformatted(entry.path().filename().string().c_str());
-          ImGui::SameLine();
-          if (ImGui::SmallButton("Load") && loader != nullptr) {
-            loader->RequestLoadScene(rel);
-          }
-          ImGui::PopID();
-        }
-      }
-    }
+    DrawAvailableScenes(assets->GetBasePath(), loader);
   }
+}
+
+void DrawTextureRow(const std::string& id, SDL_Texture* tex, AssetManager& assets, SDL_Renderer* renderer,
+                    MIX_Mixer* mixer) {
+  ImGui::TableNextRow();
+  ImGui::TableSetColumnIndex(0);
+  ImGui::TextUnformatted(id.c_str());
+
+  float w = 0.0f;
+  float h = 0.0f;
+  if (tex != nullptr) {
+    SDL_GetTextureSize(tex, &w, &h);
+  }
+
+  if (ImGui::IsItemHovered() && tex != nullptr) {
+    ImGui::BeginTooltip();
+    const auto texId = static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(tex));
+    ImGui::Image(texId, ImVec2(128.0f, 128.0f * (h > 0.0f ? h / w : 1.0f)));
+    ImGui::EndTooltip();
+  }
+
+  ImGui::TableSetColumnIndex(1);
+  ImGui::Text("%.0fx%.0f", static_cast<double>(w), static_cast<double>(h));
+
+  ImGui::TableSetColumnIndex(2);
+  ImGui::Text("%d", assets.RefCount(id));
+
+  ImGui::TableSetColumnIndex(3);
+  ImGui::PushID(id.c_str());
+  if (ImGui::SmallButton("Reload")) {
+    assets.Reload(id, renderer, mixer);
+  }
+  ImGui::PopID();
 }
 
 void DrawTexturesTab(Registry& registry, AssetManager* assets) {
@@ -73,35 +110,7 @@ void DrawTexturesTab(Registry& registry, AssetManager* assets) {
     ImGui::TableHeadersRow();
 
     for (const auto& [id, tex] : assets->GetTextures()) {
-      ImGui::TableNextRow();
-      ImGui::TableSetColumnIndex(0);
-      ImGui::TextUnformatted(id.c_str());
-
-      float w = 0.0f;
-      float h = 0.0f;
-      if (tex != nullptr) {
-        SDL_GetTextureSize(tex, &w, &h);
-      }
-
-      if (ImGui::IsItemHovered() && tex != nullptr) {
-        ImGui::BeginTooltip();
-        const auto texId = static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(tex));
-        ImGui::Image(texId, ImVec2(128.0f, 128.0f * (h > 0.0f ? h / w : 1.0f)));
-        ImGui::EndTooltip();
-      }
-
-      ImGui::TableSetColumnIndex(1);
-      ImGui::Text("%.0fx%.0f", static_cast<double>(w), static_cast<double>(h));
-
-      ImGui::TableSetColumnIndex(2);
-      ImGui::Text("%d", assets->RefCount(id));
-
-      ImGui::TableSetColumnIndex(3);
-      ImGui::PushID(id.c_str());
-      if (ImGui::SmallButton("Reload")) {
-        assets->Reload(id, renderer, mixer);
-      }
-      ImGui::PopID();
+      DrawTextureRow(id, tex, *assets, renderer, mixer);
     }
     ImGui::EndTable();
   }

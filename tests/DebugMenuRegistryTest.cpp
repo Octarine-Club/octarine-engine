@@ -46,9 +46,9 @@ int main() {
     bool toggleState = false;
     reg.RegisterToggle("Game/GodMode", [&]() { return toggleState; }, [&](bool v) { toggleState = v; });
     Check(reg.Toggles().size() == 1, "toggle registered");
-    Check(reg.Toggles()[0].getter() == false, "toggle getter works");
+    Check(!reg.Toggles()[0].getter(), "toggle getter works");
     reg.Toggles()[0].setter(true);
-    Check(toggleState == true, "toggle setter works");
+    Check(toggleState, "toggle setter works");
 
     int watchValue = 42;
     reg.RegisterWatch("Test Watch", [&]() { return std::to_string(watchValue); });
@@ -91,7 +91,7 @@ int main() {
     reg.RegisterToggle("Game/Toggle", []() { return false; }, [](bool) {});
     reg.RegisterToggle("Game/Toggle", []() { return true; }, [](bool) {});
     Check(reg.Toggles().size() == 1, "toggle vector updates in-place on hot reload");
-    Check(reg.Toggles()[0].getter() == true, "toggle getter updated");
+    Check(reg.Toggles()[0].getter(), "toggle getter updated");
   }
 
   std::cout << "[DebugMenuRegistry] Per-Project Persistence Serialization\n";

@@ -368,12 +368,8 @@ bool ContainsCaseInsensitive(const std::string& haystack, const std::string& nee
 }
 
 bool MatchesAnySubstringCaseInsensitive(const std::string& haystack, const std::vector<std::string>& needles) noexcept {
-  for (const auto& needle : needles) {
-    if (!needle.empty() && ContainsCaseInsensitive(haystack, needle)) {
-      return true;
-    }
-  }
-  return false;
+  return std::ranges::any_of(
+      needles, [&](const auto& needle) { return !needle.empty() && ContainsCaseInsensitive(haystack, needle); });
 }
 
 struct CollisionMatchResult {
@@ -409,12 +405,9 @@ bool LevelHasExplicitCollisionLayer(const Json& layers, const std::vector<Collis
     if (!layer.is_object()) return false;
     const std::string id = layer.value("__identifier", std::string{});
     if (!rules.empty()) {
-      for (const auto& rule : rules) {
-        if (!rule.layerMatch.empty() && ContainsCaseInsensitive(id, rule.layerMatch)) {
-          return true;
-        }
-      }
-      return false;
+      return std::ranges::any_of(rules, [&](const auto& rule) {
+        return !rule.layerMatch.empty() && ContainsCaseInsensitive(id, rule.layerMatch);
+      });
     }
     return ContainsCaseInsensitive(id, "collision");
   });

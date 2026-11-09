@@ -11,30 +11,32 @@ namespace octarine::debug {
 
 namespace {
 
-void DrawWatchesSection(DebugMenuRegistry& debugReg) {
-  if (ImGui::CollapsingHeader("Live Watches & Tweaks", ImGuiTreeNodeFlags_DefaultOpen)) {
-    const auto& watches = debugReg.Watches();
-    if (watches.empty()) {
-      ImGui::TextDisabled("No active watches. Register with dev.watch('Label', fn)");
-    } else {
-      if (ImGui::BeginTable("##watches_table", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
-        ImGui::TableSetupColumn("Watch Label", ImGuiTableColumnFlags_WidthFixed, 180.0f);
-        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableHeadersRow();
+void DrawWatchesTable(const std::vector<DebugWatchDescriptor>& watches) {
+  if (!ImGui::BeginTable("##watches_table", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) return;
+  ImGui::TableSetupColumn("Watch Label", ImGuiTableColumnFlags_WidthFixed, 180.0f);
+  ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+  ImGui::TableHeadersRow();
 
-        for (const auto& w : watches) {
-          ImGui::TableNextRow();
-          ImGui::TableSetColumnIndex(0);
-          ImGui::TextUnformatted(w.label.c_str());
+  for (const auto& w : watches) {
+    ImGui::TableNextRow();
+    ImGui::TableSetColumnIndex(0);
+    ImGui::TextUnformatted(w.label.c_str());
 
-          ImGui::TableSetColumnIndex(1);
-          const std::string val = w.valueFormatter ? w.valueFormatter() : "<null>";
-          ImGui::TextUnformatted(val.c_str());
-        }
-        ImGui::EndTable();
-      }
-    }
+    ImGui::TableSetColumnIndex(1);
+    const std::string val = w.valueFormatter ? w.valueFormatter() : "<null>";
+    ImGui::TextUnformatted(val.c_str());
   }
+  ImGui::EndTable();
+}
+
+void DrawWatchesSection(DebugMenuRegistry& debugReg) {
+  if (!ImGui::CollapsingHeader("Live Watches & Tweaks", ImGuiTreeNodeFlags_DefaultOpen)) return;
+  const auto& watches = debugReg.Watches();
+  if (watches.empty()) {
+    ImGui::TextDisabled("No active watches. Register with dev.watch('Label', fn)");
+    return;
+  }
+  DrawWatchesTable(watches);
 }
 
 void DrawSimulationSection(EngineOptions& opts) {

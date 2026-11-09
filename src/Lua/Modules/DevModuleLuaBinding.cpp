@@ -77,8 +77,8 @@ void BindPanelFunctions(sol::table& dev, LuaBindingContext& ctx) {
 }
 
 void BindActionAndToggleFunctions(sol::table& dev, LuaBindingContext& ctx) {
-  dev.set_function("register_action", [&ctx](const std::string& menuPath, sol::protected_function actionFn,
-                                             sol::optional<std::string> shortcut) {
+  dev.set_function("register_action", [&ctx](const std::string& menuPath, const sol::protected_function& actionFn,
+                                             const sol::optional<std::string>& shortcut) {
     auto* debugReg = GetDebugRegistry(ctx);
     if (!debugReg || !actionFn.valid()) return;
 
@@ -87,51 +87,53 @@ void BindActionAndToggleFunctions(sol::table& dev, LuaBindingContext& ctx) {
         [actionFn](Registry&) {
           auto res = actionFn();
           if (!res.valid()) {
-            const sol::error err = res;
+            const auto err = res.get<sol::error>();
             Logger::ErrorLua("dev.register_action error: " + std::string(err.what()));
           }
         },
         shortcut.value_or(""), /*isLuaOwned=*/true);
   });
 
-  dev.set_function("register_toggle",
-                   [&ctx](const std::string& menuPath, sol::protected_function getter, sol::protected_function setter) {
-                     auto* debugReg = GetDebugRegistry(ctx);
-                     if (!debugReg || !getter.valid() || !setter.valid()) return;
+  dev.set_function("register_toggle", [&ctx](const std::string& menuPath, const sol::protected_function& getter,
+                                             const sol::protected_function& setter) {
+    auto* debugReg = GetDebugRegistry(ctx);
+    if (!debugReg || !getter.valid() || !setter.valid()) return;
 
-                     debugReg->RegisterToggle(
-                         menuPath,
-                         [getter]() -> bool {
-                           auto res = getter();
-                           return res.valid() && res.get_type() == sol::type::boolean && res.get<bool>();
-                         },
-                         [setter](bool enabled) {
-                           auto res = setter(enabled);
-                           if (!res.valid()) {
-                             const sol::error err = res;
-                             Logger::ErrorLua("dev.register_toggle error: " + std::string(err.what()));
-                           }
-                         },
-                         /*isLuaOwned=*/true);
-                   });
+    debugReg->RegisterToggle(
+        menuPath,
+        [getter]() -> bool {
+          auto res = getter();
+          return res.valid() && res.get_type() == sol::type::boolean && res.get<bool>();
+        },
+        [setter](bool enabled) {
+          auto res = setter(enabled);
+          if (!res.valid()) {
+            const auto err = res.get<sol::error>();
+            Logger::ErrorLua("dev.register_toggle error: " + std::string(err.what()));
+          }
+        },
+        /*isLuaOwned=*/true);
+  });
 }
 
-void BindWatchAndEntityFunctions(sol::table& dev, LuaBindingContext& ctx) {
-  dev.set_function("watch", [&ctx](const std::string& label, sol::protected_function valueFn) {
+std::string FormatWatchValue(const sol::protected_function& valueFn) {
+  auto res = valueFn();
+  if (!res.valid()) return "<err>";
+  if (res.return_count() == 0) return {};
+  const sol::object obj = res.get<sol::object>();
+  if (obj.is<std::string>()) return obj.as<std::string>();
+  sol::state_view sv(obj.lua_state());
+  sol::protected_function_result strRes = sv["tostring"](obj);
+  return strRes.valid() && strRes.get_type() == sol::type::string ? strRes.get<std::string>() : std::string{};
+}
+
+void BindWatchFunctions(sol::table& dev, LuaBindingContext& ctx) {
+  dev.set_function("watch", [&ctx](const std::string& label, const sol::protected_function& valueFn) {
     auto* debugReg = GetDebugRegistry(ctx);
     if (!debugReg || !valueFn.valid()) return;
 
     debugReg->RegisterWatch(
-        label,
-        [valueFn]() -> std::string {
-          auto res = valueFn();
-          if (!res.valid()) return "<err>";
-          sol::object obj = res;
-          if (obj.is<std::string>()) return obj.as<std::string>();
-          sol::state_view sv(obj.lua_state());
-          sol::protected_function_result strRes = sv["tostring"](obj);
-          return strRes.valid() && strRes.get_type() == sol::type::string ? strRes.get<std::string>() : std::string{};
-        },
+        label, [valueFn]() -> std::string { return FormatWatchValue(valueFn); },
         /*isLuaOwned=*/true);
   });
 
@@ -139,7 +141,9 @@ void BindWatchAndEntityFunctions(sol::table& dev, LuaBindingContext& ctx) {
     auto* debugReg = GetDebugRegistry(ctx);
     return debugReg != nullptr && debugReg->UnregisterWatch(label);
   });
+}
 
+void BindEntitySelectionFunctions(sol::table& dev, LuaBindingContext& ctx) {
   dev.set_function("select_entity", [&ctx](sol::optional<Entity> entity) {
     if (auto* debugReg = GetDebugRegistry(ctx)) {
       debugReg->SelectEntity(entity.value_or(Entity{}));
@@ -150,9 +154,8 @@ void BindWatchAndEntityFunctions(sol::table& dev, LuaBindingContext& ctx) {
     auto* debugReg = GetDebugRegistry(ctx);
     if (debugReg == nullptr) return sol::nullopt;
     const Entity ent = debugReg->GetSelectedEntity();
-    if (auto* reg = ctx.GetRegistry()) {
-      if (reg->IsAlive(ent)) return ent;
-    }
+    auto* reg = ctx.GetRegistry();
+    if (reg != nullptr && reg->IsAlive(ent)) return ent;
     return sol::nullopt;
   });
 
@@ -169,5 +172,6 @@ void LuaModuleBinding<DevModule>::install(sol::state& lua, LuaBindingContext& ct
   sol::table dev = lua.create_named_table("dev");
   BindPanelFunctions(dev, ctx);
   BindActionAndToggleFunctions(dev, ctx);
-  BindWatchAndEntityFunctions(dev, ctx);
+  BindWatchFunctions(dev, ctx);
+  BindEntitySelectionFunctions(dev, ctx);
 }

@@ -2599,13 +2599,11 @@ std::vector<UIRuntime::MountedViewDebugInfo> UIRuntime::GetMountedViewsDebugInfo
 }
 
 bool UIRuntime::ReloadMountedView(const uint64_t id) {
-  for (const auto& rec : mounted_views_) {
-    if (rec && rec->id == id && rec->reloadFn) {
-      rec->reloadFn();
-      return true;
-    }
-  }
-  return false;
+  const auto it =
+      std::ranges::find_if(mounted_views_, [id](const auto& rec) { return rec && rec->id == id && rec->reloadFn; });
+  if (it == mounted_views_.end()) return false;
+  (*it)->reloadFn();
+  return true;
 }
 
 void UIRuntime::ReloadAllMountedViews() {

@@ -34,21 +34,17 @@ bool PassesFilter(const Registry& registry, Entity ent, const std::string& filte
 
   if (filter.starts_with("@")) {
     const std::string compFilter = filter.substr(1);
-    for (const auto& entry : DebugComponentInspectorRegistry::All()) {
-      if (entry.hasComponent(registry, ent)) {
-        if (entry.displayName.find(compFilter) != std::string::npos) return true;
-      }
-    }
-    return false;
+    const auto& all = DebugComponentInspectorRegistry::All();
+    return std::ranges::any_of(all, [&](const auto& entry) {
+      return entry.hasComponent(registry, ent) && entry.displayName.find(compFilter) != std::string::npos;
+    });
   }
 
   const std::string name = GetEntityDisplayName(registry, ent);
   return name.find(filter) != std::string::npos;
 }
 
-void DrawEntityList(Registry& registry, DebugMenuRegistry& debugReg, const std::string& filter) {
-  const auto entities = registry.GetUserEntities();
-
+void DrawEntityListToolbar(Registry& registry, DebugMenuRegistry& debugReg) {
   if (ImGui::Button("+ Create")) {
     const Entity created = registry.CreateEntity();
     debugReg.SelectEntity(created);
@@ -68,7 +64,11 @@ void DrawEntityList(Registry& registry, DebugMenuRegistry& debugReg, const std::
   if (ImGui::Checkbox("Pick (Alt+Click)", &picker)) {
     debugReg.SetWorldPickerEnabled(picker);
   }
+}
 
+void DrawEntityList(Registry& registry, DebugMenuRegistry& debugReg, const std::string& filter) {
+  const auto entities = registry.GetUserEntities();
+  DrawEntityListToolbar(registry, debugReg);
   ImGui::Separator();
 
   if (ImGui::BeginChild("##entity_list", ImVec2(0, 0), true)) {
@@ -80,6 +80,7 @@ void DrawEntityList(Registry& registry, DebugMenuRegistry& debugReg, const std::
       }
     }
 
+    const Entity selected = debugReg.GetSelectedEntity();
     ImGuiListClipper clipper;
     clipper.Begin(static_cast<int>(displayEntities.size()));
     while (clipper.Step()) {

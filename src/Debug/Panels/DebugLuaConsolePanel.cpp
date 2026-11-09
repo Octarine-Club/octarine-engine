@@ -2,6 +2,7 @@
 
 #ifdef OCTARINE_WITH_IMGUI
 #include <algorithm>
+#include <cstdint>
 #include <cstring>
 #include <sol/sol.hpp>
 #include <string>
@@ -15,7 +16,7 @@ namespace octarine::debug {
 
 namespace {
 
-enum class SeverityFilter { All, Info, Warn, Error, Lua };
+enum class SeverityFilter : std::uint8_t { All, Info, Warn, Error, Lua };
 
 struct ConsoleState {
   char inputBuf[512] = "";
@@ -33,31 +34,43 @@ ConsoleState& GetConsoleState() {
   return state;
 }
 
+void NavigateHistoryUp(ConsoleState* state) {
+  if (state->historyPos == -1) {
+    state->historyPos = static_cast<int>(state->commandHistory.size()) - 1;
+  } else if (state->historyPos > 0) {
+    state->historyPos--;
+  }
+}
+
+void NavigateHistoryDown(ConsoleState* state) {
+  if (state->historyPos != -1) {
+    state->historyPos++;
+    if (state->historyPos >= static_cast<int>(state->commandHistory.size())) {
+      state->historyPos = -1;
+    }
+  }
+}
+
+void HandleHistoryNavigation(ConsoleState* state, ImGuiInputTextCallbackData* data) {
+  const int prevPos = state->historyPos;
+  if (data->EventKey == ImGuiKey_UpArrow) {
+    NavigateHistoryUp(state);
+  } else if (data->EventKey == ImGuiKey_DownArrow) {
+    NavigateHistoryDown(state);
+  }
+
+  if (prevPos != state->historyPos) {
+    const char* historyStr =
+        (state->historyPos >= 0) ? state->commandHistory[static_cast<size_t>(state->historyPos)].c_str() : "";
+    data->DeleteChars(0, data->BufTextLen);
+    data->InsertChars(0, historyStr);
+  }
+}
+
 int TextEditCallbackStub(ImGuiInputTextCallbackData* data) {
   auto* state = static_cast<ConsoleState*>(data->UserData);
   if (data->EventFlag == ImGuiInputTextFlags_CallbackHistory) {
-    const int prevPos = state->historyPos;
-    if (data->EventKey == ImGuiKey_UpArrow) {
-      if (state->historyPos == -1) {
-        state->historyPos = static_cast<int>(state->commandHistory.size()) - 1;
-      } else if (state->historyPos > 0) {
-        state->historyPos--;
-      }
-    } else if (data->EventKey == ImGuiKey_DownArrow) {
-      if (state->historyPos != -1) {
-        state->historyPos++;
-        if (state->historyPos >= static_cast<int>(state->commandHistory.size())) {
-          state->historyPos = -1;
-        }
-      }
-    }
-
-    if (prevPos != state->historyPos) {
-      const char* historyStr =
-          (state->historyPos >= 0) ? state->commandHistory[static_cast<size_t>(state->historyPos)].c_str() : "";
-      data->DeleteChars(0, data->BufTextLen);
-      data->InsertChars(0, historyStr);
-    }
+    HandleHistoryNavigation(state, data);
   }
   return 0;
 }
@@ -83,13 +96,13 @@ void ExecuteLuaCommand(Registry& registry, const std::string& command) {
   }
 
   if (!result.valid()) {
-    const sol::error err = result;
+    const auto err = result.get<sol::error>();
     Logger::ErrorLua(err.what());
     return;
   }
 
   if (result.return_count() > 0) {
-    sol::object obj = result[0];
+    const sol::object obj = result.get<sol::object>(0);
     if (obj.is<std::string>()) {
       Logger::InfoLua(obj.as<std::string>());
     } else {
