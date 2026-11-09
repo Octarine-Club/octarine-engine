@@ -17,6 +17,7 @@
 #include "Components/TrianglePrimitiveComponent.h"
 #ifdef OCTARINE_HAS_GAME_MODULE
 #include "Components/HealthComponent.h"
+#include "Engine/GameModuleHooks.h"
 #include "Lua/Bindings/HealthComponentLuaBinding.h"
 #endif
 #include "Components/LifetimeComponent.h"
@@ -407,6 +408,9 @@ int main() {
   lua.open_libraries(sol::lib::base, sol::lib::math, sol::lib::io, sol::lib::string, sol::lib::table);
 
   RegisterAllLuaBindings();
+#ifdef OCTARINE_HAS_GAME_MODULE
+  game_module::RegisterComponentBindings();
+#endif
   ScriptSystem scriptSystem;
   scriptSystem.CreateLuaBindings(lua);  // primitives + every LuaBinding<T>::bindUsertype
   RegisterAllLuaModules(lua, game);     // installs `registry.has_/get_<key>` + free functions
