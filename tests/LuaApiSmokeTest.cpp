@@ -70,7 +70,7 @@ int main() {
 
   // Mirror Game::Setup's binding order: component types, then free-function modules, then
   // system surfaces. Pass false so catalogs reflect the pure engine API surface.
-  RegisterAllLuaBindings(false);
+  RegisterAllLuaBindings();
 
   ScriptSystem scriptSystem;
   scriptSystem.CreateLuaBindings(lua);  // primitives + component usertypes

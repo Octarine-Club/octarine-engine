@@ -39,6 +39,8 @@ option(OCTARINE_ALLOW_LOOSE_ASSETS "Allow loose config/manifest/asset overrides 
 
 # Compiler & performance tuning
 option(OCTARINE_USE_CCACHE "Use ccache or sccache as compiler launcher when available" ON)
+option(OCTARINE_ENABLE_PCH "Use precompiled headers for engine and native game module targets" ON)
+option(OCTARINE_ENABLE_LTO "Enable Link-Time Optimization (ThinLTO / IPO) for non-Debug engine and benchmark targets" ON)
 option(OCTARINE_NATIVE_ARCH "Tune optimized builds for host CPU (-march=native; not portable, keep off for distribution)" OFF)
 set(OCTARINE_SANITIZE "OFF" CACHE STRING "Sanitizer instrumentation: OFF, asan (ASan+UBSan), or tsan")
 set_property(CACHE OCTARINE_SANITIZE PROPERTY STRINGS OFF asan tsan)
@@ -95,6 +97,14 @@ if (OCTARINE_USE_CCACHE AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
     endif ()
 endif ()
 
+# Precompiled Header & ccache interoperability
+if (OCTARINE_ENABLE_PCH)
+    message(STATUS "Octarine: Precompiled Headers ENABLED")
+    if (OCTARINE_COMPILER_CACHE AND (CMAKE_CXX_COMPILER_ID MATCHES "Clang|AppleClang|GNU"))
+        add_compile_options(-fpch-preprocess)
+    endif ()
+endif ()
+
 # Architecture flags: default to portable baseline (x86-64-v3 / AVX2 floor) on x86_64
 if (OCTARINE_NATIVE_ARCH)
     set(OCTARINE_ARCH_FLAG "-march=native")
@@ -105,12 +115,21 @@ else ()
 endif ()
 
 # Link-Time Optimization (LTO / IPO) for non-Debug configurations
-include(CheckIPOSupported)
-check_ipo_supported(RESULT OCTARINE_IPO_SUPPORTED OUTPUT OCTARINE_IPO_ERROR)
-if (OCTARINE_IPO_SUPPORTED)
-    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
-    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO ON)
-    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL ON)
+if (OCTARINE_ENABLE_LTO)
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT OCTARINE_IPO_SUPPORTED OUTPUT OCTARINE_IPO_ERROR)
+    if (OCTARINE_IPO_SUPPORTED)
+        set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+        set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO ON)
+        set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL ON)
+
+        # ThinLTO incremental cache directory for sub-second re-links
+        if (APPLE)
+            add_link_options($<$<NOT:$<CONFIG:Debug>>:-Wl,-cache_path_lto,${CMAKE_BINARY_DIR}/lto.cache>)
+        elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+            add_link_options($<$<NOT:$<CONFIG:Debug>>:-Wl,--thinlto-cache-dir=${CMAKE_BINARY_DIR}/lto.cache>)
+        endif ()
+    endif ()
 endif ()
 
 # Sanitizers (GCC/Clang only)

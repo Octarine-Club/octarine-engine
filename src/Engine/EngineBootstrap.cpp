@@ -131,6 +131,7 @@ void RegisterAllComponentBindings() {
   // ScriptSystem's CreateLuaBindings runs — usertypes + registry.has_/get_ are populated
   // from LuaComponentRegistry at that point.
   RegisterAllLuaBindings();
+  game_module::RegisterComponentBindings();
 }
 
 void InstallLuaModules(sol::state& lua, Game& game) {

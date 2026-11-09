@@ -44,17 +44,14 @@ function(octarine_add_engine_test TARGET CTEST_NAME SOURCE)
     target_include_directories(${TARGET} PRIVATE "${CMAKE_SOURCE_DIR}/tests")
 endfunction()
 
-# Core ECS test helper (links ECS Registry and Logger only)
+# Core ECS test helper (links octarine_core directly)
 function(octarine_add_core_test EXE_NAME CTEST_NAME SOURCE)
-    add_executable(${EXE_NAME} ${SOURCE}
-            "${CMAKE_SOURCE_DIR}/src/ECS/Registry.cpp"
-            "${CMAKE_SOURCE_DIR}/src/General/Logger.cpp")
-    target_compile_definitions(${EXE_NAME} PRIVATE GLM_FORCE_INTRINSICS)
+    add_executable(${EXE_NAME} ${SOURCE})
     target_include_directories(${EXE_NAME} PRIVATE
             "${CMAKE_SOURCE_DIR}/src"
             "${CMAKE_SOURCE_DIR}/libs"
             "${CMAKE_SOURCE_DIR}/tests")
-    target_link_libraries(${EXE_NAME} PRIVATE glm::glm spdlog::spdlog Threads::Threads octarine_lua)
+    target_link_libraries(${EXE_NAME} PRIVATE octarine_core)
     add_test(NAME ${CTEST_NAME} COMMAND ${EXE_NAME})
 endfunction()
 
@@ -97,9 +94,9 @@ octarine_add_test(OctarineScenarioRunnerTest ScenarioRunnerTest
 )
 
 octarine_add_test(OctarineEventBusTest EventBusTest
-        SOURCES "${CMAKE_SOURCE_DIR}/src/General/Logger.cpp" EventBusTest.cpp
+        SOURCES EventBusTest.cpp
         INCLUDES "${CMAKE_SOURCE_DIR}/src"
-        LIBS spdlog::spdlog
+        LIBS octarine_core
 )
 
 octarine_add_test(OctarineCryptoTest CryptoTest
@@ -135,6 +132,9 @@ octarine_add_engine_test(OctarineLuaApiTest LuaApiSmokeTest LuaApiSmokeTest.cpp
 )
 
 octarine_add_engine_test(OctarineLuaBehaviorTest LuaBehaviorTest LuaBehaviorTest.cpp)
+if (TARGET octarine_game_module)
+    target_compile_definitions(OctarineLuaBehaviorTest PRIVATE OCTARINE_HAS_GAME_MODULE)
+endif ()
 
 octarine_add_test(OctarineFileSandboxTest FileSandboxTest
         SOURCES FileSandboxTest.cpp
@@ -146,20 +146,17 @@ octarine_add_test(OctarineFileSandboxTest FileSandboxTest
 # -----------------------------------------------------------------------------
 
 octarine_add_test(OctarineProjectIniTest ProjectIniTest
-        SOURCES "${CMAKE_SOURCE_DIR}/src/General/IniParser.cpp"
-                "${CMAKE_SOURCE_DIR}/src/Project/ProjectIni.cpp"
-                ProjectIniTest.cpp
+        SOURCES ProjectIniTest.cpp
         INCLUDES "${CMAKE_SOURCE_DIR}/src"
+        LIBS octarine_core
 )
 
 octarine_add_engine_test(OctarineUserSettingsTest UserSettingsTest UserSettingsTest.cpp)
 
 octarine_add_test(OctarineFileWatcherTest FileWatcherTest
-        SOURCES "${CMAKE_SOURCE_DIR}/src/General/FileWatcher.cpp"
-                "${CMAKE_SOURCE_DIR}/src/General/Logger.cpp"
-                FileWatcherTest.cpp
+        SOURCES FileWatcherTest.cpp
         INCLUDES "${CMAKE_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}"
-        LIBS spdlog::spdlog
+        LIBS octarine_core
 )
 
 octarine_add_engine_test(OctarineGameBakeTest GameBakeTest GameBakeTest.cpp
@@ -174,16 +171,10 @@ octarine_add_engine_test(OctarineDebugThemeTest DebugThemeTest DebugThemeTest.cp
 octarine_add_engine_test(OctarineEngineIconTest EngineIconTest EngineIconTest.cpp)
 
 if (NOT OCTARINE_SHIPPED)
-    set(_extra_dev_libs "")
-    if (WIN32)
-        set(_extra_dev_libs ws2_32)
-    endif ()
     octarine_add_test(OctarineDevListenServerTest DevListenServerTest
-            SOURCES "${CMAKE_SOURCE_DIR}/src/Dev/DevListenServer.cpp"
-                    "${CMAKE_SOURCE_DIR}/src/General/Logger.cpp"
-                    DevListenServerTest.cpp
+            SOURCES DevListenServerTest.cpp
             INCLUDES "${CMAKE_SOURCE_DIR}/src"
-            LIBS spdlog::spdlog Threads::Threads ${_extra_dev_libs}
+            LIBS octarine_engine
     )
 endif ()
 

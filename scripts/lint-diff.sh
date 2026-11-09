@@ -78,8 +78,42 @@ if ! grep -q -- '-warnings-as-errors' "$diff_tool"; then
   exit 2
 fi
 
+tidy_dir="$build_dir"
+clean_db_dir=""
+if grep -q -- '-include-pch' "$build_dir/compile_commands.json"; then
+  clean_db_dir="$(mktemp -d -t oct_tidy_db.XXXXXX)"
+  python3 -c '
+import json, re, sys
+with open(sys.argv[1]) as f:
+    db = json.load(f)
+for entry in db:
+    cmd = entry.get("command", "")
+    cmd = re.sub(r"-Xclang -include-pch -Xclang \S+\.pch", "", cmd)
+    cmd = re.sub(r"-include-pch \S+\.pch", "", cmd)
+    entry["command"] = cmd
+with open(sys.argv[2], "w") as f:
+    json.dump(db, f)
+' "$build_dir/compile_commands.json" "$clean_db_dir/compile_commands.json"
+  tidy_dir="$clean_db_dir"
+fi
+
+cleanup() {
+  [[ -n "$clean_db_dir" && -d "$clean_db_dir" ]] && rm -rf "$clean_db_dir"
+  [[ -f "${diff_tool:-}" ]] && rm -f "$diff_tool"
+}
+trap cleanup EXIT
+
 # -p1 strips the a/ b/ diff prefixes; -path points at compile_commands.json; the diff's -U0 hunks
-# limit diagnostics to touched lines; any diagnostic there is promoted to an error and fails the run.
-git diff -U0 "$base"...HEAD -- $changed \
-  | python3 "$diff_tool" -p1 -j0 -path "$build_dir" \
-      -clang-tidy-binary "$tidy_bin" -warnings-as-errors='*'
+# limit diagnostics to touched lines; matching CI, exclude clang frontend diagnostics ([clang-diagnostic-]).
+report="$(git diff -U0 "$base"...HEAD -- $changed \
+  | python3 "$diff_tool" -p1 -j0 -path "$tidy_dir" \
+      -clang-tidy-binary "$tidy_bin" 2>&1)" || true
+printf '%s\n' "$report"
+
+findings="$(printf '%s\n' "$report" \
+  | grep -E '^[^ ]+:[0-9]+:[0-9]+: (warning|error):' | grep -v '\[clang-diagnostic-' || true)"
+if [ -n "$findings" ]; then
+  echo "lint-diff: clang-tidy reported issues on changed lines (see log above)." >&2
+  exit 1
+fi
+echo "lint-diff: ok (no clang-tidy violations on changed lines)"

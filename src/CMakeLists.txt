@@ -43,16 +43,18 @@ octarine_library(octarine_core ${OCTARINE_CORE_SOURCES})
 target_link_libraries(octarine_core PUBLIC
         glm::glm
         SDL3::SDL3
-        spdlog::spdlog
         sol2::sol2
         ${LUA_LIBRARIES}
         Threads::Threads
 )
+target_link_libraries(octarine_core PRIVATE spdlog::spdlog)
 
 # Compile defines shared by every layer (consumers inherit via PUBLIC).
 target_compile_definitions(octarine_core PUBLIC GLM_FORCE_INTRINSICS)
 target_compile_definitions(octarine_core PUBLIC SOL_NO_CHECK_NUMBER_PRECISION=1)
-target_compile_definitions(octarine_core PUBLIC OCTARINE_LOG_LEVEL_NAME="${_octarine_default_log_level}")
+set_source_files_properties(General/Logger.cpp PROPERTIES
+        COMPILE_DEFINITIONS "OCTARINE_LOG_LEVEL_NAME=\"${_octarine_default_log_level}\"")
+
 if (OCTARINE_ENABLE_PROFILING)
     target_compile_definitions(octarine_core PUBLIC OCTARINE_PROFILING)
 endif ()
@@ -97,7 +99,9 @@ set_source_files_properties(
         AssetManager/AtlasBaker.cpp
         AssetManager/GlyphAtlas.cpp
         AssetManager/AudioNormalizer.cpp
-        PROPERTIES COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>")
+        PROPERTIES
+            COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>"
+            SKIP_PRECOMPILE_HEADERS ON)
 target_link_libraries(octarine_assets PUBLIC
         octarine_core
         SDL3_ttf::SDL3_ttf
@@ -129,6 +133,10 @@ octarine_library(octarine_lua
         Lua/LuaApiManifest.cpp
         Lua/LuaTableSerializer.cpp
         Lua/Bindings/RegisterAllBindings.cpp
+        Lua/Bindings/RegisterTransformCoreBindings.cpp
+        Lua/Bindings/RegisterRenderBindings.cpp
+        Lua/Bindings/RegisterPhysicsAudioScriptBindings.cpp
+        Lua/Bindings/RegisterUIBindings.cpp
         Lua/HotReload/ScriptHotReload.cpp
         Lua/Modules/AssetsModuleLuaBinding.cpp
         Lua/Modules/AudioModuleLuaBinding.cpp
@@ -168,7 +176,8 @@ set(OCTARINE_SYSTEMS_SOURCES
 octarine_library(octarine_systems ${OCTARINE_SYSTEMS_SOURCES})
 if (NOT MSVC)
     set_source_files_properties(Tilemap/LdtkParser.cpp PROPERTIES
-            COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:-Os>")
+            COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:-Os>"
+            SKIP_PRECOMPILE_HEADERS ON)
 endif ()
 target_link_libraries(octarine_systems PUBLIC
         octarine_core
@@ -190,7 +199,6 @@ set(OCTARINE_GAME_MODULE_DIR "" CACHE PATH "Optional path to private game C++ mo
 if (OCTARINE_GAME_MODULE_DIR AND EXISTS "${OCTARINE_GAME_MODULE_DIR}/CMakeLists.txt")
     message(STATUS "Octarine: Private GameModule FOUND at ${OCTARINE_GAME_MODULE_DIR}")
     add_subdirectory("${OCTARINE_GAME_MODULE_DIR}" GameModule)
-    target_compile_definitions(octarine_core PUBLIC OCTARINE_HAS_GAME_MODULE)
 endif ()
 
 
@@ -206,7 +214,11 @@ set(OCTARINE_ENGINE_SOURCES
         Engine/Platform/PlatformPaths.cpp
         Engine/SceneLoader.cpp
         Game/Game.cpp
+        Game/GameBake.cpp
 )
+if (NOT TARGET octarine_game_module)
+    list(APPEND OCTARINE_ENGINE_SOURCES Engine/GameModuleNoop.cpp)
+endif ()
 # DevListenServer: TCP listener for the dev iterate loop. Available in dev player
 # presets; compile-stripped from ship-release (OCTARINE_SHIPPED).
 if (NOT OCTARINE_SHIPPED)

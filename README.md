@@ -130,3 +130,15 @@ For ad-hoc profiling runs:
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
   ./build/player-profile/bin/relwithdebinfo/OctarineEngine /path/to/game --startup-mode bench
 ```
+
+## Compiler Caching (`ccache`)
+
+Octarine automatically detects and enables [`ccache`](https://ccache.dev/) or `sccache` when available on your `PATH` via `OCTARINE_USE_CCACHE=ON`, accelerating both clean and incremental builds.
+
+To install it:
+- **macOS:** `brew install ccache`
+- **Linux:** `sudo apt-get install ccache` (or distribution equivalent)
+- **Windows:** `winget install ccache` / `choco install ccache`
+
+For installation instructions and configuration options, see the [official ccache website](https://ccache.dev/).
+

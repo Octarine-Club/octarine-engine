@@ -1,9 +1,13 @@
 #include "Logger.h"
 
+#include <spdlog/logger.h>
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
 #include <cctype>
+#include <deque>
+#include <memory>
+#include <mutex>
 
 #if defined(__ANDROID__)
 #include <spdlog/sinks/android_sink.h>
@@ -13,13 +17,23 @@
 
 // iOS os_log sink is parked on the defer/ios branch pending an Apple Developer account.
 
-std::shared_ptr<spdlog::logger> Logger::lua_logger_;
-std::deque<std::string> Logger::history_;
-std::mutex Logger::history_mutex_;
-std::vector<Logger::ScriptError> Logger::script_errors_;
-std::uint64_t Logger::script_error_sequence_ = 0;
-
 namespace {
+
+std::shared_ptr<spdlog::logger> g_lua_logger;
+std::deque<std::string> g_history;
+std::mutex g_history_mutex;
+std::vector<Logger::ScriptError> g_script_errors;
+std::uint64_t g_script_error_sequence = 0;
+
+void PushHistory(std::string entry) {
+  // Cap history to prevent unbounded growth from per-frame logging.
+  constexpr size_t kMaxHistory = 1000;
+  std::lock_guard<std::mutex> lock(g_history_mutex);
+  if (g_history.size() >= kMaxHistory) {
+    g_history.pop_front();
+  }
+  g_history.push_back(std::move(entry));
+}
 
 // Parses log level string, returning spdlog::level::n_levels on invalid input.
 spdlog::level::level_enum ParseLevelName(std::string name) {
@@ -42,16 +56,16 @@ void Logger::Init() {
   // Android logcat sinks for engine and Lua messages.
   auto main_logger = spdlog::android_logger_mt("octarine", "Octarine");
   spdlog::set_default_logger(main_logger);
-  lua_logger_ = spdlog::android_logger_mt("octarine-lua", "OctarineLua");
+  g_lua_logger = spdlog::android_logger_mt("octarine-lua", "OctarineLua");
 #else
   // Colored stdout sinks for desktop platforms.
   auto main_logger = spdlog::stdout_color_mt("octarine");
   spdlog::set_default_logger(main_logger);
-  lua_logger_ = spdlog::stdout_color_mt("lua");
+  g_lua_logger = spdlog::stdout_color_mt("lua");
 #endif
 
   spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] %v");
-  lua_logger_->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] [lua] %v");
+  g_lua_logger->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] [lua] %v");
 
 #ifdef OCTARINE_LOG_LEVEL_NAME
   SetLevel(OCTARINE_LOG_LEVEL_NAME);
@@ -66,19 +80,9 @@ void Logger::SetLevel(const std::string& level) {
     return;
   }
   spdlog::set_level(parsed);
-  if (lua_logger_) {
-    lua_logger_->set_level(parsed);
+  if (g_lua_logger) {
+    g_lua_logger->set_level(parsed);
   }
-}
-
-void Logger::PushHistory(std::string entry) {
-  // Cap history to prevent unbounded growth from per-frame logging.
-  constexpr size_t kMaxHistory = 1000;
-  std::lock_guard<std::mutex> lock(history_mutex_);
-  if (history_.size() >= kMaxHistory) {
-    history_.pop_front();
-  }
-  history_.push_back(std::move(entry));
 }
 
 void Logger::Error(const std::string& message) {
@@ -99,52 +103,52 @@ void Logger::Info(const std::string& message) {
 #endif
 
 void Logger::LogLua(const std::string& message) {
-  lua_logger_->info(message);
+  g_lua_logger->info(message);
   PushHistory(message);
 }
 
 void Logger::ErrorLua(const std::string& message) {
-  lua_logger_->error(message);
+  g_lua_logger->error(message);
   PushHistory("[Error] [Lua] " + message);
   // Cap toast history ring buffer.
   constexpr size_t kMaxScriptErrors = 8;
-  std::lock_guard<std::mutex> lock(history_mutex_);
-  script_errors_.push_back({++script_error_sequence_, message, std::chrono::steady_clock::now()});
-  if (script_errors_.size() > kMaxScriptErrors) {
-    script_errors_.erase(script_errors_.begin());
+  std::lock_guard<std::mutex> lock(g_history_mutex);
+  g_script_errors.push_back({++g_script_error_sequence, message, std::chrono::steady_clock::now()});
+  if (g_script_errors.size() > kMaxScriptErrors) {
+    g_script_errors.erase(g_script_errors.begin());
   }
 }
 
 void Logger::WarnLua(const std::string& message) {
-  lua_logger_->warn(message);
+  g_lua_logger->warn(message);
   PushHistory("[Warn] [Lua] " + message);
 }
 
 #ifndef OCTARINE_SHIPPED
 void Logger::InfoLua(const std::string& message) {
-  lua_logger_->info(message);
+  g_lua_logger->info(message);
   PushHistory("[Info] [Lua] " + message);
 }
 #endif
 
 std::vector<std::string> Logger::GetHistory() {
-  std::lock_guard<std::mutex> lock(history_mutex_);
-  return {history_.begin(), history_.end()};
+  std::lock_guard<std::mutex> lock(g_history_mutex);
+  return {g_history.begin(), g_history.end()};
 }
 
 void Logger::ForEachHistory(const std::function<void(const std::string&)>& callback) {
-  std::lock_guard<std::mutex> lock(history_mutex_);
-  for (const auto& line : history_) {
+  std::lock_guard<std::mutex> lock(g_history_mutex);
+  for (const auto& line : g_history) {
     callback(line);
   }
 }
 
 void Logger::ClearHistory() {
-  std::lock_guard<std::mutex> lock(history_mutex_);
-  history_.clear();
+  std::lock_guard<std::mutex> lock(g_history_mutex);
+  g_history.clear();
 }
 
 std::vector<Logger::ScriptError> Logger::RecentScriptErrors() {
-  std::lock_guard<std::mutex> lock(history_mutex_);
-  return script_errors_;
+  std::lock_guard<std::mutex> lock(g_history_mutex);
+  return g_script_errors;
 }

@@ -19,7 +19,6 @@
 #include "Component.h"
 #include "Context.h"
 #include "Entity.h"
-#include "General/Logger.h"
 #include "System.h"
 
 template <typename... TComponents>

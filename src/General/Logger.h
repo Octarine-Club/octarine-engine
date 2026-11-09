@@ -1,12 +1,8 @@
 #pragma once
 
-#include <spdlog/logger.h>
-
 #include <chrono>
 #include <cstdint>
-#include <deque>
-#include <memory>
-#include <mutex>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -18,16 +14,6 @@ class Logger {
     std::string message;
     std::chrono::steady_clock::time_point when{};
   };
-
- private:
-  static std::shared_ptr<spdlog::logger> lua_logger_;
-  static std::deque<std::string> history_;
-  static std::mutex history_mutex_;
-  static std::vector<ScriptError> script_errors_;
-  static std::uint64_t script_error_sequence_;
-
-  // Appends entry and enforces bounded capacity under history_mutex_.
-  static void PushHistory(std::string entry);
 
  public:
   static void Init();
