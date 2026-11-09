@@ -132,10 +132,6 @@ jobs:
         if: matrix.platform == 'linux'
         uses: ./.github/actions/linux-build-deps
 
-      - name: Install Ninja (Windows/macOS)
-        if: matrix.platform != 'linux'
-        uses: seanmiddleditch/gha-setup-ninja@v6
-
       - name: Setup MSVC dev environment (Windows)
         if: matrix.platform == 'windows'
         uses: ilammy/msvc-dev-cmd@v1
