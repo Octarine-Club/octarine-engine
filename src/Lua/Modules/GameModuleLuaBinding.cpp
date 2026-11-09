@@ -146,6 +146,12 @@ void BindDiagnostics(sol::state& lua, LuaBindingContext& ctx) {
   });
 
   lua.set_function("toggle_debug_gui", [&ctx]() {
+    static uint64_t lastToggleTicks = 0;
+    const uint64_t now = SDL_GetTicks();
+    if (now >= lastToggleTicks && (now - lastToggleTicks) < 150) {
+      return ctx.GetRegistry()->Get<GameConfig>().GetEngineOptions().showDebugGUI;
+    }
+    lastToggleTicks = now;
     auto& options = ctx.GetRegistry()->Get<GameConfig>().GetEngineOptions();
     options.showDebugGUI = !options.showDebugGUI;
 #ifdef OCTARINE_WITH_IMGUI

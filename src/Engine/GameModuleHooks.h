@@ -19,6 +19,7 @@ void RegisterSimulationSystems(Registry& registry, const std::unique_ptr<EventBu
                                SystemId velocityIntegration);
 void RegisterEventSystems(Registry& registry, const std::unique_ptr<EventBus>& eventBus);
 void InstallLuaFunctions(sol::state& lua, LuaBindingContext& ctx);
+void RegisterDebugUI(Registry& registry);
 
 }  // namespace game_module
 
@@ -32,6 +33,7 @@ inline void RegisterSimulationSystems(Registry& /*registry*/, const std::unique_
                                       SystemId /*velocityIntegration*/) {}
 inline void RegisterEventSystems(Registry& /*registry*/, const std::unique_ptr<EventBus>& /*eventBus*/) {}
 inline void InstallLuaFunctions(sol::state& /*lua*/, LuaBindingContext& /*ctx*/) {}
+inline void RegisterDebugUI(Registry& /*registry*/) {}
 
 }  // namespace game_module
 

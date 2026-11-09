@@ -3,9 +3,21 @@
 #ifdef OCTARINE_WITH_IMGUI
 #include <algorithm>
 #include <chrono>
+#include <cstring>
+#include <string_view>
 #include <vector>
 
 #include "Components/ViewportInfo.h"
+#include "Debug/DebugComponentInspectors.h"
+#include "Debug/DebugMenuRegistry.h"
+#include "Debug/Panels/DebugAssetScenePanel.h"
+#include "Debug/Panels/DebugEngineOptionsPanel.h"
+#include "Debug/Panels/DebugEntityInspectorPanel.h"
+#include "Debug/Panels/DebugLuaConsolePanel.h"
+#include "Debug/Panels/DebugMainMenuBar.h"
+#include "Debug/Panels/DebugSystemProfilerPanel.h"
+#include "Debug/Panels/DebugUIPanel.h"
+#include "Debug/Panels/DebugViewportGizmos.h"
 #include "ECS/Query.h"
 #include "Game/GameConfig.h"
 #include "General/PerfUtils.h"
@@ -15,24 +27,71 @@
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_internal.h"
 
-void RenderDebugGUISystem::ReturnFocusToGame(Registry* registry) {
-  if (!registry) return;
-  auto& viewportInfo = registry->Get<ViewportInfo>();
+namespace octarine::debug {
 
-  if (ImGui::GetCurrentContext()) {
-    ImGuiIO& io = ImGui::GetIO();
-    io.ClearInputKeys();
-    io.ClearEventsQueue();
-    ImGui::ClearActiveID();
+void InstallImGuiSettingsHandler(Registry& registry) {
+  ImGuiContext* ctx = ImGui::GetCurrentContext();
+  if (ctx == nullptr) return;
 
-    ImGui::SetWindowFocus(nullptr);
-    viewportInfo.isFocused = true;
-    io.WantCaptureKeyboard = false;
-    io.NavActive = false;
-  } else {
-    viewportInfo.isFocused = true;
+  for (const auto& existing : ctx->SettingsHandlers) {
+    if (std::strcmp(existing.TypeName, "OctarineDebugPanels") == 0) return;
+  }
+
+  ImGuiSettingsHandler iniHandler;
+  iniHandler.TypeName = "OctarineDebugPanels";
+  iniHandler.TypeHash = ImHashStr("OctarineDebugPanels");
+  iniHandler.UserData = &registry;
+
+  iniHandler.ReadOpenFn = [](ImGuiContext*, ImGuiSettingsHandler*, const char* name) -> void* {
+    if (std::strcmp(name, "OpenState") == 0) {
+      return reinterpret_cast<void*>(1);
+    }
+    return nullptr;
+  };
+
+  iniHandler.ReadLineFn = [](ImGuiContext*, ImGuiSettingsHandler* handler, void* entry, const char* line) {
+    if (entry == nullptr || handler->UserData == nullptr) return;
+    auto* reg = static_cast<Registry*>(handler->UserData);
+    auto* debugReg = reg->TryGet<DebugMenuRegistry>();
+    if (debugReg == nullptr) return;
+
+    std::string_view sv(line);
+    const auto eq = sv.find('=');
+    if (eq != std::string_view::npos) {
+      const std::string key(sv.substr(0, eq));
+      const std::string_view val = sv.substr(eq + 1);
+      const bool isOpen = (val == "1" || val == "true");
+      debugReg->ApplyPersistedOpenState(key, isOpen);
+    }
+  };
+
+  iniHandler.WriteAllFn = [](ImGuiContext*, ImGuiSettingsHandler* handler, ImGuiTextBuffer* buf) {
+    if (handler->UserData == nullptr) return;
+    auto* reg = static_cast<Registry*>(handler->UserData);
+    auto* debugReg = reg->TryGet<DebugMenuRegistry>();
+    if (debugReg == nullptr) return;
+
+    buf->appendf("[%s][OpenState]\n", handler->TypeName);
+    std::string serialized = debugReg->SerializeOpenStates();
+    buf->append(serialized.c_str());
+    buf->append("\n");
+  };
+
+  ctx->SettingsHandlers.push_back(iniHandler);
+}
+
+void UninstallImGuiSettingsHandler() {
+  ImGuiContext* ctx = ImGui::GetCurrentContext();
+  if (ctx == nullptr) return;
+
+  for (auto& handler : ctx->SettingsHandlers) {
+    if (std::strcmp(handler.TypeName, "OctarineDebugPanels") == 0) {
+      handler.UserData = nullptr;
+    }
   }
 }
+
+}  // namespace octarine::debug
 
 namespace {
 constexpr float kColorChannelMax = 255.0f;
@@ -41,33 +100,137 @@ ImVec4 ColorToImVec4(const octarine::Color& color) {
   return {static_cast<float>(color.r) / kColorChannelMax, static_cast<float>(color.g) / kColorChannelMax,
           static_cast<float>(color.b) / kColorChannelMax, static_cast<float>(color.a) / kColorChannelMax};
 }
+
+void InstallBuiltInDebugPanels(octarine::debug::DebugMenuRegistry& debugReg) {
+  debugReg.RegisterPanel({
+      .id = "engine.entity_inspector",
+      .category = "ECS",
+      .title = "Entity Inspector",
+      .shortcut = "F1",
+      .autoWindow = true,
+      .drawCallback = [](Registry& reg) { octarine::debug::DrawEntityInspectorPanel(reg); },
+  });
+
+  debugReg.RegisterPanel({
+      .id = "engine.lua_console",
+      .category = "Engine",
+      .title = "Lua Console & Logs",
+      .shortcut = "~",
+      .autoWindow = true,
+      .drawCallback = [](Registry& reg) { octarine::debug::DrawLuaConsolePanel(reg); },
+  });
+
+  debugReg.RegisterPanel({
+      .id = "engine.system_profiler",
+      .category = "ECS",
+      .title = "System & ECS Profiler",
+      .shortcut = "",
+      .autoWindow = true,
+      .drawCallback = [](Registry& reg) { octarine::debug::DrawSystemProfilerPanel(reg); },
+  });
+
+  debugReg.RegisterPanel({
+      .id = "engine.asset_scene_inspector",
+      .category = "Assets",
+      .title = "Scenes & Assets",
+      .shortcut = "",
+      .autoWindow = true,
+      .drawCallback = [](Registry& reg) { octarine::debug::DrawAssetScenePanel(reg); },
+  });
+
+  debugReg.RegisterPanel({
+      .id = "engine.ui_inspector",
+      .category = "UI",
+      .title = "Declarative UI Inspector",
+      .shortcut = "",
+      .autoWindow = true,
+      .drawCallback = [](Registry& reg) { octarine::debug::DrawUIPanel(reg); },
+  });
+
+  debugReg.RegisterPanel({
+      .id = "engine.options_and_watches",
+      .category = "Engine",
+      .title = "Engine Options & Watches",
+      .shortcut = "",
+      .autoWindow = true,
+      .drawCallback = [](Registry& reg) { octarine::debug::DrawEngineOptionsPanel(reg); },
+  });
+
+  debugReg.RegisterPanel({
+      .id = "engine.tilemap_inspector",
+      .category = "World",
+      .title = "Tilemap Inspector",
+      .shortcut = "",
+      .autoWindow = false,
+      .drawCallback =
+          [](Registry& reg) {
+            if (auto* debugRegistry = reg.TryGet<octarine::debug::DebugMenuRegistry>()) {
+              if (auto* p = debugRegistry->FindPanel("engine.tilemap_inspector")) {
+                octarine::systems::DrawTilemapDebugPanel(&reg, &p->isOpen);
+              }
+            }
+          },
+  });
+}
+
+void DrawRegisteredPanels(Registry& registry, octarine::debug::DebugMenuRegistry& debugReg) {
+  for (auto& panel : debugReg.Panels()) {
+    if (!panel.isOpen) continue;
+    if (panel.autoWindow) {
+      if (ImGui::Begin(panel.title.c_str(), &panel.isOpen)) {
+        if (panel.drawCallback) panel.drawCallback(registry);
+      }
+      ImGui::End();
+    } else {
+      if (panel.drawCallback) panel.drawCallback(registry);
+    }
+  }
+}
 }  // namespace
 
 void RenderDebugGUISystem::DrawDebugOverlays(Registry* registry, const EngineOptions& engineOptions,
                                              const bool showGameOverlays, const bool projectLoaded,
                                              const float deltaTime) {
-  if (!showGameOverlays && !engineOptions.showFpsCounter) {
+  if (!showGameOverlays) {
     return;
   }
-  const ImVec4 bgColor = ColorToImVec4(engineOptions.debugOverlayBackgroundColor);
-  ImGui::PushStyleColor(ImGuiCol_WindowBg, bgColor);
 
-  if (showGameOverlays) {
-    if (projectLoaded) {
-      auto query = registry->CreateQuery<ScriptComponent>();
-      RenderDebugGUISystem system;
-      query->ForEach(system);
-    }
-    if (engineOptions.showEntityInfo) {
-      EntityInfoWindow(registry);
-    }
-    octarine::systems::DrawTilemapDebugPanel(registry);
-    FPSWindow(deltaTime);
-  } else if (engineOptions.showFpsCounter) {
-    FPSWindow(deltaTime);
+  auto* debugReg = registry->TryGet<octarine::debug::DebugMenuRegistry>();
+  if (debugReg != nullptr && !debugReg->BuiltInsInstalled()) {
+    octarine::debug::DebugComponentInspectorRegistry::InstallBuiltInComponentInspectors();
+    InstallBuiltInDebugPanels(*debugReg);
+    debugReg->MarkBuiltInsInstalled();
   }
 
-  ImGui::PopStyleColor();
+  const bool hasCustomBg = (engineOptions.debugOverlayBackgroundColor.a > 0);
+  if (hasCustomBg) {
+    const ImVec4 bgColor = ColorToImVec4(engineOptions.debugOverlayBackgroundColor);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, bgColor);
+  }
+
+  octarine::debug::DrawDebugMainMenuBar(*registry, deltaTime);
+
+  if (debugReg != nullptr) {
+    DrawRegisteredPanels(*registry, *debugReg);
+  }
+
+  if (projectLoaded) {
+    auto query = registry->CreateQuery<ScriptComponent>();
+    RenderDebugGUISystem system;
+    query->ForEach(system);
+  }
+  if (engineOptions.showEntityInfo) {
+    EntityInfoWindow(registry);
+  }
+  if (engineOptions.showImGuiDemoWindow) {
+    ImGui::ShowDemoWindow(&const_cast<EngineOptions&>(engineOptions).showImGuiDemoWindow);
+  }
+
+  octarine::debug::DrawDebugViewportGizmos(*registry);
+
+  if (hasCustomBg) {
+    ImGui::PopStyleColor();
+  }
 }
 
 void RenderDebugGUISystem::Render(Registry* registry, SDL_Renderer* renderer, const float deltaTime) {
@@ -87,7 +250,7 @@ void RenderDebugGUISystem::Render(Registry* registry, SDL_Renderer* renderer, co
     ReturnFocusToGame(registry);
   }
 
-  if (!showGameOverlays && !engineOptions.showFpsCounter && !toastActive && !justClosedOverlays) {
+  if (!showGameOverlays && !toastActive && !justClosedOverlays) {
     return;
   }
 
@@ -109,25 +272,6 @@ void RenderDebugGUISystem::Render(Registry* registry, SDL_Renderer* renderer, co
 
   ImGui::Render();
   ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer);
-}
-
-void RenderDebugGUISystem::FPSWindow(const float deltaTime) {
-  static constexpr int kFpsHistoryCount = 120;
-  static constexpr float kFpsPlotScaleMax = 120.0f;
-  static constexpr float kFpsPlotHeight = 50.0f;
-
-  static float fpsHistory[kFpsHistoryCount] = {};
-  static int fpsOffset = 0;
-  const float fps = (deltaTime > 0.0f) ? 1.0f / deltaTime : 0.0f;
-  fpsHistory[fpsOffset] = fps;
-  fpsOffset = (fpsOffset + 1) % kFpsHistoryCount;
-
-  ImGui::Begin("FPS", nullptr, ImGuiWindowFlags_NoNavInputs);
-  char overlay[32];
-  snprintf(overlay, sizeof(overlay), "%.1f FPS", static_cast<double>(fps));
-  ImGui::PlotLines("##fps", fpsHistory, kFpsHistoryCount, fpsOffset, overlay, 0.0f, kFpsPlotScaleMax,
-                   ImVec2(0, kFpsPlotHeight));
-  ImGui::End();
 }
 
 void RenderDebugGUISystem::EntityInfoWindow(const Registry* registry) {

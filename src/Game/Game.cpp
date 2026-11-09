@@ -37,6 +37,7 @@
 #include "Components/TextLabelComponent.h"
 #include "Components/TrianglePrimitiveComponent.h"
 #include "Components/ViewportInfo.h"
+#include "Debug/DebugMenuRegistry.h"
 #include "ECS/Query.h"
 #include "ECS/Registry.h"
 #include "Engine/EngineBootstrap.h"
@@ -468,6 +469,7 @@ void Game::InitImGuiBackend() {
     imguiIniPath = kImGuiIniFilename;
   }
   runtime_.InitImGui(imguiIniPath.c_str());
+  octarine::debug::InstallImGuiSettingsHandler(*registry_);
 
   ImGuiIO& io = ImGui::GetIO();
   io.Fonts->AddFontDefault();
@@ -606,6 +608,16 @@ void Game::Destroy() {
     }
   }
 
+#ifdef OCTARINE_WITH_IMGUI
+  if (ImGui::GetCurrentContext() != nullptr) {
+    const ImGuiIO& io = ImGui::GetIO();
+    if (io.IniFilename != nullptr && io.IniFilename[0] != '\0') {
+      ImGui::SaveIniSettingsToDisk(io.IniFilename);
+    }
+    octarine::debug::UninstallImGuiSettingsHandler();
+  }
+#endif
+
   // Tear registry/event bus down BEFORE SDL_Quit so owned systems (AudioSystem -> MIX_Quit,
   // AssetManager -> SDL_DestroyTexture) can still call into a live SDL.
   registry_.reset();
@@ -679,6 +691,7 @@ bool Game::RunBakeValidation(const std::string& assetPath, const std::string& sc
   engine_bootstrap::InstallLuaModules(lua, *this);
   LuaSystemRegistry::bindAll(lua);
   engine_bootstrap::SetCommonLuaGlobals(lua, gameConfig, startup_mode_, dev_mode_);
+  game_module::RegisterDebugUI(*registry_);
 
   auto& assetManager = registry_->Get<AssetManager>();
   assetManager.LoadGameConfig(gameConfig);
@@ -893,7 +906,6 @@ void ApplyBenchModeOverlayOverrides(Registry& /*registry*/, GameConfig& gameConf
                                     const std::string& /*startupMode*/) {
   auto& options = gameConfig.GetEngineOptions();
   options.showDebugGUI = false;
-  options.showFpsCounter = false;
   options.showEntityInfo = false;
   options.showImGuiDemoWindow = false;
   options.drawColliders = false;
@@ -930,6 +942,7 @@ void Game::Setup() {
   engine_bootstrap::InstallLuaModules(lua, *this);
   LuaSystemRegistry::bindAll(lua);
   engine_bootstrap::SetCommonLuaGlobals(lua, gameConfig, startup_mode_, dev_mode_);
+  game_module::RegisterDebugUI(*registry_);
 
 #ifndef OCTARINE_SHIPPED
   if (!LuaApiManifest::MaybeDumpFromEnv(lua, preBindingGlobals) && dev_mode_) {

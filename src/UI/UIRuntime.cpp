@@ -2543,7 +2543,7 @@ void UIRuntime::RegisterMountedViewWatch(const std::string& sourceStr, std::vect
     return v != nullptr && v->IsCurrentlyMounted();
   };
   rec->reloadFn = [this, weakView, sourceStr, opts, parentEntity]() {
-    ReloadMountedView(this, weakView.lock(), sourceStr, opts, parentEntity);
+    ::ReloadMountedView(this, weakView.lock(), sourceStr, opts, parentEntity);
   };
   mounted_views_.push_back(std::move(rec));
 }
@@ -2578,6 +2578,39 @@ void UIRuntime::PollHotReload(const float deltaTime, const float pollIntervalSec
   for (const auto& rec : mounted_views_) {
     if (HasWatchedViewFilesChanged(rec->watchedFiles, rec->lastWriteTimes) && rec->reloadFn) {
       Logger::Info("UIRuntime: hot-reloading UI view '" + rec->sourcePath + "'");
+      rec->reloadFn();
+    }
+  }
+}
+
+std::vector<UIRuntime::MountedViewDebugInfo> UIRuntime::GetMountedViewsDebugInfo() const {
+  std::vector<MountedViewDebugInfo> list;
+  list.reserve(mounted_views_.size());
+  for (const auto& rec : mounted_views_) {
+    if (!rec) continue;
+    list.push_back({
+        .id = rec->id,
+        .sourcePath = rec->sourcePath,
+        .watchedFiles = rec->watchedFiles,
+        .isMounted = rec->isMountedFn ? rec->isMountedFn() : false,
+    });
+  }
+  return list;
+}
+
+bool UIRuntime::ReloadMountedView(const uint64_t id) {
+  for (const auto& rec : mounted_views_) {
+    if (rec && rec->id == id && rec->reloadFn) {
+      rec->reloadFn();
+      return true;
+    }
+  }
+  return false;
+}
+
+void UIRuntime::ReloadAllMountedViews() {
+  for (const auto& rec : mounted_views_) {
+    if (rec && rec->reloadFn) {
       rec->reloadFn();
     }
   }

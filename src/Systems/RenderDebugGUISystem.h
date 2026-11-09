@@ -8,10 +8,14 @@
 
 #ifdef OCTARINE_WITH_IMGUI
 
+#include "Components/ViewportInfo.h"
+#include "imgui.h"
+#include "imgui_internal.h"
+
 struct EngineOptions;
 
 // Per-frame ImGui pass for in-game debug overlays (the script onDebugGUI hook,
-// FPS plot, entity count, and tilemap inspector).
+// entity count, and tilemap inspector).
 class RenderDebugGUISystem {
  public:
   void operator()(const ContextFacade& context, ScriptComponent& script) const {
@@ -25,14 +29,30 @@ class RenderDebugGUISystem {
   }
 
   static void Render(Registry* registry, SDL_Renderer* renderer, float deltaTime);
-  static void ReturnFocusToGame(Registry* registry);
+  static inline void ReturnFocusToGame(Registry* registry) {
+    if (!registry) return;
+    auto& viewportInfo = registry->Get<ViewportInfo>();
+
+    if (ImGui::GetCurrentContext()) {
+      ImGuiIO& io = ImGui::GetIO();
+      io.ClearInputKeys();
+      io.ClearEventsQueue();
+      ImGui::ClearActiveID();
+
+      ImGui::SetWindowFocus(nullptr);
+      viewportInfo.isFocused = true;
+      io.WantCaptureKeyboard = false;
+      io.NavActive = false;
+    } else {
+      viewportInfo.isFocused = true;
+    }
+  }
   // True while any recent script error is inside its toast window.
   static bool HasActiveScriptErrorToast();
 
  private:
   static void DrawDebugOverlays(Registry* registry, const EngineOptions& engineOptions, bool showGameOverlays,
                                 bool projectLoaded, float deltaTime);
-  static void FPSWindow(float deltaTime);
   static void EntityInfoWindow(const Registry* registry);
   static void ScriptErrorToastWindow();
 };

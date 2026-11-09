@@ -50,6 +50,7 @@ class SceneLoader {
 
   // True between a successful LoadScene/ReloadScene and the next StopScene.
   [[nodiscard]] bool IsSceneRunning() const { return scene_running_; }
+  [[nodiscard]] const std::string& GetCurrentScenePath() const { return current_scene_path_; }
 
  private:
   // Clear the current scene's user entities and reset per-scene Lua input state, without

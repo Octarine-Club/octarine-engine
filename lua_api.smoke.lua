@@ -1604,6 +1604,32 @@ color = {}
 color_grid_component = {}
 
 
+---@class dev
+dev = {}
+
+function dev.clear(...) end
+
+function dev.get_selected_entity(...) end
+
+function dev.is_panel_open(...) end
+
+function dev.register_action(...) end
+
+function dev.register_panel(...) end
+
+function dev.register_toggle(...) end
+
+function dev.select_entity(...) end
+
+function dev.set_panel_open(...) end
+
+function dev.unregister_panel(...) end
+
+function dev.unwatch(...) end
+
+function dev.watch(...) end
+
+
 ---@class entity
 entity = {}
 

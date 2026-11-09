@@ -9,6 +9,7 @@
 #include "Audio/AudioTrackCache.h"
 #include "Components/CameraComponents.h"
 #include "Components/ViewportInfo.h"
+#include "Debug/DebugMenuRegistry.h"
 #include "ECS/Registry.h"
 #include "Engine/EngineContext.h"
 #include "Engine/GameModuleHooks.h"
@@ -102,7 +103,9 @@ void InstallCoreSingletons(Registry& registry, EngineContext& context, const int
 
   // Store AssetManager in the Lua registry so C-functions (like LuaDofileViaSDL) can access it
   // and resolve scripts transparently from asset_bundle.pak.
+  registry.Set<octarine::debug::DebugMenuRegistry>(octarine::debug::DebugMenuRegistry());
   if (lua != nullptr) {
+    registry.Set<sol::state*>(lua);
     lua_State* L = lua->lua_state();
     lua_pushlightuserdata(L, &assetManager);
     lua_setfield(L, LUA_REGISTRYINDEX, "octarine_assets");

@@ -8,6 +8,7 @@
 #include "General/Logger.h"
 
 #ifdef OCTARINE_WITH_IMGUI
+#include "Debug/DebugTheme.h"
 #include "imgui.h"
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
@@ -64,6 +65,7 @@ bool EngineRuntime::CreateWindow(const std::string& title, int width, int height
 void EngineRuntime::InitImGui(const char* iniPath) {
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
+  octarine::debug::ApplyOctarineTheme();
   ImGuiIO& io = ImGui::GetIO();
   io.IniFilename = iniPath;
 

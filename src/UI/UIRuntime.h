@@ -38,6 +38,16 @@ class UIRuntime {
                                                          std::string* outResolvedPath = nullptr) const;
   [[nodiscard]] const sol::table* FindCustomWidget(const std::string& name) const;
 
+  struct MountedViewDebugInfo {
+    uint64_t id = 0;
+    std::string sourcePath{};
+    std::vector<std::string> watchedFiles{};
+    bool isMounted = false;
+  };
+  [[nodiscard]] std::vector<MountedViewDebugInfo> GetMountedViewsDebugInfo() const;
+  bool ReloadMountedView(uint64_t id);
+  void ReloadAllMountedViews();
+
  private:
   sol::state* lua_{nullptr};
   Registry* registry_{nullptr};
