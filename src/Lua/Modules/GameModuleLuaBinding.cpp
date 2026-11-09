@@ -115,6 +115,84 @@ const PerformanceStats* GetPerfStatsFromCtx(LuaBindingContext& ctx) {
   return engineCtx != nullptr ? engineCtx->perfStats : nullptr;
 }
 
+float GetFpsState(LuaBindingContext& ctx) {
+  const auto* stats = GetPerfStatsFromCtx(ctx);
+  return stats != nullptr ? stats->fps : 0.0F;
+}
+
+float GetAvgFpsState(LuaBindingContext& ctx) {
+  const auto* stats = GetPerfStatsFromCtx(ctx);
+  return stats != nullptr ? stats->avgFps : 0.0F;
+}
+
+float GetFrameTimeState(LuaBindingContext& ctx) {
+  const auto* stats = GetPerfStatsFromCtx(ctx);
+  return stats != nullptr ? stats->frameTimeMs : 0.0F;
+}
+
+std::size_t GetEntityCountState(LuaBindingContext& ctx) {
+  const auto* stats = GetPerfStatsFromCtx(ctx);
+  if (stats != nullptr) {
+    return stats->entityCount;
+  }
+  auto* reg = ctx.GetRegistry();
+  return reg != nullptr ? reg->GetUserEntityCount() : 0;
+}
+
+std::uint64_t GetMemoryUsageState(LuaBindingContext& ctx) {
+  const auto* stats = GetPerfStatsFromCtx(ctx);
+  return stats != nullptr ? stats->memoryBytes : 0;
+}
+
+sol::table GetPerfStatsTable(sol::this_state ts, LuaBindingContext& ctx) {
+  sol::state_view sv(ts);
+  sol::table t = sv.create_table();
+  const auto* stats = GetPerfStatsFromCtx(ctx);
+  if (stats == nullptr) {
+    return t;
+  }
+
+  t["fps"] = stats->fps;
+  t["avg_fps"] = stats->avgFps;
+  t["p50_fps"] = stats->p50Fps;
+  t["p95_fps"] = stats->p95Fps;
+  t["p99_fps"] = stats->p99Fps;
+  t["frame_ms"] = stats->frameTimeMs;
+  t["avg_frame_ms"] = stats->avgFrameTimeMs;
+  t["p95_frame_ms"] = stats->p95FrameTimeMs;
+  t["entity_count"] = stats->entityCount;
+  t["memory_bytes"] = stats->memoryBytes;
+  t["memory_mb"] = stats->memoryMb;
+  return t;
+}
+
+void SetDebugGuiState(LuaBindingContext& ctx, const bool enabled) {
+  auto& options = ctx.GetRegistry()->Get<GameConfig>().GetEngineOptions();
+  options.showDebugGUI = enabled;
+#ifdef OCTARINE_WITH_IMGUI
+  if (!options.showDebugGUI) {
+    RenderDebugGUISystem::ReturnFocusToGame(ctx.GetRegistry());
+  }
+#endif
+}
+
+bool ToggleDebugGuiState(LuaBindingContext& ctx) {
+  static uint64_t lastToggleTicks = 0;
+  const uint64_t now = SDL_GetTicks();
+  if (now >= lastToggleTicks && (now - lastToggleTicks) < 150) {
+    return ctx.GetRegistry()->Get<GameConfig>().GetEngineOptions().showDebugGUI;
+  }
+  lastToggleTicks = now;
+  auto& options = ctx.GetRegistry()->Get<GameConfig>().GetEngineOptions();
+  options.showDebugGUI = !options.showDebugGUI;
+#ifdef OCTARINE_WITH_IMGUI
+  if (!options.showDebugGUI) {
+    RenderDebugGUISystem::ReturnFocusToGame(ctx.GetRegistry());
+  }
+#endif
+  return options.showDebugGUI;
+}
+
 void BindDiagnostics(sol::state& lua, LuaBindingContext& ctx) {
   lua.set_function("log_table", [](const sol::table& table, const sol::optional<std::string>& message) {
     std::string prefix = message.has_value() ? (message.value() + ": ") : "";
@@ -122,80 +200,14 @@ void BindDiagnostics(sol::state& lua, LuaBindingContext& ctx) {
   });
 
   lua.set_function("quit_game", [&ctx]() { ctx.RequestQuit(); });
-
-  lua.set_function("get_fps", [&ctx]() -> float {
-    const auto* stats = GetPerfStatsFromCtx(ctx);
-    return stats != nullptr ? stats->fps : 0.0F;
-  });
-
-  lua.set_function("get_avg_fps", [&ctx]() -> float {
-    const auto* stats = GetPerfStatsFromCtx(ctx);
-    return stats != nullptr ? stats->avgFps : 0.0F;
-  });
-
-  lua.set_function("get_frame_time", [&ctx]() -> float {
-    const auto* stats = GetPerfStatsFromCtx(ctx);
-    return stats != nullptr ? stats->frameTimeMs : 0.0F;
-  });
-
-  lua.set_function("get_entity_count", [&ctx]() -> std::size_t {
-    const auto* stats = GetPerfStatsFromCtx(ctx);
-    if (stats != nullptr) return stats->entityCount;
-    auto* reg = ctx.GetRegistry();
-    return reg != nullptr ? reg->GetUserEntityCount() : 0;
-  });
-
-  lua.set_function("get_memory_usage", [&ctx]() -> std::uint64_t {
-    const auto* stats = GetPerfStatsFromCtx(ctx);
-    return stats != nullptr ? stats->memoryBytes : 0;
-  });
-
-  lua.set_function("get_perf_stats", [&ctx](sol::this_state ts) -> sol::table {
-    sol::state_view sv(ts);
-    sol::table t = sv.create_table();
-    const auto* stats = GetPerfStatsFromCtx(ctx);
-    if (stats == nullptr) return t;
-
-    t["fps"] = stats->fps;
-    t["avg_fps"] = stats->avgFps;
-    t["p50_fps"] = stats->p50Fps;
-    t["p95_fps"] = stats->p95Fps;
-    t["p99_fps"] = stats->p99Fps;
-    t["frame_ms"] = stats->frameTimeMs;
-    t["avg_frame_ms"] = stats->avgFrameTimeMs;
-    t["p95_frame_ms"] = stats->p95FrameTimeMs;
-    t["entity_count"] = stats->entityCount;
-    t["memory_bytes"] = stats->memoryBytes;
-    t["memory_mb"] = stats->memoryMb;
-    return t;
-  });
-
-  lua.set_function("set_debug_gui", [&ctx](const bool enabled) {
-    auto& options = ctx.GetRegistry()->Get<GameConfig>().GetEngineOptions();
-    options.showDebugGUI = enabled;
-#ifdef OCTARINE_WITH_IMGUI
-    if (!options.showDebugGUI) {
-      RenderDebugGUISystem::ReturnFocusToGame(ctx.GetRegistry());
-    }
-#endif
-  });
-
-  lua.set_function("toggle_debug_gui", [&ctx]() {
-    static uint64_t lastToggleTicks = 0;
-    const uint64_t now = SDL_GetTicks();
-    if (now >= lastToggleTicks && (now - lastToggleTicks) < 150) {
-      return ctx.GetRegistry()->Get<GameConfig>().GetEngineOptions().showDebugGUI;
-    }
-    lastToggleTicks = now;
-    auto& options = ctx.GetRegistry()->Get<GameConfig>().GetEngineOptions();
-    options.showDebugGUI = !options.showDebugGUI;
-#ifdef OCTARINE_WITH_IMGUI
-    if (!options.showDebugGUI) {
-      RenderDebugGUISystem::ReturnFocusToGame(ctx.GetRegistry());
-    }
-#endif
-    return options.showDebugGUI;
-  });
+  lua.set_function("get_fps", [&ctx]() -> float { return GetFpsState(ctx); });
+  lua.set_function("get_avg_fps", [&ctx]() -> float { return GetAvgFpsState(ctx); });
+  lua.set_function("get_frame_time", [&ctx]() -> float { return GetFrameTimeState(ctx); });
+  lua.set_function("get_entity_count", [&ctx]() -> std::size_t { return GetEntityCountState(ctx); });
+  lua.set_function("get_memory_usage", [&ctx]() -> std::uint64_t { return GetMemoryUsageState(ctx); });
+  lua.set_function("get_perf_stats", [&ctx](sol::this_state ts) -> sol::table { return GetPerfStatsTable(ts, ctx); });
+  lua.set_function("set_debug_gui", [&ctx](const bool enabled) { SetDebugGuiState(ctx, enabled); });
+  lua.set_function("toggle_debug_gui", [&ctx]() -> bool { return ToggleDebugGuiState(ctx); });
 }
 
 void BindSubsteppingAndDt(sol::state& lua, LuaBindingContext& ctx) {
