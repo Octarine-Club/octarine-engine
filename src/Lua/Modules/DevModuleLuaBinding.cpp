@@ -123,8 +123,14 @@ std::string FormatWatchValue(const sol::protected_function& valueFn) {
   const sol::object obj = res.get<sol::object>();
   if (obj.is<std::string>()) return obj.as<std::string>();
   sol::state_view sv(obj.lua_state());
-  sol::protected_function_result strRes = sv["tostring"](obj);
-  return strRes.valid() && strRes.get_type() == sol::type::string ? strRes.get<std::string>() : std::string{};
+  auto tostring = sv["tostring"].get<sol::protected_function>();
+  if (tostring.valid()) {
+    auto strRes = tostring(obj);
+    if (strRes.valid() && strRes.get_type() == sol::type::string) {
+      return strRes.get<std::string>();
+    }
+  }
+  return {};
 }
 
 void BindWatchFunctions(sol::table& dev, LuaBindingContext& ctx) {

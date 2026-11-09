@@ -107,9 +107,14 @@ void ExecuteLuaCommand(Registry& registry, const std::string& command) {
       Logger::InfoLua(obj.as<std::string>());
     } else {
       sol::state_view sv(obj.lua_state());
-      sol::protected_function_result strRes = sv["tostring"](obj);
-      Logger::InfoLua(strRes.valid() && strRes.get_type() == sol::type::string ? strRes.get<std::string>()
-                                                                               : "<result>");
+      auto tostring = sv["tostring"].get<sol::protected_function>();
+      if (tostring.valid()) {
+        auto strRes = tostring(obj);
+        Logger::InfoLua(strRes.valid() && strRes.get_type() == sol::type::string ? strRes.get<std::string>()
+                                                                                 : "<result>");
+      } else {
+        Logger::InfoLua("<result>");
+      }
     }
   }
 }
