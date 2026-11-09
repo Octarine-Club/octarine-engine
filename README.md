@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/logo-128.png" alt="Octarine Engine Logo" width="128" height="128" />
+</p>
+
 # Octarine Engine
 
 ![Octarine Engine](https://img.shields.io/badge/Aesthetic-Yellowish--Purple-9370DB?style=for-the-badge)

@@ -179,8 +179,7 @@ metadata from that single input:
 by `scripts/octarine-icon-tool`, a vendored host-only stb-based exe built
 on demand by `octarine-icons.cmake`. macOS `.icns` assembly still shells
 out to `iconutil` (ships with Xcode command-line tools). With `icon=`
-unset, the script skip-warns and the build ships platform defaults:
-Android keeps the green-robot launcher, desktop ships no icon.
+unset, the build falls back to the default Octarine Engine icon (`docs/assets/icon-64.png`).
 
 Adaptive icons crop the outer ~16% of the source PNG. Leave safe padding so
 the cropped circle on Android matches the legacy square on Android 7.

@@ -552,10 +552,12 @@ function(octarine_package TARGET)
         set(_runtime_dest ".")
         set(_data_dest ".")
         set(_framework_dest ".")   # unused on non-APPLE; bundle helper branches on platform
-        # Linux: ship the PNG beside the binary so a future .desktop file (or AppImage) can
-        # reference it via Icon=octarine_icon. Windows: nothing here; CPack NSIS picks the .ico
-        # through CPACK_NSIS_MUI_ICON below.
-        if (NOT WIN32 AND EXISTS "${_desktop_png}")
+        if (WIN32 AND EXISTS "${_desktop_ico}")
+            file(TO_CMAKE_PATH "${_desktop_ico}" _rc_ico_path)
+            set(_pkg_rc "${CMAKE_BINARY_DIR}/_octarine_desktop_icons/octarine_package_icon.rc")
+            file(WRITE "${_pkg_rc}" "IDI_ICON1 ICON \"${_rc_ico_path}\"\n")
+            target_sources(${TARGET} PRIVATE "${_pkg_rc}")
+        elseif (NOT WIN32 AND EXISTS "${_desktop_png}")
             install(FILES "${_desktop_png}" DESTINATION "${_runtime_dest}")
         endif ()
     endif ()

@@ -171,6 +171,7 @@ octarine_add_engine_test(OctarineTilemapSystemTest TilemapSystemTest TilemapSyst
 octarine_add_engine_test(OctarineUILayoutTest UILayoutTest UILayoutTest.cpp)
 octarine_add_engine_test(OctarineDebugMenuRegistryTest DebugMenuRegistryTest DebugMenuRegistryTest.cpp)
 octarine_add_engine_test(OctarineDebugThemeTest DebugThemeTest DebugThemeTest.cpp)
+octarine_add_engine_test(OctarineEngineIconTest EngineIconTest EngineIconTest.cpp)
 
 if (NOT OCTARINE_SHIPPED)
     set(_extra_dev_libs "")

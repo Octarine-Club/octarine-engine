@@ -1,10 +1,12 @@
 #include "Engine/EngineRuntime.h"
 
 #include <SDL3/SDL.h>
+#include <SDL3_image/SDL_image.h>
 #include <SDL3_ttf/SDL_ttf.h>
 
 #include <string>
 
+#include "General/Icons/OctarineIcon.h"
 #include "General/Logger.h"
 
 #ifdef OCTARINE_WITH_IMGUI
@@ -58,7 +60,32 @@ bool EngineRuntime::CreateWindow(const std::string& title, int width, int height
     return false;
   }
 
+  if (!headless) {
+    SetWindowIcon(octarine::icons::kOctarineIconPng, octarine::icons::kOctarineIconPngSize);
+  }
+
   return true;
+}
+
+bool EngineRuntime::SetWindowIcon(const void* pngData, const size_t pngSize) {
+  if (!window_ || !pngData || pngSize == 0) {
+    return false;
+  }
+
+  SDL_IOStream* io = SDL_IOFromConstMem(pngData, pngSize);
+  if (!io) {
+    return false;
+  }
+
+  SDL_Surface* surface = IMG_Load_IO(io, true);
+  if (!surface) {
+    Logger::Warn("Failed to decode window icon PNG: " + std::string(SDL_GetError()));
+    return false;
+  }
+
+  const bool ok = SDL_SetWindowIcon(window_, surface);
+  SDL_DestroySurface(surface);
+  return ok;
 }
 
 #ifdef OCTARINE_WITH_IMGUI
@@ -81,9 +108,11 @@ void EngineRuntime::InitImGui(const char* iniPath) {
 void EngineRuntime::Shutdown() {
   if (sdl_renderer_) {
 #ifdef OCTARINE_WITH_IMGUI
-    ImGui_ImplSDLRenderer3_Shutdown();
-    ImGui_ImplSDL3_Shutdown();
-    ImGui::DestroyContext();
+    if (ImGui::GetCurrentContext() != nullptr) {
+      ImGui_ImplSDLRenderer3_Shutdown();
+      ImGui_ImplSDL3_Shutdown();
+      ImGui::DestroyContext();
+    }
 #endif
     SDL_DestroyRenderer(sdl_renderer_);
     sdl_renderer_ = nullptr;

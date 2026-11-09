@@ -522,6 +522,35 @@ void ApplyInitialWindowSettings(Registry& registry, const GameConfig& gameConfig
     Renderer::ApplyVSync(runtime.SdlRenderer(), gameConfig.GetEngineOptions().vsync);
   }
 }
+
+void ApplyProjectWindowIcon(Registry& registry, const GameConfig& gameConfig, EngineRuntime& runtime,
+                            const bool headless) {
+  if (headless) return;
+  const auto* pak = registry.TryGet<AssetPak>();
+  const auto iniBytes = ReadProjectIniBytes(gameConfig, pak);
+  if (!iniBytes) return;
+  const auto ini = octarine::project::ProjectIni::Parse(*iniBytes);
+  if (ini.icon.empty()) return;
+
+  if (pak != nullptr && pak->IsOpen() && pak->Contains(ini.icon)) {
+    if (SDL_IOStream* io = pak->OpenIO(ini.icon)) {
+      size_t dataSize = 0;
+      if (void* data = SDL_LoadFile_IO(io, &dataSize, true)) {
+        runtime.SetWindowIcon(data, dataSize);
+        SDL_free(data);
+        return;
+      }
+    }
+  }
+#if !defined(OCTARINE_SHIPPED) || defined(OCTARINE_ALLOW_LOOSE_ASSETS)
+  const std::filesystem::path iconPath = std::filesystem::path(gameConfig.GetAssetPath()) / ini.icon;
+  size_t dataSize = 0;
+  if (void* data = SDL_LoadFile(iconPath.string().c_str(), &dataSize)) {
+    runtime.SetWindowIcon(data, dataSize);
+    SDL_free(data);
+  }
+#endif
+}
 }  // namespace
 
 bool Game::CreateWindowAndScene(bool projectLoaded) {
@@ -537,6 +566,9 @@ bool Game::CreateWindowAndScene(bool projectLoaded) {
   }
 
   ApplyInitialWindowSettings(*registry_, gameConfig, runtime_, headless_);
+  if (projectLoaded) {
+    ApplyProjectWindowIcon(*registry_, gameConfig, runtime_, headless_);
+  }
 
   return renderer_->CreateScene(runtime_.SdlRenderer(), gameConfig.windowWidth, gameConfig.windowHeight);
 }
@@ -812,6 +844,18 @@ bool Game::RunBakeValidation(const std::string& assetPath, const std::string& sc
         std::filesystem::path(assetPath) / octarine::project::ProjectIni::kFilename;
     if (std::filesystem::is_regular_file(projectIniFile, ec)) {
       extraFiles.push_back(projectIniFile.lexically_normal().string());
+      size_t iniSize = 0;
+      if (void* iniData = SDL_LoadFile(projectIniFile.string().c_str(), &iniSize)) {
+        const std::string iniStr(static_cast<const char*>(iniData), iniSize);
+        SDL_free(iniData);
+        const auto ini = octarine::project::ProjectIni::Parse(iniStr);
+        if (!ini.icon.empty()) {
+          const auto iconPath = (std::filesystem::path(assetPath) / ini.icon).lexically_normal();
+          if (std::filesystem::is_regular_file(iconPath, ec)) {
+            extraFiles.push_back(iconPath.string());
+          }
+        }
+      }
     }
 
     // If an external scripts directory is provided (e.g. pre-compiled bytecode staged by CMake),

@@ -185,6 +185,9 @@ if (ANDROID)
     set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME main)
 else ()
     add_executable(${PROJECT_NAME} src/Main.cpp)
+    if (WIN32 AND NOT OCTARINE_PACKAGE_PROJECT)
+        target_sources(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/General/Icons/octarine_icon.rc")
+    endif ()
 endif ()
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
