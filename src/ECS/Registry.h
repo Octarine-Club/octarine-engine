@@ -24,6 +24,20 @@
 template <typename... TComponents>
 class ComponentQuery;
 
+struct RegistryMemoryStats {
+  double chunkFillPct = 0.0;        // occupiedSlots / totalSlotCapacity * 100
+  double activeFillPct = 0.0;       // activeSlots / totalSlotCapacity * 100
+  double byteUtilizationPct = 0.0;  // payloadUsedBytes / chunkArenaBytes * 100
+  std::size_t archetypeCount = 0;
+  std::size_t nonEmptyArchetypes = 0;
+  std::size_t totalChunks = 0;
+  std::size_t chunkArenaBytes = 0;  // totalChunks * kChunkSize (16 KB)
+  std::size_t totalSlotCapacity = 0;
+  std::size_t occupiedSlots = 0;
+  std::size_t activeSlots = 0;
+  std::size_t payloadUsedBytes = 0;
+};
+
 class ComponentRegistry {
  public:
   template <typename T>
@@ -155,6 +169,8 @@ class Registry {
   [[nodiscard]] std::uint64_t GetEntityCount() const { return entity_locations_.size(); }
 
   [[nodiscard]] std::size_t GetArchetypeCount() const { return archetypes_.size(); }
+
+  [[nodiscard]] RegistryMemoryStats ComputeMemoryStats() const;
 
   // Opt-in wall-clock timing of each system inside Update(). Exists in every build type (unlike
   // the PROFILE_* macros, which compile out outside player-profile) so headless benchmarks and

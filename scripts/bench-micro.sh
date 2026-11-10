@@ -8,6 +8,7 @@
 #   --filter REGEX    raw --benchmark_filter (overrides --tier)
 #   --quick           short min-time, skips Frame/MaxEntities (default)
 #   --full            longer min-time + 3 repetitions (median/cv), includes Frame/MaxEntities
+#   --hw-counters     sample hardware PMU counters (instructions, cycles, IPC)
 #   --repetitions N   override repetition count
 #   --baseline FILE   compare against a previous JSON (scripts/bench_compare.py)
 #   --out FILE        JSON output path (default: build/bench-results/<timestamp>[_label].json)
@@ -28,6 +29,7 @@ repo_root="$(cd "$script_dir/.." && pwd)"
 tier="all"
 filter=""
 mode="quick"
+hw_counters=0
 repetitions=""
 baseline=""
 out=""
@@ -40,7 +42,8 @@ while [[ $# -gt 0 ]]; do
     --tier) tier="$2"; shift 2 ;;
     --filter) filter="$2"; shift 2 ;;
     --quick) mode="quick"; shift ;;
-    --full) mode="full"; shift ;;
+    --full) mode="full"; hw_counters=1; shift ;;
+    --hw-counters) hw_counters=1; shift ;;
     --repetitions) repetitions="$2"; shift 2 ;;
     --baseline) baseline="$2"; shift 2 ;;
     --out) out="$2"; shift 2 ;;
@@ -68,8 +71,8 @@ fi
 
 if [[ -z "$filter" ]]; then
   case "$tier" in
-    all) filter="^(ECS|Sys|Pipeline|Misc)/|^Frame/(Sim|SimSync|Churn|Lua)/" ;;
-    Frame) filter="^Frame/(Sim|SimSync|Churn|Lua)/" ;;
+    all) filter="^(ECS|Sys|Pipeline|Misc)/|^Frame/(Sim|SimSync|Churn|Lua|CoreSim|CoreSimSync|CoreChurn|CoreLua)/" ;;
+    Frame) filter="^Frame/(Sim|SimSync|Churn|Lua|CoreSim|CoreSimSync|CoreChurn|CoreLua)/" ;;
     ECS|Sys|Pipeline|Misc) filter="^$tier/" ;;
     *) echo "unknown tier: $tier" >&2; exit 2 ;;
   esac
@@ -82,6 +85,9 @@ if [[ -z "$filter" ]]; then
 fi
 
 args=(--benchmark_filter="$filter" --benchmark_out_format=json)
+if [[ $hw_counters -eq 1 ]]; then
+  args+=(--hw-counters)
+fi
 if [[ "$mode" == "quick" ]]; then
   args+=(--benchmark_min_time=0.1s)
   [[ -n "$repetitions" ]] && args+=(--benchmark_repetitions="$repetitions" --benchmark_report_aggregates_only=true)

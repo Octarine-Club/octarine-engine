@@ -71,6 +71,7 @@ octarine_add_core_test(OctarineCollisionResponseTest CollisionResponseTest Colli
 octarine_add_core_test(OctarineKDTreeCollisionSystemTest KDTreeCollisionSystemTest KDTreeCollisionSystemTest.cpp)
 octarine_add_engine_test(OctarineLayoutInvariantsTest LayoutInvariantsTest LayoutInvariantsTest.cpp)
 octarine_add_engine_test(OctarineZeroAllocFrameTest ZeroAllocFrameTest ZeroAllocFrameTest.cpp)
+octarine_add_engine_test(OctarineRenderQueueStatsTest RenderQueueStatsTest RenderQueueStatsTest.cpp)
 
 if (TARGET octarine_game_module AND EXISTS "${OCTARINE_GAME_MODULE_DIR}/tests/CMakeLists.txt")
     add_subdirectory("${OCTARINE_GAME_MODULE_DIR}/tests" GameModuleTests)

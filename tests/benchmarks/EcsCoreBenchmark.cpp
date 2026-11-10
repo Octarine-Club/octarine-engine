@@ -86,6 +86,8 @@ static void BM_IterateSerial(benchmark::State& state) {
   PopulateSpread(registry, n, 8);
   auto query = registry.CreateQuery<CorePos, CoreVel>();
   query->Update();
+  bench::AllocScope allocScope;
+  bench::HwCounterScope hwScope(n);
   for (auto _ : state) {
     query->ForEach([](const Entity /*e*/, CorePos& p, const CoreVel& v) {
       p.x += v.dx;
@@ -93,9 +95,20 @@ static void BM_IterateSerial(benchmark::State& state) {
     });
     benchmark::ClobberMemory();
   }
+  allocScope.Stop();
+  hwScope.Stop();
+  state.SetComplexityN(n);
   bench::ReportPerEntity(state, n);
+  bench::ReportBandwidth(state, n, sizeof(CorePos) + sizeof(CoreVel));
+  bench::ReportRegistry(state, registry);
+  allocScope.Report(state);
+  hwScope.Report(state);
 }
-BENCHMARK(BM_IterateSerial)->Name("ECS/Iterate/Serial")->RangeMultiplier(8)->Range(512, 262144);
+BENCHMARK(BM_IterateSerial)
+    ->Name("ECS/Iterate/Serial")
+    ->RangeMultiplier(8)
+    ->Range(512, 262144)
+    ->Complexity(benchmark::oN);
 
 static void BM_IterateFacade(benchmark::State& state) {
   Registry registry;
@@ -103,6 +116,8 @@ static void BM_IterateFacade(benchmark::State& state) {
   PopulateSpread(registry, n, 8);
   auto query = registry.CreateQuery<CorePos, CoreVel>();
   query->Update();
+  bench::AllocScope allocScope;
+  bench::HwCounterScope hwScope(n);
   for (auto _ : state) {
     query->ForEach([](const ContextFacade& /*ctx*/, const Entity /*e*/, CorePos& p, const CoreVel& v) {
       p.x += v.dx;
@@ -110,9 +125,20 @@ static void BM_IterateFacade(benchmark::State& state) {
     });
     benchmark::ClobberMemory();
   }
+  allocScope.Stop();
+  hwScope.Stop();
+  state.SetComplexityN(n);
   bench::ReportPerEntity(state, n);
+  bench::ReportBandwidth(state, n, sizeof(CorePos) + sizeof(CoreVel));
+  bench::ReportRegistry(state, registry);
+  allocScope.Report(state);
+  hwScope.Report(state);
 }
-BENCHMARK(BM_IterateFacade)->Name("ECS/Iterate/Facade")->RangeMultiplier(8)->Range(512, 262144);
+BENCHMARK(BM_IterateFacade)
+    ->Name("ECS/Iterate/Facade")
+    ->RangeMultiplier(8)
+    ->Range(512, 262144)
+    ->Complexity(benchmark::oN);
 
 // Args: {entities, kernel cost, parallel?}
 static void BM_IterateKernelCost(benchmark::State& state) {
@@ -260,6 +286,8 @@ static void BM_SpawnDespawnPerFrame(benchmark::State& state) {
   };
   for (int i = 0; i < n; ++i) live.push_back(spawn());
   size_t cursor = 0;
+  bench::AllocScope allocScope;
+  bench::HwCounterScope hwScope(perFrame);
 
   for (auto _ : state) {
     for (int i = 0; i < perFrame; ++i) {
@@ -269,8 +297,14 @@ static void BM_SpawnDespawnPerFrame(benchmark::State& state) {
     }
     registry.Update(bench::kDt);
   }
+  allocScope.Stop();
+  hwScope.Stop();
+
   bench::ReportPerEntity(state, perFrame);
+  bench::ReportRegistry(state, registry);
   state.counters["churn_per_frame"] = perFrame;
+  allocScope.Report(state);
+  hwScope.Report(state);
 }
 BENCHMARK(BM_SpawnDespawnPerFrame)
     ->Name("ECS/Structural/SpawnDespawnPerFrame")

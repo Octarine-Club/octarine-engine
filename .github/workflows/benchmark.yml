@@ -43,17 +43,18 @@ jobs:
 
       - name: Configure CMake
         shell: bash
-        run: cmake --preset player-profile -DOCTARINE_ENABLE_BENCHMARKS=ON
+        run: cmake --preset player-release -DOCTARINE_ENABLE_BENCHMARKS=ON
 
       - name: Build Benchmarks
-        run: cmake --build build/player-profile --target OctarineBenchmarks --parallel
+        run: cmake --build build/player-release --target OctarineBenchmarks --parallel
 
-      # Write the JSON via --benchmark_out rather than piping stdout through tee: the profiling
-      # build logs TIMER/ACCUM lines to stdout, which both pollutes a stdout-captured JSON and,
-      # through the pipe, makes the step's exit code tee's (always 0) instead of the benchmark's —
-      # a crashed benchmark exe then "passes" and only the store step fails on the bad file.
+      # Write the JSON via --benchmark_out rather than piping stdout through tee:
+      # piping makes the step's exit code tee's (always 0) instead of the benchmark's, so
+      # a crashed benchmark exe would falsely pass before reaching the store step.
       - name: Run Micro-Benchmarks
-        run: ./build/player-profile/bin/relwithdebinfo/OctarineBenchmarks --benchmark_out=benchmark_result.json --benchmark_out_format=json > /dev/null
+        run: |
+          BENCH_BIN=$(find build/player-release/bin -type f -name OctarineBenchmarks -perm -u+x | head -n 1)
+          "$BENCH_BIN" --benchmark_out=benchmark_result.json --benchmark_out_format=json > /dev/null
 
       - name: Store micro-benchmark result
         uses: benchmark-action/github-action-benchmark@v1

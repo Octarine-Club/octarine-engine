@@ -351,9 +351,13 @@ if (OCTARINE_ENABLE_BENCHMARKS)
 
     add_executable(OctarineBenchmarks
             tests/benchmarks/BenchMain.cpp
+            tests/benchmarks/BenchAllocTracker.cpp
+            tests/benchmarks/BenchHwCounters.cpp
+            tests/benchmarks/CorePipelineFrameBenchmark.cpp
             tests/benchmarks/EcsCoreBenchmark.cpp
             tests/benchmarks/EntityPoolBenchmark.cpp
             tests/benchmarks/KDTreeCollisionSystemBenchmark.cpp
+            tests/benchmarks/RenderBatchBenchmark.cpp
             tests/benchmarks/SpatialAudioBenchmark.cpp
             tests/benchmarks/TextCacheBenchmark.cpp
             tests/benchmarks/TilemapBenchmark.cpp

@@ -482,5 +482,46 @@ int main() {
     registry.ValidateInvariants();
   }
 
+  // Registry::ComputeMemoryStats verifies chunk layout, occupancy, and active partition calculations.
+  {
+    std::cout << "[memory_stats] ComputeMemoryStats reports chunk metrics and fill percentages\n";
+    Registry registry;
+    const auto emptyStats = registry.ComputeMemoryStats();
+    Check(emptyStats.occupiedSlots == 0, "empty registry has 0 occupied slots");
+    Check(emptyStats.totalChunks == 0, "empty registry has 0 chunks");
+    Check(emptyStats.chunkArenaBytes == 0, "empty registry has 0 arena bytes");
+    Check(emptyStats.chunkFillPct == 0.0, "empty registry has 0% fill");
+
+    constexpr int kCount = 100;
+    std::vector<Entity> entities;
+    entities.reserve(kCount);
+    for (int i = 0; i < kCount; ++i) {
+      entities.push_back(registry.CreateEntityWithBundle(Position{1.0f, 2.0f}, Velocity{0.5f, 0.5f}));
+    }
+
+    const auto populatedStats = registry.ComputeMemoryStats();
+    Check(populatedStats.archetypeCount >= 1, "has at least 1 archetype");
+    Check(populatedStats.nonEmptyArchetypes >= 1, "has at least 1 non-empty archetype");
+    Check(populatedStats.totalChunks >= 1, "has allocated chunks");
+    Check(populatedStats.occupiedSlots == kCount, "occupied slots match entity count");
+    Check(populatedStats.activeSlots == kCount, "active slots match entity count initially");
+    Check(populatedStats.totalSlotCapacity >= kCount, "total slot capacity exceeds or matches entity count");
+    Check(populatedStats.chunkArenaBytes == populatedStats.totalChunks * 16384, "arena bytes equals chunks * 16KB");
+    Check(populatedStats.chunkFillPct > 0.0 && populatedStats.chunkFillPct <= 100.0, "chunk fill pct is valid");
+    Check(populatedStats.byteUtilizationPct > 0.0 && populatedStats.byteUtilizationPct <= 100.0,
+          "byte utilization pct is valid");
+
+    // Deactivate half the entities
+    for (int i = 0; i < kCount / 2; ++i) {
+      registry.Deactivate(entities[static_cast<size_t>(i)]);
+    }
+    registry.ValidateInvariants();
+    const auto deactivatedStats = registry.ComputeMemoryStats();
+    Check(deactivatedStats.occupiedSlots == kCount, "occupied slots remain unchanged after deactivation");
+    Check(deactivatedStats.activeSlots == kCount / 2, "active slots drop by half after deactivation");
+    Check(deactivatedStats.activeFillPct < deactivatedStats.chunkFillPct,
+          "active fill pct is strictly less than total chunk fill pct");
+  }
+
   return octarine::test::Result();
 }

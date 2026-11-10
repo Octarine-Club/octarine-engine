@@ -754,3 +754,50 @@ void Registry::ValidateInvariants() const {
     ValidateArchetypeChunks(archId, *archPtr);
   }
 }
+
+RegistryMemoryStats Registry::ComputeMemoryStats() const {
+  RegistryMemoryStats stats;
+  stats.archetypeCount = archetypes_.size();
+
+  auto processArchetype = [&](const Archetype& arch) {
+    const std::size_t chunks = arch.GetChunkCount();
+    if (chunks == 0) return;
+    const std::size_t entities = arch.GetEntityCount();
+    stats.totalChunks += chunks;
+    stats.totalSlotCapacity += chunks * arch.GetChunkCapacity();
+    stats.occupiedSlots += entities;
+    stats.activeSlots += arch.GetActiveCount();
+    if (entities > 0) {
+      ++stats.nonEmptyArchetypes;
+    }
+    std::size_t bytesPerEntity = sizeof(Entity);
+    for (const auto& info : arch.component_infos()) {
+      bytesPerEntity += info.size;
+    }
+    stats.payloadUsedBytes += bytesPerEntity * entities;
+  };
+
+  if (root_archetype_ && root_archetype_->GetChunkCount() > 0) {
+    processArchetype(*root_archetype_);
+    ++stats.archetypeCount;
+  }
+
+  for (const auto& [id, archPtr] : archetypes_) {
+    if (archPtr) {
+      processArchetype(*archPtr);
+    }
+  }
+
+  stats.chunkArenaBytes = stats.totalChunks * kChunkSize;
+  if (stats.totalSlotCapacity > 0) {
+    stats.chunkFillPct =
+        (static_cast<double>(stats.occupiedSlots) / static_cast<double>(stats.totalSlotCapacity)) * 100.0;
+    stats.activeFillPct =
+        (static_cast<double>(stats.activeSlots) / static_cast<double>(stats.totalSlotCapacity)) * 100.0;
+  }
+  if (stats.chunkArenaBytes > 0) {
+    stats.byteUtilizationPct =
+        (static_cast<double>(stats.payloadUsedBytes) / static_cast<double>(stats.chunkArenaBytes)) * 100.0;
+  }
+  return stats;
+}

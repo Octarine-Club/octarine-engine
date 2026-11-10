@@ -244,11 +244,16 @@ bool EntityMatchesFilter(const Registry& registry, Entity entity, const std::vec
 }  // namespace
 
 std::string StateInspector::DumpSummary(const Registry& registry, uint64_t currentTick) {
+  const auto memStats = registry.ComputeMemoryStats();
   std::ostringstream ss;
   ss << "{\n";
   ss << "  \"tick\": " << currentTick << ",\n";
   ss << "  \"entity_count\": " << registry.GetEntityCount() << ",\n";
-  ss << "  \"user_entity_count\": " << registry.GetUserEntityCount() << "\n";
+  ss << "  \"user_entity_count\": " << registry.GetUserEntityCount() << ",\n";
+  ss << "  \"archetype_count\": " << memStats.archetypeCount << ",\n";
+  ss << "  \"chunk_count\": " << memStats.totalChunks << ",\n";
+  ss << "  \"chunk_arena_bytes\": " << memStats.chunkArenaBytes << ",\n";
+  ss << "  \"chunk_fill_pct\": " << std::fixed << std::setprecision(2) << memStats.chunkFillPct << "\n";
   ss << "}";
   return ss.str();
 }

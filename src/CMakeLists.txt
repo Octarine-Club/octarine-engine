@@ -121,6 +121,7 @@ endif ()
 # -----------------------------------------------------------------------------
 octarine_library(octarine_renderer
         Renderer/Renderer.cpp
+        Renderer/RenderQueueStats.cpp
 )
 target_link_libraries(octarine_renderer PUBLIC
         octarine_core
