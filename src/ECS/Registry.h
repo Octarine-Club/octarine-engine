@@ -116,8 +116,8 @@ class Registry {
       ids[i] = componentEntities[i].GetId();
     }
     std::sort(ids.begin(), ids.end());
-    auto* uniqueEnd = std::unique(ids.begin(), ids.end());
-    const auto uniqueCount = static_cast<size_t>(uniqueEnd - ids.begin());
+    const auto uniqueEnd = std::unique(ids.begin(), ids.end());
+    const auto uniqueCount = static_cast<size_t>(std::distance(ids.begin(), uniqueEnd));
 
     Archetype* archetype = GetOrCreateArchetypeFromSpan(std::span<const ComponentID>(ids.data(), uniqueCount));
 
