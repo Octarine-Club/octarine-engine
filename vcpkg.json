@@ -17,14 +17,14 @@
         "sdl3-renderer-binding",
         "docking-experimental"
       ],
-      "version>=": "1.91.8"
+      "version>=": "1.93.0"
     },
     {
       "name": "lua",
       "features": [
         "tools"
       ],
-      "version>=": "5.4.7"
+      "version>=": "5.4.9"
     },
     {
       "name": "nlohmann-json",
@@ -32,7 +32,7 @@
     },
     {
       "name": "sdl3",
-      "version>=": "3.2.14"
+      "version>=": "3.4.20"
     },
     {
       "name": "sdl3",
@@ -54,11 +54,11 @@
       "features": [
         "png"
       ],
-      "version>=": "3.2.4"
+      "version>=": "3.4.8"
     },
     {
       "name": "sdl3-mixer",
-      "version>=": "3.2.0"
+      "version>=": "3.2.4"
     },
     {
       "name": "sdl3-ttf",
@@ -88,7 +88,7 @@
   "overrides": [
     {
       "name": "lua",
-      "version": "5.4.7"
+      "version": "5.4.9"
     }
   ]
 }

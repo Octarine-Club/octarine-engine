@@ -27,16 +27,16 @@ runs:
       with:
         path: |
           ${{ runner.temp }}/vcpkg-bincache
-          ${{ runner.temp }}/vcpkg-downloads/lua-5.4.7.tar.gz
+          ${{ runner.temp }}/vcpkg-downloads/lua-5.4.9.tar.gz
         key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-overlay-ports/**') }}
         restore-keys: |
           vcpkg-${{ runner.os }}-
-    - name: Pre-fetch and verify Lua 5.4.7 tarball
+    - name: Pre-fetch and verify Lua 5.4.9 tarball
       shell: bash
       run: |
         dl_dir="${RUNNER_TEMP}/vcpkg-downloads"
-        tarball="$dl_dir/lua-5.4.7.tar.gz"
-        expected_sha512="98c5c8978dfdf867e37e9eb3b3ec83dee92d199243b5119505da83895e33f10d43c841be6a7d3b106daba8a0b2bd25fe099ebff8f87831dcc55c79c78b97d8b8"
+        tarball="$dl_dir/lua-5.4.9.tar.gz"
+        expected_sha512="b112bd3f0d47043568ef52928853ef692554378a5e368d420b589babf606a82ce05fca781f5401c3565171800b39322141ee500e53e813d1a4ccc5d3a05879b1"
 
         verify_lua_tarball() {
           [ -f "$tarball" ] || return 1
@@ -47,7 +47,7 @@ runs:
         if ! verify_lua_tarball; then
           rm -f "$tarball"
           curl -fL --connect-timeout 15 --max-time 60 --retry 8 --retry-all-errors --retry-delay 5 \
-            "https://www.lua.org/ftp/lua-5.4.7.tar.gz" \
+            "https://www.lua.org/ftp/lua-5.4.9.tar.gz" \
             -o "$tarball"
           if ! verify_lua_tarball; then
             echo "::error::Failed to verify SHA512 of downloaded $tarball"
