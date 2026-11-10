@@ -47,10 +47,13 @@ function(octarine_library NAME)
                 /wd4201
                 /wd5321
         )
-        # Warnings-as-errors + AVX2 only outside Debug.
-        target_compile_options(${NAME} PRIVATE
-                $<IF:$<CONFIG:Debug>,,-WX /arch:AVX2>
-        )
+        # Warnings-as-errors + AVX2
+        if (OCTARINE_WARNINGS_AS_ERRORS)
+            target_compile_options(${NAME} PRIVATE /WX)
+        else ()
+            target_compile_options(${NAME} PRIVATE $<IF:$<CONFIG:Debug>,,-WX>)
+        endif ()
+        target_compile_options(${NAME} PRIVATE $<IF:$<CONFIG:Debug>,,/arch:AVX2>)
     else ()
         target_compile_options(${NAME} PRIVATE
                 -Wall
@@ -60,13 +63,18 @@ function(octarine_library NAME)
                 -Wconversion
                 -Wfatal-errors
         )
+        if (OCTARINE_WARNINGS_AS_ERRORS)
+            target_compile_options(${NAME} PRIVATE -Werror)
+        else ()
+            target_compile_options(${NAME} PRIVATE $<IF:$<CONFIG:Debug>,,-Werror>)
+        endif ()
         if (ANDROID)
             target_compile_options(${NAME} PRIVATE
                     $<IF:$<CONFIG:Debug>,,-ffast-math>
             )
         else ()
             target_compile_options(${NAME} PRIVATE
-                    $<IF:$<CONFIG:Debug>,,-Werror ${OCTARINE_ARCH_FLAG} -ffast-math>
+                    $<IF:$<CONFIG:Debug>,,${OCTARINE_ARCH_FLAG} -ffast-math>
             )
         endif ()
         target_compile_options(${NAME} PRIVATE

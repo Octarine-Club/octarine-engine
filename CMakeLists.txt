@@ -46,9 +46,11 @@ set(OCTARINE_SANITIZE "OFF" CACHE STRING "Sanitizer instrumentation: OFF, asan (
 set_property(CACHE OCTARINE_SANITIZE PROPERTY STRINGS OFF asan tsan)
 
 # Tooling, benchmarks, and testing
+option(OCTARINE_WARNINGS_AS_ERRORS "Treat compiler warnings as errors in all configurations" OFF)
 option(OCTARINE_ENABLE_LINTING "Run clang-tidy during compilation" OFF)
 option(OCTARINE_ENABLE_BENCHMARKS "Build benchmarks" OFF)
 option(OCTARINE_ENABLE_TESTS "Build engine tests" OFF)
+option(OCTARINE_ENABLE_COVERAGE "Build with source-based code coverage instrumentation (Clang/GCC)" OFF)
 
 # =============================================================================
 # Platform Overrides & Constraints
@@ -149,6 +151,21 @@ if (NOT OCTARINE_SANITIZE STREQUAL "OFF")
     message(STATUS "Octarine: sanitizers ENABLED (${OCTARINE_SANITIZE})")
 endif ()
 
+# Source-based Code Coverage (Clang/GCC)
+if (OCTARINE_ENABLE_COVERAGE)
+    if (NOT (CMAKE_CXX_COMPILER_ID MATCHES "Clang|AppleClang|GNU"))
+        message(FATAL_ERROR "OCTARINE_ENABLE_COVERAGE requires Clang or GCC (got ${CMAKE_CXX_COMPILER_ID})")
+    endif ()
+    if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|AppleClang")
+        set(OCTARINE_COVERAGE_FLAGS -fprofile-instr-generate -fcoverage-mapping)
+    else ()
+        set(OCTARINE_COVERAGE_FLAGS --coverage -fprofile-arcs -ftest-coverage)
+    endif ()
+    add_compile_options(${OCTARINE_COVERAGE_FLAGS})
+    add_link_options(${OCTARINE_COVERAGE_FLAGS})
+    message(STATUS "Octarine: code coverage ENABLED")
+endif ()
+
 # Status summary
 message(STATUS "Octarine: default log level = ${_octarine_default_log_level}")
 if (OCTARINE_ENABLE_PROFILING)
@@ -227,20 +244,28 @@ if (MSVC)
             /W4 /permissive- /MP /bigobj
             /w14242 /w14244 /w14254 /w44456 /w44457 /w44458 /w44459 /wd4201 /wd5321
     )
-    target_compile_options(${PROJECT_NAME} PRIVATE
-            $<IF:$<CONFIG:Debug>,,-WX /arch:AVX2>
-    )
+    if (OCTARINE_WARNINGS_AS_ERRORS)
+        target_compile_options(${PROJECT_NAME} PRIVATE /WX)
+    else ()
+        target_compile_options(${PROJECT_NAME} PRIVATE $<IF:$<CONFIG:Debug>,,-WX>)
+    endif ()
+    target_compile_options(${PROJECT_NAME} PRIVATE $<IF:$<CONFIG:Debug>,,/arch:AVX2>)
 else ()
     target_compile_options(${PROJECT_NAME} PRIVATE
             -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wfatal-errors
     )
+    if (OCTARINE_WARNINGS_AS_ERRORS)
+        target_compile_options(${PROJECT_NAME} PRIVATE -Werror)
+    else ()
+        target_compile_options(${PROJECT_NAME} PRIVATE $<IF:$<CONFIG:Debug>,,-Werror>)
+    endif ()
     if (ANDROID)
         target_compile_options(${PROJECT_NAME} PRIVATE
                 $<IF:$<CONFIG:Debug>,,-ffast-math>
         )
     else ()
         target_compile_options(${PROJECT_NAME} PRIVATE
-                $<IF:$<CONFIG:Debug>,,-Werror ${OCTARINE_ARCH_FLAG} -ffast-math>
+                $<IF:$<CONFIG:Debug>,,${OCTARINE_ARCH_FLAG} -ffast-math>
         )
     endif ()
     target_compile_options(${PROJECT_NAME} PRIVATE
