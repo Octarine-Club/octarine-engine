@@ -6,8 +6,17 @@
 ---@diagnostic disable: lowercase-global, missing-return
 
 ---@class ImDrawFlags
+---@field AAFill any
+---@field AALineEnds any
+---@field AALines any
+---@field CapSquare any
 ---@field Closed any
+---@field JoinMiter any
 ---@field None any
+---@field RoundAll any
+---@field RoundBottom any
+---@field RoundBottomLeft any
+---@field RoundBottomRight any
 ---@field RoundCornersAll any
 ---@field RoundCornersBottom any
 ---@field RoundCornersBottomLeft any
@@ -18,6 +27,20 @@
 ---@field RoundCornersTop any
 ---@field RoundCornersTopLeft any
 ---@field RoundCornersTopRight any
+---@field RoundLeft any
+---@field RoundNone any
+---@field RoundRight any
+---@field RoundTop any
+---@field RoundTopLeft any
+---@field RoundTopRight any
+---@field StrokeCenter any
+---@field StrokeCenterBiased any
+---@field StrokeInside any
+---@field StrokeLegacy any
+---@field StrokeOutside any
+---@field TextNoPixelSnap any
+---@field UseTexForRoundCorners any
+---@field UseVtxOffset any
 ImDrawFlags = {}
 
 
@@ -27,11 +50,13 @@ ImDrawFlags = {}
 ---@field AntiAliasedLines any
 ---@field AntiAliasedLinesUseTex any
 ---@field None any
+---@field TextNoPixelSnap any
 ImDrawListFlags = {}
 
 
 ---@class ImFontAtlasFlags
 ---@field NoBakedLines any
+---@field NoBakedRoundCorners any
 ---@field NoMouseCursors any
 ---@field NoPowerOfTwoHeight any
 ---@field None any
@@ -39,6 +64,7 @@ ImFontAtlasFlags = {}
 
 
 ---@class ImFontFlags
+---@field ImplicitRefSize any
 ---@field LockBakedSizes any
 ---@field NoLoadError any
 ---@field NoLoadGlyphs any
@@ -240,6 +266,8 @@ function ImGui.GetFrameHeight(...) end
 function ImGui.GetFrameHeightWithSpacing(...) end
 
 function ImGui.GetID(...) end
+
+function ImGui.GetItemClickedCountWithSingleClickDelay(...) end
 
 function ImGui.GetItemFlags(...) end
 
@@ -722,6 +750,7 @@ ImGuiChildFlags = {}
 ---@field ButtonHovered any
 ---@field COUNT any
 ---@field CheckMark any
+---@field CheckboxSelectedBg any
 ---@field ChildBg any
 ---@field DockingEmptyBg any
 ---@field DockingPreview any
@@ -812,6 +841,7 @@ ImGuiCol = {}
 ---@field None any
 ---@field PickerHueBar any
 ---@field PickerHueWheel any
+---@field PickerNoRotate any
 ---@field Uint8 any
 ImGuiColorEditFlags = {}
 
@@ -908,7 +938,6 @@ ImGuiDockNodeFlags = {}
 ---@field PayloadNoCrossContext any
 ---@field PayloadNoCrossProcess any
 ---@field SourceAllowNullID any
----@field SourceAutoExpirePayload any
 ---@field SourceExtern any
 ---@field SourceNoDisableHover any
 ---@field SourceNoHoldToOpenOthers any
@@ -1002,6 +1031,10 @@ ImGuiInputTextFlags = {}
 ---@field AutoClosePopups any
 ---@field ButtonRepeat any
 ---@field Disabled any
+---@field LiveEditOnInput any
+---@field LiveEditOnInputScalar any
+---@field LiveEditOnInputText any
+---@field MixedValue any
 ---@field NoNav any
 ---@field NoNavDefaultFocus any
 ---@field NoTabStop any
@@ -1300,6 +1333,7 @@ ImGuiSortDirection = {}
 ---@field ChildRounding any
 ---@field DisabledAlpha any
 ---@field DockingSeparatorSize any
+---@field DragDropTargetRounding any
 ---@field FrameBorderSize any
 ---@field FramePadding any
 ---@field FrameRounding any
@@ -1310,11 +1344,13 @@ ImGuiSortDirection = {}
 ---@field IndentSpacing any
 ---@field ItemInnerSpacing any
 ---@field ItemSpacing any
+---@field MenuItemRounding any
 ---@field PopupBorderSize any
 ---@field PopupRounding any
 ---@field ScrollbarPadding any
 ---@field ScrollbarRounding any
 ---@field ScrollbarSize any
+---@field SelectableRounding any
 ---@field SelectableTextAlign any
 ---@field SeparatorSize any
 ---@field SeparatorTextAlign any
@@ -1474,7 +1510,6 @@ ImGuiTableRowFlags = {}
 ---@field SpanAvailWidth any
 ---@field SpanFullWidth any
 ---@field SpanLabelWidth any
----@field SpanTextWidth any
 ImGuiTreeNodeFlags = {}
 
 
