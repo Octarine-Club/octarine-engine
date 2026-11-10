@@ -12,10 +12,12 @@
 #include "ECS/Context.h"
 #include "ECS/EntityPool.h"
 #include "ECS/Registry.h"
+#include "EventBus/EventBus.h"
 #include "Game/GameConfig.h"
 #include "Systems/AnimationSystem.h"
 #include "Systems/CameraFollowSystem.h"
 #include "Systems/LifetimeSystem.h"
+#include "Systems/ScriptCollisionSystem.h"
 #include "Systems/ScriptSystem.h"
 #include "TestHarness.h"
 
@@ -262,6 +264,63 @@ void TestScriptSystem() {
   }
 }
 
+void TestScriptCollisionSystem() {
+  Registry registry;
+  auto eventBus = std::make_unique<EventBus>();
+  ScriptCollisionSystem colSystem;
+  colSystem.Init(&registry, eventBus);
+
+  sol::state lua;
+  lua.open_libraries(sol::lib::base, sol::lib::table);
+  ScriptSystem scriptSystem;
+  scriptSystem.CreateLuaBindings(lua);
+
+  lua.script(R"(
+    enter_events = 0
+    exit_events = 0
+    function on_enter(tbl, self_e, other_e)
+      enter_events = enter_events + 1
+    end
+    function on_exit(tbl, self_e, other_e)
+      exit_events = exit_events + 1
+    end
+    function throwing_cb(tbl, self_e, other_e)
+      error("Intentional collision callback error")
+    end
+  )");
+
+  const Entity e1 = registry.CreateEntity();
+  const Entity e2 = registry.CreateEntity();
+  const Entity e3 = registry.CreateEntity();
+
+  ScriptComponent s1;
+  s1.onCollisionFunction = lua["on_enter"];
+  s1.onCollisionExitFunction = lua["on_exit"];
+  registry.AddComponent(e1, s1);
+
+  ScriptComponent s2;
+  s2.onCollisionFunction = lua["on_enter"];
+  s2.onCollisionExitFunction = lua["on_exit"];
+  registry.AddComponent(e2, s2);
+
+  // Emit enter batch with 2 pairs: (e1, e2) and (e1, e3)
+  std::vector<std::pair<Entity, Entity>> enterPairs{{e1, e2}, {e1, e3}};
+  eventBus->EmitEvent<CollisionBatchEvent>(enterPairs);
+
+  // e1 gets 2 enters, e2 gets 1 enter, e3 has no script component = 3 total callbacks
+  CheckEq(lua["enter_events"].get<int>(), 3, "Enter callback fired for e1 and e2");
+
+  // Emit exit batch
+  std::vector<std::pair<Entity, Entity>> exitPairs{{e1, e2}};
+  eventBus->EmitEvent<CollisionExitBatchEvent>(exitPairs);
+
+  CheckEq(lua["exit_events"].get<int>(), 2, "Exit callback fired for e1 and e2");
+
+  // Error handling path in DispatchCollisionCallback
+  registry.GetComponent<ScriptComponent>(e1).onCollisionFunction = lua["throwing_cb"];
+  eventBus->EmitEvent<CollisionBatchEvent>(enterPairs);
+}
+
 }  // namespace
 
 int main() {
@@ -270,5 +329,6 @@ int main() {
   TestLifetimeSystem();
   TestEntityPoolManager();
   TestScriptSystem();
+  TestScriptCollisionSystem();
   return octarine::test::ReportSummary("OctarineGameplaySystemsTest");
 }

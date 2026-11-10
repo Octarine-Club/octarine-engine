@@ -575,5 +575,33 @@ int main() {
           "active fill pct is strictly less than total chunk fill pct");
   }
 
+  // QueueBlamEntity and QueueDespawnEntity deferred destruction
+  {
+    Registry registry;
+    const Entity e1 = registry.CreateEntity();
+    const Entity e2 = registry.CreateEntity();
+    const Entity e3 = registry.CreateEntity();
+
+    // Valid queueing + duplicate deduplication + invalid entity handling
+    registry.QueueBlamEntity(e1);
+    registry.QueueBlamEntity(e1);
+    registry.QueueBlamEntity(Entity{999999});
+
+    registry.QueueDespawnEntity(e2);
+    registry.QueueDespawnEntity(e2);
+    registry.QueueDespawnEntity(Entity{888888});
+
+    Check(registry.IsAlive(e1), "e1 is alive before update");
+    Check(registry.IsAlive(e2), "e2 is alive before update");
+    Check(registry.IsAlive(e3), "e3 is alive before update");
+
+    registry.Update(0.016f);
+    registry.ValidateInvariants();
+
+    Check(!registry.IsAlive(e1), "e1 was blammed during Update");
+    Check(!registry.IsAlive(e2), "e2 was despawned during Update");
+    Check(registry.IsAlive(e3), "e3 remains alive");
+  }
+
   return octarine::test::Result();
 }

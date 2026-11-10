@@ -389,6 +389,40 @@ int main() {
     sys3 = std::move(sys2);
   }
 
+  // --- KDTreeCollisionSystem asynchronous update & IsOverlapping
+  {
+    Registry reg;
+    auto bus = std::make_unique<EventBus>();
+    EngineContext ctx;
+    ctx.eventBus = bus.get();
+    reg.Set<EngineContext>(ctx);
+
+    auto collision = reg.RegisterBulkSystem(KDTreeCollisionSystem(false));
+
+    const Entity e1 = reg.CreateEntity();
+    reg.AddComponent(e1, GlobalTransformComponent{glm::vec2(0.0f, 0.0f), glm::vec2(1.0f, 1.0f), 0.0f});
+    reg.AddComponent(e1, BoxColliderComponent{32, 32});
+    reg.AddComponent(e1, EntityMaskComponent{});
+
+    const Entity e2 = reg.CreateEntity();
+    reg.AddComponent(e2, GlobalTransformComponent{glm::vec2(10.0f, 0.0f), glm::vec2(1.0f, 1.0f), 0.0f});
+    reg.AddComponent(e2, BoxColliderComponent{32, 32});
+    reg.AddComponent(e2, EntityMaskComponent{});
+
+    // Step 1: gathers boxes and launches async detection
+    reg.Update(1.0f / 60.0f);
+    collision.Func().WaitForAsync();
+    // Step 2: consumes async result and updates prevPairs_
+    reg.Update(1.0f / 60.0f);
+
+    Check(collision.Func().IsOverlapping(e1, e2), "e1 and e2 are overlapping");
+
+    // Despawn to exercise empty box path with prior pairs
+    reg.BlamEntity(e1);
+    reg.BlamEntity(e2);
+    reg.Update(1.0f / 60.0f);
+  }
+
   TestMultiShapeCollisions();
 
   return octarine::test::Result();

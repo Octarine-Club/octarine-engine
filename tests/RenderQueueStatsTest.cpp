@@ -139,5 +139,161 @@ int main() {
     CheckEq(stats.totalVertices, size_t{4}, "degenerate outline triangle draws as 4-point line loop");
   }
 
+  // Test 8: Text command classification
+  {
+    RenderQueue queue(16);
+    auto* dummyTex = reinterpret_cast<SDL_Texture*>(0x3000);
+    auto& text = queue.EmplaceText(0, 0.0f, dummyTex);
+    text.texture = dummyTex;
+    queue.Sort();
+    const auto stats = AnalyzeRenderQueue(queue, 1.0f);
+    CheckEq(stats.commandCount, size_t{1}, "1 text command registered");
+    CheckEq(stats.drawBatches, size_t{1}, "1 batch for text command");
+    CheckEq(stats.totalVertices, size_t{4}, "Text command uses quad (4 vertices)");
+    CheckEq(stats.totalIndices, size_t{6}, "Text command uses 6 indices");
+  }
+
+  // Test 9: Thick line and degenerate line
+  {
+    RenderQueue queue(16);
+    auto& thickLine = queue.EmplaceLine(0, 0.0f);
+    thickLine.start = {0.0f, 0.0f};
+    thickLine.end = {50.0f, 50.0f};
+    thickLine.thickness = 4.0f;
+
+    auto& degenLine = queue.EmplaceLine(0, 1.0f);
+    degenLine.start = {10.0f, 10.0f};
+    degenLine.end = {10.0f, 10.0f};  // zero length
+    degenLine.thickness = 4.0f;
+
+    queue.Sort();
+    const auto stats = AnalyzeRenderQueue(queue, 1.0f);
+    CheckEq(stats.commandCount, size_t{1}, "1 valid line registered (degenerate skipped)");
+    CheckEq(stats.totalVertices, size_t{4}, "Thick line produces 4 vertices, degen 0");
+  }
+
+  // Test 10: Circle classification (filled, hairline outline, thick outline, degenerate)
+  {
+    RenderQueue queue(16);
+    auto& filledCirc = queue.EmplaceCircle(0, 0.0f);
+    filledCirc.radiusX = 20.0f;
+    filledCirc.radiusY = 20.0f;
+    filledCirc.filled = true;
+
+    auto& hairCirc = queue.EmplaceCircle(0, 1.0f);
+    hairCirc.radiusX = 20.0f;
+    hairCirc.radiusY = 20.0f;
+    hairCirc.thickness = 1.0f;
+    hairCirc.filled = false;
+
+    auto& thickCirc = queue.EmplaceCircle(0, 2.0f);
+    thickCirc.radiusX = 20.0f;
+    thickCirc.radiusY = 20.0f;
+    thickCirc.thickness = 4.0f;
+    thickCirc.filled = false;
+
+    auto& degenCirc = queue.EmplaceCircle(0, 3.0f);
+    degenCirc.radiusX = 0.0f;
+    degenCirc.radiusY = 0.0f;
+
+    queue.Sort();
+    const auto stats = AnalyzeRenderQueue(queue, 1.0f);
+    CheckEq(stats.commandCount, size_t{3}, "3 valid circles registered (degenerate skipped)");
+    Check(stats.totalVertices > 0, "Circles produce vertices");
+  }
+
+  // Test 11: Triangle classification (filled, hairline outline, thick outline)
+  {
+    RenderQueue queue(16);
+    auto& filledTri = queue.EmplaceTriangle(0, 0.0f);
+    filledTri.p1 = {0.0f, 0.0f};
+    filledTri.p2 = {20.0f, 0.0f};
+    filledTri.p3 = {10.0f, 20.0f};
+    filledTri.filled = true;
+
+    auto& hairTri = queue.EmplaceTriangle(0, 1.0f);
+    hairTri.p1 = {0.0f, 0.0f};
+    hairTri.p2 = {20.0f, 0.0f};
+    hairTri.p3 = {10.0f, 20.0f};
+    hairTri.thickness = 1.0f;
+    hairTri.filled = false;
+
+    auto& thickTri = queue.EmplaceTriangle(0, 2.0f);
+    thickTri.p1 = {0.0f, 0.0f};
+    thickTri.p2 = {20.0f, 0.0f};
+    thickTri.p3 = {10.0f, 20.0f};
+    thickTri.thickness = 4.0f;
+    thickTri.filled = false;
+
+    queue.Sort();
+    const auto stats = AnalyzeRenderQueue(queue, 1.0f);
+    CheckEq(stats.commandCount, size_t{3}, "3 triangles registered");
+    CheckEq(stats.drawBatches, size_t{3}, "Triangles with different topologies split batches");
+  }
+
+  // Test 12: Capsule classification (filled, hairline, thick, degen radius, degen points)
+  {
+    RenderQueue queue(16);
+    auto& filledCap = queue.EmplaceCapsule(0, 0.0f);
+    filledCap.start = {0.0f, 0.0f};
+    filledCap.end = {40.0f, 0.0f};
+    filledCap.radius = 10.0f;
+    filledCap.filled = true;
+
+    auto& hairCap = queue.EmplaceCapsule(0, 1.0f);
+    hairCap.start = {0.0f, 0.0f};
+    hairCap.end = {40.0f, 0.0f};
+    hairCap.radius = 10.0f;
+    hairCap.thickness = 1.0f;
+    hairCap.filled = false;
+
+    auto& thickCap = queue.EmplaceCapsule(0, 2.0f);
+    thickCap.start = {0.0f, 0.0f};
+    thickCap.end = {40.0f, 0.0f};
+    thickCap.radius = 10.0f;
+    thickCap.thickness = 4.0f;
+    thickCap.filled = false;
+
+    auto& degenRadiusCap = queue.EmplaceCapsule(0, 3.0f);
+    degenRadiusCap.start = {0.0f, 0.0f};
+    degenRadiusCap.end = {40.0f, 0.0f};
+    degenRadiusCap.radius = 0.0f;  // falls back to line
+
+    auto& degenPointsCap = queue.EmplaceCapsule(0, 4.0f);
+    degenPointsCap.start = {10.0f, 10.0f};
+    degenPointsCap.end = {10.0f, 10.0f};  // falls back to circle
+    degenPointsCap.radius = 10.0f;
+
+    queue.Sort();
+    const auto stats = AnalyzeRenderQueue(queue, 1.0f);
+    CheckEq(stats.commandCount, size_t{5}, "5 capsules registered");
+    Check(stats.totalVertices > 0, "Capsules produce geometry");
+  }
+
+  // Test 13: TileChunk classification (valid, degenerate)
+  {
+    RenderQueue queue(16);
+    auto* dummyTex = reinterpret_cast<SDL_Texture*>(0x4000);
+    const SDL_Vertex verts[4]{};
+    const int indices[6]{0, 1, 2, 2, 3, 0};
+
+    auto& validChunk = queue.EmplaceTileChunk(0, 0.0f, dummyTex);
+    validChunk.texture = dummyTex;
+    validChunk.vertices = verts;
+    validChunk.indices = indices;
+    validChunk.vertexCount = 4;
+    validChunk.indexCount = 6;
+
+    auto& nullChunk = queue.EmplaceTileChunk(0, 1.0f);
+    nullChunk.vertices = nullptr;
+    nullChunk.vertexCount = 0;
+
+    queue.Sort();
+    const auto stats = AnalyzeRenderQueue(queue, 1.0f);
+    CheckEq(stats.commandCount, size_t{1}, "1 valid tile chunk registered (null skipped)");
+    CheckEq(stats.totalVertices, size_t{4}, "Only valid chunk contributes 4 vertices");
+    CheckEq(stats.totalIndices, size_t{6}, "Only valid chunk contributes 6 indices");
+  }
+
   return octarine::test::ReportSummary("RenderQueueStatsTest");
 }

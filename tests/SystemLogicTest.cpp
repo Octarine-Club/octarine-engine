@@ -4,9 +4,11 @@
 // moves matching entities and skips non-matching ones. gtest-free; exit code = failed-check count.
 // Registered with ctest as SystemLogicTest. Links the ECS core only.
 
+#include <atomic>
 #include <cmath>
 #include <glm/glm.hpp>
 #include <iostream>
+#include <thread>
 
 #include "Components/AnimationComponent.h"
 #include "Components/LifetimeComponent.h"
@@ -16,7 +18,9 @@
 #include "ECS/Registry.h"
 #include "Game/GameConfig.h"
 #include "General/AngleUnit.h"
+#include "General/Logger.h"
 #include "General/Rotation2D.h"
+#include "General/ThreadPool.h"
 #include "Systems/AnimationSystem.h"
 #include "Systems/LifetimeSystem.h"
 #include "Systems/OffScreenDespawnSystem.h"
@@ -24,6 +28,7 @@
 #include "TestHarness.h"
 
 using octarine::test::Check;
+using octarine::test::CheckEq;
 
 namespace {
 struct Position {
@@ -218,6 +223,24 @@ int main() {
 
     Check(registry.IsAlive(mirroredOnScreen), "partially visible mirrored sprite at x=20 is NOT despawned");
     Check(!registry.IsAlive(mirroredOffScreen), "fully offscreen mirrored sprite at x=-10 IS despawned");
+  }
+
+  // ThreadPool ring-buffer resize and Logger Lua coverage
+  {
+    constexpr int kJobCount = 128;
+    std::atomic<int> completed{0};
+    for (int i = 0; i < kJobCount; ++i) {
+      ThreadPool::Instance().Submit([&completed] { completed.fetch_add(1, std::memory_order_relaxed); });
+    }
+    while (completed.load(std::memory_order_relaxed) < kJobCount) {
+      std::this_thread::yield();
+    }
+    CheckEq(completed.load(), kJobCount, "All ThreadPool jobs completed after ring buffer growth");
+
+    Logger::WarnLua("test warning message");
+#ifndef OCTARINE_SHIPPED
+    Logger::InfoLua("test info message");
+#endif
   }
 
   return octarine::test::Result();

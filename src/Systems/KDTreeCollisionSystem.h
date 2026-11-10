@@ -392,6 +392,22 @@ class KDTreeCollisionSystem {
   void SetSynchronous(bool sync) { synchronous_ = sync; }
   [[nodiscard]] bool IsSynchronous() const { return synchronous_; }
 
+  void WaitForAsync() {
+    if (!asyncState_ || !asyncState_->in_flight.load(std::memory_order_acquire)) {
+      return;
+    }
+    std::unique_lock<std::mutex> lk(asyncState_->mutex);
+    asyncState_->cv.wait(lk, [this] { return asyncState_->ready.load(std::memory_order_acquire); });
+  }
+
+  void DrainAsync() {
+    WaitForAsync();
+    if (asyncState_) {
+      asyncState_->in_flight.store(false, std::memory_order_relaxed);
+      asyncState_->ready.store(false, std::memory_order_relaxed);
+    }
+  }
+
   [[nodiscard]] static glm::vec2 TransformLocalPoint(const glm::vec2 localOffset,
                                                      const GlobalTransformComponent& transform,
                                                      const octarine::Rotation2D rot) {
@@ -668,16 +684,6 @@ class KDTreeCollisionSystem {
       }
       state->cv.notify_one();
     });
-  }
-
-  void DrainAsync() {
-    if (!asyncState_ || !asyncState_->in_flight.load(std::memory_order_acquire)) {
-      return;
-    }
-    std::unique_lock<std::mutex> lk(asyncState_->mutex);
-    asyncState_->cv.wait(lk, [this] { return asyncState_->ready.load(std::memory_order_acquire); });
-    asyncState_->in_flight.store(false, std::memory_order_relaxed);
-    asyncState_->ready.store(false, std::memory_order_relaxed);
   }
 
  public:
