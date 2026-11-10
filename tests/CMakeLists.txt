@@ -61,9 +61,16 @@ endfunction()
 
 octarine_add_core_test(OctarineEcsTest EcsRegistryTest EcsRegistryTest.cpp)
 octarine_add_core_test(OctarineEcsHierarchyTest EcsHierarchyTest EcsHierarchyTest.cpp)
+octarine_add_core_test(OctarineCommandBufferTest CommandBufferTest CommandBufferTest.cpp)
+octarine_add_core_test(OctarineEcsPropertyFuzzTest EcsPropertyFuzzTest EcsPropertyFuzzTest.cpp)
+octarine_add_engine_test(OctarineGameplaySystemsTest GameplaySystemsTest GameplaySystemsTest.cpp)
+octarine_add_engine_test(OctarineAudioSystemsTest AudioSystemsTest AudioSystemsTest.cpp)
+octarine_add_engine_test(OctarineInputSystemTest InputSystemTest InputSystemTest.cpp)
 octarine_add_core_test(OctarineSystemLogicTest SystemLogicTest SystemLogicTest.cpp)
 octarine_add_core_test(OctarineCollisionResponseTest CollisionResponseTest CollisionResponseTest.cpp)
 octarine_add_core_test(OctarineKDTreeCollisionSystemTest KDTreeCollisionSystemTest KDTreeCollisionSystemTest.cpp)
+octarine_add_engine_test(OctarineLayoutInvariantsTest LayoutInvariantsTest LayoutInvariantsTest.cpp)
+octarine_add_engine_test(OctarineZeroAllocFrameTest ZeroAllocFrameTest ZeroAllocFrameTest.cpp)
 
 if (TARGET octarine_game_module AND EXISTS "${OCTARINE_GAME_MODULE_DIR}/tests/CMakeLists.txt")
     add_subdirectory("${OCTARINE_GAME_MODULE_DIR}/tests" GameModuleTests)
@@ -135,6 +142,11 @@ octarine_add_engine_test(OctarineLuaBehaviorTest LuaBehaviorTest LuaBehaviorTest
 if (TARGET octarine_game_module)
     target_compile_definitions(OctarineLuaBehaviorTest PRIVATE OCTARINE_HAS_GAME_MODULE)
 endif ()
+
+octarine_add_engine_test(OctarineLuaModulesTest LuaModulesTest LuaModulesTest.cpp)
+octarine_add_engine_test(OctarineLuaTableSerializerTest LuaTableSerializerTest LuaTableSerializerTest.cpp)
+octarine_add_engine_test(OctarineParserRobustnessTest ParserRobustnessTest ParserRobustnessTest.cpp)
+octarine_add_engine_test(OctarineHotReloadTest HotReloadTest HotReloadTest.cpp)
 
 octarine_add_test(OctarineFileSandboxTest FileSandboxTest
         SOURCES FileSandboxTest.cpp
