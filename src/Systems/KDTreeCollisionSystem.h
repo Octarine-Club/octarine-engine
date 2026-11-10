@@ -1,14 +1,15 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdint>
 #include <functional>
-#include <future>
 #include <memory>
+#include <mutex>
 #include <tuple>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -327,11 +328,6 @@ struct Box {
 };
 static_assert(sizeof(Box) <= 64, "Box must fit in a single 64-byte cache line for KD-tree partitioning");
 
-struct CollisionResult {
-  std::vector<std::pair<Entity, Entity>> intersectingPairs;
-  std::vector<Box> boxes;
-};
-
 struct Partitions {
   int leftEnd;
   int rightStart;
@@ -339,7 +335,59 @@ struct Partitions {
 
 class KDTreeCollisionSystem {
  public:
-  explicit KDTreeCollisionSystem(bool synchronous = false) : synchronous_(synchronous) {}
+  struct AsyncState {
+    std::atomic<bool> ready{false};
+    std::atomic<bool> in_flight{false};
+    std::vector<Box> boxes;
+    std::vector<std::pair<Entity, Entity>> pairs;
+    std::mutex mutex;
+    std::condition_variable cv;
+  };
+
+  explicit KDTreeCollisionSystem(bool synchronous = false)
+      : synchronous_(synchronous), asyncState_(std::make_unique<AsyncState>()) {}
+
+  ~KDTreeCollisionSystem() { DrainAsync(); }
+
+  KDTreeCollisionSystem(KDTreeCollisionSystem&& other) noexcept
+      : prevPairs_([&] {
+          other.DrainAsync();
+          return std::move(other.prevPairs_);
+        }()),
+        cachedBoxes_(std::move(other.cachedBoxes_)),
+        syncPairsScratch_(std::move(other.syncPairsScratch_)),
+        enteringPairs_(std::move(other.enteringPairs_)),
+        exitingPairs_(std::move(other.exitingPairs_)),
+        query_(std::move(other.query_)),
+        circleQuery_(std::move(other.circleQuery_)),
+        capsuleQuery_(std::move(other.capsuleQuery_)),
+        triangleQuery_(std::move(other.triangleQuery_)),
+        lineQuery_(std::move(other.lineQuery_)),
+        synchronous_(other.synchronous_),
+        asyncState_(std::move(other.asyncState_)) {}
+
+  KDTreeCollisionSystem& operator=(KDTreeCollisionSystem&& other) noexcept {
+    if (this != &other) {
+      DrainAsync();
+      other.DrainAsync();
+      synchronous_ = other.synchronous_;
+      prevPairs_ = std::move(other.prevPairs_);
+      cachedBoxes_ = std::move(other.cachedBoxes_);
+      syncPairsScratch_ = std::move(other.syncPairsScratch_);
+      enteringPairs_ = std::move(other.enteringPairs_);
+      exitingPairs_ = std::move(other.exitingPairs_);
+      query_ = std::move(other.query_);
+      circleQuery_ = std::move(other.circleQuery_);
+      capsuleQuery_ = std::move(other.capsuleQuery_);
+      triangleQuery_ = std::move(other.triangleQuery_);
+      lineQuery_ = std::move(other.lineQuery_);
+      asyncState_ = std::move(other.asyncState_);
+    }
+    return *this;
+  }
+
+  KDTreeCollisionSystem(const KDTreeCollisionSystem&) = delete;
+  KDTreeCollisionSystem& operator=(const KDTreeCollisionSystem&) = delete;
 
   void SetSynchronous(bool sync) { synchronous_ = sync; }
   [[nodiscard]] bool IsSynchronous() const { return synchronous_; }
@@ -480,9 +528,7 @@ class KDTreeCollisionSystem {
     // Deterministic simulation mode (ThreadPool force-serial) also forces synchronous detection:
     // the async path emits whichever pass has finished by wall-clock time, which varies per run.
     if (synchronous_ || ThreadPool::IsForceSerial()) {
-      if (collisionResult_.valid()) {
-        static_cast<void>(collisionResult_.get());  // drain any in-flight async pass from before the mode switch
-      }
+      DrainAsync();
       UpdateSynchronous(eventBus);
     } else {
       UpdateAsynchronous(eventBus);
@@ -560,53 +606,78 @@ class KDTreeCollisionSystem {
 
     PROFILE_COUNTER_SET("Collision: Box count", static_cast<long long>(boxes.size()));
 
-    std::vector<std::pair<Entity, Entity>> intersectingPairs;
+    syncPairsScratch_.clear();
     if (!boxes.empty()) {
-      ComputeAsyncCollisions(boxes, intersectingPairs);
-      std::sort(intersectingPairs.begin(), intersectingPairs.end(), [](const auto& a, const auto& b) {
-        if (a.first.id != b.first.id) return a.first.id < b.first.id;
-        return a.second.id < b.second.id;
-      });
+      ComputeAsyncCollisions(boxes, syncPairsScratch_);
+      CanonicalizeAndDeduplicatePairs(syncPairsScratch_);
     }
-    EmitCollisionEvents(eventBus, intersectingPairs);
+    EmitCollisionEvents(eventBus, syncPairsScratch_);
   }
 
   void UpdateAsynchronous(EventBus* eventBus) {
-    if (collisionResult_.valid() &&
-        collisionResult_.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
-      return;
+    if (!asyncState_) {
+      asyncState_ = std::make_unique<AsyncState>();
     }
 
-    if (collisionResult_.valid()) {
+    if (asyncState_->in_flight.load(std::memory_order_acquire)) {
+      if (!asyncState_->ready.load(std::memory_order_acquire)) {
+        return;
+      }
       PROFILE_NAMED_SCOPE("Emit Events");
-      CollisionResult result = collisionResult_.get();
-      EmitCollisionEvents(eventBus, result.intersectingPairs);
-      cachedBoxes_ = std::move(result.boxes);
-      cachedBoxes_.clear();
+      asyncState_->in_flight.store(false, std::memory_order_relaxed);
+      asyncState_->ready.store(false, std::memory_order_relaxed);
+      EmitCollisionEvents(eventBus, asyncState_->pairs);
+      cachedBoxes_.swap(asyncState_->boxes);
     }
 
     PROFILE_NAMED_SCOPE("Gather Boxes");
-    std::vector<Box> boxes = std::move(cachedBoxes_);
     const size_t totalColliders = TotalColliderCount();
-    boxes.resize(totalColliders);
+    cachedBoxes_.resize(totalColliders);
     std::atomic<size_t> nextIndex{0};
 
-    AppendBoxesAsync(*query_, boxes, nextIndex);
-    AppendBoxesAsync(*circleQuery_, boxes, nextIndex);
-    AppendBoxesAsync(*capsuleQuery_, boxes, nextIndex);
-    AppendBoxesAsync(*triangleQuery_, boxes, nextIndex);
-    AppendBoxesAsync(*lineQuery_, boxes, nextIndex);
+    AppendBoxesAsync(*query_, cachedBoxes_, nextIndex);
+    AppendBoxesAsync(*circleQuery_, cachedBoxes_, nextIndex);
+    AppendBoxesAsync(*capsuleQuery_, cachedBoxes_, nextIndex);
+    AppendBoxesAsync(*triangleQuery_, cachedBoxes_, nextIndex);
+    AppendBoxesAsync(*lineQuery_, cachedBoxes_, nextIndex);
 
     const size_t gathered = nextIndex.load(std::memory_order_relaxed);
-    boxes.resize(std::min(gathered, totalColliders));
+    cachedBoxes_.resize(std::min(gathered, totalColliders));
 
-    PROFILE_COUNTER_SET("Collision: Box count", static_cast<long long>(boxes.size()));
+    PROFILE_COUNTER_SET("Collision: Box count", static_cast<long long>(cachedBoxes_.size()));
 
-    if (boxes.empty()) {
+    if (cachedBoxes_.empty()) {
+      if (!prevPairs_.empty()) {
+        syncPairsScratch_.clear();
+        EmitCollisionEvents(eventBus, syncPairsScratch_);
+      }
       return;
     }
 
-    collisionResult_ = StartAsyncCollisionDetection(std::move(boxes));
+    asyncState_->boxes.swap(cachedBoxes_);
+    asyncState_->ready.store(false, std::memory_order_release);
+    asyncState_->in_flight.store(true, std::memory_order_release);
+
+    ThreadPool::Instance().Submit([state = asyncState_.get()] {
+      state->pairs.clear();
+      ComputeAsyncCollisions(state->boxes, state->pairs);
+      CanonicalizeAndDeduplicatePairs(state->pairs);
+      {
+        std::lock_guard<std::mutex> lk(state->mutex);
+        state->ready.store(true, std::memory_order_release);
+      }
+      state->cv.notify_one();
+    });
+  }
+
+  void DrainAsync() {
+    if (!asyncState_ || !asyncState_->in_flight.load(std::memory_order_acquire)) {
+      return;
+    }
+    std::unique_lock<std::mutex> lk(asyncState_->mutex);
+    asyncState_->cv.wait(lk, [this] { return asyncState_->ready.load(std::memory_order_acquire); });
+    asyncState_->in_flight.store(false, std::memory_order_relaxed);
+    asyncState_->ready.store(false, std::memory_order_relaxed);
   }
 
  public:
@@ -614,63 +685,78 @@ class KDTreeCollisionSystem {
   // Reflects the result of the most recently completed async detection pass (one frame of lag
   // on the very first frame, stable thereafter). Safe to call from on_update or on_collision.
   [[nodiscard]] bool IsOverlapping(const Entity a, const Entity b) const {
-    return prevPairSet_.contains({std::min(a.id, b.id), std::max(a.id, b.id)});
+    const auto key = a.id < b.id ? std::make_pair(a, b) : std::make_pair(b, a);
+    return std::binary_search(prevPairs_.begin(), prevPairs_.end(), key, PairLess{});
   }
 
  private:
-  struct PairHash {
-    size_t operator()(const std::pair<EntityID, EntityID>& p) const noexcept {
-      // Boost-style hash_combine: golden-ratio constant spreads entropy, shifts mix bits.
-      static constexpr size_t kGoldenRatio = 0x9e3779b9ULL;
-      static constexpr int kLeftShift = 6;
-      size_t h = std::hash<EntityID>{}(p.first);
-      h ^= std::hash<EntityID>{}(p.second) + kGoldenRatio + (h << kLeftShift) + (h >> 2);
-      return h;
+  struct PairLess {
+    bool operator()(const std::pair<Entity, Entity>& a, const std::pair<Entity, Entity>& b) const noexcept {
+      if (a.first.id != b.first.id) return a.first.id < b.first.id;
+      return a.second.id < b.second.id;
     }
   };
-  using PairSet = std::unordered_set<std::pair<EntityID, EntityID>, PairHash>;
 
-  PairSet prevPairSet_;
+  static void CanonicalizeAndDeduplicatePairs(std::vector<std::pair<Entity, Entity>>& pairs) {
+    for (auto& [a, b] : pairs) {
+      if (b.id < a.id) std::swap(a, b);
+    }
+    std::sort(pairs.begin(), pairs.end(), PairLess{});
+    pairs.erase(std::unique(pairs.begin(), pairs.end()), pairs.end());
+  }
+
+  // Diff this frame's overlaps against the previous frame and emit the enter/exit batches.
+  //   - enter: pairs overlapping now but not last frame — first-contact only, so persistent
+  //     overlaps (entity pinned against an obstacle, stacked entities) don't re-fire every frame.
+  //   - exit: pairs that overlapped last frame but no longer do.
+  void EmitCollisionEvents(EventBus* eventBus, std::vector<std::pair<Entity, Entity>>& intersectingPairs) {
+    PROFILE_COUNTER_SET("Collision: Intersecting pairs", static_cast<long long>(intersectingPairs.size()));
+
+    enteringPairs_.clear();
+    exitingPairs_.clear();
+
+    size_t i = 0;
+    size_t j = 0;
+    const size_t nCurr = intersectingPairs.size();
+    const size_t nPrev = prevPairs_.size();
+    while (i < nCurr && j < nPrev) {
+      if (PairLess{}(intersectingPairs[i], prevPairs_[j])) {
+        enteringPairs_.push_back(intersectingPairs[i]);
+        ++i;
+      } else if (PairLess{}(prevPairs_[j], intersectingPairs[i])) {
+        exitingPairs_.push_back(prevPairs_[j]);
+        ++j;
+      } else {
+        ++i;
+        ++j;
+      }
+    }
+    while (i < nCurr) {
+      enteringPairs_.push_back(intersectingPairs[i++]);
+    }
+    while (j < nPrev) {
+      exitingPairs_.push_back(prevPairs_[j++]);
+    }
+
+    prevPairs_.swap(intersectingPairs);
+
+    PROFILE_COUNTER_SET("Collision: Entering pairs", static_cast<long long>(enteringPairs_.size()));
+    eventBus->EmitEvent<CollisionBatchEvent>(enteringPairs_);
+    eventBus->EmitEvent<CollisionExitBatchEvent>(exitingPairs_);
+  }
+
+  std::vector<std::pair<Entity, Entity>> prevPairs_;
   std::vector<Box> cachedBoxes_;
-  std::future<CollisionResult> collisionResult_;
+  std::vector<std::pair<Entity, Entity>> syncPairsScratch_;
+  std::vector<std::pair<Entity, Entity>> enteringPairs_;
+  std::vector<std::pair<Entity, Entity>> exitingPairs_;
   std::unique_ptr<ColliderQuery<BoxColliderComponent>> query_;
   std::unique_ptr<ColliderQuery<CircleColliderComponent>> circleQuery_;
   std::unique_ptr<ColliderQuery<CapsuleColliderComponent>> capsuleQuery_;
   std::unique_ptr<ColliderQuery<TriangleColliderComponent>> triangleQuery_;
   std::unique_ptr<ColliderQuery<LineColliderComponent>> lineQuery_;
   bool synchronous_{false};
-
-  // Diff this frame's overlaps against the previous frame and emit the enter/exit batches.
-  //   - enter: pairs overlapping now but not last frame — first-contact only, so persistent
-  //     overlaps (entity pinned against an obstacle, stacked entities) don't re-fire every frame.
-  //   - exit: pairs that overlapped last frame but no longer do.
-  void EmitCollisionEvents(EventBus* eventBus, const std::vector<std::pair<Entity, Entity>>& intersectingPairs) {
-    PROFILE_COUNTER_SET("Collision: Intersecting pairs", static_cast<long long>(intersectingPairs.size()));
-
-    PairSet currentSet;
-    currentSet.reserve(intersectingPairs.size());
-    std::vector<std::pair<Entity, Entity>> enteringPairs;
-    enteringPairs.reserve(intersectingPairs.size());
-    for (const auto& [a, b] : intersectingPairs) {
-      const auto key = std::make_pair(std::min(a.id, b.id), std::max(a.id, b.id));
-      if (currentSet.insert(key).second && !prevPairSet_.contains(key)) {
-        enteringPairs.emplace_back(a, b);
-      }
-    }
-
-    std::vector<std::pair<Entity, Entity>> exitingPairs;
-    for (const auto& [minId, maxId] : prevPairSet_) {
-      if (!currentSet.contains({minId, maxId})) {
-        exitingPairs.emplace_back(Entity{minId}, Entity{maxId});
-      }
-    }
-
-    prevPairSet_ = std::move(currentSet);
-
-    PROFILE_COUNTER_SET("Collision: Entering pairs", static_cast<long long>(enteringPairs.size()));
-    eventBus->EmitEvent<CollisionBatchEvent>(enteringPairs);
-    eventBus->EmitEvent<CollisionExitBatchEvent>(exitingPairs);
-  }
+  std::unique_ptr<AsyncState> asyncState_;
 
   static void BruteForceHugeBoxes(const std::vector<Box>& boxes, const std::vector<Box>::iterator& hugeBoxesBegin,
                                   std::vector<std::pair<Entity, Entity>>& intersectingPairs) {
@@ -719,20 +805,6 @@ class KDTreeCollisionSystem {
     if (hugeBoxesBegin != boxes.end()) {
       BruteForceHugeBoxes(boxes, hugeBoxesBegin, intersectingPairs);
     }
-  }
-
-  [[nodiscard]] static std::future<CollisionResult> StartAsyncCollisionDetection(std::vector<Box> boxes) {
-    // Run on the persistent worker pool rather than std::async(launch::async), which spawns and
-    // tears down an OS thread per cycle. The promise is shared because ThreadPool::Submit takes a
-    // copyable std::function; the future hands back to the same valid()/wait_for/get polling below.
-    auto promise = std::make_shared<std::promise<CollisionResult>>();
-    std::future<CollisionResult> result = promise->get_future();
-    ThreadPool::Instance().Submit([boxes = std::move(boxes), promise]() mutable {
-      std::vector<std::pair<Entity, Entity>> intersectingPairs;
-      ComputeAsyncCollisions(boxes, intersectingPairs);
-      promise->set_value(CollisionResult{std::move(intersectingPairs), std::move(boxes)});
-    });
-    return result;
   }
 
   static void FindIntersectionsBruteForce(const std::vector<Box>& boxes, const int begin, const int end,

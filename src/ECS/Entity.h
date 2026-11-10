@@ -7,6 +7,7 @@
 constexpr unsigned int kMaxEntityMasks = 32;
 constexpr unsigned int kStartingEntityPoolSize = 1000;
 constexpr unsigned int kEntityGenerationOffset = 32;
+constexpr EntityID kInvalidEntityID = ~static_cast<EntityID>(0);
 
 typedef std::bitset<kMaxEntityMasks> EntityMask;
 typedef std::uint32_t EntityGeneration;

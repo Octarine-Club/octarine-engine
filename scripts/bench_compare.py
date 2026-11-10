@@ -106,13 +106,18 @@ def _normalise(b: dict) -> dict:
 
 
 def fmt_time(ns: float) -> str:
-    if ns >= 1e9:
+    ans = abs(ns)
+    if ans >= 1e9:
         return f"{ns / 1e9:.2f} s"
-    if ns >= 1e6:
+    if ans >= 1e6:
         return f"{ns / 1e6:.2f} ms"
-    if ns >= 1e3:
+    if ans >= 1e3:
         return f"{ns / 1e3:.1f} µs"
-    return f"{ns:.0f} ns"
+    if ans >= 100:
+        return f"{ns:.0f} ns"
+    if ans >= 10:
+        return f"{ns:.1f} ns"
+    return f"{ns:.2f} ns"
 
 
 def fmt_num(v: float) -> str:

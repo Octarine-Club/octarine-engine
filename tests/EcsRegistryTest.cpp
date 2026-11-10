@@ -103,6 +103,58 @@ int main() {
     Check(!registry.IsAlive(e), "stale handle stays invalid across further updates");
   }
 
+  // Despawn dedup + deferred destruction via Update.
+  {
+    Registry registry;
+    const Entity e = registry.CreateEntity();
+    registry.AddComponent(e, Position{0.0f, 0.0f});
+    registry.QueueDespawnEntity(e);
+    registry.QueueDespawnEntity(e);  // duplicate within the frame — must collapse to one despawn
+    Check(registry.IsAlive(e), "queued despawn is deferred until Update");
+    registry.Update(1.0f / 60.0f);
+    Check(!registry.IsAlive(e), "entity is destroyed after Update processes the despawn queue");
+    registry.ValidateInvariants();
+  }
+
+  // Immediate-BlamEntity + slot-recycle same-frame generation queueing.
+  {
+    Registry registry;
+    const Entity e1 = registry.CreateEntity();
+    registry.AddComponent(e1, Position{1.0f, 1.0f});
+    const uint32_t slot1 = e1.GetId();
+    registry.QueueBlamEntity(e1);
+    registry.BlamEntity(e1);
+    Check(!registry.IsAlive(e1), "e1 is destroyed immediately");
+
+    // Stale call on dead entity e1 must be ignored and not corrupt the slot's tracking
+    registry.QueueBlamEntity(e1);
+
+    const Entity e2 = registry.CreateEntity();
+    Check(e2.GetId() == slot1, "recycled base slot matches e1");
+    Check(e2.id != e1.id, "recycled entity has incremented generation");
+    registry.AddComponent(e2, Position{2.0f, 2.0f});
+    registry.QueueBlamEntity(e2);
+    // Another stale e1 call must not clobber e2's queued state
+    registry.QueueBlamEntity(e1);
+    Check(registry.IsAlive(e2), "recycled entity e2 is alive before update");
+    registry.Update(1.0f / 60.0f);
+    Check(!registry.IsAlive(e2), "recycled entity e2 was properly destroyed by queued blam");
+    registry.ValidateInvariants();
+  }
+
+  // Bundle creation with multiple components.
+  {
+    Registry registry;
+    const Entity e = registry.CreateEntityWithBundle(Position{10.0f, 20.0f}, Velocity{1.0f, 2.0f});
+    Check(registry.IsAlive(e), "bundle entity is alive");
+    Check(registry.IsActive(e), "bundle entity starts active");
+    Check(registry.HasComponent<Position>(e), "bundle has Position");
+    Check(registry.HasComponent<Velocity>(e), "bundle has Velocity");
+    Check(registry.GetComponent<Position>(e).x == 10.0f, "bundle Position value matches");
+    Check(registry.GetComponent<Velocity>(e).dx == 1.0f, "bundle Velocity value matches");
+    registry.ValidateInvariants();
+  }
+
   // Queries visit exactly the matching set.
   {
     Registry registry;

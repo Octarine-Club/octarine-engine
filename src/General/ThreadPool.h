@@ -6,8 +6,8 @@
 #include <cstddef>
 #include <functional>
 #include <mutex>
-#include <queue>
 #include <thread>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -56,12 +56,19 @@ class ThreadPool {
     } barrier(numBatches - 1);
 
     const size_t per = (count + numBatches - 1) / numBatches;
+    struct Context {
+      std::remove_reference_t<Fn>& fn;
+      Barrier& barrier;
+      size_t count{0};
+      size_t per{0};
+    } ctx{fn, barrier, count, per};
+
     for (size_t b = 0; b < numBatches - 1; ++b) {
-      const size_t begin = b * per;
-      const size_t end = std::min(begin + per, count);
-      Instance().Submit([&fn, &barrier, b, begin, end] {
-        fn(b, begin, end);
-        barrier.Signal();
+      Instance().Submit([&ctx, b] {
+        const size_t begin = b * ctx.per;
+        const size_t end = std::min(begin + ctx.per, ctx.count);
+        ctx.fn(b, begin, end);
+        ctx.barrier.Signal();
       });
     }
 
@@ -78,7 +85,19 @@ class ThreadPool {
   void Submit(std::function<void()> task) {
     {
       std::lock_guard<std::mutex> lk(jobs_mutex_);
-      jobs_.push(std::move(task));
+      if (count_ == jobs_.size()) {
+        const size_t oldSize = jobs_.size();
+        const size_t newSize = oldSize * 2;
+        std::vector<std::function<void()>> newJobs(newSize);
+        for (size_t i = 0; i < count_; ++i) {
+          newJobs[i] = std::move(jobs_[(head_ + i) % oldSize]);
+        }
+        jobs_ = std::move(newJobs);
+        head_ = 0;
+      }
+      const size_t tail = (head_ + count_) % jobs_.size();
+      jobs_[tail] = std::move(task);
+      ++count_;
     }
     jobs_cv_.notify_one();
   }
@@ -106,6 +125,8 @@ class ThreadPool {
   }
 
   explicit ThreadPool(size_t numThreads) {
+    const size_t initialCapacity = std::max<size_t>(128u, numThreads * 8);
+    jobs_.resize(initialCapacity);
     workers_.reserve(numThreads);
     for (size_t i = 0; i < numThreads; ++i) {
       workers_.emplace_back([this] { WorkerLoop(); });
@@ -117,17 +138,21 @@ class ThreadPool {
       std::function<void()> job;
       {
         std::unique_lock<std::mutex> lk(jobs_mutex_);
-        jobs_cv_.wait(lk, [this] { return stop_ || !jobs_.empty(); });
-        if (stop_ && jobs_.empty()) return;
-        job = std::move(jobs_.front());
-        jobs_.pop();
+        jobs_cv_.wait(lk, [this] { return stop_ || count_ > 0; });
+        if (stop_ && count_ == 0) return;
+        job = std::move(jobs_[head_]);
+        jobs_[head_] = nullptr;
+        head_ = (head_ + 1) % jobs_.size();
+        --count_;
       }
       job();
     }
   }
 
   std::vector<std::thread> workers_;
-  std::queue<std::function<void()>> jobs_;
+  std::vector<std::function<void()>> jobs_;
+  size_t head_ = 0;
+  size_t count_ = 0;
   std::mutex jobs_mutex_;
   std::condition_variable jobs_cv_;
   bool stop_ = false;

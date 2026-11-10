@@ -219,11 +219,14 @@ void BM_Frame_CoreLua(benchmark::State& state) {
   sol::function luaFn = lua["on_tick"];
   auto query = registry.CreateQuery<PositionComponent>();
   query->Update();
-  query->ForEach([&](const Entity e, PositionComponent&) {
+  std::vector<Entity> entities;
+  entities.reserve(static_cast<size_t>(n));
+  query->ForEach([&](const Entity e, PositionComponent&) { entities.push_back(e); });
+  for (const Entity e : entities) {
     ScriptComponent sc{};
     sc.updateFunction = luaFn;
     registry.AddComponent(e, sc);
-  });
+  }
 
   bench::SystemTimings timings(registry);
   // Warm-up step

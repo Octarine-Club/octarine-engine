@@ -4,6 +4,8 @@
 #include <string>
 #include <utility>
 
+#include "ECS/Entity.h"
+
 struct ScriptComponent {
   sol::table script_table;
   sol::protected_function updateFunction;
@@ -14,6 +16,20 @@ struct ScriptComponent {
   // the file-backed form (`script = { source = "scripts/foo.lua" }`). Empty for inline tables —
   // those are not eligible for hot reload.
   std::string sourcePath;
+
+  Entity cachedEntity{kInvalidEntityID};
+  sol::object cachedEntityObj{sol::lua_nil};
+
+  [[nodiscard]] sol::object GetOrCacheEntity(lua_State* L, const Entity entity) {
+    if (cachedEntity == entity && cachedEntityObj.valid() && cachedEntityObj != sol::lua_nil) {
+      return cachedEntityObj;
+    }
+    cachedEntity = entity;
+    if (L != nullptr) {
+      cachedEntityObj = sol::make_object(L, entity);
+    }
+    return cachedEntityObj;
+  }
 
   explicit ScriptComponent(sol::table t_scriptTable = sol::lua_nil,
                            sol::protected_function t_updateFunction = sol::lua_nil,

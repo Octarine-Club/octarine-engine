@@ -192,7 +192,7 @@ void TestEntityPoolManager() {
 
 void TestScriptSystem() {
   sol::state lua;
-  lua.open_libraries(sol::lib::base);
+  lua.open_libraries(sol::lib::base, sol::lib::table);
 
   ScriptSystem scriptSystem;
   Registry registry;
@@ -228,6 +228,38 @@ void TestScriptSystem() {
     crashed = true;
   }
   Check(!crashed, "ScriptSystem gracefully catches Lua errors without throwing");
+
+  // Prototype ScriptComponent handle caching across entities and repeated calls
+  {
+    scriptSystem.CreateLuaBindings(lua);
+    lua.script(R"(
+      received_ids = {}
+      function on_record_id(tbl, entity, dt)
+        table.insert(received_ids, entity:get_id())
+      end
+    )");
+    ScriptComponent protoScript;
+    protoScript.updateFunction = lua["on_record_id"];
+
+    const Entity e1 = registry.CreateEntity();
+    const Entity e2 = registry.CreateEntity();
+
+    ScriptComponent s1 = protoScript;
+    ScriptComponent s2 = protoScript;
+
+    ctx.SetEntity(e1);
+    scriptSystem(ctx, s1);
+    scriptSystem(ctx, s1);  // repeated call uses cached entity object
+
+    ctx.SetEntity(e2);
+    scriptSystem(ctx, s2);
+
+    sol::table ids = lua["received_ids"];
+    CheckEq(ids.size(), static_cast<size_t>(3), "3 script callbacks received");
+    CheckEq(ids[1].get<uint32_t>(), e1.GetId(), "First call received e1 id");
+    CheckEq(ids[2].get<uint32_t>(), e1.GetId(), "Second call received cached e1 id");
+    CheckEq(ids[3].get<uint32_t>(), e2.GetId(), "Third call received e2 id");
+  }
 }
 
 }  // namespace

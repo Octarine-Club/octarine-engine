@@ -109,6 +109,7 @@ void InstallCoreSingletons(Registry& registry, EngineContext& context, const int
     lua_State* L = lua->lua_state();
     lua_pushlightuserdata(L, &assetManager);
     lua_setfield(L, LUA_REGISTRYINDEX, "octarine_assets");
+    lua_gc(L, LUA_GCGEN, 0, 0);
   }
 }
 
