@@ -8,12 +8,18 @@
 #include <glm/glm.hpp>
 #include <iostream>
 
+#include "Components/AnimationComponent.h"
 #include "Components/LifetimeComponent.h"
+#include "Components/ScaleComponent.h"
+#include "Components/SpriteComponent.h"
 #include "ECS/Query.h"  // full ComponentQuery definition for RegisterSystem dispatch
 #include "ECS/Registry.h"
+#include "Game/GameConfig.h"
 #include "General/AngleUnit.h"
 #include "General/Rotation2D.h"
+#include "Systems/AnimationSystem.h"
 #include "Systems/LifetimeSystem.h"
+#include "Systems/OffScreenDespawnSystem.h"
 #include "Systems/VelocityIntegrationSystem.h"
 #include "TestHarness.h"
 
@@ -154,6 +160,64 @@ int main() {
     registry.Update(0.15f);
     Check(registry.IsAlive(e1), "entity 1 still alive after 0.25s total");
     Check(!registry.IsAlive(e2), "entity 2 despawned when remaining duration reached 0");
+  }
+
+  // Part 4 — AnimationSystem timer math and frame advancing.
+  {
+    std::cout << "[animation] AnimationSystem advances frames by integer floor without timer drift\n";
+    AnimationSystem animSystem;
+    SpriteComponent sprite;
+    sprite.width = 32.0f;
+    sprite.height = 32.0f;
+    AnimationComponent anim;
+    anim.numFrames = 10;
+    anim.frameRateSpeed = 10;  // 10 FPS -> timePerFrame = 0.1s
+    anim.currentFrame = 0;
+    anim.frameTimer = 0.0f;
+    anim.shouldLoop = true;
+
+    // Advance 0.16s: 1.6 frames elapsed. With truncation, exactly 1 frame advances (currentFrame = 1),
+    // and remaining timer retains the 0.06s remainder.
+    animSystem(0.16f, sprite, anim);
+    Check(anim.currentFrame == 1, "0.16s at 10 FPS advances exactly 1 frame");
+    Check(std::abs(anim.frameTimer - 0.06f) < 1e-4f, "remaining frameTimer retains 0.06s remainder");
+    Check(sprite.srcRect.x == 32.0f, "srcRect.x aligns to frame 1");
+  }
+
+  // Part 5 — OffScreenDespawnSystem with negative scale (mirrored sprite).
+  {
+    std::cout << "[offscreen] OffScreenDespawnSystem handles mirrored/negative scales without premature despawn\n";
+    Registry registry;
+    GameConfig config;
+    config.windowWidth = 800;
+    config.windowHeight = 600;
+    config.playableAreaWidth = 800;
+    config.playableAreaHeight = 600;
+    registry.Set<GameConfig>(config);
+
+    registry.RegisterParallelSystem<PositionComponent, SpriteComponent>(OffScreenDespawnSystem());
+
+    // Entity near left edge (x = 20), width = 64, mirrored scale x = -1.0.
+    // Screen bounds [0, 800]. Sprite occupies x in [-44, 20]. Partially visible on screen!
+    const Entity mirroredOnScreen = registry.CreateEntity();
+    SpriteComponent spriteOnScreen;
+    spriteOnScreen.width = 64.0f;
+    spriteOnScreen.height = 64.0f;
+    registry.AddComponent(mirroredOnScreen, PositionComponent(glm::vec2(20.0f, 100.0f)));
+    registry.AddComponent(mirroredOnScreen, ScaleComponent(glm::vec2(-1.0f, 1.0f)));
+    registry.AddComponent(mirroredOnScreen, spriteOnScreen);
+
+    // Entity truly offscreen left: x = -10, width = 64, scale x = -1.0.
+    // Sprite occupies x in [-74, -10]. Completely < 0! Must despawn.
+    const Entity mirroredOffScreen = registry.CreateEntity();
+    registry.AddComponent(mirroredOffScreen, PositionComponent(glm::vec2(-10.0f, 100.0f)));
+    registry.AddComponent(mirroredOffScreen, ScaleComponent(glm::vec2(-1.0f, 1.0f)));
+    registry.AddComponent(mirroredOffScreen, spriteOnScreen);
+
+    registry.Update(0.016f);
+
+    Check(registry.IsAlive(mirroredOnScreen), "partially visible mirrored sprite at x=20 is NOT despawned");
+    Check(!registry.IsAlive(mirroredOffScreen), "fully offscreen mirrored sprite at x=-10 IS despawned");
   }
 
   return octarine::test::Result();

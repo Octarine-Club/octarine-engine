@@ -103,12 +103,20 @@ void Logger::Info(const std::string& message) {
 #endif
 
 void Logger::LogLua(const std::string& message) {
-  g_lua_logger->info(message);
+  if (g_lua_logger) {
+    g_lua_logger->info(message);
+  } else {
+    spdlog::info(message);
+  }
   PushHistory(message);
 }
 
 void Logger::ErrorLua(const std::string& message) {
-  g_lua_logger->error(message);
+  if (g_lua_logger) {
+    g_lua_logger->error(message);
+  } else {
+    spdlog::error(message);
+  }
   PushHistory("[Error] [Lua] " + message);
   // Cap toast history ring buffer.
   constexpr size_t kMaxScriptErrors = 8;
@@ -120,13 +128,21 @@ void Logger::ErrorLua(const std::string& message) {
 }
 
 void Logger::WarnLua(const std::string& message) {
-  g_lua_logger->warn(message);
+  if (g_lua_logger) {
+    g_lua_logger->warn(message);
+  } else {
+    spdlog::warn(message);
+  }
   PushHistory("[Warn] [Lua] " + message);
 }
 
 #ifndef OCTARINE_SHIPPED
 void Logger::InfoLua(const std::string& message) {
-  g_lua_logger->info(message);
+  if (g_lua_logger) {
+    g_lua_logger->info(message);
+  } else {
+    spdlog::info(message);
+  }
   PushHistory("[Info] [Lua] " + message);
 }
 #endif

@@ -7,10 +7,10 @@
 #include <stdexcept>
 
 #include "CommandBuffer.h"
+#include "ECS/EntityPool.h"
 #include "General/Logger.h"
 #include "General/PerfUtils.h"
 #include "Query.h"
-#include "Systems/EntityPoolSystem.h"
 
 namespace {
 // Names of the systems still blocked (indegree > 0) when Kahn's algorithm stalls — i.e. the
@@ -677,7 +677,7 @@ std::vector<Entity> Registry::GetChildren(const Entity parent) const {
 void CommandBuffer::Playback(Registry* registry) const {
   PROFILE_NAMED_SCOPE("CommandBuffer::Playback");
   auto& chan = state_->commands;
-  const size_t total = std::min(chan.count.load(std::memory_order_relaxed), chan.buffer.size());
+  const size_t total = std::min(chan.count.load(std::memory_order_acquire), chan.buffer.size());
   for (size_t i = 0; i < total; ++i) {
     if (chan.buffer[i].type == CommandType::Blam) {
       registry->QueueBlamEntity(chan.buffer[i].entity);
@@ -695,7 +695,7 @@ void CommandBuffer::Playback(Registry* registry) const {
   chan.Clear();
 
   auto& deferred = state_->deferred;
-  const size_t deferredTotal = std::min(deferred.count.load(std::memory_order_relaxed), deferred.buffer.size());
+  const size_t deferredTotal = std::min(deferred.count.load(std::memory_order_acquire), deferred.buffer.size());
   for (size_t i = 0; i < deferredTotal; ++i) {
     deferred.buffer[i](registry);
     deferred.buffer[i] = nullptr;

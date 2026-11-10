@@ -6,6 +6,7 @@
 #include <cstring>
 #include <new>
 #include <optional>
+#include <stdexcept>
 #include <unordered_map>
 #include <vector>
 
@@ -550,7 +551,9 @@ class Archetype {
       chunk_capacity_ = chunk_capacity_ > step ? chunk_capacity_ - step : 0;
       current_offset = ComputeLayoutForCapacity(chunk_capacity_);
     }
-    assert(chunk_capacity_ > 0);
+    if (chunk_capacity_ == 0) {
+      throw std::length_error("Combined component size exceeds maximum chunk capacity (16KB)");
+    }
   }
 
   void AssertLocation([[maybe_unused]] const EntityLocation& location) const {

@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "ECS/CommandBuffer.h"
 #include "ECS/Query.h"  // full ComponentQuery definition for CreateQuery / ForEach
 #include "ECS/Registry.h"
 #include "TestHarness.h"
@@ -435,6 +436,50 @@ int main() {
     const Entity m2 = em.CreateEntity();
     const Entity m3 = em.CreateEntity();
     Check(m2.GetId() != m3.GetId(), "stale double-blam does not push duplicate baseId into free list");
+  }
+
+  // Oversized archetype combinations (>16KB) throw std::length_error instead of asserting or corrupting memory.
+  {
+    std::cout << "[oversized] Archetypes exceeding 16KB chunk capacity throw std::length_error\n";
+    Registry registry;
+    const Entity e = registry.CreateEntity();
+    struct GiantA {
+      char data[10000];
+    };
+    struct GiantB {
+      char data[10000];
+    };
+    registry.AddComponent(e, GiantA{});
+    bool caughtLengthError = false;
+    try {
+      registry.AddComponent(e, GiantB{});
+    } catch (const std::length_error&) {
+      caughtLengthError = true;
+    }
+    Check(caughtLengthError, "combining components exceeding 16KB throws std::length_error");
+  }
+
+  // CommandBuffer playback handles deferred ops on already-destroyed entities safely without throwing or corrupting
+  // state.
+  {
+    std::cout << "[command_buffer] Deferred ops on stale/destroyed handles execute safely\n";
+    Registry registry;
+    const Entity live = registry.CreateEntity();
+    const Entity dead = registry.CreateEntity();
+    registry.BlamEntity(dead);
+
+    CommandBuffer cmdBuffer;
+    cmdBuffer.EmplaceBlam(live);
+    cmdBuffer.EmplaceBlam(dead);                         // blam on dead entity
+    cmdBuffer.AddComponent(dead, Position{5.0f, 5.0f});  // deferred add on dead entity
+    cmdBuffer.RemoveComponent<Position>(dead);           // deferred remove on dead entity
+
+    cmdBuffer.Playback(&registry);
+    registry.Update(0.0f);
+
+    Check(!registry.IsAlive(live), "live entity was blammed via CommandBuffer playback");
+    Check(!registry.IsAlive(dead), "dead entity remains dead");
+    registry.ValidateInvariants();
   }
 
   return octarine::test::Result();

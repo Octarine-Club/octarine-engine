@@ -28,6 +28,8 @@ class ComponentRegistry {
  public:
   template <typename T>
   void RegisterComponent(const Entity& componentEntity) {
+    static_assert(sizeof(T) <= (kUsableSpace - sizeof(Entity)),
+                  "Component size exceeds maximum chunk capacity (16KB minus Entity header)");
     const ComponentID id = componentEntity.GetId();
     ComponentInfo info{id, typeid(T).name(), sizeof(T), alignof(T)};
     if constexpr (!std::is_trivially_copyable_v<T>) {

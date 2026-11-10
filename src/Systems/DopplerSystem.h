@@ -51,7 +51,6 @@ class DopplerSystem {
     }
   }
 
- private:
   static float ComputeRatio(const GlobalTransformComponent& transform, const RigidBodyComponent& rigidBody,
                             const AudioSourceComponent& source, const AudioListenerCache& cache) {
     if (!source.doppler || !cache.valid) return 1.0f;
@@ -73,11 +72,12 @@ class DopplerSystem {
     // Clamp denominator away from zero to avoid the Mach-1 singularity (object moving
     // toward listener at the speed of sound). Cap ratio to a sane musical range so an
     // exaggerated dopplerFactor doesn't yank a track into ultrasonic / DC territory.
-    const float denom = std::max(c - vsRadial * factor, c * 0.01f);
+    const float denom = std::max(c + vsRadial * factor, c * 0.01f);
     const float numer = c + vlRadial * factor;
     return std::clamp(numer / denom, 0.25f, 4.0f);
   }
 
+ private:
   const AudioListenerCache* cache_ = nullptr;
   AudioTrackCache* track_cache_ = nullptr;
 };

@@ -126,8 +126,8 @@ void LuaModuleBinding<EntityModule>::install(sol::state& lua, LuaBindingContext&
   });
 
   lua.set_function("are_colliding", [&ctx](const Entity a, const Entity b) {
-    KDTreeCollisionSystem* cs = ctx.GetRegistry()->Get<KDTreeCollisionSystem*>();
-    return cs != nullptr && cs->IsOverlapping(a, b);
+    KDTreeCollisionSystem* const* cs = ctx.GetRegistry()->TryGet<KDTreeCollisionSystem*>();
+    return cs != nullptr && *cs != nullptr && (*cs)->IsOverlapping(a, b);
   });
 
   lua["registry"] = lua.create_table();

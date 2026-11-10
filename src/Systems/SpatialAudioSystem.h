@@ -53,32 +53,14 @@ class SpatialAudioSystem {
     const float maxDist = std::max(minDist + 1e-3f, source.maxDistance);
     const float rolloff = std::max(0.0f, cache.rolloff);
 
-    float attenuation;
-    if (distance <= minDist) {
-      attenuation = 1.0f;
-    } else if (distance >= maxDist) {
-      attenuation = 0.0f;
-    } else {
-      const float t = (distance - minDist) / (maxDist - minDist);
-      attenuation = 1.0f / (1.0f + rolloff * t);
-    }
-
+    const float attenuation = ComputeAttenuation(distance, minDist, maxDist, rolloff);
     const float gain = baseVolume * std::clamp(attenuation, 0.0f, 1.0f);
     if (gain != sink.lastGain) {
       MIX_SetTrackGain(track, gain);
       sink.lastGain = gain;
     }
 
-    // Pan: project the listener→emitter vector onto the listener's right axis. Center
-    // (distance ≈ 0) → equal L/R. Past `maxDist`, gain is already zero so the pan stays
-    // applied but inaudible — no extra check needed.
-    constexpr float kEpsilon = 1e-4f;
-    float pan = 0.0f;
-    if (distance > kEpsilon) {
-      const float rightDot = glm::dot(rel, cache.right);
-      pan = std::clamp(rightDot / distance, -1.0f, 1.0f);
-    }
-
+    const float pan = ComputePan(rel, cache.right, distance);
     if (!sink.stereoApplied || pan != sink.lastPan) {
       MIX_StereoGains gains{};
       gains.left = std::clamp(1.0f - pan, 0.0f, 1.0f);
@@ -87,6 +69,28 @@ class SpatialAudioSystem {
       sink.stereoApplied = true;
       sink.lastPan = pan;
     }
+  }
+
+  static float ComputeAttenuation(float distance, float minDist, float maxDist, float rolloff) {
+    if (distance <= minDist) {
+      return 1.0f;
+    }
+    if (distance >= maxDist) {
+      return 0.0f;
+    }
+    const float t = (distance - minDist) / (maxDist - minDist);
+    return 1.0f / (1.0f + rolloff * t);
+  }
+
+  static float ComputePan(const glm::vec2& rel, const glm::vec2& listenerRight, float distance) {
+    constexpr float kEpsilon = 1e-4f;
+    if (distance <= kEpsilon) return 0.0f;
+    const float rightDot = glm::dot(rel, listenerRight);
+    return std::clamp(rightDot / distance, -1.0f, 1.0f);
+  }
+
+  static float ComputePan(const glm::vec2& rel, const glm::vec2& listenerRight) {
+    return ComputePan(rel, listenerRight, glm::length(rel));
   }
 
  private:

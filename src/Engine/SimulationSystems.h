@@ -19,9 +19,8 @@ struct SimulationSystemHandles {
   SystemHandle<KDTreeCollisionSystem> collision;
 };
 
-// Registers the gameplay simulation tier — projectile emit/lifecycle, enemy steering, homing,
-// cull, separation, magnet, combat (+ Lua combat callbacks, retaliation), velocity integration,
-// off-screen despawn, transforms, collision, lifetime — plus the ordering edges between them.
+// Registers the engine simulation tier — velocity integration, off-screen despawn,
+// transforms, collision broadphase/narrowphase, lifetime — plus the ordering edges between them.
 //
 // Shared by Game::Setup and the headless benchmark harness so the benchmarked frame cannot drift
 // from the shipped one. Requires InstallPoolAndSingletons to have run (EntityPoolManager and

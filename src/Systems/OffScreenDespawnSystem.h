@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <glm/glm.hpp>
 
 #include "Components/CameraFollowComponent.h"
@@ -42,9 +43,13 @@ class OffScreenDespawnSystem {
                                       ? registry_->GetComponent<ScaleComponent>(entity).value
                                       : glm::vec2(1.0f, 1.0f);
 
-    const float right = globalPos.x + sprite.width * globalScale.x;
-    const float bottom = globalPos.y + sprite.height * globalScale.y;
-    if (globalPos.x > playableAreaWidth_ || globalPos.y > playableAreaHeight_ || right < 0 || bottom < 0) {
+    const float extentX = sprite.width * globalScale.x;
+    const float extentY = sprite.height * globalScale.y;
+    const float minX = std::min(globalPos.x, globalPos.x + extentX);
+    const float maxX = std::max(globalPos.x, globalPos.x + extentX);
+    const float minY = std::min(globalPos.y, globalPos.y + extentY);
+    const float maxY = std::max(globalPos.y, globalPos.y + extentY);
+    if (minX > playableAreaWidth_ || minY > playableAreaHeight_ || maxX < 0.0f || maxY < 0.0f) {
       cmd_buffer_.EmplaceDespawn(entity);
     }
   }

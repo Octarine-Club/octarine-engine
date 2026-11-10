@@ -29,9 +29,9 @@
 #include "Components/ScaleComponent.h"
 #include "Components/UIButtonComponent.h"
 #include "ECS/Registry.h"
-#include "Engine/EngineContext.h"
 #include "Events/GamepadButtonEvent.h"
 #include "Events/KeyInputEvent.h"
+#include "Game/EngineContext.h"
 #include "Game/Game.h"
 #include "Game/GameConfig.h"
 #include "General/AngleUnit.h"
@@ -416,6 +416,17 @@ int main() {
   RegisterAllLuaModules(lua, game);     // installs `registry.has_/get_<key>` + free functions
 
   Registry* reg = game.GetRegistry();
+
+  std::cout << "[entity: are_colliding safe fallback when KDTreeCollisionSystem is not set]\n";
+  {
+    const Entity e1 = reg->CreateEntity();
+    const Entity e2 = reg->CreateEntity();
+    lua["col_e1"] = e1;
+    lua["col_e2"] = e2;
+    Check(RunLua(lua, "col_res = are_colliding(col_e1, col_e2)"),
+          "are_colliding executes without throwing when collision system unregistered");
+    CheckEq(lua["col_res"].get<bool>(), false, "are_colliding returns false when system unregistered");
+  }
 
 #ifdef OCTARINE_HAS_GAME_MODULE
   std::cout << "[health: damage / heal round-trip via Lua]\n";
