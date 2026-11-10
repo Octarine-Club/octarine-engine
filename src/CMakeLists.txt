@@ -27,6 +27,7 @@ set(OCTARINE_CORE_SOURCES
         General/PerformanceTracker.cpp
         General/SystemMemory.cpp
         Debug/DebugMenuRegistry.cpp
+        Debug/SystemProfilerTracker.cpp
         ECS/Registry.cpp
         ECS/StateInspector.cpp
         Game/GameConfig.cpp

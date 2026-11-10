@@ -3,6 +3,7 @@
 #include <string>
 
 #include "Debug/DebugMenuRegistry.h"
+#include "Debug/SystemProfilerTracker.h"
 #include "ECS/Entity.h"
 #include "ECS/Registry.h"
 #include "Game/Game.h"
@@ -180,6 +181,54 @@ int main() {
 
     reg->ValidateInvariants();
     Check(true, "registry invariants valid after DevModule execution");
+  }
+
+  std::cout << "[SystemProfilerTracker] Rolling Averages, P95, Peaks & Throttling\n";
+  {
+    Registry registry;
+    registry.SetSystemTimingEnabled(true);
+
+    struct DummyComp {
+      int x = 0;
+    };
+    auto sysA = registry.RegisterSystem<DummyComp>([](const DummyComp&) {});
+    auto sysB = registry.RegisterSystem<DummyComp>([](const DummyComp&) {});
+
+    SystemProfilerTracker tracker(10, 0.25f);
+
+    registry.Update(0.016f);
+    tracker.RecordFrame(registry, 0.016f);
+
+    const auto& snap1 = tracker.GetSnapshot();
+    Check(snap1.systems.size() == 2, "snapshot tracks all registered systems");
+    Check(snap1.avgUpdateMs >= 0.0, "snapshot computes average update ms");
+    Check(!snap1.updateMsHistory.empty(), "snapshot records update history");
+
+    double firstAvgA = snap1.systems[0].avgUs;
+
+    // Record next frame with dt < refreshInterval; snapshot shouldn't recompute yet
+    registry.Update(0.016f);
+    tracker.RecordFrame(registry, 0.05f);
+    const auto& snap2 = tracker.GetSnapshot();
+    Check(snap2.systems[0].avgUs == firstAvgA, "snapshot values stay stable before refresh interval");
+
+    // Advance past refresh interval
+    registry.Update(0.016f);
+    tracker.RecordFrame(registry, 0.25f);
+    const auto& snap3 = tracker.GetSnapshot();
+    Check(snap3.systems.size() == 2, "snapshot updated after refresh interval");
+
+    // Test Pause
+    tracker.SetPaused(true);
+    Check(tracker.IsPaused(), "tracker pause state set");
+    registry.Update(0.016f);
+    tracker.RecordFrame(registry, 1.0f);
+    Check(tracker.GetSnapshot().systems[0].avgUs == snap3.systems[0].avgUs, "paused tracker ignores frames");
+
+    // Test Reset
+    tracker.SetPaused(false);
+    tracker.Reset();
+    Check(tracker.GetSnapshot().systems.empty(), "reset clears snapshot");
   }
 
   return octarine::test::ReportSummary("DebugMenuRegistry");

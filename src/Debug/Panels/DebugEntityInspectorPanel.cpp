@@ -135,6 +135,17 @@ void DrawComponentHeaders(Registry& registry, Entity selected) {
   }
 }
 
+struct JsonDumpCache {
+  Entity lastEntity{};
+  float timer = 0.0f;
+  std::string cachedJson{};
+};
+
+JsonDumpCache& GetJsonCache() {
+  static JsonDumpCache cache;
+  return cache;
+}
+
 void DrawSelectedEntity(Registry& registry, Entity selected) {
   if (!registry.IsAlive(selected)) {
     ImGui::TextDisabled("No entity selected.\nSelect an entity from the list or Alt+Click in the viewport.");
@@ -167,8 +178,21 @@ void DrawSelectedEntity(Registry& registry, Entity selected) {
     }
 
     if (ImGui::CollapsingHeader("Raw State JSON (StateInspector)")) {
-      const std::string json = octarine::inspect::StateInspector::DumpEntity(registry, selected);
-      ImGui::TextUnformatted(json.c_str());
+      auto& cache = GetJsonCache();
+      const float dt = ImGui::GetIO().DeltaTime;
+      cache.timer -= dt;
+
+      if (cache.lastEntity != selected || cache.timer <= 0.0f) {
+        cache.lastEntity = selected;
+        cache.timer = 0.25f;  // Refresh 4 times per second
+        cache.cachedJson = octarine::inspect::StateInspector::DumpEntity(registry, selected);
+      }
+
+      if (ImGui::SmallButton("Copy JSON")) {
+        ImGui::SetClipboardText(cache.cachedJson.c_str());
+      }
+      ImGui::Separator();
+      ImGui::TextUnformatted(cache.cachedJson.c_str());
     }
   }
   ImGui::EndChild();

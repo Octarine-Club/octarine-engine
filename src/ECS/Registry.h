@@ -498,6 +498,16 @@ class Registry {
     return nullptr;
   }
 
+  template <typename T>
+  [[nodiscard]] const T* TryGet() const {
+    const uint32_t family = GetComponentFamily<T>();
+    if (family >= singleton_components_.size()) return nullptr;
+    const auto& anyVal = singleton_components_[family];
+    if (!anyVal.has_value()) return nullptr;
+    if (const auto* ptr = std::any_cast<std::shared_ptr<T>>(&anyVal)) return ptr->get();
+    return nullptr;
+  }
+
   // Resolves or creates a named zero-size tag component.
   Entity TagId(const std::string& name) {
     if (const auto it = tag_to_entity_.find(name); it != tag_to_entity_.end()) {
