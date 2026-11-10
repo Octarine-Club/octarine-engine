@@ -1,0 +1,30 @@
+# Octarine Engine - LeakSanitizer (LSan) suppressions for 3rd-party library initializers
+
+# SDL3 video/audio driver and platform initializers
+leak:libSDL3
+leak:SDL_
+leak:*SDL3*
+
+# X11 / Wayland display server handles
+leak:libX11
+leak:libwayland
+leak:libxcb
+
+# OpenGL / Mesa driver internals
+leak:libGL
+leak:libEGL
+leak:libglapi
+leak:i965_dri
+leak:iris_dri
+leak:radeonsi_dri
+
+# FreeType and FontConfig font caching
+leak:libfreetype
+leak:FT_
+leak:libfontconfig
+leak:FcFontRenderPrepare
+
+# Lua runtime globals allocated once at startup
+leak:luaL_newstate
+leak:lua_open
+leak:lua_newstate

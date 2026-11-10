@@ -11,7 +11,7 @@
 #include <string>
 
 #include "AssetManager/AssetPak.h"
-#include "Engine/LuaProtect.h"
+#include "Crypto/LuaProtect.h"
 #include "Game/GameConfig.h"
 #include "General/Logger.h"
 #include "General/LuaEscape.h"

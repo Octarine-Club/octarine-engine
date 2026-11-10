@@ -15,6 +15,8 @@ int main() {
     Registry registry;
     const std::string summaryEmpty = octarine::inspect::StateInspector::DumpSummary(registry, 0);
     Check(summaryEmpty.find("\"entity_count\": 0") != std::string::npos, "empty summary has 0 entities");
+    Check(summaryEmpty.find("\"chunk_count\": 0") != std::string::npos, "empty summary has 0 chunks");
+    Check(summaryEmpty.find("\"chunk_arena_bytes\": 0") != std::string::npos, "empty summary has 0 arena bytes");
 
     const Entity e1 = registry.CreateEntity();
     const Entity e2 = registry.CreateEntity();
@@ -25,6 +27,9 @@ int main() {
     Check(summaryPopulated.find("\"user_entity_count\": 2") != std::string::npos,
           "populated summary has 2 user entities");
     Check(summaryPopulated.find("\"tick\": 42") != std::string::npos, "summary contains tick index");
+    Check(summaryPopulated.find("\"archetype_count\":") != std::string::npos, "summary contains archetype_count");
+    Check(summaryPopulated.find("\"chunk_count\":") != std::string::npos, "summary contains chunk_count");
+    Check(summaryPopulated.find("\"chunk_fill_pct\":") != std::string::npos, "summary contains chunk_fill_pct");
   }
 
   // Test 2: DumpEntity and DumpEntities

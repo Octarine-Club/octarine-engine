@@ -1,6 +1,8 @@
 #include "Debug/Panels/DebugEngineOptionsPanel.h"
 
 #ifdef OCTARINE_WITH_IMGUI
+#include <unordered_map>
+
 #include "Debug/DebugMenuRegistry.h"
 #include "ECS/Registry.h"
 #include "Game/GameConfig.h"
@@ -11,20 +13,56 @@ namespace octarine::debug {
 
 namespace {
 
+struct WatchesCacheState {
+  float timer = 0.0f;
+  float refreshInterval = 0.25f;
+  bool isFrozen = false;
+  std::unordered_map<std::string, std::string> cachedValues{};
+};
+
+WatchesCacheState& GetWatchesCache() {
+  static WatchesCacheState state;
+  return state;
+}
+
+void UpdateWatchesCache(WatchesCacheState& cache, const std::vector<DebugWatchDescriptor>& watches, const float dt) {
+  if (cache.isFrozen) return;
+  cache.timer -= dt;
+  if (cache.timer > 0.0f && cache.refreshInterval > 0.0f) return;
+
+  cache.timer = cache.refreshInterval;
+  for (const auto& w : watches) {
+    cache.cachedValues[w.label] = w.valueFormatter ? w.valueFormatter() : "<null>";
+  }
+}
+
+void DrawWatchRow(WatchesCacheState& cache, const DebugWatchDescriptor& w) {
+  ImGui::TableNextRow();
+  ImGui::TableSetColumnIndex(0);
+  ImGui::TextUnformatted(w.label.c_str());
+
+  ImGui::TableSetColumnIndex(1);
+  auto it = cache.cachedValues.find(w.label);
+  if (it == cache.cachedValues.end()) {
+    std::string val = w.valueFormatter ? w.valueFormatter() : "<null>";
+    auto [insertedIt, _] = cache.cachedValues.try_emplace(w.label, std::move(val));
+    ImGui::TextUnformatted(insertedIt->second.c_str());
+  } else {
+    ImGui::TextUnformatted(it->second.c_str());
+  }
+}
+
 void DrawWatchesTable(const std::vector<DebugWatchDescriptor>& watches) {
   if (!ImGui::BeginTable("##watches_table", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) return;
   ImGui::TableSetupColumn("Watch Label", ImGuiTableColumnFlags_WidthFixed, 180.0f);
   ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
   ImGui::TableHeadersRow();
 
-  for (const auto& w : watches) {
-    ImGui::TableNextRow();
-    ImGui::TableSetColumnIndex(0);
-    ImGui::TextUnformatted(w.label.c_str());
+  auto& cache = GetWatchesCache();
+  UpdateWatchesCache(cache, watches, ImGui::GetIO().DeltaTime);
 
-    ImGui::TableSetColumnIndex(1);
-    const std::string val = w.valueFormatter ? w.valueFormatter() : "<null>";
-    ImGui::TextUnformatted(val.c_str());
+  for (const auto& w : watches) {
+    DrawWatchRow(cache, w);
   }
   ImGui::EndTable();
 }
@@ -36,6 +74,18 @@ void DrawWatchesSection(DebugMenuRegistry& debugReg) {
     ImGui::TextDisabled("No active watches. Register with dev.watch('Label', fn)");
     return;
   }
+
+  auto& cache = GetWatchesCache();
+  ImGui::Checkbox("Freeze Watches", &cache.isFrozen);
+  ImGui::SameLine();
+  static constexpr const char* kWatchCadence[] = {"Every Frame", "100 ms", "250 ms (Default)", "500 ms", "1.0 s"};
+  static constexpr float kCadenceIntervals[] = {0.0f, 0.1f, 0.25f, 0.5f, 1.0f};
+  static int watchCadenceIdx = 2;
+  ImGui::SetNextItemWidth(140.0f);
+  if (ImGui::Combo("Refresh##watches", &watchCadenceIdx, kWatchCadence, 5)) {
+    cache.refreshInterval = kCadenceIntervals[watchCadenceIdx];
+  }
+
   DrawWatchesTable(watches);
 }
 

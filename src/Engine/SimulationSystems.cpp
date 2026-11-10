@@ -29,8 +29,8 @@ SimulationSystemHandles RegisterSimulationSystems(Registry& registry, const std:
   // Game module simulation systems (ordered before velocity integration)
   game_module::RegisterSimulationSystems(registry, eventBus, velocityIntegration.Id());
 
-  // Despawn entities (except the player) once they leave the playable area.
-  registry.RegisterParallelSystem<PositionComponent, SpriteComponent>(OffScreenDespawnSystem());
+  // Despawn entities outside playable area (exempting CameraFollowComponent entities).
+  auto offscreenDespawn = registry.RegisterParallelSystem<PositionComponent, SpriteComponent>(OffScreenDespawnSystem());
 
   // Resolve the transform hierarchy into global positions/scales.
   auto transform = registry.RegisterBulkSystem<GlobalTransformComponent>(TransformSystem());
@@ -48,6 +48,7 @@ SimulationSystemHandles RegisterSimulationSystems(Registry& registry, const std:
   // transform.globalPosition / globalScale, so it runs after both.
   registry.Order(transform).After(velocityIntegration);
   registry.Order(collision).After(transform).After(velocityIntegration);
+  registry.Order(offscreenDespawn).After(transform);
 
   return {velocityIntegration, transform, collision};
 }

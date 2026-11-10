@@ -18,8 +18,8 @@
 #   0  all gates passed            13  bake smoke failed
 #   2  environment/setup error     14  Lua-API artifact drift
 #   10 configure failed            15  clang-format violations
-#   11 build failed                16  clang-tidy findings (only with --tidy-strict)
-#   12 ctest failed
+#   11 build failed                16  system/event catalog drift or clang-tidy
+#   12 ctest failed                17  architecture boundary violation
 #
 # Env:
 #   OCT_VERIFY_GAME  Path to a game dir (with config.ini) for the bake smoke.
@@ -124,6 +124,23 @@ check_format() {
   fi
 }
 
+check_architecture() {
+  if python3 "$repo_root/scripts/check_architecture.py"; then
+    echo "  ok   architecture & layer boundaries"
+  else
+    fail 17 "architecture-violation"
+  fi
+}
+
+check_catalogs() {
+  if python3 "$repo_root/scripts/gen_api_catalogs.py" --check; then
+    echo "  ok   no system/event catalog drift"
+  else
+    echo "  -> regenerated catalogs differ — run: python3 scripts/gen_api_catalogs.py" >&2
+    fail 16 "system-event-catalog-drift"
+  fi
+}
+
 check_tidy() {
   local tidy; tidy="$(command -v clang-tidy || true)"
   if [[ -z "$tidy" ]]; then
@@ -168,13 +185,16 @@ test_targets=(
   OctarineAssetRefcounterTest OctarineDevListenServerTest OctarineLuaBehaviorTest
   OctarineFileWatcherTest OctarineGameBakeTest OctarineFileSandboxTest
   OctarineRenderQueueTest OctarineTilemapSystemTest OctarineAssetStoreTest OctarineUserSettingsTest OctarineUILayoutTest
+  OctarineCommandBufferTest OctarineEcsPropertyFuzzTest OctarineGameplaySystemsTest OctarineAudioSystemsTest
+  OctarineInputSystemTest OctarineLuaModulesTest OctarineLuaTableSerializerTest OctarineParserRobustnessTest
+  OctarineHotReloadTest OctarineLayoutInvariantsTest OctarineZeroAllocFrameTest OctarineRenderQueueStatsTest
   octarine_game_module_tests
 )
 
 if [[ $do_build -eq 1 ]]; then
   if [[ ! -f "$build_dir/CMakeCache.txt" ]]; then
     echo "== configure ($preset) =="
-    cmake_args=(--preset "$preset" -DOCTARINE_ENABLE_TESTS=ON)
+    cmake_args=(--preset "$preset" -DOCTARINE_ENABLE_TESTS=ON -DOCTARINE_WARNINGS_AS_ERRORS=ON)
     if [[ -n "${OCTARINE_GAME_MODULE_DIR:-}" ]]; then
       cmake_args+=(-DOCTARINE_GAME_MODULE_DIR="$OCTARINE_GAME_MODULE_DIR")
     fi
@@ -184,7 +204,7 @@ if [[ $do_build -eq 1 ]]; then
   fi
   echo "== build =="
   build_targets=("${test_targets[@]}")
-  [[ "$mode" == "full" ]] && build_targets+=(OctarineEngine)
+  [[ "$mode" == "full" ]] && build_targets+=(OctarineEngine OctarineBenchmarks)
   target_args=()
   ninja_targets="$(ninja -C "$build_dir" -t targets 2>/dev/null || true)"
   for t in "${build_targets[@]}"; do
@@ -240,16 +260,25 @@ if [[ "$mode" == "full" ]]; then
     fail 14 "lua-api-drift"
   fi
 
-  echo "== System & event catalog drift =="
-  if python3 scripts/gen_api_catalogs.py --check; then
-    echo "  ok   no system/event catalog drift"
-  else
-    echo "  -> regenerated catalogs differ — run: python3 scripts/gen_api_catalogs.py" >&2
-    fail 16 "system-event-catalog-drift"
-  fi
-
   echo "== clang-tidy (changed files) =="
   check_tidy
+fi
+
+# --- architecture & purity guardrails (both modes) --------------------------
+echo "== architecture & layer purity =="
+if python3 scripts/check_architecture.py; then
+  echo "  ok   clean layer DAG, CMake parity, genre purity, doc parity"
+else
+  echo "  -> architecture check failed" >&2
+  fail 17 "architecture-drift"
+fi
+
+echo "== system & event catalog drift =="
+if python3 scripts/gen_api_catalogs.py --check; then
+  echo "  ok   no system/event catalog drift"
+else
+  echo "  -> regenerated catalogs differ — run: python3 scripts/gen_api_catalogs.py" >&2
+  fail 16 "system-event-catalog-drift"
 fi
 
 # --- clang-format (both modes) ----------------------------------------------

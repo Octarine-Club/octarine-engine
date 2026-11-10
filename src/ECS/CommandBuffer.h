@@ -21,6 +21,10 @@ struct Channel {
 
   explicit Channel(const size_t capacity) { buffer.resize(capacity); }
 
+  // Workers record concurrently into buffer slots using atomic index reservation.
+  // Full memory synchronization of recorded payloads to the main thread is established
+  // by the engine's external system completion barrier (BatchBarrier / thread join)
+  // before Playback() runs.
   template <typename... Args>
   void Emplace(Args&&... args) {
     const size_t index = count.fetch_add(1, std::memory_order_relaxed);
@@ -33,8 +37,11 @@ struct Channel {
   }
 
   void Clear() {
-    count.store(0, std::memory_order_relaxed);
-    overflow_buffer.clear();
+    if (count.load(std::memory_order_relaxed) > buffer.size()) {
+      std::lock_guard<std::mutex> lock(overflow_mutex);
+      overflow_buffer.clear();
+    }
+    count.store(0, std::memory_order_release);
   }
 };
 
@@ -63,26 +70,46 @@ class CommandBuffer {
 
   template <typename T>
   void AddComponent(Entity entity, T component) const {
-    state_->deferred.Emplace(
-        [entity, c = std::move(component)](Registry* r) mutable { r->AddComponent(entity, std::move(c)); });
+    state_->deferred.Emplace([entity, c = std::move(component)](Registry* r) mutable {
+      if (r->IsAlive(entity)) {
+        r->AddComponent(entity, std::move(c));
+      }
+    });
   }
 
   template <typename T>
   void RemoveComponent(Entity entity) const {
-    state_->deferred.Emplace([entity](Registry* r) { r->RemoveComponent<T>(entity); });
+    state_->deferred.Emplace([entity](Registry* r) {
+      if (r->IsAlive(entity)) {
+        r->RemoveComponent<T>(entity);
+      }
+    });
   }
 
   template <typename T>
   void AddTag(Entity entity) const {
-    state_->deferred.Emplace([entity](Registry* r) { r->AddTag<T>(entity); });
+    state_->deferred.Emplace([entity](Registry* r) {
+      if (r->IsAlive(entity)) {
+        r->AddTag<T>(entity);
+      }
+    });
   }
 
   template <typename T>
   void RemoveTag(Entity entity) const {
-    state_->deferred.Emplace([entity](Registry* r) { r->RemoveTag<T>(entity); });
+    state_->deferred.Emplace([entity](Registry* r) {
+      if (r->IsAlive(entity)) {
+        r->RemoveTag<T>(entity);
+      }
+    });
   }
 
   void Playback(Registry* registry) const;
+
+  void Clear() const {
+    state_->commands.Clear();
+    state_->deferred.Clear();
+  }
 
  private:
   struct State {

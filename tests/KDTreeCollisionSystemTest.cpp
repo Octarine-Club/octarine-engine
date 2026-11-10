@@ -19,9 +19,10 @@
 #include "Components/GlobalTransformComponent.h"
 #include "ECS/Query.h"  // full ComponentQuery definition for RegisterBulkSystem dispatch
 #include "ECS/Registry.h"
-#include "Engine/EngineContext.h"
 #include "EventBus/EventBus.h"
 #include "Events/CollisionBatchEvent.h"
+#include "Events/CollisionExitBatchEvent.h"
+#include "Game/EngineContext.h"
 #include "Systems/KDTreeCollisionSystem.h"
 #include "TestHarness.h"
 
@@ -54,10 +55,33 @@ struct CollisionCapture {
   }
 };
 
+struct CollisionExitCapture {
+  std::vector<std::vector<std::pair<Entity, Entity>>> batches;
+  EventBus::SubscriptionHandle subscription;
+
+  void OnBatch(const CollisionExitBatchEvent& evt) { batches.emplace_back(evt.pairs); }
+
+  [[nodiscard]] int TotalPairs() const {
+    int n = 0;
+    for (const auto& b : batches) n += static_cast<int>(b.size());
+    return n;
+  }
+
+  [[nodiscard]] bool Contains(const Entity a, const Entity b) const {
+    for (const auto& batch : batches) {
+      for (const auto& [x, y] : batch) {
+        if ((x == a && y == b) || (x == b && y == a)) return true;
+      }
+    }
+    return false;
+  }
+};
+
 struct TestScene {
   Registry reg;
   std::unique_ptr<EventBus> bus;
   CollisionCapture capture;
+  CollisionExitCapture exitCapture;
 
   TestScene() : bus(std::make_unique<EventBus>()) {
     EngineContext ctx;
@@ -66,6 +90,8 @@ struct TestScene {
     reg.RegisterBulkSystem(KDTreeCollisionSystem(true));
     capture.subscription =
         bus->SubscribeEvent<CollisionCapture, CollisionBatchEvent>(&capture, &CollisionCapture::OnBatch);
+    exitCapture.subscription = bus->SubscribeEvent<CollisionExitCapture, CollisionExitBatchEvent>(
+        &exitCapture, &CollisionExitCapture::OnBatch);
   }
 
   // Create a 32×32 AABB at top-left (x, y) with default masks (all entities interact).
@@ -319,6 +345,82 @@ int main() {
     scene.Tick();
 
     CheckEq(scene.capture.TotalPairs(), 0, "mask pruning: overlapping boxes with incompatible masks emit no pairs");
+  }
+
+  // --- Separation emits CollisionExitBatchEvent and IsOverlapping is symmetric.
+  {
+    TestScene scene;
+    const Entity a = scene.MakeBox(0.0f, 0.0f);
+    const Entity b = scene.MakeBox(16.0f, 0.0f);  // overlapping a
+
+    scene.Tick();  // first frame: enters collision
+    CheckEq(scene.capture.TotalPairs(), 1, "initial overlap enters batch");
+    CheckEq(scene.exitCapture.TotalPairs(), 0, "no exits on entry");
+
+    // Move b far away
+    scene.MoveTo(b, 200.0f, 200.0f);
+    scene.Tick();  // separation detected and exit event emitted
+
+    CheckEq(scene.exitCapture.TotalPairs(), 1, "separation emits exactly one exit pair");
+    Check(scene.exitCapture.Contains(a, b), "exit pair contains (a, b)");
+  }
+
+  // --- Destroying colliders flushes exit events and resets IsOverlapping.
+  {
+    TestScene scene;
+    const Entity a = scene.MakeBox(0.0f, 0.0f);
+    const Entity b = scene.MakeBox(16.0f, 0.0f);
+
+    scene.Tick();
+    CheckEq(scene.capture.TotalPairs(), 1, "initial overlap enters batch");
+
+    scene.reg.BlamEntity(b);
+    scene.Tick();
+
+    CheckEq(scene.exitCapture.TotalPairs(), 1, "destroying entity emits exit pair");
+    Check(scene.exitCapture.Contains(a, b), "exit pair contains (a, b)");
+  }
+
+  // --- KDTreeCollisionSystem move lifecycle.
+  {
+    KDTreeCollisionSystem sys1(true);
+    KDTreeCollisionSystem sys2 = std::move(sys1);
+    KDTreeCollisionSystem sys3(false);
+    sys3 = std::move(sys2);
+  }
+
+  // --- KDTreeCollisionSystem asynchronous update & IsOverlapping
+  {
+    Registry reg;
+    auto bus = std::make_unique<EventBus>();
+    EngineContext ctx;
+    ctx.eventBus = bus.get();
+    reg.Set<EngineContext>(ctx);
+
+    auto collision = reg.RegisterBulkSystem(KDTreeCollisionSystem(false));
+
+    const Entity e1 = reg.CreateEntity();
+    reg.AddComponent(e1, GlobalTransformComponent{glm::vec2(0.0f, 0.0f), glm::vec2(1.0f, 1.0f), 0.0f});
+    reg.AddComponent(e1, BoxColliderComponent{32, 32});
+    reg.AddComponent(e1, EntityMaskComponent{});
+
+    const Entity e2 = reg.CreateEntity();
+    reg.AddComponent(e2, GlobalTransformComponent{glm::vec2(10.0f, 0.0f), glm::vec2(1.0f, 1.0f), 0.0f});
+    reg.AddComponent(e2, BoxColliderComponent{32, 32});
+    reg.AddComponent(e2, EntityMaskComponent{});
+
+    // Step 1: gathers boxes and launches async detection
+    reg.Update(1.0f / 60.0f);
+    collision.Func().WaitForAsync();
+    // Step 2: consumes async result and updates prevPairs_
+    reg.Update(1.0f / 60.0f);
+
+    Check(collision.Func().IsOverlapping(e1, e2), "e1 and e2 are overlapping");
+
+    // Despawn to exercise empty box path with prior pairs
+    reg.BlamEntity(e1);
+    reg.BlamEntity(e2);
+    reg.Update(1.0f / 60.0f);
   }
 
   TestMultiShapeCollisions();

@@ -11,7 +11,11 @@
 #include <string_view>
 #include <vector>
 
+#include "BenchAllocTracker.h"
+#include "BenchHwCounters.h"
 #include "ECS/Registry.h"
+#include "Renderer/RenderQueue.h"
+#include "Renderer/RenderQueueStats.h"
 
 #if defined(__GNUG__)
 #include <cxxabi.h>
@@ -56,6 +60,29 @@ inline void EntitySweepSmall(benchmark::Benchmark* b) {
 inline void ReportRegistry(benchmark::State& state, const Registry& registry) {
   state.counters["entities"] = static_cast<double>(registry.GetUserEntityCount());
   state.counters["archetypes"] = static_cast<double>(registry.GetArchetypeCount());
+  const auto mem = registry.ComputeMemoryStats();
+  state.counters["chunks"] = static_cast<double>(mem.totalChunks);
+  state.counters["chunk_kb"] = static_cast<double>(mem.chunkArenaBytes) / 1024.0;
+  state.counters["chunk_fill_pct"] = mem.chunkFillPct;
+  state.counters["active_fill_pct"] = mem.activeFillPct;
+}
+
+inline void ReportBandwidth(benchmark::State& state, const double entitiesPerIteration, const double bytesPerEntity) {
+  const auto totalBytes =
+      static_cast<int64_t>(static_cast<double>(state.iterations()) * entitiesPerIteration * bytesPerEntity);
+  state.SetBytesProcessed(totalBytes);
+  state.counters["bytes_per_entity"] = bytesPerEntity;
+}
+
+inline void ReportRenderQueue(benchmark::State& state, const RenderQueue& queue, const float renderScale = 1.0f) {
+  const auto stats = AnalyzeRenderQueue(queue, renderScale);
+  state.counters["emitted"] = static_cast<double>(stats.commandCount);
+  state.counters["draw_batches"] = static_cast<double>(stats.drawBatches);
+  state.counters["keys_per_batch"] = stats.keysPerBatch;
+  state.counters["tex_switches"] = static_cast<double>(stats.textureSwitches);
+  state.counters["blend_switches"] = static_cast<double>(stats.blendSwitches);
+  state.counters["clip_switches"] = static_cast<double>(stats.clipSwitches);
+  state.counters["vertices"] = static_cast<double>(stats.totalVertices);
 }
 
 // Per-entity throughput. ns_per_entity is an inverted rate, so it is derived from whichever time
@@ -131,10 +158,22 @@ class SystemTimings {
 // the mean, but frame pacing is governed by the tail.
 class FrameStats {
  public:
+  FrameStats() { samples_.reserve(4096); }
+
   void Add(const double ns) { samples_.push_back(ns); }
 
   void Report(benchmark::State& state) {
     if (samples_.empty()) return;
+    std::vector<double> jitters;
+    if (samples_.size() > 1) {
+      jitters.reserve(samples_.size() - 1);
+      for (size_t i = 1; i < samples_.size(); ++i) {
+        jitters.push_back(std::abs(samples_[i] - samples_[i - 1]));
+      }
+      std::sort(jitters.begin(), jitters.end());
+      const auto jIdx = static_cast<size_t>(0.95 * static_cast<double>(jitters.size() - 1));
+      state.counters["jitter_p95_ms"] = jitters[jIdx] / 1.0e6;
+    }
     std::sort(samples_.begin(), samples_.end());
     const auto pct = [&](const double p) {
       const auto idx = static_cast<size_t>(p * static_cast<double>(samples_.size() - 1));
@@ -147,6 +186,9 @@ class FrameStats {
     const auto over60 = static_cast<double>(
         std::count_if(samples_.begin(), samples_.end(), [](const double v) { return v > kBudget60Ns; }));
     state.counters["over60_pct"] = 100.0 * over60 / static_cast<double>(samples_.size());
+    const auto over120 = static_cast<double>(
+        std::count_if(samples_.begin(), samples_.end(), [](const double v) { return v > kBudget120Ns; }));
+    state.counters["over120_pct"] = 100.0 * over120 / static_cast<double>(samples_.size());
   }
 
  private:

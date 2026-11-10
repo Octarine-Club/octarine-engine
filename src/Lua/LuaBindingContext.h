@@ -41,4 +41,7 @@ class LuaBindingContext {
   // Request engine shutdown (the `quit_game` Lua global). Named distinctly from Game's static
   // Quit() so the override doesn't collide with the static member.
   virtual void RequestQuit() = 0;
+
+  // Return input focus to the game viewport when debug GUI overlays close.
+  virtual void ReturnFocusToGame() {}
 };

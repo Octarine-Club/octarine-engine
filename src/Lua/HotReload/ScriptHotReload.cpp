@@ -124,7 +124,7 @@ bool ScriptHotReload::SwapComponent(ScriptComponent& sc, const sol::table& newTa
   using namespace LuaComponentHelpers;
   // Preserve per-entity state (`data` sub-table) across the swap. Authors mutate this at
   // runtime; clobbering it would defeat the point of hot reload.
-  const auto preservedData = sc.script_table.get<sol::object>("data");
+  const auto preservedData = sc.script_table.valid() ? sc.script_table.get<sol::object>("data") : sol::object();
 
   // Resolve new callbacks first so we never end up with a half-swapped state if Lua throws.
   sol::protected_function newUpdate = SafeGetProtectedFunction(newTable, "on_update");

@@ -31,7 +31,7 @@ class AnimationSystem {
     const double timePerFrame = 1.0f / static_cast<double>(animation.frameRateSpeed);
 
     if (animation.frameTimer >= timePerFrame) {
-      const int framesToAdvance = static_cast<int>(std::round(animation.frameTimer / timePerFrame));
+      const int framesToAdvance = static_cast<int>(animation.frameTimer / timePerFrame);
 
       if (animation.shouldLoop) {
         animation.currentFrame = (animation.currentFrame + framesToAdvance) % animation.numFrames;
@@ -43,7 +43,7 @@ class AnimationSystem {
       }
 
       if (animation.shouldLoop) {
-        animation.frameTimer = fmod(animation.frameTimer, timePerFrame);
+        animation.frameTimer = static_cast<float>(std::fmod(animation.frameTimer, timePerFrame));
       } else if (animation.isFinished) {
         animation.frameTimer = 0.0f;
       }

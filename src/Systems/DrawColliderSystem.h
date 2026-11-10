@@ -16,7 +16,7 @@
 #include "Components/TriangleColliderComponent.h"
 #include "ECS/Query.h"
 #include "ECS/Registry.h"
-#include "Engine/EngineContext.h"
+#include "Game/EngineContext.h"
 #include "General/Constants.h"
 #include "General/Rotation2D.h"
 

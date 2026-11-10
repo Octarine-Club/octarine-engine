@@ -9,6 +9,14 @@ on:
   workflow_dispatch:
   schedule:
     - cron: '0 5 * * *'   # 05:00 UTC nightly
+  pull_request:
+    paths:
+      - 'src/ECS/**'
+      - 'src/General/ThreadPool*'
+      - 'src/Systems/KDTreeCollisionSystem*'
+      - 'tests/CommandBufferTest.cpp'
+      - 'tests/SimulationFuzzTest.cpp'
+      - '.github/workflows/sanitize-tsan.yml'
 
 jobs:
   tsan:
@@ -42,4 +50,10 @@ jobs:
       - name: Run engine tests (ctest under TSan)
         env:
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
-        run: ctest --test-dir build/player-debug --output-on-failure
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "Running targeted concurrency test suite under TSan..."
+            ctest --test-dir build/player-debug -R "CommandBufferTest|SimulationFuzzTest" --output-on-failure
+          else
+            ctest --test-dir build/player-debug --output-on-failure
+          fi

@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "ECS/CommandBuffer.h"
 #include "ECS/Query.h"  // full ComponentQuery definition for CreateQuery / ForEach
 #include "ECS/Registry.h"
 #include "TestHarness.h"
@@ -100,6 +101,58 @@ int main() {
     Check(!registry.HasComponent<Position>(e), "destroyed entity reports no components");
     registry.Update(1.0f / 60.0f);  // second Update must not double-process the (now empty) queue
     Check(!registry.IsAlive(e), "stale handle stays invalid across further updates");
+  }
+
+  // Despawn dedup + deferred destruction via Update.
+  {
+    Registry registry;
+    const Entity e = registry.CreateEntity();
+    registry.AddComponent(e, Position{0.0f, 0.0f});
+    registry.QueueDespawnEntity(e);
+    registry.QueueDespawnEntity(e);  // duplicate within the frame — must collapse to one despawn
+    Check(registry.IsAlive(e), "queued despawn is deferred until Update");
+    registry.Update(1.0f / 60.0f);
+    Check(!registry.IsAlive(e), "entity is destroyed after Update processes the despawn queue");
+    registry.ValidateInvariants();
+  }
+
+  // Immediate-BlamEntity + slot-recycle same-frame generation queueing.
+  {
+    Registry registry;
+    const Entity e1 = registry.CreateEntity();
+    registry.AddComponent(e1, Position{1.0f, 1.0f});
+    const uint32_t slot1 = e1.GetId();
+    registry.QueueBlamEntity(e1);
+    registry.BlamEntity(e1);
+    Check(!registry.IsAlive(e1), "e1 is destroyed immediately");
+
+    // Stale call on dead entity e1 must be ignored and not corrupt the slot's tracking
+    registry.QueueBlamEntity(e1);
+
+    const Entity e2 = registry.CreateEntity();
+    Check(e2.GetId() == slot1, "recycled base slot matches e1");
+    Check(e2.id != e1.id, "recycled entity has incremented generation");
+    registry.AddComponent(e2, Position{2.0f, 2.0f});
+    registry.QueueBlamEntity(e2);
+    // Another stale e1 call must not clobber e2's queued state
+    registry.QueueBlamEntity(e1);
+    Check(registry.IsAlive(e2), "recycled entity e2 is alive before update");
+    registry.Update(1.0f / 60.0f);
+    Check(!registry.IsAlive(e2), "recycled entity e2 was properly destroyed by queued blam");
+    registry.ValidateInvariants();
+  }
+
+  // Bundle creation with multiple components.
+  {
+    Registry registry;
+    const Entity e = registry.CreateEntityWithBundle(Position{10.0f, 20.0f}, Velocity{1.0f, 2.0f});
+    Check(registry.IsAlive(e), "bundle entity is alive");
+    Check(registry.IsActive(e), "bundle entity starts active");
+    Check(registry.HasComponent<Position>(e), "bundle has Position");
+    Check(registry.HasComponent<Velocity>(e), "bundle has Velocity");
+    Check(registry.GetComponent<Position>(e).x == 10.0f, "bundle Position value matches");
+    Check(registry.GetComponent<Velocity>(e).dx == 1.0f, "bundle Velocity value matches");
+    registry.ValidateInvariants();
   }
 
   // Queries visit exactly the matching set.
@@ -435,6 +488,119 @@ int main() {
     const Entity m2 = em.CreateEntity();
     const Entity m3 = em.CreateEntity();
     Check(m2.GetId() != m3.GetId(), "stale double-blam does not push duplicate baseId into free list");
+  }
+
+  // Oversized archetype combinations (>16KB) throw std::length_error instead of asserting or corrupting memory.
+  {
+    std::cout << "[oversized] Archetypes exceeding 16KB chunk capacity throw std::length_error\n";
+    Registry registry;
+    const Entity e = registry.CreateEntity();
+    struct GiantA {
+      char data[10000];
+    };
+    struct GiantB {
+      char data[10000];
+    };
+    registry.AddComponent(e, GiantA{});
+    bool caughtLengthError = false;
+    try {
+      registry.AddComponent(e, GiantB{});
+    } catch (const std::length_error&) {
+      caughtLengthError = true;
+    }
+    Check(caughtLengthError, "combining components exceeding 16KB throws std::length_error");
+  }
+
+  // CommandBuffer playback handles deferred ops on already-destroyed entities safely without throwing or corrupting
+  // state.
+  {
+    std::cout << "[command_buffer] Deferred ops on stale/destroyed handles execute safely\n";
+    Registry registry;
+    const Entity live = registry.CreateEntity();
+    const Entity dead = registry.CreateEntity();
+    registry.BlamEntity(dead);
+
+    CommandBuffer cmdBuffer;
+    cmdBuffer.EmplaceBlam(live);
+    cmdBuffer.EmplaceBlam(dead);                         // blam on dead entity
+    cmdBuffer.AddComponent(dead, Position{5.0f, 5.0f});  // deferred add on dead entity
+    cmdBuffer.RemoveComponent<Position>(dead);           // deferred remove on dead entity
+
+    cmdBuffer.Playback(&registry);
+    registry.Update(0.0f);
+
+    Check(!registry.IsAlive(live), "live entity was blammed via CommandBuffer playback");
+    Check(!registry.IsAlive(dead), "dead entity remains dead");
+    registry.ValidateInvariants();
+  }
+
+  // Registry::ComputeMemoryStats verifies chunk layout, occupancy, and active partition calculations.
+  {
+    std::cout << "[memory_stats] ComputeMemoryStats reports chunk metrics and fill percentages\n";
+    Registry registry;
+    const auto emptyStats = registry.ComputeMemoryStats();
+    Check(emptyStats.occupiedSlots == 0, "empty registry has 0 occupied slots");
+    Check(emptyStats.totalChunks == 0, "empty registry has 0 chunks");
+    Check(emptyStats.chunkArenaBytes == 0, "empty registry has 0 arena bytes");
+    Check(emptyStats.chunkFillPct == 0.0, "empty registry has 0% fill");
+
+    constexpr int kCount = 100;
+    std::vector<Entity> entities;
+    entities.reserve(kCount);
+    for (int i = 0; i < kCount; ++i) {
+      entities.push_back(registry.CreateEntityWithBundle(Position{1.0f, 2.0f}, Velocity{0.5f, 0.5f}));
+    }
+
+    const auto populatedStats = registry.ComputeMemoryStats();
+    Check(populatedStats.archetypeCount >= 1, "has at least 1 archetype");
+    Check(populatedStats.nonEmptyArchetypes >= 1, "has at least 1 non-empty archetype");
+    Check(populatedStats.totalChunks >= 1, "has allocated chunks");
+    Check(populatedStats.occupiedSlots == kCount, "occupied slots match entity count");
+    Check(populatedStats.activeSlots == kCount, "active slots match entity count initially");
+    Check(populatedStats.totalSlotCapacity >= kCount, "total slot capacity exceeds or matches entity count");
+    Check(populatedStats.chunkArenaBytes == populatedStats.totalChunks * 16384, "arena bytes equals chunks * 16KB");
+    Check(populatedStats.chunkFillPct > 0.0 && populatedStats.chunkFillPct <= 100.0, "chunk fill pct is valid");
+    Check(populatedStats.byteUtilizationPct > 0.0 && populatedStats.byteUtilizationPct <= 100.0,
+          "byte utilization pct is valid");
+
+    // Deactivate half the entities
+    for (int i = 0; i < kCount / 2; ++i) {
+      registry.Deactivate(entities[static_cast<size_t>(i)]);
+    }
+    registry.ValidateInvariants();
+    const auto deactivatedStats = registry.ComputeMemoryStats();
+    Check(deactivatedStats.occupiedSlots == kCount, "occupied slots remain unchanged after deactivation");
+    Check(deactivatedStats.activeSlots == kCount / 2, "active slots drop by half after deactivation");
+    Check(deactivatedStats.activeFillPct < deactivatedStats.chunkFillPct,
+          "active fill pct is strictly less than total chunk fill pct");
+  }
+
+  // QueueBlamEntity and QueueDespawnEntity deferred destruction
+  {
+    Registry registry;
+    const Entity e1 = registry.CreateEntity();
+    const Entity e2 = registry.CreateEntity();
+    const Entity e3 = registry.CreateEntity();
+
+    // Valid queueing + duplicate deduplication + invalid entity handling
+    registry.QueueBlamEntity(e1);
+    registry.QueueBlamEntity(e1);
+    registry.QueueBlamEntity(Entity{999999});
+
+    registry.QueueDespawnEntity(e2);
+    registry.QueueDespawnEntity(e2);
+    registry.QueueDespawnEntity(Entity{888888});
+
+    Check(registry.IsAlive(e1), "e1 is alive before update");
+    Check(registry.IsAlive(e2), "e2 is alive before update");
+    Check(registry.IsAlive(e3), "e3 is alive before update");
+
+    registry.Update(0.016f);
+    registry.ValidateInvariants();
+
+    Check(!registry.IsAlive(e1), "e1 was blammed during Update");
+    Check(!registry.IsAlive(e2), "e2 was despawned during Update");
+    Check(registry.IsAlive(e3), "e3 remains alive");
   }
 
   return octarine::test::Result();

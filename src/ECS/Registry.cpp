@@ -7,10 +7,10 @@
 #include <stdexcept>
 
 #include "CommandBuffer.h"
+#include "ECS/EntityPool.h"
 #include "General/Logger.h"
 #include "General/PerfUtils.h"
 #include "Query.h"
-#include "Systems/EntityPoolSystem.h"
 
 namespace {
 // Names of the systems still blocked (indegree > 0) when Kahn's algorithm stalls — i.e. the
@@ -121,21 +121,32 @@ void Registry::FlushPendingDestruction() {
     return;
   }
   PROFILE_NAMED_SCOPE("Registry::Update (pending blam/despawn)");
-  auto pending = std::move(pending_blams_);
-  auto despawns = std::move(pending_despawns_);
+  flush_blams_scratch_.swap(pending_blams_);
+  flush_despawns_scratch_.swap(pending_despawns_);
   pending_blams_.clear();
-  pending_blam_ids_.clear();
   pending_despawns_.clear();
-  pending_despawn_ids_.clear();
 
-  for (const Entity entity : pending) {
+  for (const Entity entity : flush_blams_scratch_) {
+    const std::uint32_t id = entity.GetId();
+    if (id < pending_blam_seen_.size()) {
+      pending_blam_seen_[id] = kInvalidEntityID;
+    }
+  }
+  for (const Entity entity : flush_despawns_scratch_) {
+    const std::uint32_t id = entity.GetId();
+    if (id < pending_despawn_seen_.size()) {
+      pending_despawn_seen_[id] = kInvalidEntityID;
+    }
+  }
+
+  for (const Entity entity : flush_blams_scratch_) {
     if (!IsAlive(entity)) continue;
     BlamEntity(entity);
   }
 
   // Route pooled entities into free list; blam non-pooled entities.
-  if (!despawns.empty()) {
-    FlushDespawns(despawns);
+  if (!flush_despawns_scratch_.empty()) {
+    FlushDespawns(flush_despawns_scratch_);
   }
 }
 
@@ -244,6 +255,12 @@ void Registry::BlamSingleEntity(const Entity entity) {
       });
   entity_manager_->BlamEntity(entity);
   entity_locations_[id] = EntityLocation{nullptr, 0, 0};
+  if (id < pending_blam_seen_.size()) {
+    pending_blam_seen_[id] = kInvalidEntityID;
+  }
+  if (id < pending_despawn_seen_.size()) {
+    pending_despawn_seen_[id] = kInvalidEntityID;
+  }
   if (internal_entity_ids_.erase(id) == 0 && user_entity_count_ > 0) {
     --user_entity_count_;
   }
@@ -277,9 +294,9 @@ void Registry::BlamEntity(const Entity entity) {
 
 void Registry::ClearUserEntities() {
   pending_blams_.clear();
-  pending_blam_ids_.clear();
+  std::fill(pending_blam_seen_.begin(), pending_blam_seen_.end(), kInvalidEntityID);
   pending_despawns_.clear();
-  pending_despawn_ids_.clear();
+  std::fill(pending_despawn_seen_.begin(), pending_despawn_seen_.end(), kInvalidEntityID);
 
   const auto entities = GetUserEntities();
   for (const auto entity : entities) {
@@ -494,7 +511,7 @@ bool Registry::IsActive(const Entity entity) const {
   return loc.indexInChunk < loc.archetype->GetActiveCountInChunk(loc.chunkIndex);
 }
 
-Archetype* Registry::FindExactArchetype(const std::vector<ComponentID>& componentIDs) const {
+Archetype* Registry::FindExactArchetype(std::span<const ComponentID> componentIDs) const {
   // Narrow search using the least frequent component in the set.
   const ArchetypeList* smallest = nullptr;
   for (const ComponentID id : componentIDs) {
@@ -506,17 +523,22 @@ Archetype* Registry::FindExactArchetype(const std::vector<ComponentID>& componen
       smallest = &it->second;
     }
   }
+  if (!smallest) return nullptr;
 
   for (const auto archetypeId : *smallest) {
     const auto archetype = archetypes_.find(archetypeId);
-    if (archetype->second->type() == componentIDs) {
+    if (archetype != archetypes_.end() && std::ranges::equal(archetype->second->type(), componentIDs)) {
       return archetype->second.get();
     }
   }
   return nullptr;
 }
 
-Archetype* Registry::RegisterNewArchetype(const std::vector<ComponentID>& componentIDs) {
+Archetype* Registry::FindExactArchetype(const std::vector<ComponentID>& componentIDs) const {
+  return FindExactArchetype(std::span<const ComponentID>(componentIDs.data(), componentIDs.size()));
+}
+
+Archetype* Registry::RegisterNewArchetype(std::span<const ComponentID> componentIDs) {
   std::vector<ComponentInfo> componentInfos;
   componentInfos.reserve(componentIDs.size());
   for (const auto& id : componentIDs) {
@@ -541,14 +563,25 @@ Archetype* Registry::RegisterNewArchetype(const std::vector<ComponentID>& compon
   return newArchetypePtr;
 }
 
-Archetype* Registry::GetOrCreateArchetype(std::vector<ComponentID> componentIDs, const ComponentID newComponentId) {
-  componentIDs.push_back(newComponentId);
-  std::ranges::sort(componentIDs);
+Archetype* Registry::RegisterNewArchetype(const std::vector<ComponentID>& componentIDs) {
+  return RegisterNewArchetype(std::span<const ComponentID>(componentIDs.data(), componentIDs.size()));
+}
 
+Archetype* Registry::GetOrCreateArchetypeFromSpan(std::span<const ComponentID> componentIDs) {
+  if (componentIDs.empty()) {
+    return root_archetype_.get();
+  }
   if (Archetype* existing = FindExactArchetype(componentIDs)) {
     return existing;
   }
   return RegisterNewArchetype(componentIDs);
+}
+
+Archetype* Registry::GetOrCreateArchetype(std::vector<ComponentID> componentIDs, const ComponentID newComponentId) {
+  componentIDs.push_back(newComponentId);
+  std::ranges::sort(componentIDs);
+
+  return GetOrCreateArchetypeFromSpan(componentIDs);
 }
 
 Archetype* Registry::GetOrCreateArchetypeRemove(std::vector<ComponentID> componentIDs,
@@ -556,26 +589,14 @@ Archetype* Registry::GetOrCreateArchetypeRemove(std::vector<ComponentID> compone
   std::erase(componentIDs, removeComponentId);
   std::ranges::sort(componentIDs);
 
-  if (componentIDs.empty()) {
-    return root_archetype_.get();
-  }
-  if (Archetype* existing = FindExactArchetype(componentIDs)) {
-    return existing;
-  }
-  return RegisterNewArchetype(componentIDs);
+  return GetOrCreateArchetypeFromSpan(componentIDs);
 }
 
 Archetype* Registry::GetOrCreateArchetypeFromSet(std::vector<ComponentID> componentIDs) {
   std::ranges::sort(componentIDs);
   componentIDs.erase(std::ranges::unique(componentIDs).begin(), componentIDs.end());
 
-  if (componentIDs.empty()) {
-    return root_archetype_.get();
-  }
-  if (Archetype* existing = FindExactArchetype(componentIDs)) {
-    return existing;
-  }
-  return RegisterNewArchetype(componentIDs);
+  return GetOrCreateArchetypeFromSpan(componentIDs);
 }
 
 void Registry::AddPair(const Entity entity, const Entity relationship, const Entity target) {
@@ -677,7 +698,7 @@ std::vector<Entity> Registry::GetChildren(const Entity parent) const {
 void CommandBuffer::Playback(Registry* registry) const {
   PROFILE_NAMED_SCOPE("CommandBuffer::Playback");
   auto& chan = state_->commands;
-  const size_t total = std::min(chan.count.load(std::memory_order_relaxed), chan.buffer.size());
+  const size_t total = std::min(chan.count.load(std::memory_order_acquire), chan.buffer.size());
   for (size_t i = 0; i < total; ++i) {
     if (chan.buffer[i].type == CommandType::Blam) {
       registry->QueueBlamEntity(chan.buffer[i].entity);
@@ -695,7 +716,7 @@ void CommandBuffer::Playback(Registry* registry) const {
   chan.Clear();
 
   auto& deferred = state_->deferred;
-  const size_t deferredTotal = std::min(deferred.count.load(std::memory_order_relaxed), deferred.buffer.size());
+  const size_t deferredTotal = std::min(deferred.count.load(std::memory_order_acquire), deferred.buffer.size());
   for (size_t i = 0; i < deferredTotal; ++i) {
     deferred.buffer[i](registry);
     deferred.buffer[i] = nullptr;
@@ -753,4 +774,51 @@ void Registry::ValidateInvariants() const {
   for (const auto& [archId, archPtr] : archetypes_) {
     ValidateArchetypeChunks(archId, *archPtr);
   }
+}
+
+RegistryMemoryStats Registry::ComputeMemoryStats() const {
+  RegistryMemoryStats stats;
+  stats.archetypeCount = archetypes_.size();
+
+  auto processArchetype = [&](const Archetype& arch) {
+    const std::size_t chunks = arch.GetChunkCount();
+    if (chunks == 0) return;
+    const std::size_t entities = arch.GetEntityCount();
+    stats.totalChunks += chunks;
+    stats.totalSlotCapacity += chunks * arch.GetChunkCapacity();
+    stats.occupiedSlots += entities;
+    stats.activeSlots += arch.GetActiveCount();
+    if (entities > 0) {
+      ++stats.nonEmptyArchetypes;
+    }
+    std::size_t bytesPerEntity = sizeof(Entity);
+    for (const auto& info : arch.component_infos()) {
+      bytesPerEntity += info.size;
+    }
+    stats.payloadUsedBytes += bytesPerEntity * entities;
+  };
+
+  if (root_archetype_ && root_archetype_->GetChunkCount() > 0) {
+    processArchetype(*root_archetype_);
+    ++stats.archetypeCount;
+  }
+
+  for (const auto& [id, archPtr] : archetypes_) {
+    if (archPtr) {
+      processArchetype(*archPtr);
+    }
+  }
+
+  stats.chunkArenaBytes = stats.totalChunks * kChunkSize;
+  if (stats.totalSlotCapacity > 0) {
+    stats.chunkFillPct =
+        (static_cast<double>(stats.occupiedSlots) / static_cast<double>(stats.totalSlotCapacity)) * 100.0;
+    stats.activeFillPct =
+        (static_cast<double>(stats.activeSlots) / static_cast<double>(stats.totalSlotCapacity)) * 100.0;
+  }
+  if (stats.chunkArenaBytes > 0) {
+    stats.byteUtilizationPct =
+        (static_cast<double>(stats.payloadUsedBytes) / static_cast<double>(stats.chunkArenaBytes)) * 100.0;
+  }
+  return stats;
 }

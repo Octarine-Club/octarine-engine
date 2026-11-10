@@ -22,7 +22,8 @@ class RenderDebugGUISystem {
     if (script.onDebugGUIFunction == sol::lua_nil) {
       return;
     }
-    if (auto result = script.onDebugGUIFunction(script.script_table, context.GetEntity()); !result.valid()) {
+    sol::object entityObj = script.GetOrCacheEntity(script.onDebugGUIFunction.lua_state(), context.GetEntity());
+    if (auto result = script.onDebugGUIFunction(script.script_table, entityObj); !result.valid()) {
       const sol::error err = result;
       Logger::ErrorLua(std::string(err.what()));
     }

@@ -10,32 +10,70 @@
 
 #include "AssetManager/AssetManager.h"
 #include "ECS/Registry.h"
-#include "Engine/EngineContext.h"
 #include "Engine/SceneLoader.h"
+#include "Game/EngineContext.h"
 #include "imgui.h"
 
 namespace octarine::debug {
 
 namespace {
 
-void DrawAvailableScenes(const std::string& basePath, SceneLoader* loader) {
+struct AvailableScenesCache {
+  float timer = 0.0f;
+  std::string cachedBasePath{};
+  std::vector<std::string> sceneRelativePaths{};
+  std::vector<std::string> sceneFilenames{};
+};
+
+AvailableScenesCache& GetScenesCache() {
+  static AvailableScenesCache cache;
+  return cache;
+}
+
+void RescanScenesDirectory(AvailableScenesCache& cache, const std::string& basePath) {
+  cache.cachedBasePath = basePath;
+  cache.timer = 1.0f;  // Refresh directory scan every 1 second
+  cache.sceneRelativePaths.clear();
+  cache.sceneFilenames.clear();
+
   const std::filesystem::path scenesDir = std::filesystem::path(basePath) / "scripts" / "scenes";
   std::error_code ec;
   if (!std::filesystem::is_directory(scenesDir, ec)) return;
 
-  ImGui::Separator();
-  ImGui::TextDisabled("Available Scenes (scripts/scenes/):");
   for (const auto& entry : std::filesystem::directory_iterator(scenesDir, ec)) {
     if (entry.is_regular_file(ec) && entry.path().extension() == ".lua") {
-      const std::string rel = "scripts/scenes/" + entry.path().filename().string();
-      ImGui::PushID(rel.c_str());
-      ImGui::TextUnformatted(entry.path().filename().string().c_str());
-      ImGui::SameLine();
-      if (ImGui::SmallButton("Load") && loader != nullptr) {
-        loader->RequestLoadScene(rel);
-      }
-      ImGui::PopID();
+      cache.sceneRelativePaths.push_back("scripts/scenes/" + entry.path().filename().string());
+      cache.sceneFilenames.push_back(entry.path().filename().string());
     }
+  }
+}
+
+void DrawAvailableScenes(const std::string& basePath, SceneLoader* loader) {
+  auto& cache = GetScenesCache();
+  const float dt = ImGui::GetIO().DeltaTime;
+  cache.timer -= dt;
+
+  if (cache.cachedBasePath != basePath || cache.timer <= 0.0f) {
+    RescanScenesDirectory(cache, basePath);
+  }
+
+  ImGui::Separator();
+  ImGui::TextDisabled("Available Scenes (scripts/scenes/):");
+  ImGui::SameLine();
+  if (ImGui::SmallButton("Scan Now")) {
+    cache.timer = 0.0f;
+  }
+
+  for (size_t i = 0; i < cache.sceneRelativePaths.size(); ++i) {
+    const auto& rel = cache.sceneRelativePaths[i];
+    const auto& filename = cache.sceneFilenames[i];
+    ImGui::PushID(rel.c_str());
+    ImGui::TextUnformatted(filename.c_str());
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Load") && loader != nullptr) {
+      loader->RequestLoadScene(rel);
+    }
+    ImGui::PopID();
   }
 }
 

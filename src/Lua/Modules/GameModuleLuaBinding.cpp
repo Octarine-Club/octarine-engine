@@ -22,7 +22,7 @@
 #include "Components/CameraComponents.h"
 #include "ECS/Registry.h"
 #include "ECS/StateInspector.h"
-#include "Engine/EngineContext.h"
+#include "Game/EngineContext.h"
 #include "Game/GameConfig.h"
 #include "Game/UserSettings.h"
 #include "General/FileSandbox.h"
@@ -32,9 +32,6 @@
 #include "General/ThreadPool.h"
 #include "Lua/LuaBindingContext.h"
 #include "Renderer/Renderer.h"
-#ifdef OCTARINE_WITH_IMGUI
-#include "Systems/RenderDebugGUISystem.h"
-#endif
 
 namespace {
 constexpr size_t kDefaultMaxDepth = 5;
@@ -169,11 +166,9 @@ sol::table GetPerfStatsTable(sol::this_state ts, LuaBindingContext& ctx) {
 void SetDebugGuiState(LuaBindingContext& ctx, const bool enabled) {
   auto& options = ctx.GetRegistry()->Get<GameConfig>().GetEngineOptions();
   options.showDebugGUI = enabled;
-#ifdef OCTARINE_WITH_IMGUI
   if (!options.showDebugGUI) {
-    RenderDebugGUISystem::ReturnFocusToGame(ctx.GetRegistry());
+    ctx.ReturnFocusToGame();
   }
-#endif
 }
 
 bool ToggleDebugGuiState(LuaBindingContext& ctx) {
@@ -185,11 +180,9 @@ bool ToggleDebugGuiState(LuaBindingContext& ctx) {
   lastToggleTicks = now;
   auto& options = ctx.GetRegistry()->Get<GameConfig>().GetEngineOptions();
   options.showDebugGUI = !options.showDebugGUI;
-#ifdef OCTARINE_WITH_IMGUI
   if (!options.showDebugGUI) {
-    RenderDebugGUISystem::ReturnFocusToGame(ctx.GetRegistry());
+    ctx.ReturnFocusToGame();
   }
-#endif
   return options.showDebugGUI;
 }
 

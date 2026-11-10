@@ -1,10 +1,12 @@
 #pragma once
 
+#include <algorithm>
 #include <any>
 #include <array>
 #include <memory>
 #include <optional>
 #include <ranges>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -24,10 +26,26 @@
 template <typename... TComponents>
 class ComponentQuery;
 
+struct RegistryMemoryStats {
+  double chunkFillPct = 0.0;        // occupiedSlots / totalSlotCapacity * 100
+  double activeFillPct = 0.0;       // activeSlots / totalSlotCapacity * 100
+  double byteUtilizationPct = 0.0;  // payloadUsedBytes / chunkArenaBytes * 100
+  std::size_t archetypeCount = 0;
+  std::size_t nonEmptyArchetypes = 0;
+  std::size_t totalChunks = 0;
+  std::size_t chunkArenaBytes = 0;  // totalChunks * kChunkSize (16 KB)
+  std::size_t totalSlotCapacity = 0;
+  std::size_t occupiedSlots = 0;
+  std::size_t activeSlots = 0;
+  std::size_t payloadUsedBytes = 0;
+};
+
 class ComponentRegistry {
  public:
   template <typename T>
   void RegisterComponent(const Entity& componentEntity) {
+    static_assert(sizeof(T) <= (kUsableSpace - sizeof(Entity)),
+                  "Component size exceeds maximum chunk capacity (16KB minus Entity header)");
     const ComponentID id = componentEntity.GetId();
     ComponentInfo info{id, typeid(T).name(), sizeof(T), alignof(T)};
     if constexpr (!std::is_trivially_copyable_v<T>) {
@@ -93,11 +111,15 @@ class Registry {
   Entity CreateEntityWithBundle(TComponents... components) {
     static_assert(sizeof...(TComponents) > 0, "CreateEntityWithBundle requires at least one component");
     std::array<Entity, sizeof...(TComponents)> componentEntities{Component<std::decay_t<TComponents>>()...};
-    std::vector<ComponentID> ids;
-    ids.reserve(sizeof...(TComponents));
-    for (const auto& e : componentEntities) ids.push_back(e.GetId());
+    std::array<ComponentID, sizeof...(TComponents)> ids{};
+    for (size_t i = 0; i < sizeof...(TComponents); ++i) {
+      ids[i] = componentEntities[i].GetId();
+    }
+    std::sort(ids.begin(), ids.end());
+    const auto uniqueEnd = std::unique(ids.begin(), ids.end());
+    const auto uniqueCount = static_cast<size_t>(std::distance(ids.begin(), uniqueEnd));
 
-    Archetype* archetype = GetOrCreateArchetypeFromSet(ids);
+    Archetype* archetype = GetOrCreateArchetypeFromSpan(std::span<const ComponentID>(ids.data(), uniqueCount));
 
     const Entity entity = entity_manager_->CreateEntity();
     const auto location = archetype->AddEntity(entity);
@@ -123,16 +145,34 @@ class Registry {
 
   // Defers destruction until the end of Update; safe to call during system iteration.
   void QueueBlamEntity(const Entity entity) {
-    if (pending_blam_ids_.insert(entity.id).second) {
-      pending_blams_.push_back(entity);
+    if (!IsAlive(entity)) {
+      return;
     }
+    const std::uint32_t id = entity.GetId();
+    if (id >= pending_blam_seen_.size()) {
+      pending_blam_seen_.resize(std::max(entity_locations_.size(), static_cast<size_t>(id + 1)), kInvalidEntityID);
+    }
+    if (pending_blam_seen_[id] == entity.id) {
+      return;
+    }
+    pending_blam_seen_[id] = entity.id;
+    pending_blams_.push_back(entity);
   }
 
   // Defers despawn until the end of Update.
   void QueueDespawnEntity(const Entity entity) {
-    if (pending_despawn_ids_.insert(entity.id).second) {
-      pending_despawns_.push_back(entity);
+    if (!IsAlive(entity)) {
+      return;
     }
+    const std::uint32_t id = entity.GetId();
+    if (id >= pending_despawn_seen_.size()) {
+      pending_despawn_seen_.resize(std::max(entity_locations_.size(), static_cast<size_t>(id + 1)), kInvalidEntityID);
+    }
+    if (pending_despawn_seen_[id] == entity.id) {
+      return;
+    }
+    pending_despawn_seen_[id] = entity.id;
+    pending_despawns_.push_back(entity);
   }
 
   [[nodiscard]] bool IsAlive(const Entity entity) const {
@@ -153,6 +193,8 @@ class Registry {
   [[nodiscard]] std::uint64_t GetEntityCount() const { return entity_locations_.size(); }
 
   [[nodiscard]] std::size_t GetArchetypeCount() const { return archetypes_.size(); }
+
+  [[nodiscard]] RegistryMemoryStats ComputeMemoryStats() const;
 
   // Opt-in wall-clock timing of each system inside Update(). Exists in every build type (unlike
   // the PROFILE_* macros, which compile out outside player-profile) so headless benchmarks and
@@ -498,6 +540,16 @@ class Registry {
     return nullptr;
   }
 
+  template <typename T>
+  [[nodiscard]] const T* TryGet() const {
+    const uint32_t family = GetComponentFamily<T>();
+    if (family >= singleton_components_.size()) return nullptr;
+    const auto& anyVal = singleton_components_[family];
+    if (!anyVal.has_value()) return nullptr;
+    if (const auto* ptr = std::any_cast<std::shared_ptr<T>>(&anyVal)) return ptr->get();
+    return nullptr;
+  }
+
   // Resolves or creates a named zero-size tag component.
   Entity TagId(const std::string& name) {
     if (const auto it = tag_to_entity_.find(name); it != tag_to_entity_.end()) {
@@ -650,7 +702,10 @@ class Registry {
   Archetype* GetOrCreateArchetype(std::vector<ComponentID> componentIDs, ComponentID newComponentId);
   Archetype* GetOrCreateArchetypeRemove(std::vector<ComponentID> componentIDs, ComponentID removeComponentId);
   Archetype* GetOrCreateArchetypeFromSet(std::vector<ComponentID> componentIDs);
+  Archetype* GetOrCreateArchetypeFromSpan(std::span<const ComponentID> componentIDs);
+  [[nodiscard]] Archetype* FindExactArchetype(std::span<const ComponentID> componentIDs) const;
   [[nodiscard]] Archetype* FindExactArchetype(const std::vector<ComponentID>& componentIDs) const;
+  Archetype* RegisterNewArchetype(std::span<const ComponentID> componentIDs);
   Archetype* RegisterNewArchetype(const std::vector<ComponentID>& componentIDs);
 
   void AddOrderEdge(SystemId before, SystemId after);
@@ -689,9 +744,11 @@ class Registry {
   std::unordered_map<EntityID, std::vector<EntityID>> parent_to_children_;
   std::unordered_map<EntityID, Entity> child_to_parent_;
   std::vector<Entity> pending_blams_;
-  std::unordered_set<EcsId> pending_blam_ids_;
+  std::vector<EntityID> pending_blam_seen_;
   std::vector<Entity> pending_despawns_;
-  std::unordered_set<EcsId> pending_despawn_ids_;
+  std::vector<EntityID> pending_despawn_seen_;
+  std::vector<Entity> flush_blams_scratch_;
+  std::vector<Entity> flush_despawns_scratch_;
   float delta_time_{};
   uint64_t archetype_generation_{0};
   uint64_t hierarchy_generation_{0};

@@ -13,13 +13,13 @@
 #include "AssetManager/AssetManager.h"
 #include "Components/ViewportInfo.h"
 #include "ECS/Registry.h"
-#include "Engine/EngineContext.h"
 #include "Engine/EngineRuntime.h"
 #include "EventBus/EventBus.h"
 #include "Events/GamepadButtonEvent.h"
 #include "Events/KeyInputEvent.h"
 #include "Events/MouseInputEvent.h"
 #include "Events/MouseWheelEvent.h"
+#include "Game/EngineContext.h"
 #include "Game/Game.h"
 #include "Game/GameConfig.h"
 #include "Game/UserSettings.h"
@@ -27,6 +27,7 @@
 #include "General/PerfUtils.h"
 #include "Lua/HotReload/ScriptHotReload.h"
 #include "Renderer/RenderQueue.h"
+#include "Renderer/RenderQueueStats.h"
 #include "Renderer/Renderer.h"
 #include "Systems/DrawColliderSystem.h"
 #include "Systems/InputSystem.h"
@@ -445,6 +446,10 @@ void FrameLoop::Render(const float deltaTime) {
     PerfUtils::ScopedTimer sortTimer("Render: Sort");
     renderQueue.Sort();
   }
+  const auto rqStats = AnalyzeRenderQueue(renderQueue, renderer_->GetRenderScale());
+  PROFILE_COUNTER_SET("RenderQueue: Batches", static_cast<long long>(rqStats.drawBatches));
+  PROFILE_COUNTER_SET("RenderQueue: TextureSwitches", static_cast<long long>(rqStats.textureSwitches));
+  PROFILE_COUNTER_SET("RenderQueue: Vertices", static_cast<long long>(rqStats.totalVertices));
   {
     PerfUtils::ScopedTimer drawTimer("Render: Draw");
     renderer_->DrawQueue(renderQueue, runtime_->SdlRenderer());

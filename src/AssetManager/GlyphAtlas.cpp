@@ -5,7 +5,7 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <sol/sol.hpp>
 
-#include "Engine/LuaProtect.h"
+#include "Crypto/LuaProtect.h"
 #include "General/Logger.h"
 #include "stb/stb_image.h"
 

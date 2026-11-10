@@ -8,8 +8,8 @@
 #                      Project/  (POD/data + cross-cutting utilities)
 #   octarine_assets    AssetManager/ (catalog, atlas bakers, audio normalizer, pak)
 #   octarine_renderer  Renderer/
+#   octarine_systems   Systems/ (gameplay, audio, input, tilemap systems)
 #   octarine_lua       Lua/Bindings, Lua/Modules, Lua/HotReload, Lua/LuaApiManifest
-#   octarine_systems   Systems/ (in-game debug overlays gated by OCTARINE_WITH_IMGUI)
 #   octarine_engine    Game/Game + Engine/EngineBootstrap (top-level coordinator)
 #
 # OctarineEngine (the desktop exe / Android shared lib) is declared in the root CMakeLists.txt
@@ -27,6 +27,7 @@ set(OCTARINE_CORE_SOURCES
         General/PerformanceTracker.cpp
         General/SystemMemory.cpp
         Debug/DebugMenuRegistry.cpp
+        Debug/SystemProfilerTracker.cpp
         ECS/Registry.cpp
         ECS/StateInspector.cpp
         Game/GameConfig.cpp
@@ -120,6 +121,7 @@ endif ()
 # -----------------------------------------------------------------------------
 octarine_library(octarine_renderer
         Renderer/Renderer.cpp
+        Renderer/RenderQueueStats.cpp
 )
 target_link_libraries(octarine_renderer PUBLIC
         octarine_core
@@ -127,11 +129,38 @@ target_link_libraries(octarine_renderer PUBLIC
 )
 
 # -----------------------------------------------------------------------------
+# octarine_systems — per-frame Update systems + event-driven systems.
+# -----------------------------------------------------------------------------
+set(OCTARINE_SYSTEMS_SOURCES
+        Systems/AudioSystem.cpp
+        Systems/InputSystem.cpp
+        Systems/TilemapSystem.cpp
+        Tilemap/LdtkParser.cpp
+        Tilemap/TilemapLoader.cpp
+)
+octarine_library(octarine_systems ${OCTARINE_SYSTEMS_SOURCES})
+if (NOT MSVC)
+    set_source_files_properties(Tilemap/LdtkParser.cpp PROPERTIES
+            COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:-Os>"
+            SKIP_PRECOMPILE_HEADERS ON)
+endif ()
+target_link_libraries(octarine_systems PUBLIC
+        octarine_core
+        octarine_assets
+        octarine_renderer
+)
+if (OCTARINE_WITH_IMGUI)
+    target_link_libraries(octarine_systems PUBLIC imgui::imgui)
+endif ()
+target_link_libraries(octarine_systems PRIVATE nlohmann_json::nlohmann_json)
+
+# -----------------------------------------------------------------------------
 # octarine_lua — sol2 component/module bindings + EmmyLua API manifest + hot reload.
 # -----------------------------------------------------------------------------
 octarine_library(octarine_lua
         Lua/LuaApiManifest.cpp
         Lua/LuaTableSerializer.cpp
+        Lua/Bindings/InputSystemLuaBinding.cpp
         Lua/Bindings/RegisterAllBindings.cpp
         Lua/Bindings/RegisterTransformCoreBindings.cpp
         Lua/Bindings/RegisterRenderBindings.cpp
@@ -156,41 +185,14 @@ target_link_libraries(octarine_lua PUBLIC
         octarine_core
         octarine_assets
         octarine_renderer
+        octarine_systems
 )
+if (OCTARINE_WITH_IMGUI)
+    target_link_libraries(octarine_lua PUBLIC imgui::imgui sol2_ImGui_Bindings::sol2_ImGui_Bindings ${LUA_LIBRARIES})
+endif ()
 if (NOT MSVC)
     target_compile_options(octarine_lua PRIVATE $<$<NOT:$<CONFIG:Debug>>:-Os>)
 endif ()
-
-# -----------------------------------------------------------------------------
-# octarine_systems — per-frame Update systems + event-driven systems.
-# Debug GUI overlays (OCTARINE_WITH_IMGUI) live here too.
-# -----------------------------------------------------------------------------
-set(OCTARINE_SYSTEMS_SOURCES
-        Lua/Bindings/InputSystemLuaBinding.cpp
-        Systems/AudioSystem.cpp
-        Systems/InputSystem.cpp
-        Systems/TilemapSystem.cpp
-        Tilemap/LdtkParser.cpp
-        Tilemap/TilemapLoader.cpp
-)
-octarine_library(octarine_systems ${OCTARINE_SYSTEMS_SOURCES})
-if (NOT MSVC)
-    set_source_files_properties(Tilemap/LdtkParser.cpp PROPERTIES
-            COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:-Os>"
-            SKIP_PRECOMPILE_HEADERS ON)
-endif ()
-target_link_libraries(octarine_systems PUBLIC
-        octarine_core
-        octarine_assets
-        octarine_renderer
-        octarine_lua
-)
-if (OCTARINE_WITH_IMGUI)
-    target_link_libraries(octarine_systems PUBLIC imgui::imgui sol2_ImGui_Bindings::sol2_ImGui_Bindings ${LUA_LIBRARIES})
-endif ()
-target_link_libraries(octarine_systems PRIVATE nlohmann_json::nlohmann_json)
-# TilemapModuleLuaBinding (in octarine_lua) invokes TilemapSystem methods (in octarine_systems).
-target_link_libraries(octarine_lua PUBLIC octarine_systems)
 
 # -----------------------------------------------------------------------------
 # Optional private GameModule (native game systems and components)

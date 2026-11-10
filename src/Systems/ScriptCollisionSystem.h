@@ -34,18 +34,34 @@ class ScriptCollisionSystem {
   }
 
  private:
+  void DispatchCollisionCallback(const sol::protected_function& callback, ScriptComponent& script, const Entity self,
+                                 const Entity other) const {
+    if (callback == sol::lua_nil) {
+      return;
+    }
+    lua_State* L = callback.lua_state();
+    sol::object selfObj = script.GetOrCacheEntity(L, self);
+    if (registry_->HasComponent<ScriptComponent>(other)) {
+      auto& otherScript = registry_->GetComponent<ScriptComponent>(other);
+      sol::object otherObj = otherScript.GetOrCacheEntity(L, other);
+      if (auto result = callback(script.script_table, selfObj, otherObj); !result.valid()) {
+        const sol::error err = result;
+        Logger::ErrorLua(std::string(err.what()));
+      }
+    } else {
+      if (auto result = callback(script.script_table, selfObj, other); !result.valid()) {
+        const sol::error err = result;
+        Logger::ErrorLua(std::string(err.what()));
+      }
+    }
+  }
+
   void FireEnterCallback(const Entity self, const Entity other) const {
     if (!registry_->HasComponent<ScriptComponent>(self)) {
       return;
     }
     auto& script = registry_->GetComponent<ScriptComponent>(self);
-    if (script.onCollisionFunction == sol::lua_nil) {
-      return;
-    }
-    if (auto result = script.onCollisionFunction(script.script_table, self, other); !result.valid()) {
-      const sol::error err = result;
-      Logger::ErrorLua(std::string(err.what()));
-    }
+    DispatchCollisionCallback(script.onCollisionFunction, script, self, other);
   }
 
   void FireExitCallback(const Entity self, const Entity other) const {
@@ -53,13 +69,7 @@ class ScriptCollisionSystem {
       return;
     }
     auto& script = registry_->GetComponent<ScriptComponent>(self);
-    if (script.onCollisionExitFunction == sol::lua_nil) {
-      return;
-    }
-    if (auto result = script.onCollisionExitFunction(script.script_table, self, other); !result.valid()) {
-      const sol::error err = result;
-      Logger::ErrorLua(std::string(err.what()));
-    }
+    DispatchCollisionCallback(script.onCollisionExitFunction, script, self, other);
   }
 
   Registry* registry_ = nullptr;

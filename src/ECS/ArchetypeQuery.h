@@ -3,6 +3,7 @@
 #include <exception>
 #include <mutex>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -100,8 +101,22 @@ class ArchetypeQuery {
 
     // Dispatch batches to pool; caller runs the final batch inline.
     BatchBarrier barrier(num_batches - 1);
+    struct DispatchContext {
+      const ArchetypeQuery* self;
+      const std::vector<ChunkWork>& work;
+      const std::array<BatchRange, kMaxParallelBatches>& batches;
+      BatchBarrier& barrier;
+      std::remove_reference_t<Func>& func;
+    } ctx{this, work, batches, barrier, func};
+
     for (size_t t = 0; t < num_batches - 1; ++t) {
-      DispatchBatch(work, batches[t].begin, batches[t].end, barrier, func);
+      ThreadPool::Instance().Submit([&ctx, t] {
+        const auto [begin, end] = ctx.batches[t];
+        if (begin < end) {
+          ctx.self->ProcessChunks(ctx.work, begin, end, ctx.func);
+        }
+        ctx.barrier.Signal();
+      });
     }
 
     const auto [inline_begin, inline_end] = batches[num_batches - 1];
@@ -251,19 +266,6 @@ class ArchetypeQuery {
       out[actualBatches - 1].end = work.size();
     }
     return actualBatches;
-  }
-
-  template <typename Func>
-  void DispatchBatch(const std::vector<ChunkWork>& work, size_t begin, size_t end, BatchBarrier& barrier,
-                     Func& func) const {
-    if (begin >= end) {
-      barrier.Signal();
-      return;
-    }
-    ThreadPool::Instance().Submit([&work, &func, this, begin, end, &barrier] {
-      ProcessChunks(work, begin, end, func);
-      barrier.Signal();
-    });
   }
 
   template <typename Func>
