@@ -22,10 +22,10 @@
 #include "ECS/Entity.h"
 #include "ECS/Query.h"
 #include "ECS/Registry.h"
-#include "Engine/EngineContext.h"
 #include "EventBus/EventBus.h"
 #include "Events/CollisionBatchEvent.h"
 #include "Events/CollisionExitBatchEvent.h"
+#include "Game/EngineContext.h"
 #include "General/PerfUtils.h"
 #include "General/Rotation2D.h"
 #include "General/ThreadPool.h"
@@ -642,7 +642,7 @@ class KDTreeCollisionSystem {
 
   // Diff this frame's overlaps against the previous frame and emit the enter/exit batches.
   //   - enter: pairs overlapping now but not last frame — first-contact only, so persistent
-  //     overlaps (enemy pinned against a wall, stacked entities) don't re-fire every frame.
+  //     overlaps (entity pinned against an obstacle, stacked entities) don't re-fire every frame.
   //   - exit: pairs that overlapped last frame but no longer do.
   void EmitCollisionEvents(EventBus* eventBus, const std::vector<std::pair<Entity, Entity>>& intersectingPairs) {
     PROFILE_COUNTER_SET("Collision: Intersecting pairs", static_cast<long long>(intersectingPairs.size()));

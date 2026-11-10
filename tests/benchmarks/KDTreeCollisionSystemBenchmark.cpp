@@ -13,9 +13,9 @@
 #include "Components/TriangleColliderComponent.h"
 #include "ECS/Query.h"
 #include "ECS/Registry.h"
-#include "Engine/EngineContext.h"
 #include "EventBus/EventBus.h"
 #include "Events/CollisionBatchEvent.h"
+#include "Game/EngineContext.h"
 #include "Systems/KDTreeCollisionSystem.h"
 
 // Fixed per-cycle overhead of KDTreeCollisionSystem's async path: each timed iteration drives one

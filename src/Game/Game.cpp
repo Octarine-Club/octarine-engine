@@ -14,6 +14,7 @@
 #include "AssetManager/AssetCatalog.h"
 #include "AssetManager/AssetHotReload.h"
 #include "AssetManager/AssetPak.h"
+#include "AssetManager/SdlFileReader.h"
 #include "Components/BoxColliderComponent.h"
 #include "Components/CameraComponents.h"
 #include "Components/CapsulePrimitiveComponent.h"
@@ -32,13 +33,12 @@
 #include "Components/TextLabelComponent.h"
 #include "Components/TrianglePrimitiveComponent.h"
 #include "Components/ViewportInfo.h"
+#include "Crypto/LuaProtect.h"
 #include "Debug/DebugMenuRegistry.h"
 #include "ECS/Query.h"
 #include "ECS/Registry.h"
 #include "Engine/EngineBootstrap.h"
-#include "Engine/LuaProtect.h"
 #include "Engine/Platform/PlatformPaths.h"
-#include "Engine/SdlFileReader.h"
 #include "Engine/SimulationSystems.h"
 #include "Events/KeyInputEvent.h"
 #include "Events/MouseInputEvent.h"
@@ -77,6 +77,7 @@
 #include "Systems/RenderCapsulePrimitiveSystem.h"
 #include "Systems/RenderCirclePrimitiveSystem.h"
 #include "Systems/RenderColorGridSystem.h"
+#include "Systems/RenderDebugGUISystem.h"
 #include "Systems/RenderLinePrimitiveSystem.h"
 #include "Systems/RenderPrimitiveSystem.h"
 #include "Systems/RenderSpriteSystem.h"
@@ -815,4 +816,10 @@ void Game::Setup() {
   registry_->Order(cameraFollow).After(transform).After(scriptSystem);
 
   RegisterEventAndHotReloadSingletons(*registry_, event_bus_);
+}
+
+void Game::ReturnFocusToGame() {
+#ifdef OCTARINE_WITH_IMGUI
+  RenderDebugGUISystem::ReturnFocusToGame(GetRegistry());
+#endif
 }

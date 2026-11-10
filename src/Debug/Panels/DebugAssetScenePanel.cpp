@@ -10,8 +10,8 @@
 
 #include "AssetManager/AssetManager.h"
 #include "ECS/Registry.h"
-#include "Engine/EngineContext.h"
 #include "Engine/SceneLoader.h"
+#include "Game/EngineContext.h"
 #include "imgui.h"
 
 namespace octarine::debug {

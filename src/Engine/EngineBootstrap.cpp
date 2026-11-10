@@ -6,16 +6,17 @@
 #include <string>
 
 #include "AssetManager/AssetManager.h"
+#include "AssetManager/SdlFileReader.h"
 #include "Audio/AudioTrackCache.h"
 #include "Components/CameraComponents.h"
 #include "Components/ViewportInfo.h"
+#include "Crypto/LuaProtect.h"
 #include "Debug/DebugMenuRegistry.h"
+#include "ECS/EntityPool.h"
 #include "ECS/Registry.h"
-#include "Engine/EngineContext.h"
 #include "Engine/GameModuleHooks.h"
-#include "Engine/LuaProtect.h"
-#include "Engine/SdlFileReader.h"
 #include "EventBus/EventBus.h"
+#include "Game/EngineContext.h"
 #include "Game/Game.h"
 #include "Game/GameConfig.h"
 #include "General/Logger.h"
@@ -24,7 +25,6 @@
 #include "Lua/Modules/RegisterAllModules.h"
 #include "Renderer/RenderQueue.h"
 #include "Renderer/SpriteRenderCache.h"
-#include "Systems/EntityPoolSystem.h"
 #include "Systems/InputSystem.h"
 #include "Systems/TilemapSystem.h"
 

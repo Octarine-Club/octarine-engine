@@ -14,7 +14,7 @@
 #include "AssetManager/AssetManager.h"
 #include "AssetManager/SceneAssetScanner.h"
 #include "ECS/Registry.h"
-#include "Engine/EngineContext.h"
+#include "Game/EngineContext.h"
 #include "Game/GameConfig.h"
 #include "General/Logger.h"
 #include "Lua/LuaBindingContext.h"

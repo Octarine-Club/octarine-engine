@@ -9,7 +9,7 @@
 
 #include "Debug/SystemProfilerTracker.h"
 #include "ECS/Registry.h"
-#include "Engine/EngineContext.h"
+#include "Game/EngineContext.h"
 #include "General/PerformanceTracker.h"
 #include "imgui.h"
 

@@ -54,3 +54,22 @@ if [ ${#src_files[@]} -gt 0 ] && hits="$(git grep -n '#include "\.\.' -- "${src_
   echo "  Bypass:  git commit --no-verify" >&2
   exit 1
 fi
+
+# Run fast sub-300ms architectural boundary and API catalog checks
+if command -v python3 >/dev/null 2>&1; then
+  if ! python3 scripts/check_architecture.py >/dev/null; then
+    echo >&2
+    echo "pre-commit: architecture or layer include violation detected:" >&2
+    python3 scripts/check_architecture.py >&2
+    echo "  Bypass:  git commit --no-verify" >&2
+    exit 1
+  fi
+
+  if ! python3 scripts/gen_api_catalogs.py --check >/dev/null; then
+    echo >&2
+    echo "pre-commit: API catalogs (systems.json, events.json) are stale." >&2
+    echo "  Fix:     python3 scripts/gen_api_catalogs.py" >&2
+    echo "  Bypass:  git commit --no-verify" >&2
+    exit 1
+  fi
+fi

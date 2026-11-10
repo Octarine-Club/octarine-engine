@@ -19,7 +19,7 @@
 #include "Components/UIRectComponent.h"
 #include "ECS/Entity.h"
 #include "ECS/Registry.h"
-#include "Engine/EngineContext.h"
+#include "Game/EngineContext.h"
 #include "Game/GameConfig.h"
 #include "General/Logger.h"
 #include "General/PerfUtils.h"

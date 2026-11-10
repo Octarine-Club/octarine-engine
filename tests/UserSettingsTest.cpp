@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "ECS/Registry.h"
-#include "Engine/EngineContext.h"
+#include "Game/EngineContext.h"
 #include "Game/GameConfig.h"
 #include "Game/UserSettings.h"
 #include "General/Logger.h"

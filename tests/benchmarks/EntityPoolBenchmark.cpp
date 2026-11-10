@@ -3,8 +3,8 @@
 #include <vector>
 
 #include "BenchCommon.h"
+#include "ECS/EntityPool.h"
 #include "ECS/Registry.h"
-#include "Systems/EntityPoolSystem.h"
 
 // Misc/Pool: entity lifecycle costs — raw create+blam, blam with relationship pairs (reverse-index
 // cleanup), and pooled spawn/park recycling. Setup that must not be timed lives outside the

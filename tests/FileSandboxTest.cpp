@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-#include "Engine/EngineContext.h"
+#include "Game/EngineContext.h"
 #include "General/FileSandbox.h"
 #include "General/Logger.h"
 #include "Lua/LuaBindingContext.h"

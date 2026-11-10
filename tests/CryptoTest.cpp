@@ -11,7 +11,7 @@
 #include "Crypto/Hash.h"
 #include "Crypto/KeyDerivation.h"
 #include "Crypto/LuaBytecodeScrambler.h"
-#include "Engine/LuaProtect.h"
+#include "Crypto/LuaProtect.h"
 #include "TestHarness.h"
 
 using octarine::crypto::ChaCha20;

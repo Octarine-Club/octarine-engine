@@ -19,9 +19,9 @@
 #include "Components/GlobalTransformComponent.h"
 #include "ECS/Query.h"  // full ComponentQuery definition for RegisterBulkSystem dispatch
 #include "ECS/Registry.h"
-#include "Engine/EngineContext.h"
 #include "EventBus/EventBus.h"
 #include "Events/CollisionBatchEvent.h"
+#include "Game/EngineContext.h"
 #include "Systems/KDTreeCollisionSystem.h"
 #include "TestHarness.h"
 

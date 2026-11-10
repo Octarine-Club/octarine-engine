@@ -7,11 +7,11 @@
 #include <string>
 #include <vector>
 
-#include "Engine/EngineContext.h"
 #include "Engine/EngineRuntime.h"
 #include "Engine/FrameLoop.h"
 #include "Engine/SceneLoader.h"
 #include "EventBus/EventBus.h"
+#include "Game/EngineContext.h"
 #include "Lua/LuaBindingContext.h"
 #include "Renderer/Renderer.h"
 
@@ -63,6 +63,7 @@ class Game : public LuaBindingContext {
 
   // LuaBindingContext shutdown hook (the `quit_game` global) — forwards to the static flag.
   void RequestQuit() override { Quit(); }
+  void ReturnFocusToGame() override;
 
   // Optional startup-mode hint exposed to Lua as `oct_startup_mode`. Empty string means
   // "no override" — the startup script can show its normal menu. Set by Main from the

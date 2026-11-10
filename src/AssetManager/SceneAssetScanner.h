@@ -12,8 +12,8 @@
 // LuaEntityLoader's stack walk) reading the asset-id fields off each component, plus the
 // scene-level `tilemap.texture_asset_id` and an explicit `preload = { ids }` list.
 //
-// `preload` covers everything the static scan cannot see: runtime spawns (projectiles,
-// click-spawned enemies) and load-time injection (Lua adding components to entity tables before
+// `preload` covers everything the static scan cannot see: runtime spawns (particles,
+// dynamically-spawned entities) and load-time injection (Lua adding components to entity tables before
 // they are loaded). It is the documented escape hatch, not zero-maintenance.
 class SceneAssetScanner {
  public:
