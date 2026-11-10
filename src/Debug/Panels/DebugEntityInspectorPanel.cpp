@@ -146,7 +146,35 @@ JsonDumpCache& GetJsonCache() {
   return cache;
 }
 
-void DrawSelectedEntity(Registry& registry, Entity selected) {
+void DrawRawStateJsonSection(Registry& registry, const Entity selected) {
+  if (!ImGui::CollapsingHeader("Raw State JSON (StateInspector)")) return;
+
+  auto& cache = GetJsonCache();
+  const float dt = ImGui::GetIO().DeltaTime;
+  cache.timer -= dt;
+
+  if (cache.lastEntity != selected || cache.timer <= 0.0f) {
+    cache.lastEntity = selected;
+    cache.timer = 0.25f;  // Refresh 4 times per second
+    cache.cachedJson = octarine::inspect::StateInspector::DumpEntity(registry, selected);
+  }
+
+  if (ImGui::SmallButton("Copy JSON")) {
+    ImGui::SetClipboardText(cache.cachedJson.c_str());
+  }
+  ImGui::Separator();
+  ImGui::TextUnformatted(cache.cachedJson.c_str());
+}
+
+void DrawScriptComponentSection(Registry& registry, const Entity selected) {
+  if (!registry.HasComponent<ScriptComponent>(selected)) return;
+  if (!ImGui::CollapsingHeader("ScriptComponent (Lua State)", ImGuiTreeNodeFlags_DefaultOpen)) return;
+  ImGui::Indent();
+  DrawScriptComponentLuaTableInspector(registry, selected);
+  ImGui::Unindent();
+}
+
+void DrawSelectedEntity(Registry& registry, const Entity selected) {
   if (!registry.IsAlive(selected)) {
     ImGui::TextDisabled("No entity selected.\nSelect an entity from the list or Alt+Click in the viewport.");
     return;
@@ -168,32 +196,8 @@ void DrawSelectedEntity(Registry& registry, Entity selected) {
 
   if (ImGui::BeginChild("##components_view")) {
     DrawComponentHeaders(registry, selected);
-
-    if (registry.HasComponent<ScriptComponent>(selected)) {
-      if (ImGui::CollapsingHeader("ScriptComponent (Lua State)", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Indent();
-        DrawScriptComponentLuaTableInspector(registry, selected);
-        ImGui::Unindent();
-      }
-    }
-
-    if (ImGui::CollapsingHeader("Raw State JSON (StateInspector)")) {
-      auto& cache = GetJsonCache();
-      const float dt = ImGui::GetIO().DeltaTime;
-      cache.timer -= dt;
-
-      if (cache.lastEntity != selected || cache.timer <= 0.0f) {
-        cache.lastEntity = selected;
-        cache.timer = 0.25f;  // Refresh 4 times per second
-        cache.cachedJson = octarine::inspect::StateInspector::DumpEntity(registry, selected);
-      }
-
-      if (ImGui::SmallButton("Copy JSON")) {
-        ImGui::SetClipboardText(cache.cachedJson.c_str());
-      }
-      ImGui::Separator();
-      ImGui::TextUnformatted(cache.cachedJson.c_str());
-    }
+    DrawScriptComponentSection(registry, selected);
+    DrawRawStateJsonSection(registry, selected);
   }
   ImGui::EndChild();
 }

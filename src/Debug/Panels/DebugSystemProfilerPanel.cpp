@@ -156,110 +156,131 @@ void DrawProfilerSummary(const Registry& registry, const ProfilerSnapshot& snap,
   }
 }
 
+int ComputeColumnCount(const ProfilerFilterState& filters) {
+  int count = 2;  // Order and Name are always present
+  if (filters.showLastUs) ++count;
+  if (filters.showAvgUs) ++count;
+  if (filters.showP95Us) ++count;
+  if (filters.showPeakUs) ++count;
+  if (filters.showAvgMs) ++count;
+  if (filters.showPctUpdate) ++count;
+  return count;
+}
+
+void SetupTableColumns(const ProfilerFilterState& filters) {
+  ImGui::TableSetupColumn("Order", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultSort, 45.0f);
+  ImGui::TableSetupColumn("System Name", ImGuiTableColumnFlags_WidthStretch);
+  if (filters.showLastUs) ImGui::TableSetupColumn("Last (us)", ImGuiTableColumnFlags_WidthFixed, 75.0f);
+  if (filters.showAvgUs) ImGui::TableSetupColumn("Avg (us)", ImGuiTableColumnFlags_WidthFixed, 75.0f);
+  if (filters.showP95Us) ImGui::TableSetupColumn("P95 (us)", ImGuiTableColumnFlags_WidthFixed, 75.0f);
+  if (filters.showPeakUs) ImGui::TableSetupColumn("Peak (us)", ImGuiTableColumnFlags_WidthFixed, 75.0f);
+  if (filters.showAvgMs) ImGui::TableSetupColumn("Avg (ms)", ImGuiTableColumnFlags_WidthFixed, 75.0f);
+  if (filters.showPctUpdate) ImGui::TableSetupColumn("% Update", ImGuiTableColumnFlags_WidthFixed, 120.0f);
+  ImGui::TableHeadersRow();
+}
+
+[[nodiscard]] std::vector<const SystemTimingStats*> CollectDisplaySystems(const ProfilerSnapshot& snap,
+                                                                          const ProfilerFilterState& filters) {
+  std::vector<const SystemTimingStats*> displaySystems;
+  displaySystems.reserve(snap.systems.size());
+  const std::string filterStr(filters.searchBuf);
+
+  for (const auto& sys : snap.systems) {
+    if (filters.hideIdle && sys.avgUs < 1.0) continue;
+    if (!filterStr.empty() && sys.name.find(filterStr) == std::string::npos) continue;
+    displaySystems.push_back(&sys);
+  }
+  return displaySystems;
+}
+
+void SortSystems(std::vector<const SystemTimingStats*>& systems) {
+  ImGuiTableSortSpecs* sortSpecs = ImGui::TableGetSortSpecs();
+  if (!sortSpecs || sortSpecs->SpecsCount <= 0 || !sortSpecs->SpecsDirty) return;
+
+  const auto& spec = sortSpecs->Specs[0];
+  const bool asc = (spec.SortDirection == ImGuiSortDirection_Ascending);
+  const int col = spec.ColumnIndex;
+
+  std::sort(systems.begin(), systems.end(), [col, asc](const SystemTimingStats* a, const SystemTimingStats* b) {
+    if (col == 0) return asc ? (a->orderIndex < b->orderIndex) : (a->orderIndex > b->orderIndex);
+    if (col == 1) return asc ? (a->name < b->name) : (a->name > b->name);
+    return asc ? (a->avgUs < b->avgUs) : (a->avgUs > b->avgUs);
+  });
+}
+
+void DrawSystemTooltip(const SystemTimingStats& sys) {
+  if (!ImGui::IsItemHovered()) return;
+  ImGui::BeginTooltip();
+  ImGui::Text("System: %s", sys.name.c_str());
+  ImGui::Separator();
+  ImGui::Text("Last: %.1f us", sys.lastUs);
+  ImGui::Text("Avg:  %.1f us (%.3f ms)", sys.avgUs, sys.avgUs / 1000.0);
+  ImGui::Text("P95:  %.1f us", sys.p95Us);
+  ImGui::Text("Peak: %.1f us", sys.maxUs);
+  ImGui::Text("Share of Update: %.1f%%", static_cast<double>(sys.shareOfUpdate * 100.0f));
+  ImGui::EndTooltip();
+}
+
+void DrawSystemRowMetrics(const SystemTimingStats& sys, const ProfilerFilterState& filters, int& colIdx) {
+  if (filters.showLastUs) {
+    ImGui::TableSetColumnIndex(colIdx++);
+    ImGui::Text("%.1f", sys.lastUs);
+  }
+  if (filters.showAvgUs) {
+    ImGui::TableSetColumnIndex(colIdx++);
+    ImGui::Text("%.1f", sys.avgUs);
+  }
+  if (filters.showP95Us) {
+    ImGui::TableSetColumnIndex(colIdx++);
+    ImGui::Text("%.1f", sys.p95Us);
+  }
+  if (filters.showPeakUs) {
+    ImGui::TableSetColumnIndex(colIdx++);
+    ImGui::Text("%.1f", sys.maxUs);
+  }
+  if (filters.showAvgMs) {
+    ImGui::TableSetColumnIndex(colIdx++);
+    ImGui::Text("%.3f", sys.avgUs / 1000.0);
+  }
+  if (filters.showPctUpdate) {
+    ImGui::TableSetColumnIndex(colIdx++);
+    char overlay[32];
+    std::snprintf(overlay, sizeof(overlay), "%.1f%%", static_cast<double>(sys.shareOfUpdate * 100.0f));
+    ImGui::ProgressBar(sys.shareOfUpdate, ImVec2(-1.0f, 0.0f), overlay);
+  }
+}
+
+void DrawSystemRow(const SystemTimingStats& sys, const ProfilerFilterState& filters) {
+  ImGui::TableNextRow();
+  int colIdx = 0;
+
+  ImGui::TableSetColumnIndex(colIdx++);
+  ImGui::Text("%zu", sys.orderIndex);
+
+  ImGui::TableSetColumnIndex(colIdx++);
+  ImGui::TextUnformatted(sys.name.c_str());
+  DrawSystemTooltip(sys);
+
+  DrawSystemRowMetrics(sys, filters, colIdx);
+}
+
 void DrawSystemsTable(const ProfilerSnapshot& snap, const ProfilerFilterState& filters) {
   constexpr ImGuiTableFlags kTableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                                           ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_ScrollY |
                                           ImGuiTableFlags_Sortable | ImGuiTableFlags_Hideable;
 
-  int columnCount = 2;  // Order and Name are always present
-  if (filters.showLastUs) ++columnCount;
-  if (filters.showAvgUs) ++columnCount;
-  if (filters.showP95Us) ++columnCount;
-  if (filters.showPeakUs) ++columnCount;
-  if (filters.showAvgMs) ++columnCount;
-  if (filters.showPctUpdate) ++columnCount;
+  const int columnCount = ComputeColumnCount(filters);
+  if (!ImGui::BeginTable("##systems_profiler_table", columnCount, kTableFlags)) return;
 
-  if (ImGui::BeginTable("##systems_profiler_table", columnCount, kTableFlags)) {
-    ImGui::TableSetupColumn("Order", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultSort, 45.0f);
-    ImGui::TableSetupColumn("System Name", ImGuiTableColumnFlags_WidthStretch);
-    if (filters.showLastUs) ImGui::TableSetupColumn("Last (us)", ImGuiTableColumnFlags_WidthFixed, 75.0f);
-    if (filters.showAvgUs) ImGui::TableSetupColumn("Avg (us)", ImGuiTableColumnFlags_WidthFixed, 75.0f);
-    if (filters.showP95Us) ImGui::TableSetupColumn("P95 (us)", ImGuiTableColumnFlags_WidthFixed, 75.0f);
-    if (filters.showPeakUs) ImGui::TableSetupColumn("Peak (us)", ImGuiTableColumnFlags_WidthFixed, 75.0f);
-    if (filters.showAvgMs) ImGui::TableSetupColumn("Avg (ms)", ImGuiTableColumnFlags_WidthFixed, 75.0f);
-    if (filters.showPctUpdate) ImGui::TableSetupColumn("% Update", ImGuiTableColumnFlags_WidthFixed, 120.0f);
-    ImGui::TableHeadersRow();
+  SetupTableColumns(filters);
 
-    std::vector<const SystemTimingStats*> displaySystems;
-    displaySystems.reserve(snap.systems.size());
-    const std::string filterStr(filters.searchBuf);
+  auto displaySystems = CollectDisplaySystems(snap, filters);
+  SortSystems(displaySystems);
 
-    for (const auto& sys : snap.systems) {
-      if (filters.hideIdle && sys.avgUs < 1.0) continue;
-      if (!filterStr.empty() && sys.name.find(filterStr) == std::string::npos) continue;
-      displaySystems.push_back(&sys);
-    }
-
-    if (ImGuiTableSortSpecs* sortSpecs = ImGui::TableGetSortSpecs()) {
-      if (sortSpecs->SpecsCount > 0 && sortSpecs->SpecsDirty) {
-        const auto& spec = sortSpecs->Specs[0];
-        const bool asc = (spec.SortDirection == ImGuiSortDirection_Ascending);
-
-        std::sort(displaySystems.begin(), displaySystems.end(),
-                  [&](const SystemTimingStats* a, const SystemTimingStats* b) {
-                    int col = spec.ColumnIndex;
-                    if (col == 0) return asc ? (a->orderIndex < b->orderIndex) : (a->orderIndex > b->orderIndex);
-                    if (col == 1) return asc ? (a->name < b->name) : (a->name > b->name);
-                    return asc ? (a->avgUs < b->avgUs) : (a->avgUs > b->avgUs);
-                  });
-      }
-    }
-
-    for (const auto* sys : displaySystems) {
-      ImGui::TableNextRow();
-      int colIdx = 0;
-
-      ImGui::TableSetColumnIndex(colIdx++);
-      ImGui::Text("%zu", sys->orderIndex);
-
-      ImGui::TableSetColumnIndex(colIdx++);
-      ImGui::TextUnformatted(sys->name.c_str());
-      if (ImGui::IsItemHovered()) {
-        ImGui::BeginTooltip();
-        ImGui::Text("System: %s", sys->name.c_str());
-        ImGui::Separator();
-        ImGui::Text("Last: %.1f us", sys->lastUs);
-        ImGui::Text("Avg:  %.1f us (%.3f ms)", sys->avgUs, sys->avgUs / 1000.0);
-        ImGui::Text("P95:  %.1f us", sys->p95Us);
-        ImGui::Text("Peak: %.1f us", sys->maxUs);
-        ImGui::Text("Share of Update: %.1f%%", static_cast<double>(sys->shareOfUpdate * 100.0f));
-        ImGui::EndTooltip();
-      }
-
-      if (filters.showLastUs) {
-        ImGui::TableSetColumnIndex(colIdx++);
-        ImGui::Text("%.1f", sys->lastUs);
-      }
-
-      if (filters.showAvgUs) {
-        ImGui::TableSetColumnIndex(colIdx++);
-        ImGui::Text("%.1f", sys->avgUs);
-      }
-
-      if (filters.showP95Us) {
-        ImGui::TableSetColumnIndex(colIdx++);
-        ImGui::Text("%.1f", sys->p95Us);
-      }
-
-      if (filters.showPeakUs) {
-        ImGui::TableSetColumnIndex(colIdx++);
-        ImGui::Text("%.1f", sys->maxUs);
-      }
-
-      if (filters.showAvgMs) {
-        ImGui::TableSetColumnIndex(colIdx++);
-        ImGui::Text("%.3f", sys->avgUs / 1000.0);
-      }
-
-      if (filters.showPctUpdate) {
-        ImGui::TableSetColumnIndex(colIdx++);
-        char overlay[32];
-        std::snprintf(overlay, sizeof(overlay), "%.1f%%", static_cast<double>(sys->shareOfUpdate * 100.0f));
-        ImGui::ProgressBar(sys->shareOfUpdate, ImVec2(-1.0f, 0.0f), overlay);
-      }
-    }
-    ImGui::EndTable();
+  for (const auto* sys : displaySystems) {
+    DrawSystemRow(*sys, filters);
   }
+  ImGui::EndTable();
 }
 
 }  // namespace

@@ -30,27 +30,31 @@ AvailableScenesCache& GetScenesCache() {
   return cache;
 }
 
+void RescanScenesDirectory(AvailableScenesCache& cache, const std::string& basePath) {
+  cache.cachedBasePath = basePath;
+  cache.timer = 1.0f;  // Refresh directory scan every 1 second
+  cache.sceneRelativePaths.clear();
+  cache.sceneFilenames.clear();
+
+  const std::filesystem::path scenesDir = std::filesystem::path(basePath) / "scripts" / "scenes";
+  std::error_code ec;
+  if (!std::filesystem::is_directory(scenesDir, ec)) return;
+
+  for (const auto& entry : std::filesystem::directory_iterator(scenesDir, ec)) {
+    if (entry.is_regular_file(ec) && entry.path().extension() == ".lua") {
+      cache.sceneRelativePaths.push_back("scripts/scenes/" + entry.path().filename().string());
+      cache.sceneFilenames.push_back(entry.path().filename().string());
+    }
+  }
+}
+
 void DrawAvailableScenes(const std::string& basePath, SceneLoader* loader) {
   auto& cache = GetScenesCache();
   const float dt = ImGui::GetIO().DeltaTime;
   cache.timer -= dt;
 
   if (cache.cachedBasePath != basePath || cache.timer <= 0.0f) {
-    cache.cachedBasePath = basePath;
-    cache.timer = 1.0f;  // Refresh directory scan every 1 second
-    cache.sceneRelativePaths.clear();
-    cache.sceneFilenames.clear();
-
-    const std::filesystem::path scenesDir = std::filesystem::path(basePath) / "scripts" / "scenes";
-    std::error_code ec;
-    if (std::filesystem::is_directory(scenesDir, ec)) {
-      for (const auto& entry : std::filesystem::directory_iterator(scenesDir, ec)) {
-        if (entry.is_regular_file(ec) && entry.path().extension() == ".lua") {
-          cache.sceneRelativePaths.push_back("scripts/scenes/" + entry.path().filename().string());
-          cache.sceneFilenames.push_back(entry.path().filename().string());
-        }
-      }
-    }
+    RescanScenesDirectory(cache, basePath);
   }
 
   ImGui::Separator();

@@ -25,6 +25,33 @@ WatchesCacheState& GetWatchesCache() {
   return state;
 }
 
+void UpdateWatchesCache(WatchesCacheState& cache, const std::vector<DebugWatchDescriptor>& watches, const float dt) {
+  if (cache.isFrozen) return;
+  cache.timer -= dt;
+  if (cache.timer > 0.0f && cache.refreshInterval > 0.0f) return;
+
+  cache.timer = cache.refreshInterval;
+  for (const auto& w : watches) {
+    cache.cachedValues[w.label] = w.valueFormatter ? w.valueFormatter() : "<null>";
+  }
+}
+
+void DrawWatchRow(WatchesCacheState& cache, const DebugWatchDescriptor& w) {
+  ImGui::TableNextRow();
+  ImGui::TableSetColumnIndex(0);
+  ImGui::TextUnformatted(w.label.c_str());
+
+  ImGui::TableSetColumnIndex(1);
+  auto it = cache.cachedValues.find(w.label);
+  if (it == cache.cachedValues.end()) {
+    std::string val = w.valueFormatter ? w.valueFormatter() : "<null>";
+    auto [insertedIt, _] = cache.cachedValues.try_emplace(w.label, std::move(val));
+    ImGui::TextUnformatted(insertedIt->second.c_str());
+  } else {
+    ImGui::TextUnformatted(it->second.c_str());
+  }
+}
+
 void DrawWatchesTable(const std::vector<DebugWatchDescriptor>& watches) {
   if (!ImGui::BeginTable("##watches_table", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) return;
   ImGui::TableSetupColumn("Watch Label", ImGuiTableColumnFlags_WidthFixed, 180.0f);
@@ -32,32 +59,10 @@ void DrawWatchesTable(const std::vector<DebugWatchDescriptor>& watches) {
   ImGui::TableHeadersRow();
 
   auto& cache = GetWatchesCache();
-  const float dt = ImGui::GetIO().DeltaTime;
-
-  if (!cache.isFrozen) {
-    cache.timer -= dt;
-    if (cache.timer <= 0.0f || cache.refreshInterval <= 0.0f) {
-      cache.timer = cache.refreshInterval;
-      for (const auto& w : watches) {
-        cache.cachedValues[w.label] = w.valueFormatter ? w.valueFormatter() : "<null>";
-      }
-    }
-  }
+  UpdateWatchesCache(cache, watches, ImGui::GetIO().DeltaTime);
 
   for (const auto& w : watches) {
-    ImGui::TableNextRow();
-    ImGui::TableSetColumnIndex(0);
-    ImGui::TextUnformatted(w.label.c_str());
-
-    ImGui::TableSetColumnIndex(1);
-    auto it = cache.cachedValues.find(w.label);
-    if (it == cache.cachedValues.end()) {
-      std::string val = w.valueFormatter ? w.valueFormatter() : "<null>";
-      cache.cachedValues[w.label] = val;
-      ImGui::TextUnformatted(val.c_str());
-    } else {
-      ImGui::TextUnformatted(it->second.c_str());
-    }
+    DrawWatchRow(cache, w);
   }
   ImGui::EndTable();
 }
