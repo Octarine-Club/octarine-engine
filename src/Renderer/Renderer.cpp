@@ -135,6 +135,17 @@ bool Renderer::EnsureSceneTargetSize(SDL_Renderer* sdlRenderer, const int target
   return true;
 }
 
+void Renderer::SetLogicalSize(const int logicalW, const int logicalH) {
+  logical_width_ = std::max(1, logicalW);
+  logical_height_ = std::max(1, logicalH);
+  render_scale_x_ = (target_width_ > 0 && logical_width_ > 0)
+                        ? static_cast<float>(target_width_) / static_cast<float>(logical_width_)
+                        : 1.0F;
+  render_scale_y_ = (target_height_ > 0 && logical_height_ > 0)
+                        ? static_cast<float>(target_height_) / static_cast<float>(logical_height_)
+                        : 1.0F;
+}
+
 void Renderer::DestroyScene() {
   if (scene_texture_ != nullptr) {
     SDL_DestroyTexture(scene_texture_);
@@ -197,6 +208,46 @@ SDL_FRect Renderer::ComputeCompositeRect(const int sceneW, const int sceneH, con
   const float x = (static_cast<float>(windowW) - w) * 0.5F;
   const float y = (static_cast<float>(windowH) - h) * 0.5F;
   return {x, y, w, h};
+}
+
+namespace {
+inline int RoundToEven(const float v) {
+  const int n = static_cast<int>(std::lround(v));
+  return (n % 2 != 0) ? (n + 1) : n;
+}
+}  // namespace
+
+std::pair<int, int> Renderer::ComputeLogicalSceneSize(const int baseW, const int baseH, const int windowW,
+                                                      const int windowH, const PresentationMode mode,
+                                                      const float minAspect, const float maxAspect) {
+  if (baseW <= 0 || baseH <= 0) {
+    return {std::max(1, baseW), std::max(1, baseH)};
+  }
+  if (mode != PresentationMode::Expand || windowW <= 0 || windowH <= 0) {
+    return {baseW, baseH};
+  }
+
+  float targetAspect = static_cast<float>(windowW) / static_cast<float>(windowH);
+  if (minAspect > 0.0F && targetAspect < minAspect) {
+    targetAspect = minAspect;
+  }
+  if (maxAspect > 0.0F && targetAspect > maxAspect) {
+    targetAspect = maxAspect;
+  }
+
+  const float baseAspect = static_cast<float>(baseW) / static_cast<float>(baseH);
+  int logicalW = baseW;
+  int logicalH = baseH;
+
+  if (targetAspect >= baseAspect) {
+    logicalH = baseH;
+    logicalW = RoundToEven(static_cast<float>(baseH) * targetAspect);
+  } else {
+    logicalW = baseW;
+    logicalH = RoundToEven(static_cast<float>(baseW) / targetAspect);
+  }
+
+  return {std::max(1, logicalW), std::max(1, logicalH)};
 }
 
 void Renderer::Present(SDL_Renderer* sdlRenderer) const {

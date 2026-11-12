@@ -116,9 +116,9 @@ void DrawDisplaySection(EngineOptions& opts) {
       opts.windowMode = static_cast<WindowMode>(winMode);
     }
 
-    static constexpr const char* kPresModes[] = {"Letterbox", "IntegerScale", "Stretch"};
+    static constexpr const char* kPresModes[] = {"Letterbox", "IntegerScale", "Stretch", "Expand"};
     int presMode = static_cast<int>(opts.presentationMode);
-    if (ImGui::Combo("Presentation Mode", &presMode, kPresModes, 3)) {
+    if (ImGui::Combo("Presentation Mode", &presMode, kPresModes, 4)) {
       opts.presentationMode = static_cast<PresentationMode>(presMode);
     }
 

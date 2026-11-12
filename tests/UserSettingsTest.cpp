@@ -347,17 +347,46 @@ void TestGameConfigAndCompositeRect() {
   std::cout << "[display] GameConfig display defaults & Renderer::ComputeCompositeRect\n";
   GameConfig cfg;
   const std::unordered_map<std::string, std::string> raw = {
-      {"Title", "Display Test Game"}, {"StartupScript", "game.lua"},       {"DefaultWindowWidth", "640"},
-      {"DefaultWindowHeight", "360"}, {"DefaultWindowMode", "borderless"}, {"DefaultPresentationMode", "integer_scale"},
-      {"DefaultVSync", "true"},       {"WindowResizable", "false"},
+      {"Title", "Display Test Game"},
+      {"StartupScript", "game.lua"},
+      {"BaseResolutionWidth", "640"},
+      {"BaseResolutionHeight", "360"},
+      {"DefaultWindowWidth", "640"},
+      {"DefaultWindowHeight", "360"},
+      {"DefaultWindowMode", "borderless"},
+      {"DefaultPresentationMode", "integer_scale"},
+      {"DefaultVSync", "true"},
+      {"WindowResizable", "false"},
   };
   Check(cfg.LoadConfig(raw), "GameConfig::LoadConfig with display keys succeeds");
+  Check(cfg.GetBaseWidth() == 640 && cfg.GetBaseHeight() == 360, "BaseResolutionWidth/Height parsed");
   Check(cfg.GetDefaultWidth() == 640 && cfg.GetDefaultHeight() == 360, "DefaultWindowWidth/Height parsed");
   Check(cfg.GetEngineOptions().windowMode == WindowMode::BorderlessFullscreen, "DefaultWindowMode borderless parsed");
   Check(cfg.GetEngineOptions().presentationMode == PresentationMode::IntegerScale,
         "DefaultPresentationMode integer_scale parsed");
   Check(cfg.GetEngineOptions().vsync, "DefaultVSync true parsed");
   Check(!cfg.GetEngineOptions().windowResizable, "WindowResizable false parsed");
+
+  GameConfig fallbackCfg;
+  const std::unordered_map<std::string, std::string> missingBase = {
+      {"Title", "No Base"},
+      {"StartupScript", "game.lua"},
+      {"DefaultWindowWidth", "800"},
+      {"DefaultWindowHeight", "600"},
+  };
+  Check(fallbackCfg.LoadConfig(missingBase),
+        "GameConfig::LoadConfig succeeds when BaseResolutionWidth/Height are omitted");
+  Check(fallbackCfg.GetBaseWidth() == 800 && fallbackCfg.GetBaseHeight() == 600,
+        "BaseResolution falls back to DefaultWindowWidth/Height");
+
+  GameConfig badCfg;
+  const std::unordered_map<std::string, std::string> invalidAspect = {
+      {"Title", "Bad Aspect"},
+      {"StartupScript", "game.lua"},
+      {"MinAspectRatio", "2.0"},
+      {"MaxAspectRatio", "1.5"},
+  };
+  Check(!badCfg.LoadConfig(invalidAspect), "GameConfig::LoadConfig fails when MinAspectRatio > MaxAspectRatio");
 
   // Composite rect math: 640x360 (16:9) inside a 1920x1200 (16:10) window
   const SDL_FRect letterbox = Renderer::ComputeCompositeRect(640, 360, 1920, 1200, PresentationMode::Letterbox);
@@ -382,6 +411,29 @@ void TestGameConfigAndCompositeRect() {
   Check(std::abs(stretch.x) < 0.01F && std::abs(stretch.y) < 0.01F && std::abs(stretch.w - 1920.0F) < 0.01F &&
             std::abs(stretch.h - 1200.0F) < 0.01F,
         "ComputeCompositeRect Stretch fills entire window");
+
+  // Expand mode logical sizing across aspect ratios
+  const auto s169 = Renderer::ComputeLogicalSceneSize(1280, 720, 1920, 1080, PresentationMode::Expand);
+  Check(s169.first == 1280 && s169.second == 720, "ComputeLogicalSceneSize Expand 16:9 keeps 1280x720");
+
+  const auto s1610 = Renderer::ComputeLogicalSceneSize(1280, 720, 1280, 800, PresentationMode::Expand);
+  Check(s1610.first == 1280 && s1610.second == 800, "ComputeLogicalSceneSize Expand 16:10 expands height to 800");
+
+  const auto s43 = Renderer::ComputeLogicalSceneSize(1280, 720, 1280, 960, PresentationMode::Expand);
+  Check(s43.first == 1280 && s43.second == 960, "ComputeLogicalSceneSize Expand 4:3 expands height to 960");
+
+  const auto s219 = Renderer::ComputeLogicalSceneSize(1280, 720, 2560, 1080, PresentationMode::Expand);
+  Check(s219.first == 1708 && s219.second == 720, "ComputeLogicalSceneSize Expand 21:9 expands width to 1708");
+
+  const auto s329 = Renderer::ComputeLogicalSceneSize(1280, 720, 5120, 1440, PresentationMode::Expand, 1.3333F, 2.40F);
+  Check(s329.first == 1728 && s329.second == 720,
+        "ComputeLogicalSceneSize Expand 32:9 clamped to maxAspect=2.40 (1728x720)");
+
+  // Clamped 32:9 (1728x720) inside 5120x1440 window pillarboxes to 3456x1440 centered at x=832
+  const SDL_FRect expClamped = Renderer::ComputeCompositeRect(1728, 720, 5120, 1440, PresentationMode::Expand);
+  Check(std::abs(expClamped.x - 832.0F) < 0.01F && std::abs(expClamped.y - 0.0F) < 0.01F &&
+            std::abs(expClamped.w - 3456.0F) < 0.01F && std::abs(expClamped.h - 1440.0F) < 0.01F,
+        "ComputeCompositeRect Expand pillarboxes clamped 32:9 aspect inside window");
 }
 
 void TestLuaDisplayApisAndReset() {
@@ -394,6 +446,8 @@ void TestLuaDisplayApisAndReset() {
   FakeSettingsHost host(tempDir.string());
   auto& cfg = host.GetRegistry()->Get<GameConfig>();
   auto& us = host.GetRegistry()->Get<octarine::UserSettings>();
+  cfg.SetBaseWidth(1280);
+  cfg.SetBaseHeight(720);
   cfg.windowWidth = 1280;
   cfg.windowHeight = 720;
   cfg.GetEngineOptions().windowMode = WindowMode::BorderlessFullscreen;
@@ -442,10 +496,20 @@ void TestLuaDisplayApisAndReset() {
     assert(fw == 2560 and fh == 1440 and math.abs(fhz - 120.0) < 0.01)
 
     -- Switch presentation mode and vsync via both direct functions and settings.set
+    assert(set_presentation_mode("expand") == true)
+    assert(settings.get("presentation_mode") == "expand")
+    assert(get_presentation_mode() == "expand")
     assert(set_presentation_mode("stretch") == true)
     assert(settings.get("presentation_mode") == "stretch")
     assert(settings.set("presentation_mode", "letterbox") == true)
     assert(get_presentation_mode() == "letterbox")
+
+    local bw, bh = get_base_resolution()
+    assert(bw == 1280 and bh == 720)
+    local lw, lh = get_logical_size()
+    assert(lw == 1280 and lh == 720)
+    local dw, dh = get_display_size()
+    assert(dw > 0 and dh > 0)
 
     assert(set_texture_scale_mode("nearest") == true)
     assert(settings.get("texture_scale_mode") == "nearest")

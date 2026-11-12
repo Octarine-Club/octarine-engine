@@ -85,8 +85,11 @@ Title=${name}
 LogLevel=info
 StartupScript=game.lua
 DefaultScalingMode=nearest
+BaseResolutionWidth=1280
+BaseResolutionHeight=720
 DefaultWindowWidth=1280
 DefaultWindowHeight=720
+DefaultPresentationMode=expand
 EOF
 
 # shellcheck disable=SC2016

@@ -1612,6 +1612,8 @@ function get_asset_path(...) end
 
 function get_avg_fps(...) end
 
+function get_base_resolution(...) end
+
 function get_camera_position(...) end
 
 function get_camera_zoom(...) end
@@ -1623,6 +1625,8 @@ function get_current_display_name(...) end
 function get_display_count(...) end
 
 function get_display_modes(...) end
+
+function get_display_size(...) end
 
 function get_displays(...) end
 
@@ -1641,6 +1645,8 @@ function get_frame_time(...) end
 function get_fullscreen_resolution(...) end
 
 function get_game_map_dimensions(...) end
+
+function get_logical_size(...) end
 
 function get_master_volume(...) end
 

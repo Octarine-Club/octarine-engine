@@ -116,6 +116,10 @@ bool GameConfig::LoadConfig(const std::unordered_map<std::string, std::string>& 
   success &= SetValue(settings, "LogLevel", &GameConfig::SetLogLevel, false);
   success &= SetValue(settings, "Title", &GameConfig::SetGameTitle, true);
   success &= SetValue(settings, "StartupScript", &GameConfig::SetStartupScript, true);
+  success &= SetValue(settings, "BaseResolutionWidth", &GameConfig::SetBaseWidth, false);
+  success &= SetValue(settings, "BaseResolutionHeight", &GameConfig::SetBaseHeight, false);
+  success &= SetValue(settings, "MinAspectRatio", &GameConfig::SetMinAspectRatio, false);
+  success &= SetValue(settings, "MaxAspectRatio", &GameConfig::SetMaxAspectRatio, false);
   success &= SetValue(settings, "DefaultScalingMode", &GameConfig::SetDefaultScaleMode, false);
   success &= SetValue(settings, "DefaultWindowWidth", &GameConfig::SetDefaultWidth, false);
   success &= SetValue(settings, "DefaultWindowHeight", &GameConfig::SetDefaultHeight, false);
@@ -131,6 +135,17 @@ bool GameConfig::LoadConfig(const std::unordered_map<std::string, std::string>& 
   success &= SetValue(settings, "HotReloadPollSeconds", &GameConfig::SetHotReloadPollSeconds, false);
   success &= SetValue(settings, "DebugOverlayBackgroundColor", &GameConfig::SetDebugOverlayBackgroundColor, false);
   success &= SetValue(settings, "AngleUnit", &GameConfig::SetAngleUnit, false);
+
+  if (base_width_ < 0 || base_height_ < 0) {
+    Logger::Error("BaseResolutionWidth and BaseResolutionHeight cannot be negative (got " +
+                  std::to_string(base_width_) + "x" + std::to_string(base_height_) + ")");
+    success = false;
+  }
+  if (min_aspect_ratio_ > 0.0F && max_aspect_ratio_ > 0.0F && min_aspect_ratio_ > max_aspect_ratio_) {
+    Logger::Error("MinAspectRatio (" + std::to_string(min_aspect_ratio_) + ") cannot be greater than MaxAspectRatio (" +
+                  std::to_string(max_aspect_ratio_) + ")");
+    success = false;
+  }
 
   // Logged whether or not the key was present: the default is degrees, so a project authored in
   // radians that omits the key would otherwise reinterpret every angle silently.
@@ -167,15 +182,24 @@ std::optional<std::string> GameConfig::GetDefaultScaleMode() const {
   return default_scaling_mode_;
 }
 
-int GameConfig::GetDefaultWidth() const {
-  assert(has_loaded_config_);
-  return default_width_;
+int GameConfig::GetBaseWidth() const {
+  return base_width_ > 0 ? base_width_ : (default_width_ > 0 ? default_width_ : Constants::kDefaultWindowWidth);
 }
 
-int GameConfig::GetDefaultHeight() const {
-  assert(has_loaded_config_);
-  return default_height_;
+int GameConfig::GetBaseHeight() const {
+  return base_height_ > 0 ? base_height_ : (default_height_ > 0 ? default_height_ : Constants::kDefaultWindowHeight);
 }
+
+void GameConfig::SetBaseWidth(const int baseWidth) { base_width_ = baseWidth; }
+void GameConfig::SetBaseHeight(const int baseHeight) { base_height_ = baseHeight; }
+float GameConfig::GetMinAspectRatio() const { return min_aspect_ratio_; }
+void GameConfig::SetMinAspectRatio(const float minAspect) { min_aspect_ratio_ = std::max(0.0F, minAspect); }
+float GameConfig::GetMaxAspectRatio() const { return max_aspect_ratio_; }
+void GameConfig::SetMaxAspectRatio(const float maxAspect) { max_aspect_ratio_ = std::max(0.0F, maxAspect); }
+
+int GameConfig::GetDefaultWidth() const { return default_width_ > 0 ? default_width_ : GetBaseWidth(); }
+
+int GameConfig::GetDefaultHeight() const { return default_height_ > 0 ? default_height_ : GetBaseHeight(); }
 
 void GameConfig::SetAssetPath(const std::string& assetPath) {
   if (assetPath.empty()) {

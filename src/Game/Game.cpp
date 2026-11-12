@@ -481,8 +481,8 @@ void Game::StartDevListenServer() {
 namespace {
 std::pair<int, int> ResolveInitialWindowSize([[maybe_unused]] Registry& registry, const GameConfig& gameConfig,
                                              [[maybe_unused]] const bool headless) {
-  int initialWidth = gameConfig.windowWidth;
-  int initialHeight = gameConfig.windowHeight;
+  int initialWidth = gameConfig.GetDefaultWidth();
+  int initialHeight = gameConfig.GetDefaultHeight();
 #ifndef OCTARINE_PLATFORM_MOBILE
   if (!headless) {
     if (const auto* userSettings = registry.TryGet<octarine::UserSettings>()) {
@@ -500,7 +500,9 @@ void ApplyInitialWindowSettings(Registry& registry, const GameConfig& gameConfig
                                 const bool headless) {
   if (headless) return;
   if (auto* userSettings = registry.TryGet<octarine::UserSettings>()) {
-    userSettings->ApplyToWindow(runtime.Window(), gameConfig.windowWidth, gameConfig.windowHeight);
+    const int defW = gameConfig.HasLoadedConfig() ? gameConfig.GetDefaultWidth() : Constants::kDefaultWindowWidth;
+    const int defH = gameConfig.HasLoadedConfig() ? gameConfig.GetDefaultHeight() : Constants::kDefaultWindowHeight;
+    userSettings->ApplyToWindow(runtime.Window(), defW, defH);
   }
   if (runtime.SdlRenderer() != nullptr) {
     Renderer::ApplyVSync(runtime.SdlRenderer(), gameConfig.GetEngineOptions().vsync);
@@ -539,8 +541,8 @@ void ApplyProjectWindowIcon(Registry& registry, const GameConfig& gameConfig, En
 
 bool Game::CreateWindowAndScene(bool projectLoaded) {
   auto& gameConfig = registry_->Get<GameConfig>();
-  gameConfig.windowWidth = projectLoaded ? gameConfig.GetDefaultWidth() : Constants::kDefaultWindowWidth;
-  gameConfig.windowHeight = projectLoaded ? gameConfig.GetDefaultHeight() : Constants::kDefaultWindowHeight;
+  gameConfig.windowWidth = projectLoaded ? gameConfig.GetBaseWidth() : Constants::kDefaultWindowWidth;
+  gameConfig.windowHeight = projectLoaded ? gameConfig.GetBaseHeight() : Constants::kDefaultWindowHeight;
   const std::string title = projectLoaded ? gameConfig.GetGameTitle() : kDefaultWindowTitle;
 
   const auto [initialWidth, initialHeight] = ResolveInitialWindowSize(*registry_, gameConfig, headless_);

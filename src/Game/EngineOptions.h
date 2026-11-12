@@ -38,12 +38,13 @@ enum class WindowMode : std::uint8_t {
   ExclusiveFullscreen = 2,
 };
 
-// How the fixed logical scene texture is scaled into the window backbuffer.
-// config.ini: DefaultPresentationMode=letterbox|integer_scale|stretch
+// How the logical scene texture is scaled or expanded into the window backbuffer.
+// config.ini: DefaultPresentationMode=letterbox|integer_scale|stretch|expand
 enum class PresentationMode : std::uint8_t {
   Letterbox = 0,
   IntegerScale = 1,
   Stretch = 2,
+  Expand = 3,
 };
 
 [[nodiscard]] inline std::optional<WindowMode> ParseWindowMode(std::string_view str) {
@@ -74,6 +75,7 @@ enum class PresentationMode : std::uint8_t {
   if (str == "letterbox" || str == "aspect" || str == "fit") return PresentationMode::Letterbox;
   if (str == "integer_scale" || str == "integer" || str == "pixel_perfect") return PresentationMode::IntegerScale;
   if (str == "stretch" || str == "fill") return PresentationMode::Stretch;
+  if (str == "expand" || str == "adaptive") return PresentationMode::Expand;
   return std::nullopt;
 }
 
@@ -85,6 +87,8 @@ enum class PresentationMode : std::uint8_t {
       return "integer_scale";
     case PresentationMode::Stretch:
       return "stretch";
+    case PresentationMode::Expand:
+      return "expand";
   }
   return "letterbox";
 }
