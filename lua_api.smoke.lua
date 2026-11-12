@@ -169,10 +169,6 @@ function ImGui.DebugStartItemPicker(...) end
 
 function ImGui.DebugTextEncoding(...) end
 
-function ImGui.DestroyPlatformWindows(...) end
-
-function ImGui.DockSpace(...) end
-
 function ImGui.DragFloat(...) end
 
 function ImGui.DragFloat2(...) end
@@ -319,10 +315,6 @@ function ImGui.GetWindowContentRegionMax(...) end
 
 function ImGui.GetWindowContentRegionMin(...) end
 
-function ImGui.GetWindowDockID(...) end
-
-function ImGui.GetWindowDpiScale(...) end
-
 function ImGui.GetWindowHeight(...) end
 
 function ImGui.GetWindowPos(...) end
@@ -420,8 +412,6 @@ function ImGui.IsRectVisible(...) end
 function ImGui.IsWindowAppearing(...) end
 
 function ImGui.IsWindowCollapsed(...) end
-
-function ImGui.IsWindowDocked(...) end
 
 function ImGui.IsWindowFocused(...) end
 
@@ -567,8 +557,6 @@ function ImGui.SetNextWindowCollapsed(...) end
 
 function ImGui.SetNextWindowContentSize(...) end
 
-function ImGui.SetNextWindowDockID(...) end
-
 function ImGui.SetNextWindowFocus(...) end
 
 function ImGui.SetNextWindowPos(...) end
@@ -578,8 +566,6 @@ function ImGui.SetNextWindowScroll(...) end
 function ImGui.SetNextWindowSize(...) end
 
 function ImGui.SetNextWindowSizeConstraints(...) end
-
-function ImGui.SetNextWindowViewport(...) end
 
 function ImGui.SetScrollFromPosX(...) end
 
@@ -697,8 +683,6 @@ function ImGui.TreePush(...) end
 
 function ImGui.Unindent(...) end
 
-function ImGui.UpdatePlatformWindows(...) end
-
 function ImGui.VSliderFloat(...) end
 
 function ImGui.VSliderInt(...) end
@@ -707,13 +691,9 @@ function ImGui.VSliderInt(...) end
 ---@class ImGuiBackendFlags
 ---@field HasGamepad any
 ---@field HasMouseCursors any
----@field HasMouseHoveredViewport any
----@field HasParentViewport any
 ---@field HasSetMousePos any
 ---@field None any
----@field PlatformHasViewports any
 ---@field RendererHasTextures any
----@field RendererHasViewports any
 ---@field RendererHasVtxOffset any
 ImGuiBackendFlags = {}
 
@@ -752,8 +732,6 @@ ImGuiChildFlags = {}
 ---@field CheckMark any
 ---@field CheckboxSelectedBg any
 ---@field ChildBg any
----@field DockingEmptyBg any
----@field DockingPreview any
 ---@field DragDropTarget any
 ---@field DragDropTargetBg any
 ---@field FrameBg any
@@ -869,9 +847,6 @@ ImGuiCond = {}
 
 
 ---@class ImGuiConfigFlags
----@field DockingEnable any
----@field DpiEnableScaleFonts any
----@field DpiEnableScaleViewports any
 ---@field IsSRGB any
 ---@field IsTouchScreen any
 ---@field NavEnableGamepad any
@@ -882,7 +857,6 @@ ImGuiCond = {}
 ---@field NoMouse any
 ---@field NoMouseCursorChange any
 ---@field None any
----@field ViewportsEnable any
 ImGuiConfigFlags = {}
 
 
@@ -913,20 +887,6 @@ ImGuiDataType = {}
 ImGuiDir = {}
 
 
----@class ImGuiDockNodeFlags
----@field AutoHideTabBar any
----@field KeepAliveOnly any
----@field NoDockingInCentralNode any
----@field NoDockingOverCentralNode any
----@field NoDockingSplit any
----@field NoResize any
----@field NoSplit any
----@field NoUndocking any
----@field None any
----@field PassthruCentralNode any
-ImGuiDockNodeFlags = {}
-
-
 ---@class ImGuiDragDropFlags
 ---@field AcceptBeforeDelivery any
 ---@field AcceptDrawAsHovered any
@@ -948,7 +908,6 @@ ImGuiDragDropFlags = {}
 ---@class ImGuiFocusedFlags
 ---@field AnyWindow any
 ---@field ChildWindows any
----@field DockHierarchy any
 ---@field NoPopupHierarchy any
 ---@field None any
 ---@field RootAndChildWindows any
@@ -968,7 +927,6 @@ ImGuiFocusedFlags = {}
 ---@field DelayNone any
 ---@field DelayNormal any
 ---@field DelayShort any
----@field DockHierarchy any
 ---@field ForTooltip any
 ---@field NoNavOverride any
 ---@field NoPopupHierarchy any
@@ -1332,7 +1290,6 @@ ImGuiSortDirection = {}
 ---@field ChildBorderSize any
 ---@field ChildRounding any
 ---@field DisabledAlpha any
----@field DockingSeparatorSize any
 ---@field DragDropTargetRounding any
 ---@field FrameBorderSize any
 ---@field FramePadding any
@@ -1513,25 +1470,6 @@ ImGuiTableRowFlags = {}
 ImGuiTreeNodeFlags = {}
 
 
----@class ImGuiViewportFlags
----@field CanHostOtherWindows any
----@field IsFocused any
----@field IsMinimized any
----@field IsPlatformMonitor any
----@field IsPlatformWindow any
----@field NoAutoMerge any
----@field NoDecoration any
----@field NoFocusOnAppearing any
----@field NoFocusOnClick any
----@field NoInputs any
----@field NoRendererClear any
----@field NoTaskBarIcon any
----@field None any
----@field OwnedByApp any
----@field TopMost any
-ImGuiViewportFlags = {}
-
-
 ---@class ImGuiWindowFlags
 ---@field AlwaysAutoResize any
 ---@field AlwaysHorizontalScrollbar any
@@ -1542,7 +1480,6 @@ ImGuiViewportFlags = {}
 ---@field NoBringToFrontOnFocus any
 ---@field NoCollapse any
 ---@field NoDecoration any
----@field NoDocking any
 ---@field NoFocusOnAppearing any
 ---@field NoInputs any
 ---@field NoMouseInputs any
