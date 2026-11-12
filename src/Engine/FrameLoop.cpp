@@ -76,25 +76,9 @@ std::optional<SDL_FRect> PrepareSceneTargetForWindow(Renderer& renderer, SDL_Ren
   }
 
   const auto& opts = gameConfig.GetEngineOptions();
-  int logicalW = gameConfig.windowWidth;
-  int logicalH = gameConfig.windowHeight;
-
-  if (opts.presentationMode == PresentationMode::Expand) {
-    const int baseW = gameConfig.GetBaseWidth();
-    const int baseH = gameConfig.GetBaseHeight();
-    const auto [newLogW, newLogH] =
-        Renderer::ComputeLogicalSceneSize(baseW, baseH, outPixelW, outPixelH, opts.presentationMode,
-                                          gameConfig.GetMinAspectRatio(), gameConfig.GetMaxAspectRatio());
-    logicalW = newLogW;
-    logicalH = newLogH;
-  } else {
-    const int baseW = gameConfig.GetBaseWidth();
-    const int baseH = gameConfig.GetBaseHeight();
-    if (baseW > 0 && baseH > 0) {
-      logicalW = baseW;
-      logicalH = baseH;
-    }
-  }
+  const auto [logicalW, logicalH] = Renderer::ComputeLogicalSceneSize(
+      gameConfig.GetBaseWidth(), gameConfig.GetBaseHeight(), outPixelW, outPixelH, opts.presentationMode,
+      gameConfig.GetMinAspectRatio(), gameConfig.GetMaxAspectRatio());
 
   if (logicalW != gameConfig.windowWidth || logicalH != gameConfig.windowHeight ||
       renderer.GetLogicalWidth() != logicalW || renderer.GetLogicalHeight() != logicalH) {
@@ -170,6 +154,11 @@ void CaptureWindowStateOnEvent(octarine::UserSettings& userSettings, SDL_Window*
     userSettings.fullscreen = savedFullscreen;
   }
 }
+
+bool IsResizeOrDisplayEvent(const Uint32 eventType) {
+  return eventType == SDL_EVENT_WINDOW_RESIZED || eventType == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED ||
+         eventType == SDL_EVENT_WINDOW_DISPLAY_CHANGED;
+}
 }  // namespace
 
 FrameLoop::FrameLoop(Game* game, Registry* registry, EventBus* eventBus, Renderer* renderer, EngineRuntime* runtime,
@@ -183,15 +172,18 @@ FrameLoop::FrameLoop(Game* game, Registry* registry, EventBus* eventBus, Rendere
   }
 }
 
+void FrameLoop::SyncSceneTargetAndScale(GameConfig& config) {
+  const bool isHeadlessOrCapture = game_->IsHeadless() || config.GetEngineOptions().headless || !capture_path_.empty();
+  PrepareSceneTargetForWindow(*renderer_, runtime_->SdlRenderer(), config, &lua_, isHeadlessOrCapture);
+  if (auto* ctx = registry_->TryGet<EngineContext>()) {
+    ctx->sceneRenderScale = renderer_->GetRenderScale();
+  }
+}
+
 void FrameLoop::Begin() {
   nanoseconds_previous_frame_ = SDL_GetTicksNS();
   if (auto* gameConfig = registry_->TryGet<GameConfig>()) {
-    const bool isHeadless = game_->IsHeadless() || gameConfig->GetEngineOptions().headless;
-    PrepareSceneTargetForWindow(*renderer_, runtime_->SdlRenderer(), *gameConfig, &lua_,
-                                isHeadless || !capture_path_.empty());
-    if (auto* ctx = registry_->TryGet<EngineContext>()) {
-      ctx->sceneRenderScale = renderer_->GetRenderScale();
-    }
+    SyncSceneTargetAndScale(*gameConfig);
     if (auto* viewportInfo = registry_->TryGet<ViewportInfo>()) {
       SyncViewportRectFromWindow(runtime_->Window(), runtime_->SdlRenderer(), *gameConfig, *viewportInfo);
     }
@@ -297,24 +289,19 @@ void FrameLoop::HandleWindowEvent(const SDL_Event& event) {
   if (auto* userSettings = registry_->TryGet<octarine::UserSettings>()) {
     CaptureWindowStateOnEvent(*userSettings, runtime_->Window(), event.type);
   }
-  if (event.type == SDL_EVENT_WINDOW_RESIZED || event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED ||
-      event.type == SDL_EVENT_WINDOW_DISPLAY_CHANGED) {
-    auto* viewportInfo = registry_->TryGet<ViewportInfo>();
-    auto* config = registry_->TryGet<GameConfig>();
-    if (config != nullptr) {
-      const bool isHeadless = game_->IsHeadless() || config->GetEngineOptions().headless;
-      PrepareSceneTargetForWindow(*renderer_, runtime_->SdlRenderer(), *config, &lua_,
-                                  isHeadless || !capture_path_.empty());
-      if (auto* ctx = registry_->TryGet<EngineContext>()) {
-        ctx->sceneRenderScale = renderer_->GetRenderScale();
-      }
-    }
-    if (viewportInfo != nullptr && config != nullptr) {
-      SyncViewportRectFromWindow(runtime_->Window(), runtime_->SdlRenderer(), *config, *viewportInfo);
-    }
-    if (event.type == SDL_EVENT_WINDOW_DISPLAY_CHANGED && runtime_->SdlRenderer() != nullptr && config != nullptr) {
-      Renderer::ApplyVSync(runtime_->SdlRenderer(), config->GetEngineOptions().vsync);
-    }
+  if (!IsResizeOrDisplayEvent(event.type)) {
+    return;
+  }
+  auto* config = registry_->TryGet<GameConfig>();
+  if (config == nullptr) {
+    return;
+  }
+  SyncSceneTargetAndScale(*config);
+  if (auto* viewportInfo = registry_->TryGet<ViewportInfo>()) {
+    SyncViewportRectFromWindow(runtime_->Window(), runtime_->SdlRenderer(), *config, *viewportInfo);
+  }
+  if (event.type == SDL_EVENT_WINDOW_DISPLAY_CHANGED && runtime_->SdlRenderer() != nullptr) {
+    Renderer::ApplyVSync(runtime_->SdlRenderer(), config->GetEngineOptions().vsync);
   }
 }
 
@@ -415,11 +402,8 @@ int FrameLoop::Update(const float deltaTime) {
   if (auto* ctx = registry_->TryGet<EngineContext>()) {
     ctx->perfStats = &perf_tracker_.GetStats();
     auto& gameConfig = registry_->Get<GameConfig>();
-    const bool isHeadless = game_->IsHeadless() || options.headless;
-    PrepareSceneTargetForWindow(*renderer_, runtime_->SdlRenderer(), gameConfig, &lua_,
-                                isHeadless || !capture_path_.empty());
-    ctx->sceneRenderScale = renderer_->GetRenderScale();
-    if (!isHeadless) {
+    SyncSceneTargetAndScale(gameConfig);
+    if (!game_->IsHeadless() && !options.headless) {
       UpdateViewportInfo(options.showDebugGUI);
     }
   }

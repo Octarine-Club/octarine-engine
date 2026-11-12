@@ -1,12 +1,18 @@
+#include <SDL3/SDL.h>
+
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <sol/sol.hpp>
 #include <string>
 #include <vector>
 
+#include "Components/CameraComponents.h"
 #include "ECS/Registry.h"
 #include "Game/EngineContext.h"
+#include "Game/Game.h"
 #include "Game/GameConfig.h"
 #include "Game/UserSettings.h"
 #include "General/Logger.h"
@@ -17,6 +23,18 @@
 namespace {
 
 int g_failures = 0;
+
+void SetProcessEnvVar(const char* name, const char* value) {
+#ifdef _MSC_VER
+  _putenv_s(name, value != nullptr ? value : "");
+#else
+  if (value != nullptr && value[0] != '\0') {
+    setenv(name, value, 1);
+  } else {
+    unsetenv(name);
+  }
+#endif
+}
 
 void Check(const bool condition, const std::string& what) {
   if (condition) {
@@ -37,8 +55,13 @@ class FakeSettingsHost : public LuaBindingContext {
     registry_.Set<EngineContext>(context_);
   }
 
+  void SetRenderer(SDL_Renderer* renderer) {
+    sdl_renderer_ = renderer;
+    registry_.Get<EngineContext>().sdlRenderer = renderer;
+  }
+
   [[nodiscard]] Registry* GetRegistry() const override { return &registry_; }
-  [[nodiscard]] SDL_Renderer* GetRenderer() const override { return nullptr; }
+  [[nodiscard]] SDL_Renderer* GetRenderer() const override { return sdl_renderer_; }
   [[nodiscard]] EngineContext& GetContext() override { return registry_.Get<EngineContext>(); }
 
   void LoadScene(const std::string& /*scenePath*/) override {}
@@ -57,6 +80,7 @@ class FakeSettingsHost : public LuaBindingContext {
  private:
   mutable Registry registry_{};
   EngineContext context_{};
+  SDL_Renderer* sdl_renderer_ = nullptr;
   std::string save_root_;
 };
 
@@ -488,6 +512,8 @@ void TestLuaDisplayApisAndReset() {
     assert(modes[1].width > 0 and modes[1].height > 0 and modes[1].refresh_rate > 0)
 
     -- Switch to exclusive fullscreen with custom resolution & refresh rate
+    local initFw, initFh = get_fullscreen_resolution()
+    assert(initFw > 0 and initFh > 0)
     assert(set_fullscreen_resolution(2560, 1440, 120.0) == true)
     assert(set_window_mode("exclusive") == true)
     assert(get_window_mode() == "exclusive")
@@ -549,6 +575,189 @@ void TestLuaDisplayApisAndReset() {
   std::filesystem::remove_all(tempDir, ec);
 }
 
+void TestGameConfigAspectAndLogicalBounds() {
+  std::cout << "[aspect-bounds] GameConfig negative resolution guard, aspect getters, and logical size bounds\n";
+  GameConfig negCfg;
+  const std::unordered_map<std::string, std::string> negativeBase = {
+      {"Title", "Negative Base"},
+      {"StartupScript", "game.lua"},
+      {"BaseResolutionWidth", "-640"},
+      {"BaseResolutionHeight", "360"},
+  };
+  Check(!negCfg.LoadConfig(negativeBase), "GameConfig::LoadConfig rejects negative BaseResolutionWidth");
+
+  GameConfig aspectCfg;
+  aspectCfg.SetMinAspectRatio(1.33F);
+  aspectCfg.SetMaxAspectRatio(2.40F);
+  Check(std::abs(aspectCfg.GetMinAspectRatio() - 1.33F) < 0.001F, "GetMinAspectRatio returns configured value");
+  Check(std::abs(aspectCfg.GetMaxAspectRatio() - 2.40F) < 0.001F, "GetMaxAspectRatio returns configured value");
+
+  const auto zeroBase = Renderer::ComputeLogicalSceneSize(0, -10, 1920, 1080, PresentationMode::Expand);
+  Check(zeroBase.first == 1, "ComputeLogicalSceneSize clamps non-positive baseW to 1");
+  Check(zeroBase.second == 1, "ComputeLogicalSceneSize clamps non-positive baseH to 1");
+
+  const auto nonExpand = Renderer::ComputeLogicalSceneSize(640, 360, 1920, 1200, PresentationMode::Letterbox);
+  Check(nonExpand.first == 640, "ComputeLogicalSceneSize preserves baseW in Letterbox mode");
+  Check(nonExpand.second == 360, "ComputeLogicalSceneSize preserves baseH in Letterbox mode");
+
+  const auto minClamped =
+      Renderer::ComputeLogicalSceneSize(1280, 720, 720, 1280, PresentationMode::Expand, 1.3333334F, 2.40F);
+  Check(minClamped.first == 1280, "ComputeLogicalSceneSize portrait clamped to minAspect 4:3 width");
+  Check(minClamped.second == 960, "ComputeLogicalSceneSize portrait clamped to minAspect 4:3 height");
+}
+
+void TestSoftwareRendererSceneTarget() {
+  std::cout << "[renderer-target] Renderer logical size, scene target resize, and render scale\n";
+  SDL_Surface* surface = SDL_CreateSurface(1600, 1000, SDL_PIXELFORMAT_RGBA32);
+  SDL_Renderer* sdlRenderer = surface != nullptr ? SDL_CreateSoftwareRenderer(surface) : nullptr;
+  Check(sdlRenderer != nullptr, "software SDL_Renderer created for Renderer target test");
+  if (sdlRenderer == nullptr) {
+    SDL_DestroySurface(surface);
+    return;
+  }
+
+  Renderer renderer;
+  Check(renderer.CreateScene(sdlRenderer, 1280, 720), "Renderer::CreateScene succeeds");
+  Check(renderer.GetLogicalWidth() == 1280, "GetLogicalWidth matches initial 1280");
+  Check(renderer.GetLogicalHeight() == 720, "GetLogicalHeight matches initial 720");
+  Check(std::abs(renderer.GetRenderScale() - 1.0F) < 0.001F, "initial render scale is 1.0");
+
+  renderer.SetLogicalSize(1280, 800);
+  Check(renderer.GetLogicalWidth() == 1280, "SetLogicalSize updates width to 1280");
+  Check(renderer.GetLogicalHeight() == 800, "SetLogicalSize updates height to 800");
+  Check(renderer.EnsureSceneTargetSize(sdlRenderer, 1600, 1000), "EnsureSceneTargetSize resizes target to 1600x1000");
+  Check(std::abs(renderer.GetRenderScale() - 1.25F) < 0.001F, "render scale updates to 1.25x");
+
+  Renderer::ApplyVSync(sdlRenderer, false);
+  renderer.DestroyScene();
+  SDL_DestroyRenderer(sdlRenderer);
+  SDL_DestroySurface(surface);
+}
+
+void TestLuaCameraAndExpandResize() {
+  std::cout << "[lua-camera-expand] Camera zoom clamping and expand presentation resize via Lua\n";
+  const auto tempDir = std::filesystem::temp_directory_path() / "octarine_lua_cam_expand_test";
+  std::error_code ec;
+  std::filesystem::remove_all(tempDir, ec);
+  std::filesystem::create_directories(tempDir, ec);
+
+  SDL_Surface* surface = SDL_CreateSurface(1600, 1000, SDL_PIXELFORMAT_RGBA32);
+  SDL_Renderer* sdlRenderer = surface != nullptr ? SDL_CreateSoftwareRenderer(surface) : nullptr;
+
+  FakeSettingsHost host(tempDir.string());
+  host.SetRenderer(sdlRenderer);
+  auto& cfg = host.GetRegistry()->Get<GameConfig>();
+  cfg.SetBaseWidth(1280);
+  cfg.SetBaseHeight(720);
+  cfg.windowWidth = 1280;
+  cfg.windowHeight = 720;
+  cfg.playableAreaWidth = 2000.0F;
+  cfg.playableAreaHeight = 1200.0F;
+
+  CameraComponent cam{};
+  cam.viewport = {200.0F, 150.0F, 1280.0F, 720.0F};
+  cam.zoom = 1.0F;
+  host.GetRegistry()->Set<CameraComponent>(cam);
+
+  sol::state lua;
+  lua.open_libraries(sol::lib::base, sol::lib::math);
+  LuaModuleBinding<GameModule>::install(lua, host);
+
+  const bool ok = lua.script(R"(
+    set_camera_zoom(2.0)
+    assert(math.abs(get_camera_zoom() - 2.0) < 0.001)
+    set_camera_zoom(0.5)
+    assert(math.abs(get_camera_zoom() - 0.5) < 0.001)
+    set_camera_zoom(1.0)
+
+    assert(set_presentation_mode("expand") == true)
+    local lw, lh = get_logical_size()
+    assert(lw == 1280 and lh == 800)
+
+    assert(set_presentation_mode("letterbox") == true)
+    local lw2, lh2 = get_logical_size()
+    assert(lw2 == 1280 and lh2 == 720)
+    return true
+  )")
+                      .get<bool>();
+  Check(ok, "set_camera_zoom and set_presentation_mode('expand') update logical size and camera viewport");
+
+  const auto& updatedCam = host.GetRegistry()->Get<CameraComponent>();
+  Check(std::abs(updatedCam.viewport.w - 1280.0F) < 0.1F, "camera viewport width restored to 1280");
+  Check(std::abs(updatedCam.viewport.h - 720.0F) < 0.1F, "camera viewport height restored to 720");
+
+  SDL_DestroyRenderer(sdlRenderer);
+  SDL_DestroySurface(surface);
+  std::filesystem::remove_all(tempDir, ec);
+}
+
+void TestRuntimeWindowAndFrameLoopExpand() {
+  std::cout << "[runtime-frameloop] Game::Initialize + FrameLoop expand/letterbox resize under dummy driver\n";
+  const auto tempRoot = std::filesystem::temp_directory_path() / "octarine_frameloop_expand_test";
+  const auto projDir = tempRoot / "proj";
+  const auto saveDir = tempRoot / "save";
+  std::error_code ec;
+  std::filesystem::remove_all(tempRoot, ec);
+  std::filesystem::create_directories(projDir, ec);
+  std::filesystem::create_directories(saveDir, ec);
+
+  {
+    std::ofstream cfgOut(projDir / "config.ini");
+    cfgOut << "Title = Expand FrameLoop Test\n"
+           << "StartupScript = main.lua\n"
+           << "BaseResolutionWidth = 640\n"
+           << "BaseResolutionHeight = 360\n"
+           << "DefaultWindowWidth = 1280\n"
+           << "DefaultWindowHeight = 800\n"
+           << "DefaultPresentationMode = expand\n"
+           << "FpsTarget = 0\n";
+    std::ofstream luaOut(projDir / "main.lua");
+    luaOut << "-- minimal startup script for FrameLoop test\n";
+  }
+
+  SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
+  SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "dummy");
+  SetProcessEnvVar("OCTARINE_SAVE_PATH", saveDir.string().c_str());
+
+  {
+    Game game;
+    game.SetStartupMode("bench");
+    const bool initOk = game.Initialize(projDir.string());
+    Check(initOk, "Game::Initialize succeeds under dummy video/audio driver");
+    if (initOk) {
+      game.Step(1.0F / 60.0F);
+      const auto& cfg = game.GetRegistry()->Get<GameConfig>();
+      Check(cfg.windowWidth == 640, "FrameLoop Expand keeps 640 base width in 1280x800 window");
+      Check(cfg.windowHeight == 400, "FrameLoop Expand expands height from 360 to 400 in 1280x800 window");
+      Check(game.GetLua()["game_window_height"].get<int>() == 400, "Lua game_window_height updated to 400");
+
+      const auto [dispW, dispH] = game.GetLua().script("return get_display_size(0)").get<std::tuple<int, int>>();
+      Check(dispW > 0 && dispH > 0, "get_display_size(0) returns positive display bounds under initialized video");
+      const auto [fbDispW, fbDispH] = game.GetLua().script("return get_display_size(99)").get<std::tuple<int, int>>();
+      Check(fbDispW > 0 && fbDispH > 0, "get_display_size(99) falls back to window size when index out of range");
+
+      game.GetLua().script("set_presentation_mode('letterbox')");
+      SDL_Event moveEv{};
+      moveEv.type = SDL_EVENT_WINDOW_MOVED;
+      SDL_PushEvent(&moveEv);
+      SDL_Event resizeEv{};
+      resizeEv.type = SDL_EVENT_WINDOW_RESIZED;
+      SDL_PushEvent(&resizeEv);
+      SDL_Event displayEv{};
+      displayEv.type = SDL_EVENT_WINDOW_DISPLAY_CHANGED;
+      SDL_PushEvent(&displayEv);
+
+      game.Step(1.0F / 60.0F);
+      Check(cfg.windowHeight == 360, "FrameLoop Letterbox restores logical height to 360 after window events");
+      Check(game.GetLua()["game_window_height"].get<int>() == 360, "Lua game_window_height restored to 360");
+    }
+    game.Destroy();
+  }
+
+  SetProcessEnvVar("OCTARINE_SAVE_PATH", nullptr);
+  std::filesystem::remove_all(tempRoot, ec);
+}
+
 }  // namespace
 
 int main() {
@@ -561,6 +770,10 @@ int main() {
   TestLuaSettingsModule();
   TestGameConfigAndCompositeRect();
   TestLuaDisplayApisAndReset();
+  TestGameConfigAspectAndLogicalBounds();
+  TestSoftwareRendererSceneTarget();
+  TestLuaCameraAndExpandResize();
+  TestRuntimeWindowAndFrameLoopExpand();
 
   if (g_failures == 0) {
     std::cout << "\nUserSettings test: PASS\n";

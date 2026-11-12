@@ -14,6 +14,7 @@
 #include "Systems/DrawColliderSystem.h"
 
 class Game;
+class GameConfig;
 class Registry;
 class Renderer;
 class EngineRuntime;
@@ -56,6 +57,7 @@ class FrameLoop {
 
  private:
   static KeyInputEvent GetKeyInputEvent(SDL_KeyboardEvent* event);
+  void SyncSceneTargetAndScale(GameConfig& config);
   void HandleWindowEvent(const SDL_Event& event);
   void UpdateViewportInfo(bool showDebugGUI);
   void CheckHeadlessCapture();

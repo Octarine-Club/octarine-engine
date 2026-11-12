@@ -318,6 +318,24 @@ void BindStateInspection(sol::state& lua, LuaBindingContext& ctx) {
   });
 }
 
+void UpdateCameraViewportOnResize(CameraComponent* camera, const GameConfig& config, const int logicalW,
+                                  const int logicalH) {
+  if (camera == nullptr) return;
+  const float prevCenterX = camera->viewport.x + camera->viewport.w * 0.5f;
+  const float prevCenterY = camera->viewport.y + camera->viewport.h * 0.5f;
+  const float zoom = camera->zoom > 0.05f ? camera->zoom : 1.0f;
+  camera->viewport.w = static_cast<float>(logicalW) / zoom;
+  camera->viewport.h = static_cast<float>(logicalH) / zoom;
+  camera->viewport.x = prevCenterX - camera->viewport.w * 0.5f;
+  camera->viewport.y = prevCenterY - camera->viewport.h * 0.5f;
+  if (config.playableAreaWidth > 0.0f && config.playableAreaHeight > 0.0f) {
+    const float maxX = std::max(0.0f, config.playableAreaWidth - camera->viewport.w);
+    const float maxY = std::max(0.0f, config.playableAreaHeight - camera->viewport.h);
+    camera->viewport.x = std::clamp(camera->viewport.x, 0.0f, maxX);
+    camera->viewport.y = std::clamp(camera->viewport.y, 0.0f, maxY);
+  }
+}
+
 void BindWorldAndCamera(sol::state& lua, LuaBindingContext& ctx) {
   lua.set_function("set_game_map_dimensions", [&ctx](const double width, const double height) {
     auto& gameConfig = ctx.GetRegistry()->Get<GameConfig>();
@@ -339,20 +357,9 @@ void BindWorldAndCamera(sol::state& lua, LuaBindingContext& ctx) {
     auto* registry = ctx.GetRegistry();
     auto* camera = registry->TryGet<CameraComponent>();
     if (!camera) return;
-    const float prevCenterX = camera->viewport.x + camera->viewport.w * 0.5f;
-    const float prevCenterY = camera->viewport.y + camera->viewport.h * 0.5f;
     camera->zoom = std::clamp(static_cast<float>(zoom), 0.1f, 10.0f);
     if (const auto* gameConfig = registry->TryGet<GameConfig>()) {
-      camera->viewport.w = static_cast<float>(gameConfig->windowWidth) / camera->zoom;
-      camera->viewport.h = static_cast<float>(gameConfig->windowHeight) / camera->zoom;
-      camera->viewport.x = prevCenterX - camera->viewport.w * 0.5f;
-      camera->viewport.y = prevCenterY - camera->viewport.h * 0.5f;
-      if (gameConfig->playableAreaWidth > 0.0f && gameConfig->playableAreaHeight > 0.0f) {
-        const float maxX = std::max(0.0f, gameConfig->playableAreaWidth - camera->viewport.w);
-        const float maxY = std::max(0.0f, gameConfig->playableAreaHeight - camera->viewport.h);
-        camera->viewport.x = std::clamp(camera->viewport.x, 0.0f, maxX);
-        camera->viewport.y = std::clamp(camera->viewport.y, 0.0f, maxY);
-      }
+      UpdateCameraViewportOnResize(camera, *gameConfig, gameConfig->windowWidth, gameConfig->windowHeight);
     }
   });
 
@@ -530,48 +537,19 @@ std::optional<std::tuple<int, int, double>> GetDisplayModeFallback(LuaBindingCon
   return std::nullopt;
 }
 
-void UpdateCameraViewportOnResize(CameraComponent* camera, const GameConfig& config, const int logicalW,
-                                  const int logicalH) {
-  if (camera == nullptr) return;
-  const float prevCenterX = camera->viewport.x + camera->viewport.w * 0.5f;
-  const float prevCenterY = camera->viewport.y + camera->viewport.h * 0.5f;
-  const float zoom = camera->zoom > 0.05f ? camera->zoom : 1.0f;
-  camera->viewport.w = static_cast<float>(logicalW) / zoom;
-  camera->viewport.h = static_cast<float>(logicalH) / zoom;
-  camera->viewport.x = prevCenterX - camera->viewport.w * 0.5f;
-  camera->viewport.y = prevCenterY - camera->viewport.h * 0.5f;
-  if (config.playableAreaWidth > 0.0f && config.playableAreaHeight > 0.0f) {
-    const float maxX = std::max(0.0f, config.playableAreaWidth - camera->viewport.w);
-    const float maxY = std::max(0.0f, config.playableAreaHeight - camera->viewport.h);
-    camera->viewport.x = std::clamp(camera->viewport.x, 0.0f, maxX);
-    camera->viewport.y = std::clamp(camera->viewport.y, 0.0f, maxY);
-  }
-}
-
 void SyncLogicalDimensionsOnPresentationMode(LuaBindingContext& ctx, GameConfig& config, const PresentationMode mode) {
   int outPixelW = 0;
   int outPixelH = 0;
   if (auto* window = TryGetWindow(ctx)) {
     SDL_GetWindowSizeInPixels(window, &outPixelW, &outPixelH);
+  } else if (auto* renderer = TryGetRenderer(ctx)) {
+    SDL_GetRenderOutputSize(renderer, &outPixelW, &outPixelH);
   }
   if (outPixelW <= 0 || outPixelH <= 0) return;
 
-  int logicalW = config.windowWidth;
-  int logicalH = config.windowHeight;
-  if (mode == PresentationMode::Expand) {
-    const auto [newW, newH] =
-        Renderer::ComputeLogicalSceneSize(config.GetBaseWidth(), config.GetBaseHeight(), outPixelW, outPixelH, mode,
-                                          config.GetMinAspectRatio(), config.GetMaxAspectRatio());
-    logicalW = newW;
-    logicalH = newH;
-  } else {
-    const int baseW = config.GetBaseWidth();
-    const int baseH = config.GetBaseHeight();
-    if (baseW > 0 && baseH > 0) {
-      logicalW = baseW;
-      logicalH = baseH;
-    }
-  }
+  const auto [logicalW, logicalH] =
+      Renderer::ComputeLogicalSceneSize(config.GetBaseWidth(), config.GetBaseHeight(), outPixelW, outPixelH, mode,
+                                        config.GetMinAspectRatio(), config.GetMaxAspectRatio());
 
   if (logicalW != config.windowWidth || logicalH != config.windowHeight) {
     config.windowWidth = logicalW;
