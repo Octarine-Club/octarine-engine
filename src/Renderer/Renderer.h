@@ -35,6 +35,17 @@ class Renderer {
   // preserving the logical coordinate space (`logical_width_` x `logical_height_`).
   bool EnsureSceneTargetSize(SDL_Renderer* sdlRenderer, int targetPixelW, int targetPixelH);
 
+  // Updates the logical coordinate space and synchronizes the HiDPI render scale against target dimensions.
+  void SetLogicalSize(int logicalW, int logicalH);
+  [[nodiscard]] int GetLogicalWidth() const { return logical_width_; }
+  [[nodiscard]] int GetLogicalHeight() const { return logical_height_; }
+
+  // Computes the logical scene size for the specified window backbuffer size under `mode`,
+  // expanding between [minAspect, maxAspect] when `mode == PresentationMode::Expand`.
+  [[nodiscard]] static std::pair<int, int> ComputeLogicalSceneSize(int baseW, int baseH, int windowW, int windowH,
+                                                                   PresentationMode mode, float minAspect = 0.0F,
+                                                                   float maxAspect = 0.0F);
+
   // Destroy the scene texture. Idempotent; safe to call when CreateScene never ran or failed.
   // Must run before SDL_DestroyRenderer.
   void DestroyScene();

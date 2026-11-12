@@ -98,7 +98,6 @@ void EngineRuntime::InitImGui(const char* iniPath) {
 
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
-  io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 
   ImGui_ImplSDL3_InitForSDLRenderer(window_, sdl_renderer_);
   ImGui_ImplSDLRenderer3_Init(sdl_renderer_);

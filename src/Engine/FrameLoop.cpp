@@ -62,7 +62,8 @@ std::string GetEnvVar(const char* name) {
 }
 
 std::optional<SDL_FRect> PrepareSceneTargetForWindow(Renderer& renderer, SDL_Renderer* sdlRenderer,
-                                                     const GameConfig& gameConfig, const bool isHeadlessOrCapture) {
+                                                     GameConfig& gameConfig, sol::state* lua,
+                                                     const bool isHeadlessOrCapture) {
   if (sdlRenderer == nullptr) return std::nullopt;
   if (isHeadlessOrCapture) {
     renderer.EnsureSceneTargetSize(sdlRenderer, gameConfig.windowWidth, gameConfig.windowHeight);
@@ -73,9 +74,25 @@ std::optional<SDL_FRect> PrepareSceneTargetForWindow(Renderer& renderer, SDL_Ren
   if (!SDL_GetRenderOutputSize(sdlRenderer, &outPixelW, &outPixelH) || outPixelW <= 0 || outPixelH <= 0) {
     return std::nullopt;
   }
-  const SDL_FRect compositeRect =
-      Renderer::ComputeCompositeRect(gameConfig.windowWidth, gameConfig.windowHeight, outPixelW, outPixelH,
-                                     gameConfig.GetEngineOptions().presentationMode);
+
+  const auto& opts = gameConfig.GetEngineOptions();
+  const auto [logicalW, logicalH] = Renderer::ComputeLogicalSceneSize(
+      gameConfig.GetBaseWidth(), gameConfig.GetBaseHeight(), outPixelW, outPixelH, opts.presentationMode,
+      gameConfig.GetMinAspectRatio(), gameConfig.GetMaxAspectRatio());
+
+  if (logicalW != gameConfig.windowWidth || logicalH != gameConfig.windowHeight ||
+      renderer.GetLogicalWidth() != logicalW || renderer.GetLogicalHeight() != logicalH) {
+    gameConfig.windowWidth = logicalW;
+    gameConfig.windowHeight = logicalH;
+    renderer.SetLogicalSize(logicalW, logicalH);
+    if (lua != nullptr) {
+      (*lua)["game_window_width"] = logicalW;
+      (*lua)["game_window_height"] = logicalH;
+    }
+  }
+
+  const SDL_FRect compositeRect = Renderer::ComputeCompositeRect(gameConfig.windowWidth, gameConfig.windowHeight,
+                                                                 outPixelW, outPixelH, opts.presentationMode);
   const int targetW = std::max(1, static_cast<int>(std::lround(compositeRect.w)));
   const int targetH = std::max(1, static_cast<int>(std::lround(compositeRect.h)));
   renderer.EnsureSceneTargetSize(sdlRenderer, targetW, targetH);
@@ -137,6 +154,11 @@ void CaptureWindowStateOnEvent(octarine::UserSettings& userSettings, SDL_Window*
     userSettings.fullscreen = savedFullscreen;
   }
 }
+
+bool IsResizeOrDisplayEvent(const Uint32 eventType) {
+  return eventType == SDL_EVENT_WINDOW_RESIZED || eventType == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED ||
+         eventType == SDL_EVENT_WINDOW_DISPLAY_CHANGED;
+}
 }  // namespace
 
 FrameLoop::FrameLoop(Game* game, Registry* registry, EventBus* eventBus, Renderer* renderer, EngineRuntime* runtime,
@@ -150,8 +172,22 @@ FrameLoop::FrameLoop(Game* game, Registry* registry, EventBus* eventBus, Rendere
   }
 }
 
+void FrameLoop::SyncSceneTargetAndScale(GameConfig& config) {
+  const bool isHeadlessOrCapture = game_->IsHeadless() || config.GetEngineOptions().headless || !capture_path_.empty();
+  PrepareSceneTargetForWindow(*renderer_, runtime_->SdlRenderer(), config, &lua_, isHeadlessOrCapture);
+  if (auto* ctx = registry_->TryGet<EngineContext>()) {
+    ctx->sceneRenderScale = renderer_->GetRenderScale();
+  }
+}
+
 void FrameLoop::Begin() {
   nanoseconds_previous_frame_ = SDL_GetTicksNS();
+  if (auto* gameConfig = registry_->TryGet<GameConfig>()) {
+    SyncSceneTargetAndScale(*gameConfig);
+    if (auto* viewportInfo = registry_->TryGet<ViewportInfo>()) {
+      SyncViewportRectFromWindow(runtime_->Window(), runtime_->SdlRenderer(), *gameConfig, *viewportInfo);
+    }
+  }
   int count = 0;
   if (SDL_JoystickID* gamepads = SDL_GetGamepads(&count)) {
     for (int i = 0; i < count; ++i) {
@@ -253,16 +289,19 @@ void FrameLoop::HandleWindowEvent(const SDL_Event& event) {
   if (auto* userSettings = registry_->TryGet<octarine::UserSettings>()) {
     CaptureWindowStateOnEvent(*userSettings, runtime_->Window(), event.type);
   }
-  if (event.type == SDL_EVENT_WINDOW_RESIZED || event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED ||
-      event.type == SDL_EVENT_WINDOW_DISPLAY_CHANGED) {
-    auto* viewportInfo = registry_->TryGet<ViewportInfo>();
-    const auto* config = registry_->TryGet<GameConfig>();
-    if (viewportInfo != nullptr && config != nullptr) {
-      SyncViewportRectFromWindow(runtime_->Window(), runtime_->SdlRenderer(), *config, *viewportInfo);
-    }
-    if (event.type == SDL_EVENT_WINDOW_DISPLAY_CHANGED && runtime_->SdlRenderer() != nullptr && config != nullptr) {
-      Renderer::ApplyVSync(runtime_->SdlRenderer(), config->GetEngineOptions().vsync);
-    }
+  if (!IsResizeOrDisplayEvent(event.type)) {
+    return;
+  }
+  auto* config = registry_->TryGet<GameConfig>();
+  if (config == nullptr) {
+    return;
+  }
+  SyncSceneTargetAndScale(*config);
+  if (auto* viewportInfo = registry_->TryGet<ViewportInfo>()) {
+    SyncViewportRectFromWindow(runtime_->Window(), runtime_->SdlRenderer(), *config, *viewportInfo);
+  }
+  if (event.type == SDL_EVENT_WINDOW_DISPLAY_CHANGED && runtime_->SdlRenderer() != nullptr) {
+    Renderer::ApplyVSync(runtime_->SdlRenderer(), config->GetEngineOptions().vsync);
   }
 }
 
@@ -362,10 +401,11 @@ int FrameLoop::Update(const float deltaTime) {
 
   if (auto* ctx = registry_->TryGet<EngineContext>()) {
     ctx->perfStats = &perf_tracker_.GetStats();
-    const auto& gameConfig = registry_->Get<GameConfig>();
-    const bool isHeadless = game_->IsHeadless() || options.headless;
-    PrepareSceneTargetForWindow(*renderer_, runtime_->SdlRenderer(), gameConfig, isHeadless || !capture_path_.empty());
-    ctx->sceneRenderScale = renderer_->GetRenderScale();
+    auto& gameConfig = registry_->Get<GameConfig>();
+    SyncSceneTargetAndScale(gameConfig);
+    if (!game_->IsHeadless() && !options.headless) {
+      UpdateViewportInfo(options.showDebugGUI);
+    }
   }
 
   auto* inputSystem = registry_->TryGet<InputSystem>();
@@ -436,7 +476,7 @@ void FrameLoop::Render(const float deltaTime) {
     return;
   }
 
-  const auto compositeRect = PrepareSceneTargetForWindow(*renderer_, runtime_->SdlRenderer(), gameConfig,
+  const auto compositeRect = PrepareSceneTargetForWindow(*renderer_, runtime_->SdlRenderer(), gameConfig, &lua_,
                                                          isHeadless || !capture_path_.empty());
 
   renderer_->BeginScene(runtime_->SdlRenderer());

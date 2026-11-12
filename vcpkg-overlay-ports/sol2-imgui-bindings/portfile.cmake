@@ -7,8 +7,8 @@
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO Octarine-Club/sol2-imgui-bindings
-    REF v1.93.0-1   # X.Y.Z = targeted Dear ImGui version (== this port's version); -<rev> = binding revision
-    SHA512 21b2a1c2e5ce8903b49e9565f72d7c622a99cb5e5deb095003f70563eaf98d9a14be21210f536250786fdecb76b43ba2b9dce639959e5eb44d3df33821c0c650
+    REF v1.93.0-2   # X.Y.Z = targeted Dear ImGui version (== this port's version); -<rev> = binding revision
+    SHA512 8e3a729ca85c6fd572ad9b0692b5ab3f0cdedef8cf4698effbbb3c18ca0ab206b16f478753b683aeacc882959364de386c0d9960a4fa8ecde7d1dc53b7cb5dd8
     HEAD_REF main
 )
 

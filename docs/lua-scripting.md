@@ -33,8 +33,11 @@ The `config.ini` file defines the game's initial window settings and engine opti
 ```ini
 Title=My Awesome Game
 StartupScript=game.lua
+BaseResolutionWidth=1280
+BaseResolutionHeight=720
 DefaultWindowWidth=1280
 DefaultWindowHeight=720
+DefaultPresentationMode=expand # 'expand', 'letterbox', 'integer_scale', or 'stretch'
 DefaultScalingMode=nearest # 'nearest' or 'linear'
 FpsTarget=60               # frame-rate cap; 0 = uncapped (default 60)
 AngleUnit=degrees          # 'degrees' (default) or 'radians'

@@ -318,6 +318,24 @@ void BindStateInspection(sol::state& lua, LuaBindingContext& ctx) {
   });
 }
 
+void UpdateCameraViewportOnResize(CameraComponent* camera, const GameConfig& config, const int logicalW,
+                                  const int logicalH) {
+  if (camera == nullptr) return;
+  const float prevCenterX = camera->viewport.x + camera->viewport.w * 0.5f;
+  const float prevCenterY = camera->viewport.y + camera->viewport.h * 0.5f;
+  const float zoom = camera->zoom > 0.05f ? camera->zoom : 1.0f;
+  camera->viewport.w = static_cast<float>(logicalW) / zoom;
+  camera->viewport.h = static_cast<float>(logicalH) / zoom;
+  camera->viewport.x = prevCenterX - camera->viewport.w * 0.5f;
+  camera->viewport.y = prevCenterY - camera->viewport.h * 0.5f;
+  if (config.playableAreaWidth > 0.0f && config.playableAreaHeight > 0.0f) {
+    const float maxX = std::max(0.0f, config.playableAreaWidth - camera->viewport.w);
+    const float maxY = std::max(0.0f, config.playableAreaHeight - camera->viewport.h);
+    camera->viewport.x = std::clamp(camera->viewport.x, 0.0f, maxX);
+    camera->viewport.y = std::clamp(camera->viewport.y, 0.0f, maxY);
+  }
+}
+
 void BindWorldAndCamera(sol::state& lua, LuaBindingContext& ctx) {
   lua.set_function("set_game_map_dimensions", [&ctx](const double width, const double height) {
     auto& gameConfig = ctx.GetRegistry()->Get<GameConfig>();
@@ -341,8 +359,7 @@ void BindWorldAndCamera(sol::state& lua, LuaBindingContext& ctx) {
     if (!camera) return;
     camera->zoom = std::clamp(static_cast<float>(zoom), 0.1f, 10.0f);
     if (const auto* gameConfig = registry->TryGet<GameConfig>()) {
-      camera->viewport.w = static_cast<float>(gameConfig->windowWidth) / camera->zoom;
-      camera->viewport.h = static_cast<float>(gameConfig->windowHeight) / camera->zoom;
+      UpdateCameraViewportOnResize(camera, *gameConfig, gameConfig->windowWidth, gameConfig->windowHeight);
     }
   });
 
@@ -449,8 +466,10 @@ void ApplyLiveWindowMode([[maybe_unused]] LuaBindingContext& ctx, [[maybe_unused
   if (window == nullptr) return;
   const auto* settings = GetOrCreateUserSettings(ctx);
   const auto* config = ctx.GetRegistry()->TryGet<GameConfig>();
-  const int defW = config ? config->windowWidth : Constants::kDefaultWindowWidth;
-  const int defH = config ? config->windowHeight : Constants::kDefaultWindowHeight;
+  const int defW =
+      (config != nullptr && config->HasLoadedConfig()) ? config->GetDefaultWidth() : Constants::kDefaultWindowWidth;
+  const int defH =
+      (config != nullptr && config->HasLoadedConfig()) ? config->GetDefaultHeight() : Constants::kDefaultWindowHeight;
   if (settings != nullptr) {
     settings->ApplyToWindow(window, defW, defH);
   } else {
@@ -487,6 +506,90 @@ void SetFullscreenState(LuaBindingContext& ctx, const bool enabled) {
   ApplyLiveWindowMode(ctx, targetMode);
 }
 
+int GetCurrentDisplayIndexState(LuaBindingContext& ctx);
+std::tuple<int, int> GetWindowSizeState(LuaBindingContext& ctx);
+
+namespace {
+#ifndef OCTARINE_PLATFORM_MOBILE
+std::optional<std::tuple<int, int, double>> QueryWindowDisplayMode(SDL_Window* window) {
+  if (window == nullptr) return std::nullopt;
+  const SDL_DisplayID displayId = SDL_GetDisplayForWindow(window);
+  const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(displayId);
+  if (mode != nullptr && mode->w > 0 && mode->h > 0) {
+    return std::tuple<int, int, double>{mode->w, mode->h,
+                                        mode->refresh_rate > 0.0F ? static_cast<double>(mode->refresh_rate) : 60.0};
+  }
+  return std::nullopt;
+}
+#endif
+
+std::optional<std::tuple<int, int, double>> GetDisplayModeFallback(LuaBindingContext& ctx) {
+#ifndef OCTARINE_PLATFORM_MOBILE
+  if (const auto mode = QueryWindowDisplayMode(TryGetWindow(ctx))) {
+    return mode;
+  }
+#endif
+  if (const auto* config = ctx.GetRegistry()->TryGet<GameConfig>()) {
+    const int defW = config->HasLoadedConfig() ? config->GetDefaultWidth() : Constants::kDefaultWindowWidth;
+    const int defH = config->HasLoadedConfig() ? config->GetDefaultHeight() : Constants::kDefaultWindowHeight;
+    return std::tuple<int, int, double>{defW, defH, 0.0};
+  }
+  return std::nullopt;
+}
+
+void SyncLogicalDimensionsOnPresentationMode(LuaBindingContext& ctx, GameConfig& config, const PresentationMode mode) {
+  int outPixelW = 0;
+  int outPixelH = 0;
+  if (auto* window = TryGetWindow(ctx)) {
+    SDL_GetWindowSizeInPixels(window, &outPixelW, &outPixelH);
+  } else if (auto* renderer = TryGetRenderer(ctx)) {
+    SDL_GetRenderOutputSize(renderer, &outPixelW, &outPixelH);
+  }
+  if (outPixelW <= 0 || outPixelH <= 0) return;
+
+  const auto [logicalW, logicalH] =
+      Renderer::ComputeLogicalSceneSize(config.GetBaseWidth(), config.GetBaseHeight(), outPixelW, outPixelH, mode,
+                                        config.GetMinAspectRatio(), config.GetMaxAspectRatio());
+
+  if (logicalW != config.windowWidth || logicalH != config.windowHeight) {
+    config.windowWidth = logicalW;
+    config.windowHeight = logicalH;
+    UpdateCameraViewportOnResize(ctx.GetRegistry()->TryGet<CameraComponent>(), config, logicalW, logicalH);
+  }
+}
+
+std::tuple<int, int> GetBaseResolutionState(LuaBindingContext& ctx) {
+  if (const auto* config = ctx.GetRegistry()->TryGet<GameConfig>()) {
+    return {config->GetBaseWidth(), config->GetBaseHeight()};
+  }
+  return {Constants::kDefaultWindowWidth, Constants::kDefaultWindowHeight};
+}
+
+std::tuple<int, int> GetLogicalSizeState(LuaBindingContext& ctx) {
+  if (const auto* config = ctx.GetRegistry()->TryGet<GameConfig>()) {
+    return {config->windowWidth > 0 ? config->windowWidth : config->GetBaseWidth(),
+            config->windowHeight > 0 ? config->windowHeight : config->GetBaseHeight()};
+  }
+  return {Constants::kDefaultWindowWidth, Constants::kDefaultWindowHeight};
+}
+
+std::tuple<int, int> GetDisplaySizeState(LuaBindingContext& ctx, const sol::optional<int>& displayIndex) {
+  const int targetIdx = displayIndex.value_or(-1) >= 0 ? *displayIndex : GetCurrentDisplayIndexState(ctx);
+  int count = 0;
+  if (SDL_DisplayID* displays = SDL_GetDisplays(&count)) {
+    if (targetIdx >= 0 && targetIdx < count) {
+      SDL_Rect rect{};
+      if (SDL_GetDisplayBounds(displays[targetIdx], &rect) && rect.w > 0 && rect.h > 0) {
+        SDL_free(displays);
+        return {rect.w, rect.h};
+      }
+    }
+    SDL_free(displays);
+  }
+  return GetWindowSizeState(ctx);
+}
+}  // namespace
+
 std::tuple<int, int, double> GetFullscreenResolutionState(LuaBindingContext& ctx) {
   if (const auto* settings = GetOrCreateUserSettings(ctx)) {
     if (settings->fullscreenWidth > 0 && settings->fullscreenHeight > 0) {
@@ -494,11 +597,8 @@ std::tuple<int, int, double> GetFullscreenResolutionState(LuaBindingContext& ctx
               static_cast<double>(settings->fullscreenRefreshRate)};
     }
   }
-  if (const auto* config = ctx.GetRegistry()->TryGet<GameConfig>()) {
-    const int defW = config->HasLoadedConfig() ? config->GetDefaultWidth() : Constants::kDefaultWindowWidth;
-    const int defH = config->HasLoadedConfig() ? config->GetDefaultHeight() : Constants::kDefaultWindowHeight;
-    return {config->windowWidth > 0 ? config->windowWidth : defW,
-            config->windowHeight > 0 ? config->windowHeight : defH, 0.0};
+  if (const auto fallback = GetDisplayModeFallback(ctx)) {
+    return *fallback;
   }
   return {Constants::kDefaultWindowWidth, Constants::kDefaultWindowHeight, 0.0};
 }
@@ -530,11 +630,12 @@ bool SetPresentationModeState(LuaBindingContext& ctx, const std::string_view mod
   const auto parsed = ParsePresentationMode(modeStr);
   if (!parsed.has_value()) {
     Logger::Warn("set_presentation_mode: unknown mode '" + std::string(modeStr) +
-                 "' (expected letterbox|integer_scale|stretch)");
+                 "' (expected letterbox|integer_scale|stretch|expand)");
     return false;
   }
   if (auto* config = ctx.GetRegistry()->TryGet<GameConfig>()) {
     config->GetEngineOptions().presentationMode = *parsed;
+    SyncLogicalDimensionsOnPresentationMode(ctx, *config, *parsed);
   }
   if (auto* settings = GetOrCreateUserSettings(ctx)) {
     settings->presentationMode = *parsed;
@@ -1220,8 +1321,10 @@ void SyncEngineOptionsFromSettings(LuaBindingContext& ctx) {
   ApplyTextureScaleSetting(*reg, *settings);
   if (auto* window = TryGetWindow(ctx)) {
     const auto* config = reg->TryGet<GameConfig>();
-    const int defW = config ? config->windowWidth : Constants::kDefaultWindowWidth;
-    const int defH = config ? config->windowHeight : Constants::kDefaultWindowHeight;
+    const int defW =
+        (config != nullptr && config->HasLoadedConfig()) ? config->GetDefaultWidth() : Constants::kDefaultWindowWidth;
+    const int defH =
+        (config != nullptr && config->HasLoadedConfig()) ? config->GetDefaultHeight() : Constants::kDefaultWindowHeight;
     settings->ApplyToWindow(window, defW, defH);
   }
   if (auto* renderer = TryGetRenderer(ctx)) {
@@ -1580,6 +1683,11 @@ void BindWindowAndDisplay(sol::state& lua, LuaBindingContext& ctx) {
   lua.set_function("set_maximized", [&ctx](const bool enabled) { SetMaximizedState(ctx, enabled); });
   lua.set_function("get_window_size", [&ctx]() -> std::tuple<int, int> { return GetWindowSizeState(ctx); });
   lua.set_function("set_window_size", [&ctx](const int w, const int h) { SetWindowSizeState(ctx, w, h); });
+  lua.set_function("get_base_resolution", [&ctx]() -> std::tuple<int, int> { return GetBaseResolutionState(ctx); });
+  lua.set_function("get_logical_size", [&ctx]() -> std::tuple<int, int> { return GetLogicalSizeState(ctx); });
+  lua.set_function("get_display_size", [&ctx](const sol::optional<int>& displayIndex) -> std::tuple<int, int> {
+    return GetDisplaySizeState(ctx, displayIndex);
+  });
   lua.set_function("get_window_position", [&ctx]() -> std::tuple<int, int> { return GetWindowPositionState(ctx); });
   lua.set_function("set_window_position", [&ctx](const int x, const int y) { SetWindowPositionState(ctx, x, y); });
 

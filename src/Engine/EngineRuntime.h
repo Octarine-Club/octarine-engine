@@ -35,7 +35,7 @@ class EngineRuntime {
   bool SetWindowIcon(const void* pngData, size_t pngSize);
 
 #ifdef OCTARINE_WITH_IMGUI
-  // Stand up the ImGui context + SDL3/SDLRenderer3 backends and the docking/nav config flags.
+  // Stand up the ImGui context + SDL3/SDLRenderer3 backends and the nav config flags.
   // `iniPath` becomes io.IniFilename (must outlive the context). Fonts/style are the caller's
   // job afterwards (caller initializes font/style).
   void InitImGui(const char* iniPath);

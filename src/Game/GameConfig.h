@@ -36,6 +36,14 @@ class GameConfig {
   [[nodiscard]] std::string GetStartupScript() const;
   [[nodiscard]] std::optional<std::string> GetDefaultScaleMode() const;
   void SetDefaultScaleMode(const std::string& defaultScaleMode);
+  [[nodiscard]] int GetBaseWidth() const;
+  [[nodiscard]] int GetBaseHeight() const;
+  void SetBaseWidth(int baseWidth);
+  void SetBaseHeight(int baseHeight);
+  [[nodiscard]] float GetMinAspectRatio() const;
+  void SetMinAspectRatio(float minAspect);
+  [[nodiscard]] float GetMaxAspectRatio() const;
+  void SetMaxAspectRatio(float maxAspect);
   [[nodiscard]] int GetDefaultWidth() const;
   [[nodiscard]] int GetDefaultHeight() const;
 
@@ -128,6 +136,10 @@ class GameConfig {
   std::string game_title_;
   std::string startup_script_;
   std::optional<std::string> default_scaling_mode_;
-  int default_width_ = Constants::kDefaultWindowWidth;
-  int default_height_ = Constants::kDefaultWindowHeight;
+  int base_width_ = 0;
+  int base_height_ = 0;
+  int default_width_ = 0;
+  int default_height_ = 0;
+  float min_aspect_ratio_ = 0.0F;
+  float max_aspect_ratio_ = 0.0F;
 };

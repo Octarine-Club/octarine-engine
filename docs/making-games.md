@@ -121,8 +121,11 @@ script — organise the rest however suits your project.
 ```ini
 Title=My Awesome Game
 StartupScript=game.lua
+BaseResolutionWidth=1280
+BaseResolutionHeight=720
 DefaultWindowWidth=1280
 DefaultWindowHeight=720
+DefaultPresentationMode=expand  # 'expand', 'letterbox', 'integer_scale', or 'stretch'
 DefaultScalingMode=nearest      # 'nearest' for pixel art, 'linear' for smooth
 FpsTarget=60                    # frame-rate cap; 0 = uncapped (default 60)
 AngleUnit=degrees               # 'degrees' (default) or 'radians' for authored angles
