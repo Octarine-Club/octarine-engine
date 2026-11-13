@@ -688,6 +688,7 @@ OCTARINE_GAME_MODULE_DIR=/path/to/MyGame/native scripts/octarine-verify.sh --fas
 | [`docs/ui-layout.md`](ui-layout.md) | Procedural canvas/anchor UI layout and low-level `ui.*` helpers |
 | [`docs/ecs-components.md`](ecs-components.md) | Every component — all fields, types, and defaults |
 | [`docs/lua-scripting.md`](lua-scripting.md) | Full Lua scripting guide |
+| [`docs/input-and-controllers.md`](input-and-controllers.md) | Action binding (`set_bindings`), canonical gamepad buttons, analog sticks, triggers, and UI focus |
 | [`docs/scenes.md`](scenes.md) | Scene lifecycle, declarative vs. procedural forms |
 | [`docs/asset-pipeline.md`](asset-pipeline.md) | `.meta` sidecars, baking, atlases, audio normalisation |
 | [`docs/systems.md`](systems.md) | Built-in systems and the order they run |

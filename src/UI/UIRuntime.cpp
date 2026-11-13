@@ -32,6 +32,7 @@
 #include "General/Logger.h"
 #include "Lua/Bindings/TextLabelComponentLuaBinding.h"
 #include "Renderer/SpriteRenderCache.h"
+#include "Systems/UIButtonSystem.h"
 
 namespace {
 
@@ -942,6 +943,90 @@ void ApplyButtonSounds(const OxmlNode& node, const OssResolvedStyle& resolved, U
   btn.focusSound = std::move(focus);
 }
 
+void ApplyButtonInputAttrs(const OxmlNode& node, UIButtonComponent& btn) {
+  btn.key = node.GetAttr("key");
+  btn.controllerButton = node.GetAttr("gamepad", node.GetAttr("gamepad-button", node.GetAttr("controller-button")));
+  btn.action = node.GetAttr("action");
+}
+
+sol::protected_function MakeControllerItemCallback(const std::shared_ptr<UIViewInstance>& view,
+                                                   const std::string& methodName, const sol::table& scope,
+                                                   sol::state& lua) {
+  if (methodName.empty()) return sol::lua_nil;
+  std::weak_ptr<UIViewInstance> weakView = view;
+  return lua
+      .create_table_with("fn",
+                         [weakView, methodName, scope]() {
+                           if (auto v = weakView.lock()) {
+                             sol::object itemArg = LookupKeyInTable(scope, "item");
+                             if (itemArg == sol::lua_nil) {
+                               itemArg = LookupKeyInTable(scope, "__item");
+                             }
+                             v->InvokeController(methodName, itemArg);
+                           }
+                         })
+      .get<sol::protected_function>("fn");
+}
+
+void ApplyButtonFocusAttr(const std::shared_ptr<UIViewInstance>& view, const OxmlNode& node, UIButtonComponent& btn,
+                          const sol::table& scope, sol::state& lua) {
+  if (node.HasAttr("on-focus")) {
+    btn.focusFunction = MakeControllerItemCallback(view, node.GetAttr("on-focus"), scope, lua);
+  }
+}
+
+bool IsFocusableEntity(Registry* r, const Entity entity) {
+  if (!r || !r->IsAlive(entity) || !r->HasComponent<UIFocusComponent>(entity)) return false;
+  if (r->HasComponent<UIRectComponent>(entity) && !r->GetComponent<UIRectComponent>(entity).visible) return false;
+  const auto& foc = r->GetComponent<UIFocusComponent>(entity);
+  return foc.isFocusable && !foc.isDisabled && !foc.isInert;
+}
+
+bool SubtreeHasFocus(Registry* r, const Entity root) {
+  if (!r || !r->IsAlive(root)) return false;
+  std::vector<Entity> stack{root};
+  while (!stack.empty()) {
+    const Entity cur = stack.back();
+    stack.pop_back();
+    if (!r->IsAlive(cur)) continue;
+    if (r->HasComponent<UIFocusComponent>(cur) && r->GetComponent<UIFocusComponent>(cur).isFocused) {
+      return true;
+    }
+    const auto& children = r->GetChildren(cur);
+    stack.insert(stack.end(), children.begin(), children.end());
+  }
+  return false;
+}
+
+// Depth-first tree scan bounded by UI hierarchy depth.
+// NOLINTNEXTLINE(misc-no-recursion)
+std::optional<Entity> FindFirstFocusableInSubtree(Registry* r, const Entity root) {
+  if (!r || !r->IsAlive(root)) return std::nullopt;
+  if (r->HasComponent<UIRectComponent>(root) && !r->GetComponent<UIRectComponent>(root).visible) {
+    return std::nullopt;
+  }
+  if (IsFocusableEntity(r, root)) return root;
+  for (const Entity child : r->GetChildren(root)) {
+    if (const auto found = FindFirstFocusableInSubtree(r, child)) {
+      return found;
+    }
+  }
+  return std::nullopt;
+}
+
+void FocusEntitySafe(Registry* r, const Entity target, const bool fireFocusCallback = true) {
+  if (!r || !r->IsAlive(target)) return;
+  if (auto* btnSys = r->TryGet<UIButtonSystem>()) {
+    btnSys->SetFocus(target, fireFocusCallback);
+  } else if (r->HasComponent<UIFocusComponent>(target)) {
+    auto q = r->CreateQuery<UIFocusComponent>();
+    q->Update();
+    q->ForEach([target](const Entity e, UIFocusComponent& foc) {
+      foc.isFocused = (e == target && foc.isFocusable && !foc.isDisabled && !foc.isInert);
+    });
+  }
+}
+
 void ConfigureInteractiveFocus(Registry* reg, Entity entity, const OxmlNode& node, const OssResolvedStyle& resolved) {
   UIFocusComponent focus;
   if (reg->HasComponent<UIFocusComponent>(entity)) {
@@ -989,21 +1074,9 @@ void ConfigureButtonEntity(const std::shared_ptr<UIViewInstance>& view, Entity e
   const bool isDisabled = ParseBoolStr(node.GetAttr("disabled", resolved.Get("disabled", "false")), false);
   UIButtonComponent btn;
   btn.isActive = !isDisabled;
-  btn.key = node.GetAttr("key");
-
-  const std::string onClickMethod = node.GetAttr("on-click");
-  std::weak_ptr<UIViewInstance> weakView = view;
-  btn.clickFunction = lua.create_table_with("fn",
-                                            [weakView, onClickMethod, scope]() {
-                                              if (auto v = weakView.lock()) {
-                                                sol::object itemArg = LookupKeyInTable(scope, "item");
-                                                if (itemArg == sol::lua_nil) {
-                                                  itemArg = LookupKeyInTable(scope, "__item");
-                                                }
-                                                v->InvokeController(onClickMethod, itemArg);
-                                              }
-                                            })
-                          .get<sol::protected_function>("fn");
+  ApplyButtonInputAttrs(node, btn);
+  btn.clickFunction = MakeControllerItemCallback(view, node.GetAttr("on-click"), scope, lua);
+  ApplyButtonFocusAttr(view, node, btn, scope, lua);
 
   ApplyButtonSounds(node, resolved, btn);
   reg->AddComponent(entity, btn);
@@ -1137,6 +1210,7 @@ void ConfigureToggleEntity(const std::shared_ptr<UIViewInstance>& view, Entity e
 
   UIButtonComponent btn;
   btn.isActive = !isDisabled;
+  ApplyButtonInputAttrs(node, btn);
   std::weak_ptr<UIViewInstance> weakView = view;
   btn.clickFunction = lua.create_table_with("fn",
                                             [weakView, entity, bindPath, onChangeMethod]() {
@@ -1147,6 +1221,7 @@ void ConfigureToggleEntity(const std::shared_ptr<UIViewInstance>& view, Entity e
                           .get<sol::protected_function>("fn");
 
   ApplyButtonSounds(node, resolved, btn);
+  ApplyButtonFocusAttr(view, node, btn, scope, lua);
   reg->AddComponent(entity, btn);
   SetEntityDisabled(reg, entity, isDisabled);
 
@@ -1206,6 +1281,7 @@ void ConfigureRadioButtonEntity(const std::shared_ptr<UIViewInstance>& view, Ent
   const std::string onClickMethod = node.GetAttr("on-click");
   UIButtonComponent btn;
   btn.isActive = !isDisabled;
+  ApplyButtonInputAttrs(node, btn);
   std::weak_ptr<UIViewInstance> weakView = view;
   btn.clickFunction =
       lua.create_table_with("fn",
@@ -1217,6 +1293,7 @@ void ConfigureRadioButtonEntity(const std::shared_ptr<UIViewInstance>& view, Ent
           .get<sol::protected_function>("fn");
 
   ApplyButtonSounds(node, resolved, btn);
+  ApplyButtonFocusAttr(view, node, btn, scope, lua);
   reg->AddComponent(entity, btn);
   SetEntityDisabled(reg, entity, isDisabled);
 }
@@ -1335,8 +1412,19 @@ void ConfigureSliderEntity(const std::shared_ptr<UIViewInstance>& view, Entity e
                                               }
                                             })
                           .get<sol::protected_function>("fn");
+  btn.stepFunction = lua.create_table_with("fn",
+                                           [weakView, st](const float dir) {
+                                             if (auto v = weakView.lock()) {
+                                               const float stepAmt =
+                                                   st->step > 0.0f ? st->step : (st->maxVal - st->minVal) * 0.05f;
+                                               SetSliderValue(v, st, st->value + dir * stepAmt, true);
+                                             }
+                                           })
+                         .get<sol::protected_function>("fn");
 
+  ApplyButtonInputAttrs(node, btn);
   ApplyButtonSounds(node, resolved, btn);
+  ApplyButtonFocusAttr(view, node, btn, scope, lua);
   reg->AddComponent(entity, btn);
   ConfigureInteractiveFocus(reg, entity, node, resolved);
   SetEntityDisabled(reg, entity, isDisabled);
@@ -1745,6 +1833,32 @@ void ClearRepeaterSpawnedItems(const std::shared_ptr<UIViewInstance>& v, const s
   std::erase_if(v->changeCallbacks, [r](const auto& kv) { return !r->IsAlive(Entity(kv.first)); });
 }
 
+std::optional<std::size_t> FindFocusedRepeaterIndex(Registry* r, const std::vector<Entity>& spawned) {
+  for (std::size_t i = 0; i < spawned.size(); ++i) {
+    if (SubtreeHasFocus(r, spawned[i])) return i;
+  }
+  return std::nullopt;
+}
+
+void FinalizeRepeaterItems(Registry* r, const std::shared_ptr<UIViewInstance>& v,
+                           const std::shared_ptr<RepeaterRecord>& rec,
+                           const std::optional<std::size_t> prevFocusedIdx) {
+  for (const auto& fn : rec->itemRefreshFns) {
+    fn();
+  }
+  if (v->isInert || IsEntityInert(r, rec->parentEntity)) {
+    for (const Entity e : rec->spawnedEntities) {
+      SetSubtreeInert(r, e, true);
+    }
+  }
+  if (!prevFocusedIdx.has_value() || rec->spawnedEntities.empty()) return;
+  const std::size_t idx = std::min(*prevFocusedIdx, rec->spawnedEntities.size() - 1);
+  if (const auto focusTarget = FindFirstFocusableInSubtree(r, rec->spawnedEntities[idx])) {
+    // Suppress on-focus while restoring repeater selection so reactive rebuilds cannot re-trigger loops.
+    FocusEntitySafe(r, *focusTarget, false);
+  }
+}
+
 // Repeater rebuild instantiates child OXML trees which may contain nested repeaters.
 // NOLINTNEXTLINE(misc-no-recursion)
 void RebuildRepeaterItems(const std::shared_ptr<UIViewInstance>& v, const std::shared_ptr<RepeaterRecord>& rec,
@@ -1753,6 +1867,7 @@ void RebuildRepeaterItems(const std::shared_ptr<UIViewInstance>& v, const std::s
   Registry* r = v->runtime->GetRegistry();
   if (!r->IsAlive(rec->parentEntity)) return;
 
+  const std::optional<std::size_t> prevFocusedIdx = FindFocusedRepeaterIndex(r, rec->spawnedEntities);
   ClearRepeaterSpawnedItems(v, rec);
 
   sol::state& lua = *v->runtime->GetLua();
@@ -1778,14 +1893,7 @@ void RebuildRepeaterItems(const std::shared_ptr<UIViewInstance>& v, const std::s
     rec->spawnedEntities.push_back(spawned);
   }
   v->activeRefreshSink = prevSink;
-  for (const auto& fn : rec->itemRefreshFns) {
-    fn();
-  }
-  if (v->isInert || IsEntityInert(r, rec->parentEntity)) {
-    for (const Entity e : rec->spawnedEntities) {
-      SetSubtreeInert(r, e, true);
-    }
-  }
+  FinalizeRepeaterItems(r, v, rec, prevFocusedIdx);
 }
 
 // Repeater mounting delegates to RebuildRepeaterItems which recursively instantiates child nodes.
@@ -2032,26 +2140,18 @@ void ConfigureContainerEntity(const std::shared_ptr<UIViewInstance>& view, Entit
   if (node.tag == "RadioGroup") {
     currentRadioGroup = CreateRadioGroupState(view, node, scope, lua);
   }
-  if (node.HasAttr("on-click")) {
+  if (node.HasAttr("on-click") || node.HasAttr("on-focus")) {
     const bool isDisabled = ParseBoolStr(node.GetAttr("disabled", resolved.Get("disabled", "false")), false);
     UIButtonComponent btn;
     btn.isActive = !isDisabled;
-    btn.key = node.GetAttr("key");
-    const std::string onClickMethod = node.GetAttr("on-click");
-    std::weak_ptr<UIViewInstance> weakView = view;
-    btn.clickFunction = lua.create_table_with("fn",
-                                              [weakView, onClickMethod, scope]() {
-                                                if (auto v = weakView.lock()) {
-                                                  sol::object itemArg = LookupKeyInTable(scope, "item");
-                                                  if (itemArg == sol::lua_nil) {
-                                                    itemArg = LookupKeyInTable(scope, "__item");
-                                                  }
-                                                  v->InvokeController(onClickMethod, itemArg);
-                                                }
-                                              })
-                            .get<sol::protected_function>("fn");
+    ApplyButtonInputAttrs(node, btn);
+    if (node.HasAttr("on-click")) {
+      btn.clickFunction = MakeControllerItemCallback(view, node.GetAttr("on-click"), scope, lua);
+    }
+    ApplyButtonFocusAttr(view, node, btn, scope, lua);
     ApplyButtonSounds(node, resolved, btn);
     reg->AddComponent(entity, btn);
+    ConfigureInteractiveFocus(reg, entity, node, resolved);
     SetEntityDisabled(reg, entity, isDisabled);
   }
 }
@@ -2291,6 +2391,15 @@ void PopulateMountViewTable(const std::shared_ptr<UIViewInstance>& view) {
   vt.set_function("set_inert", [view](const sol::table&, const bool inert) { view->SetInert(inert); });
   vt.set_function("is_inert", [view](const sol::table&) -> bool { return view->isInert; });
   vt.set_function("is_mounted", [view](const sol::table&) -> bool { return view->IsCurrentlyMounted(); });
+  vt.set_function("focus_first", [view](const sol::table&) -> sol::optional<Entity> {
+    if (!view || !view->IsCurrentlyMounted()) return sol::nullopt;
+    Registry* r = view->runtime->GetRegistry();
+    if (const auto target = FindFirstFocusableInSubtree(r, view->rootEntity)) {
+      FocusEntitySafe(r, *target);
+      return *target;
+    }
+    return sol::nullopt;
+  });
   vt.set_function("unmount", [view](const sol::table&) { view->Unmount(); });
   vt.set_function("destroy", [view](const sol::table&) { view->Unmount(); });
 }

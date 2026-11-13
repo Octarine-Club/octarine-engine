@@ -9,6 +9,8 @@
 struct UIButtonComponent {
   sol::optional<sol::table> buttonTable;
   sol::protected_function clickFunction;
+  sol::protected_function focusFunction = sol::lua_nil;
+  sol::protected_function stepFunction = sol::lua_nil;
   std::string key;
   std::string controllerButton;
   std::string action;

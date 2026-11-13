@@ -311,6 +311,13 @@ void ApplySingleStyleProp(const std::string& k, const std::string& v, UIStylePat
     if (OssParser::ParseColor(v, c)) patch.SetBorder(c);
     return;
   }
+  if (k == "border-width" || k == "border-thickness") {
+    float bw = 0.0f;
+    if (OssParser::ParseFloat(v, bw)) {
+      patch.SetBorderWidth(static_cast<std::uint8_t>(std::clamp(std::round(bw), 0.0f, 255.0f)));
+    }
+    return;
+  }
   if (k == "color" || k == "text-color") {
     octarine::Color c{};
     if (OssParser::ParseColor(v, c)) patch.SetText(c);

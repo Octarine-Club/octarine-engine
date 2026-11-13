@@ -16,13 +16,18 @@
 #include "Components/UIStyleStateComponent.h"
 #include "Components/UIZIndexComponent.h"
 #include "ECS/Registry.h"
+#include "Engine/EngineContext.h"
 #include "EventBus/EventBus.h"
 #include "Events/AudioPlayEvent.h"
 #include "Events/KeyInputEvent.h"
 #include "Events/MouseInputEvent.h"
 #include "Events/MouseWheelEvent.h"
 #include "Game/GameConfig.h"
+#include "Lua/Bindings/InputSystemLuaBinding.h"
 #include "Lua/Bindings/TextLabelComponentLuaBinding.h"
+#include "Lua/Bindings/UIStyleStateComponentLuaBinding.h"
+#include "Lua/LuaBindingContext.h"
+#include "Lua/Modules/UIModuleLuaBinding.h"
 #include "Renderer/RenderKey.h"
 #include "Renderer/RenderQueue.h"
 #include "Systems/RenderTextSystem.h"
@@ -1535,6 +1540,429 @@ void TestCheckedHoverPressPseudoStatesAndControllerParenStrip() {
   lua.script("paren_view:unmount()");
 }
 
+void TestGamepadAndFocusNavigationFixes() {
+  std::cout << "[gamepad-focus] Spacebar non-trigger, Enter/South on bound focus, slider step, repeater focus\n";
+
+  Registry registry;
+  registry.Set<GameConfig>(GameConfig{});
+  registry.Set<RenderQueue>(RenderQueue(64));
+  auto& inputSys = registry.Set<InputSystem>(InputSystem());
+  auto eventBus = std::make_unique<EventBus>();
+  inputSys.SubscribeToEvents(eventBus, &registry);
+  auto& btnSys = registry.Set<UIButtonSystem>(UIButtonSystem());
+  btnSys.Init(&registry, eventBus);
+  registry.RegisterBulkSystem(UILayoutSystem());
+  registry.RegisterBulkSystem(RenderUIPrimitiveSystem());
+
+  sol::state lua;
+  lua.open_libraries(sol::lib::base, sol::lib::math, sol::lib::table, sol::lib::string);
+  UIRuntime uiRuntime(&lua, &registry, nullptr);
+  sol::table uiTbl = lua.create_table();
+  uiRuntime.InstallLuaFunctions(uiTbl);
+  lua["ui"] = uiTbl;
+  LuaSystemBinding<InputSystem>::bind(lua, inputSys);
+
+  lua.script(R"lua(
+    clicks_a = 0
+    clicks_b = 0
+    slider_val = 0.5
+    state = ui.observable({ items = { { id = "one" }, { id = "two" }, { id = "three" } } })
+    local ctrl = {
+      on_a = function(self) clicks_a = clicks_a + 1 end,
+      on_b = function(self) clicks_b = clicks_b + 1 end,
+      on_slider = function(self, v) slider_val = v end,
+      on_item = function(self, item) end,
+    }
+    gp_view = ui.mount([[
+      <OXML>
+        <Canvas width="800px" height="600px">
+          <Column gap="8px" padding="10px">
+            <Button ref="BtnA" width="120px" height="40px" text="A" key="return" on-click="on_a" />
+            <Button ref="BtnB" width="120px" height="40px" text="B" key="escape" controller-button="west" on-click="on_b" />
+            <Slider ref="VolSlider" width="200px" height="20px" min="0" max="1" step="0.1" value="0.5" on-change="on_slider" />
+            <Column ref="CardCol" width="120px" height="40px" focusable="false" on-click="on_a" />
+            <Row ref="List" gap="6px">
+              <Button each="item in items" width="80px" height="30px" text="{item.id}" on-click="on_item" />
+            </Row>
+          </Column>
+        </Canvas>
+      </OXML>
+    ]], { context = state, controller = ctrl })
+  )lua");
+
+  registry.Update(0.016f);
+
+  const Entity cardCol = lua["gp_view"]["refs"]["CardCol"]["entity"].get<Entity>();
+  Check(
+      registry.HasComponent<UIFocusComponent>(cardCol) && !registry.GetComponent<UIFocusComponent>(cardCol).isFocusable,
+      "<Column focusable='false' on-click='...'> honors focusable=false");
+
+  const Entity btnA = lua["gp_view"]["refs"]["BtnA"]["entity"].get<Entity>();
+  const Entity btnB = lua["gp_view"]["refs"]["BtnB"]["entity"].get<Entity>();
+  const Entity slider = lua["gp_view"]["refs"]["VolSlider"]["entity"].get<Entity>();
+  CheckEq(registry.GetComponent<UIButtonComponent>(btnB).controllerButton, std::string("west"),
+          "OXML controller-button attribute populates UIButtonComponent.controllerButton");
+
+  // Focusing BtnA and pressing Space must NOT trigger BtnA
+  btnSys.SetFocus(btnA);
+  eventBus->EmitEvent<KeyInputEvent>(SDLK_SPACE, SDL_KMOD_NONE, true);
+  CheckEq(lua.get<int>("clicks_a"), 0, "Spacebar does NOT trigger focused button via focus navigation");
+
+  // Focusing BtnB (which has key="escape") and pressing Enter or Gamepad South triggers BtnB, not BtnA!
+  btnSys.SetFocus(btnB);
+  eventBus->EmitEvent<KeyInputEvent>(SDLK_RETURN, SDL_KMOD_NONE, true);
+  CheckEq(lua.get<int>("clicks_b"), 1, "Enter triggers focused BtnB even when BtnB has key='escape'");
+  CheckEq(lua.get<int>("clicks_a"), 0, "Enter does NOT fall through to BtnA when BtnB is focused");
+
+  eventBus->EmitEvent<GamepadButtonEvent>(0, SDL_GAMEPAD_BUTTON_SOUTH, "south", true);
+  CheckEq(lua.get<int>("clicks_b"), 2, "Gamepad South triggers focused BtnB");
+
+  // Focusing slider and pressing Right/Left steps value
+  btnSys.SetFocus(slider);
+  eventBus->EmitEvent<KeyInputEvent>(SDLK_RIGHT, SDL_KMOD_NONE, true);
+  Check(std::abs(lua.get<float>("slider_val") - 0.6f) < 0.01f, "Right arrow steps focused Slider up by step");
+  eventBus->EmitEvent<GamepadButtonEvent>(0, SDL_GAMEPAD_BUTTON_DPAD_LEFT, "dpad_left", true);
+  Check(std::abs(lua.get<float>("slider_val") - 0.5f) < 0.01f, "D-Pad Left steps focused Slider down by step");
+
+  // Repeater focus preservation across rebuild
+  const Entity listEnt = lua["gp_view"]["refs"]["List"]["entity"].get<Entity>();
+  const auto beforeChildren = registry.GetChildren(listEnt);
+  CheckEq(beforeChildren.size(), static_cast<size_t>(3), "Repeater spawned 3 buttons");
+  if (beforeChildren.size() >= 3) {
+    btnSys.SetFocus(beforeChildren[1]);
+    Check(registry.GetComponent<UIFocusComponent>(beforeChildren[1]).isFocused, "Repeater item #2 focused");
+
+    lua.script("state.items = { { id = 'alpha' }, { id = 'beta' }, { id = 'gamma' } }");
+    registry.Update(0.016f);
+    const auto afterChildren = registry.GetChildren(listEnt);
+    CheckEq(afterChildren.size(), static_cast<size_t>(3), "Repeater respawned 3 buttons on refresh");
+    if (afterChildren.size() >= 3) {
+      Check(registry.GetComponent<UIFocusComponent>(afterChildren[1]).isFocused,
+            "Repeater rebuild preserves focus on item index #2");
+    }
+  }
+
+  // view:focus_first() focuses BtnA
+  btnSys.SetFocus(Entity(static_cast<EcsId>(-1)));
+  lua.script("gp_view:focus_first()");
+  Check(registry.GetComponent<UIFocusComponent>(btnA).isFocused, "view:focus_first() focuses first focusable child");
+
+  lua.script("gp_view:unmount()");
+}
+
+void TestOxmlGamepadOnFocusBorderWidthAndHotplug() {
+  std::cout << "[gamepad-focus-v2] gamepad attr, on-focus, :focus border-width, hotplug & South focus, inert scroll\n";
+
+  Registry registry;
+  GameConfig cfg{};
+  cfg.windowWidth = 800;
+  cfg.windowHeight = 600;
+  registry.Set<GameConfig>(cfg);
+  ViewportInfo vp{};
+  vp.isFocused = true;
+  vp.isHovered = true;
+  vp.width = 800.0f;
+  vp.height = 600.0f;
+  registry.Set<ViewportInfo>(vp);
+  registry.Set<RenderQueue>(RenderQueue(128));
+  auto& inputSys = registry.Set<InputSystem>(InputSystem());
+  auto eventBus = std::make_unique<EventBus>();
+  inputSys.SubscribeToEvents(eventBus, &registry);
+  auto& btnSys = registry.Set<UIButtonSystem>(UIButtonSystem());
+  btnSys.Init(&registry, eventBus);
+  registry.RegisterBulkSystem(UILayoutSystem());
+  registry.RegisterBulkSystem(RenderUIPrimitiveSystem());
+
+  sol::state lua;
+  lua.open_libraries(sol::lib::base, sol::lib::math, sol::lib::table, sol::lib::string);
+  UIRuntime uiRuntime(&lua, &registry, nullptr);
+  sol::table uiTbl = lua.create_table();
+  uiRuntime.InstallLuaFunctions(uiTbl);
+  lua["ui"] = uiTbl;
+  LuaSystemBinding<InputSystem>::bind(lua, inputSys);
+
+  lua.script(R"lua(
+    focus_log = {}
+    click_focus_before = ""
+    west_clicks = 0
+    tile_vm = ui.observable({
+      tiles = { { id = "alpha" }, { id = "beta" } },
+      focused_id = "",
+    })
+    local ctrl = {
+      on_tile_focus = function(self, item)
+        table.insert(focus_log, item.id)
+        tile_vm.focused_id = item.id
+      end,
+      on_tile_click = function(self, item)
+        click_focus_before = tile_vm.focused_id
+      end,
+      on_west = function(self) west_clicks = west_clicks + 1 end,
+    }
+    v2_view = ui.mount([[
+      <OXML>
+        <Canvas width="800px" height="600px">
+          <Column gap="8px" padding="10px">
+            <Button ref="ThickBtn" class="thick-focus" width="120px" height="40px"
+                    text="Thick" gamepad="west" on-click="on_west" />
+            <Button ref="AutoBtn" class="auto-focus" width="120px" height="40px" text="Auto" />
+            <Row ref="TileRow" gap="6px">
+              <Button each="item in tiles" width="80px" height="30px" text="{item.id}"
+                      on-focus="on_tile_focus" on-click="on_tile_click" />
+            </Row>
+            <ScrollView ref="ActiveScroll" width="200px" height="80px">
+              <Column width="200px" height="300px">
+                <Button ref="InScrollBtn" width="180px" height="40px" text="Inside" />
+              </Column>
+            </ScrollView>
+          </Column>
+        </Canvas>
+      </OXML>
+    ]], {
+      context = tile_vm,
+      controller = ctrl,
+      styles = {
+        [[
+          .thick-focus { border-color: #404040; border-width: 1px; }
+          .thick-focus:focus { border-color: #FFD166; border-width: 4px; }
+          .auto-focus { border-color: #404040; border-width: 1px; }
+          .auto-focus:focus { border-color: #50E3C2; }
+        ]]
+      }
+    })
+
+    inert_bg = ui.mount([[
+      <OXML>
+        <Canvas width="800px" height="600px">
+          <ScrollView ref="InertScroll" width="200px" height="80px">
+            <Column width="200px" height="300px" />
+          </ScrollView>
+        </Canvas>
+      </OXML>
+    ]])
+    inert_bg:set_inert(true)
+  )lua");
+
+  registry.Update(0.016f);
+
+  const Entity thickBtn = lua["v2_view"]["refs"]["ThickBtn"]["entity"].get<Entity>();
+  const Entity autoBtn = lua["v2_view"]["refs"]["AutoBtn"]["entity"].get<Entity>();
+  const Entity activeScroll = lua["v2_view"]["refs"]["ActiveScroll"]["entity"].get<Entity>();
+  const Entity inertScroll = lua["inert_bg"]["refs"]["InertScroll"]["entity"].get<Entity>();
+  const Entity inScrollBtn = lua["v2_view"]["refs"]["InScrollBtn"]["entity"].get<Entity>();
+  CheckEq(registry.GetComponent<UIButtonComponent>(thickBtn).controllerButton, std::string("west"),
+          "OXML gamepad='west' populates controllerButton");
+
+  // Unbound South press when nothing is focused focuses first focusable button (ThickBtn)
+  eventBus->EmitEvent<GamepadButtonEvent>(0, SDL_GAMEPAD_BUTTON_SOUTH, "south", true);
+  Check(registry.GetComponent<UIFocusComponent>(thickBtn).isFocused,
+        "Pressing South when unfocused focuses first focusable button");
+  CheckEq(lua.get<int>("west_clicks"), 0, "Initial South focus recovery does not immediately activate button");
+
+  // Hotplug auto-focus when nothing is focused
+  btnSys.SetFocus(Entity(static_cast<EcsId>(-1)));
+  btnSys.OnGamepadConnected();
+  Check(registry.GetComponent<UIFocusComponent>(thickBtn).isFocused,
+        "OnGamepadConnected auto-focuses first focusable button when unfocused");
+
+  // Gamepad shortcut using canonical 'west' matches gamepad="west"
+  eventBus->EmitEvent<GamepadButtonEvent>(0, SDL_GAMEPAD_BUTTON_WEST, "west", true);
+  CheckEq(lua.get<int>("west_clicks"), 1, "gamepad='west' triggers on canonical GamepadButtonEvent");
+
+  // Verify :focus border-width explicit (4px) vs fallback (2px)
+  const auto& thickStyle = registry.GetComponent<UIStyleStateComponent>(thickBtn);
+  Check(thickStyle.focus.HasBorderWidth() && thickStyle.focus.borderWidth == 4,
+        ":focus border-width: 4px parsed into UIStylePatch");
+  const auto thickResolved =
+      octarine::ui::ResolveVisualState(&registry, thickBtn, {0, 0, 0, 255}, {0, 0, 0, 255}, {255, 255, 255, 255});
+  CheckEq(thickResolved.borderWidth, 4.0f, "Resolved borderWidth honors explicit :focus border-width");
+
+  btnSys.SetFocus(autoBtn);
+  const auto& autoStyle = registry.GetComponent<UIStyleStateComponent>(autoBtn);
+  Check(!autoStyle.focus.HasBorderWidth() && autoStyle.focus.HasBorder(),
+        ":focus without border-width keeps HasBorderWidth() == false");
+
+  // Navigate to repeater tiles via focus: on-focus passes repeater item (which mutates observable & rebuilds repeater)
+  const Entity tileRow = lua["v2_view"]["refs"]["TileRow"]["entity"].get<Entity>();
+  const auto tilesBefore = registry.GetChildren(tileRow);
+  CheckEq(tilesBefore.size(), static_cast<size_t>(2), "TileRow spawned 2 tile buttons");
+  btnSys.SetFocus(tilesBefore[0]);
+  CheckEq(lua["focus_log"][1].get<std::string>(), std::string("alpha"),
+          "Keyboard/gamepad focus fires on-focus with repeater item");
+
+  // Repeater rebuilt on observable mutation; re-fetch live children and verify focus preserved without loop
+  registry.Update(0.016f);
+  const auto tiles = registry.GetChildren(tileRow);
+  CheckEq(tiles.size(), static_cast<size_t>(2), "TileRow preserves 2 live children after on-focus refresh");
+  Check(registry.GetComponent<UIFocusComponent>(tiles[0]).isFocused,
+        "Repeater rebuild preserves focus on tiles[0] after on-focus refresh");
+
+  // Mouse click on unfocused tiles[1] does NOT fire on-focus before on-click (click_focus_before stays 'alpha')
+  const auto& t2Rect = registry.GetComponent<UIRectComponent>(tiles[1]);
+  SDL_MouseButtonEvent mdown{};
+  mdown.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+  mdown.button = SDL_BUTTON_LEFT;
+  mdown.x = t2Rect.Center().x;
+  mdown.y = t2Rect.Center().y;
+  eventBus->EmitEvent<MouseInputEvent>(mdown);
+  CheckEq(lua.get<std::string>("click_focus_before"), std::string("alpha"),
+          "Mouse press suppresses on-focus before on-click so locked tile inspects instead of double-activating");
+
+  // Repeater rebuild restores focus WITHOUT re-invoking on-focus loop
+  const size_t focusCountBefore = lua.get<sol::table>("focus_log").size();
+  lua.script("tile_vm.tiles = { { id = 'alpha' }, { id = 'beta' } }");
+  registry.Update(0.016f);
+  CheckEq(lua.get<sol::table>("focus_log").size(), focusCountBefore,
+          "Repeater rebuild preserves focus without re-triggering on-focus");
+
+  // Right-stick scroll prefers focused ancestor ScrollView and ignores inert background ScrollView
+  btnSys.SetFocus(inScrollBtn);
+  inputSys.SetGamepadAxis(SDL_GAMEPAD_AXIS_RIGHTY, 1.0f);
+  btnSys.TickAnalogNavigation(0.5f);
+  Check(registry.GetComponent<UIScrollComponent>(activeScroll).scrollY > 0.0f,
+        "Right-stick scrolls ancestor ScrollView of focused widget");
+  CheckEq(registry.GetComponent<UIScrollComponent>(inertScroll).scrollY, 0.0f,
+          "Inert background ScrollView is NOT scrolled by right-stick");
+
+  lua.script("v2_view:unmount(); inert_bg:unmount()");
+  registry.ValidateInvariants();
+}
+
+class TestUiBindingContext final : public LuaBindingContext {
+ public:
+  explicit TestUiBindingContext(Registry* reg) : registry_(reg) {}
+  [[nodiscard]] Registry* GetRegistry() const override { return registry_; }
+  [[nodiscard]] SDL_Renderer* GetRenderer() const override { return nullptr; }
+  [[nodiscard]] EngineContext& GetContext() override { return ctx_; }
+  void LoadScene(const std::string& /*scenePath*/) override {}
+  void ReloadScene() override {}
+  void StopScene() override {}
+  void TrackSceneAssets(const std::vector<std::string>& /*assetIds*/) override {}
+  [[nodiscard]] bool IsBakeMode() const override { return false; }
+  void RecordBakeValidationFailures(int /*failures*/) override {}
+  [[nodiscard]] std::string GetProjectPath() const override { return {}; }
+  std::string GetSaveDataPath() override { return {}; }
+  void RequestQuit() override {}
+
+ private:
+  Registry* registry_ = nullptr;
+  EngineContext ctx_{};
+};
+
+void TestLuaFocusApiAnalogSliderAndScrollFallback() {
+  // 1. ui.focus / ui.focused fallback path (no UIButtonSystem registered in Registry)
+  {
+    Registry fallbackReg;
+    TestUiBindingContext bindCtx(&fallbackReg);
+    sol::state lua;
+    lua.open_libraries(sol::lib::base);
+    LuaModuleBinding<UIModule>::install(lua, bindCtx);
+    const auto res = lua.safe_script(R"(
+      assert(ui.get_focused() == nil, "ui.get_focused() returns nil when nothing is focused")
+      ui.focus(nil)
+    )");
+    Check(res.valid(), "ui.get_focused() and ui.focus(nil) work without UIButtonSystem");
+
+    const Entity e1 = fallbackReg.CreateEntity();
+    fallbackReg.AddComponent(e1, UIRectComponent{});
+    UIFocusComponent f1;
+    f1.isFocusable = true;
+    fallbackReg.AddComponent(e1, f1);
+    lua["e1"] = e1;
+    const auto res2 = lua.safe_script(R"(
+      ui.focus(e1)
+      assert(ui.get_focused() == e1, "ui.get_focused() returns focused entity via fallback")
+      ui.focus(nil)
+      assert(ui.get_focused() == nil, "ui.focus(nil) clears focus via fallback")
+    )");
+    Check(res2.valid(), "ui.focus(entity) and ui.focus(nil) fallback work");
+
+    // Exercise UIStyleStateComponentLuaBinding border_width parsing
+    const sol::object styleTbl = lua.safe_script("return { focus = { border_width = 3 } }").get<sol::object>();
+    const auto parsedStyle = LuaBinding<UIStyleStateComponent>::fromLua(styleTbl);
+    Check(parsedStyle.focus.HasBorderWidth() && parsedStyle.focus.borderWidth == 3,
+          "LuaBinding<UIStyleStateComponent>::fromLua parses border_width");
+  }
+
+  // 2. ui.focus / ui.focused with UIButtonSystem + analog left-stick slider + right-stick scroll fallback
+  auto eventBus = std::make_unique<EventBus>();
+  Registry registry;
+  GameConfig cfg;
+  cfg.windowWidth = 800;
+  cfg.windowHeight = 600;
+  registry.Set<GameConfig>(cfg);
+  registry.Set<ViewportInfo>(ViewportInfo{.x = 0.0f, .y = 0.0f, .width = 800.0f, .height = 600.0f, .isFocused = true});
+  auto& inputSys = registry.Set<InputSystem>(InputSystem{});
+  inputSys.SubscribeToEvents(eventBus, &registry);
+  auto& btnSys = registry.Set<UIButtonSystem>(UIButtonSystem{});
+  btnSys.Init(&registry, eventBus);
+  registry.RegisterBulkSystem(UILayoutSystem());
+
+  sol::state lua;
+  lua.open_libraries(sol::lib::base, sol::lib::math, sol::lib::table, sol::lib::string);
+  TestUiBindingContext bindCtx(&registry);
+  LuaModuleBinding<UIModule>::install(lua, bindCtx);
+  LuaSystemBinding<InputSystem>::bind(lua, inputSys);
+
+  lua.script(R"(
+    vm = ui.observable({ vol = 50 })
+    view = ui.mount([[
+      <OXML>
+        <Canvas width="800px" height="600px">
+          <Column width="400px" height="500px" gap="12">
+            <Slider ref="VolSlider" min="0" max="100" step="10" bind-value="vol" width="200px" height="24px" />
+            <Button ref="DoneBtn" text="Done" width="120px" height="36px" />
+            <ScrollView ref="FallbackScroll" width="200px" height="100px" scroll="vertical">
+              <Column width="200px" height="300px">
+                <Label text="Row 1" height="40px" />
+              </Column>
+            </ScrollView>
+          </Column>
+        </Canvas>
+      </OXML>
+    ]], { context = vm })
+  )");
+
+  registry.Update(0.016f);
+
+  const Entity sliderEnt = lua["view"]["refs"]["VolSlider"]["entity"].get<Entity>();
+  const Entity doneBtn = lua["view"]["refs"]["DoneBtn"]["entity"].get<Entity>();
+  const Entity fallbackScroll = lua["view"]["refs"]["FallbackScroll"]["entity"].get<Entity>();
+  lua["slider_ent"] = sliderEnt;
+
+  const auto focusRes = lua.safe_script(R"(
+    assert(ui.get_focused() == nil)
+    ui.focus(slider_ent)
+    assert(ui.get_focused() == slider_ent, "ui.get_focused() returns slider via UIButtonSystem")
+  )");
+  Check(focusRes.valid(), "ui.focus / ui.get_focused work with UIButtonSystem");
+
+  // Analog left-stick right adjusts focused slider + repeats when held
+  inputSys.SetGamepadAxis(SDL_GAMEPAD_AXIS_LEFTX, 1.0f);
+  btnSys.TickAnalogNavigation(0.10f);  // initial step: 50 -> 60
+  btnSys.TickAnalogNavigation(0.35f);  // repeat step: 60 -> 70
+  CheckEq(lua["vm"]["vol"].get<int>(), 70, "Left-stick X adjusts focused slider with initial + repeat step");
+
+  // Left-stick down navigates focus away from slider to DoneBtn
+  inputSys.SetGamepadAxis(SDL_GAMEPAD_AXIS_LEFTX, 0.0f);
+  inputSys.SetGamepadAxis(SDL_GAMEPAD_AXIS_LEFTY, 1.0f);
+  btnSys.TickAnalogNavigation(0.05f);
+  Check(registry.GetComponent<UIFocusComponent>(doneBtn).isFocused,
+        "Left-stick Y navigates focus from slider to DoneBtn");
+
+  // Clear focus and verify right-stick scroll falls back to top interactive ScrollView
+  lua.script("ui.focus(nil)");
+  Check(!registry.GetComponent<UIFocusComponent>(doneBtn).isFocused, "ui.focus(nil) clears UIButtonSystem focus");
+  inputSys.SetGamepadAxis(SDL_GAMEPAD_AXIS_LEFTY, 0.0f);
+  inputSys.SetGamepadAxis(SDL_GAMEPAD_AXIS_RIGHTY, 1.0f);
+  btnSys.TickAnalogNavigation(0.5f);
+  Check(registry.GetComponent<UIScrollComponent>(fallbackScroll).scrollY > 0.0f,
+        "Right-stick scrolls top interactive ScrollView when nothing is focused");
+
+  lua.script("view:unmount()");
+  registry.ValidateInvariants();
+}
+
 }  // namespace
 
 int main() {
@@ -1555,5 +1983,8 @@ int main() {
   TestPointerEventsStopBlocksHoverClickAndWheel();
   TestViewSetInertSuspendsInputAndPreservesVisuals();
   TestCheckedHoverPressPseudoStatesAndControllerParenStrip();
+  TestGamepadAndFocusNavigationFixes();
+  TestOxmlGamepadOnFocusBorderWidthAndHotplug();
+  TestLuaFocusApiAnalogSliderAndScrollFallback();
   return octarine::test::ReportSummary("UILayoutTest");
 }

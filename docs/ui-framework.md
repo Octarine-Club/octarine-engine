@@ -246,7 +246,7 @@ Unlike manual multi-entity setups that require separate background and text enti
 | `<Box>` | Non-flex container or spacer with explicit sizing. | `width`, `height`, `anchor`, `pointer-events="stop\|none"` |
 | `<Label>` | Text display (`TextLabelComponent`). Supports `{...}` interpolation, word wrapping (`wrap="true"`), drop shadows, and outlines. | `text`, `font`, `color`, `text-align`, `text-valign`, `wrap="true\|false\|<px>"`, `max-width`, `outline`, `outline-width`, `outline-color`, `shadow-color`, `shadow-offset` |
 | `<Image>` | Texture / atlas region (`SpriteComponent`). Resolves full texture dimensions when `srcRect` is empty. Supports 9-slice borders. | `src="asset_id"`, `slice="l,t,r,b"` (or `"all"`), `color` |
-| `<Button>` | Interactive button (`UIButtonComponent` + background + label + focus/style state). | `text`, `on-click`, `key`, `gamepad`, `action`, `sound-hover`, `sound-click`, `sound-focus`, `disabled`, `focusable` |
+| `<Button>` | Interactive button (`UIButtonComponent` + background + label + focus/style state). | `text`, `on-click`, `on-focus`, `key`, `gamepad`, `action`, `sound-hover`, `sound-click`, `sound-focus`, `disabled`, `focusable` |
 | `<ProgressBar>` | Fill bar (`SquarePrimitiveComponent.fillRatio`). | `value="{0..1}"`, `fill-color`, `background-color` |
 | `<Toggle>` | Boolean checkbox / switch with `:checked` state and two-way binding. | `checked="{bool}"`, `bind-value="field"`, `on-change="fn"`, `sound-hover`, `sound-click`, `text` |
 | `<RadioGroup>` | Mutual-exclusion container for `<RadioButton>` children. | `value="{val}"`, `bind-value="field"`, `on-change="fn"`, `direction="row\|column"` |
@@ -337,12 +337,13 @@ Interactive widgets dispatch events to functions on the `controller` table passe
 
 | Attribute | Fired By | Controller Signature |
 |---|---|---|
-| `on-click="fn"` | `<Button>`, `<Toggle>`, `<RadioButton>` | `function(controller, entity)` |
+| `on-click="fn"` | `<Button>`, `<Toggle>`, `<RadioButton>` | `function(controller, item_or_entity)` |
+| `on-focus="fn"` | `<Button>`, `<Toggle>`, `<RadioButton>`, `<Slider>`, interactive containers | `function(controller, item_or_nil)` |
 | `on-change="fn"` | `<Toggle>`, `<RadioGroup>`, `<Slider>` | `function(controller, newValue, entity)` |
 
-Every interactive element also supports direct keyboard, gamepad, and input-action shortcuts without extra Lua boilerplate:
+Every interactive element also supports direct keyboard, gamepad, and input-action shortcuts without extra Lua boilerplate (see [`docs/input-and-controllers.md`](input-and-controllers.md)):
 - `key="return, space"` — Comma-separated keyboard key names.
-- `gamepad="a, south"` — Comma-separated controller button names.
+- `gamepad="south"` — Comma-separated canonical controller button names (`south`, `east`, `west`, `north`, `lb`, `rb`, etc.; Xbox/PS/SDL aliases and `gamepad-button`/`controller-button` attributes also accepted).
 - `action="ui_confirm"` — Input action name from your project configuration.
 
 #### Declarative Audio Feedback Hooks (`sound-*`)

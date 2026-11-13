@@ -32,6 +32,7 @@
 #include "Systems/DrawColliderSystem.h"
 #include "Systems/InputSystem.h"
 #include "Systems/TilemapSystem.h"
+#include "Systems/UIButtonSystem.h"
 #include "UI/UIRuntime.h"
 
 #ifndef OCTARINE_SHIPPED
@@ -190,8 +191,12 @@ void FrameLoop::Begin() {
   }
   int count = 0;
   if (SDL_JoystickID* gamepads = SDL_GetGamepads(&count)) {
+    auto* inputSys = registry_->TryGet<InputSystem>();
     for (int i = 0; i < count; ++i) {
-      SDL_OpenGamepad(gamepads[i]);
+      SDL_Gamepad* pad = SDL_OpenGamepad(gamepads[i]);
+      if (inputSys != nullptr) {
+        inputSys->OnGamepadAdded(gamepads[i], pad);
+      }
     }
     SDL_free(gamepads);
   }
@@ -249,23 +254,12 @@ void FrameLoop::ProcessInput() {
         event_bus_->EmitEvent<MouseWheelEvent>(event.wheel.x, event.wheel.y);
         break;
       }
-      case SDL_EVENT_GAMEPAD_ADDED: {
-        SDL_OpenGamepad(event.gdevice.which);
-        break;
-      }
-      case SDL_EVENT_GAMEPAD_REMOVED: {
-        if (SDL_Gamepad* gamepad = SDL_GetGamepadFromID(event.gdevice.which)) {
-          SDL_CloseGamepad(gamepad);
-        }
-        break;
-      }
+      case SDL_EVENT_GAMEPAD_ADDED:
+      case SDL_EVENT_GAMEPAD_REMOVED:
+      case SDL_EVENT_GAMEPAD_AXIS_MOTION:
       case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
       case SDL_EVENT_GAMEPAD_BUTTON_UP: {
-        const auto btn = static_cast<SDL_GamepadButton>(event.gbutton.button);
-        const char* rawName = SDL_GetGamepadStringForButton(btn);
-        std::string name = rawName ? rawName : "";
-        GamepadButtonEvent gamepadEvent(event.gbutton.which, btn, std::move(name), event.gbutton.down);
-        event_bus_->EmitEvent<GamepadButtonEvent>(gamepadEvent);
+        HandleGamepadEvent(event);
         break;
       }
       case SDL_EVENT_WINDOW_MOVED:
@@ -283,6 +277,50 @@ void FrameLoop::ProcessInput() {
         break;
     }
   }
+}
+
+namespace {
+
+void HandleGamepadAddedEvent(const SDL_JoystickID id, Registry* registry, InputSystem* inputSys) {
+  SDL_Gamepad* pad = SDL_OpenGamepad(id);
+  if (inputSys) inputSys->OnGamepadAdded(id, pad);
+  if (auto* uiButtons = registry->TryGet<UIButtonSystem>()) uiButtons->OnGamepadConnected();
+}
+
+void HandleGamepadRemovedEvent(const SDL_JoystickID id, InputSystem* inputSys) {
+  if (inputSys) inputSys->OnGamepadRemoved(id);
+  if (SDL_Gamepad* gamepad = SDL_GetGamepadFromID(id)) SDL_CloseGamepad(gamepad);
+}
+
+void HandleGamepadAxisMotionEvent(const SDL_GamepadAxisEvent& gaxis, InputSystem* inputSys) {
+  if (!inputSys) return;
+  const float denom = (gaxis.value < 0) ? 32768.0f : 32767.0f;
+  const float norm = static_cast<float>(gaxis.value) / denom;
+  if (std::abs(norm) > 0.25f) inputSys->NoteGamepadActivity(gaxis.which);
+}
+
+}  // namespace
+
+void FrameLoop::HandleGamepadEvent(const SDL_Event& event) {
+  auto* inputSys = registry_->TryGet<InputSystem>();
+  switch (event.type) {
+    case SDL_EVENT_GAMEPAD_ADDED:
+      HandleGamepadAddedEvent(event.gdevice.which, registry_, inputSys);
+      return;
+    case SDL_EVENT_GAMEPAD_REMOVED:
+      HandleGamepadRemovedEvent(event.gdevice.which, inputSys);
+      return;
+    case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+      HandleGamepadAxisMotionEvent(event.gaxis, inputSys);
+      return;
+    default:
+      break;
+  }
+  const auto btn = static_cast<SDL_GamepadButton>(event.gbutton.button);
+  const char* rawName = SDL_GetGamepadStringForButton(btn);
+  std::string name = rawName ? InputSystem::CanonicalizeGamepadButton(rawName) : "";
+  GamepadButtonEvent gamepadEvent(event.gbutton.which, btn, std::move(name), event.gbutton.down);
+  event_bus_->EmitEvent<GamepadButtonEvent>(gamepadEvent);
 }
 
 void FrameLoop::HandleWindowEvent(const SDL_Event& event) {
@@ -411,6 +449,9 @@ int FrameLoop::Update(const float deltaTime) {
   auto* inputSystem = registry_->TryGet<InputSystem>();
   if (inputSystem) {
     inputSystem->BeginFrame();
+  }
+  if (auto* uiButtons = registry_->TryGet<UIButtonSystem>()) {
+    uiButtons->TickAnalogNavigation(deltaTime);
   }
 
   PollHotReload(options, deltaTime);
