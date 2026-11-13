@@ -159,44 +159,49 @@ These globals are shorthand for the most common reads and writes:
 
 ## 5. Input
 
-The `input` table handles action binding, polling, and event callbacks.
+The `input` table handles keyboard, mouse, and gamepad action binding, polling, analog sticks, and event callbacks. For the complete gamepad, trigger, and UI focus guide, see [`docs/input-and-controllers.md`](input-and-controllers.md).
 
 ### Binding actions
 
-Bind named logical actions to physical keys once at startup (typically in
-`game.lua`). Bindings persist across the session unless explicitly removed.
+Declare your action map with `input.set_bindings(tbl, opts?)` or add individual bindings with `input.bind_key` / `input.bind_gamepad`. Action bindings **persist across scenes** (`load_scene` / `reload_scene`); only transient key states and `input.on_*` callbacks are cleared on scene swaps (see [`docs/scenes.md`](scenes.md)).
 
 ```lua
-input.bind("move_up",    "up")
-input.bind("move_up",    "w")       -- multiple keys per action
-input.bind("move_down",  "down")
-input.bind("move_down",  "s")
-input.bind("move_left",  "left")
-input.bind("move_left",  "a")
-input.bind("move_right", "right")
-input.bind("move_right", "d")
-input.bind("fire",       "space")
+input.set_bindings({
+    move_up    = { keys = { "w", "up" },    gamepad = "dpad_up" },
+    move_down  = { keys = { "s", "down" },  gamepad = "dpad_down" },
+    move_left  = { keys = { "a", "left" },  gamepad = "dpad_left" },
+    move_right = { keys = { "d", "right" }, gamepad = "dpad_right" },
+    fire       = { keys = { "space" },      gamepad = { "south", "rt" } },
+})
 
-input.unbind("fire", "space")       -- remove one key
-input.unbind("fire")                -- remove all keys for the action
+-- Merge changes without clearing unrelated actions:
+input.set_bindings({ fire = { keys = "f" } }, { merge = true })
+
+-- Or inspect / incrementally edit single device bindings:
+local bindings = input.get_bindings() -- { [action] = { keys = {...}, gamepad = {...} } }
+input.bind_key("fire", "j")
+input.unbind_key("fire", "j")
+input.bind_gamepad("fire", "rb")
+input.unbind_gamepad("fire")          -- clears gamepad buttons for "fire", keeps keys
 ```
 
-> **Note:** action bindings and callbacks are cleared on `load_scene` /
-> `reload_scene`. Re-install them in the new scene's startup or use a guard for
-> idempotency. See [`docs/scenes.md`](scenes.md) for the full scene lifecycle.
+Gamepad button names follow positional canonical names (`south`, `east`, `west`, `north`, `lb`, `rb`, `lt`, `rt`, `ls`, `rs`, `dpad_up`..`dpad_right`, `start`, `back`, `guide`); Xbox, PlayStation, and SDL aliases are accepted and normalized automatically.
 
 ### Polling
 
 ```lua
--- Actions (fires for any key bound to the action)
+-- Actions (fires for any key or gamepad button bound to the action)
 input.is_action_down("fire")        -- held this frame
 input.is_action_pressed("fire")     -- just went down this frame
 input.is_action_released("fire")    -- just came up this frame
 
--- Raw keys
+-- Raw keys & gamepad
 input.is_key_down("escape")
 input.is_key_pressed("f5")
-input.is_key_released("space")
+input.is_gamepad_connected()
+input.is_gamepad_pressed("south")
+local stick = input.gamepad_stick("left", 0.18) -- vec2 in [-1, 1]
+local trig  = input.gamepad_axis("rt", 0.05)    -- float in [0, 1]
 
 -- Mouse
 local pos   = input.mouse_position()   -- returns {x, y}, viewport-aware
@@ -211,6 +216,8 @@ input.is_mouse_released(1)
 ```lua
 input.on_key_down(function(key_name) ... end)
 input.on_key_up(function(key_name) ... end)
+input.on_gamepad_down(function(btn_name) ... end) -- canonical button name
+input.on_gamepad_up(function(btn_name) ... end)
 input.on_mouse_down(function(btn, x, y) ... end)
 input.on_mouse_up(function(btn, x, y) ... end)
 input.on_mouse_wheel(function(dx, dy) ... end)
@@ -297,7 +304,7 @@ The engine exposes core subsystems as dedicated global modules:
 
 - **`ui`**: The declarative and procedural UI framework. Provides `ui.mount` for `.oxml` and `.oss` layout rendering, `ui.observable` for reactive MVVM state binding, `ui.register_widget` for custom tags, `ui.debug_draw` for wireframe debugging, and procedural layout helpers (`ui.canvas`, `ui.anchor`, `ui.flex`, `ui.box`, `ui.clip`, `ui.nine_slice`, `ui.scroll`, `ui.focus`, `ui.get_focused`). See [`docs/ui-framework.md`](ui-framework.md) and [`docs/ui-layout.md`](ui-layout.md).
 - **`tilemap`**: Infinite 2D LDtk chunked tilemap runtime. Provides level loading (`tilemap.load`), edge-socket procedural stitching, IntGrid spatial queries (`tilemap.is_solid_at`), 2D DDA raycasting (`tilemap.raycast`), circle and AABB penetration resolution, and dynamic prop streaming with consumed persistence. See [`docs/tilemaps.md`](tilemaps.md).
-- **`input`**: Action mapping and raw device input handling. Provides action binding (`input.bind`), state queries (`input.is_down`, `input.is_pressed`), and event callbacks (`input.on_key_down`). See § 5 above.
+- **`input`**: Action mapping and raw device input handling (`input.set_bindings`, `input.get_bindings`, `input.is_action_pressed`, `input.gamepad_stick`, `input.on_gamepad_down`). See § 5 above and [`docs/input-and-controllers.md`](input-and-controllers.md).
 
 ---
 

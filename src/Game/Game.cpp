@@ -714,10 +714,13 @@ void ApplyBenchModeOverlayOverrides(Registry& /*registry*/, GameConfig& gameConf
   options.drawColliders = false;
 }
 
-void RegisterEventAndHotReloadSingletons(Registry& registry, const std::unique_ptr<EventBus>& eventBus) {
+void InstallUIButtonSystem(Registry& registry, const std::unique_ptr<EventBus>& eventBus) {
   auto& uiButtonSystem = registry.Set<UIButtonSystem>(UIButtonSystem());
-  auto& scriptCollisionSystem = registry.Set<ScriptCollisionSystem>(ScriptCollisionSystem());
   uiButtonSystem.Init(&registry, eventBus);
+}
+
+void RegisterEventAndHotReloadSingletons(Registry& registry, const std::unique_ptr<EventBus>& eventBus) {
+  auto& scriptCollisionSystem = registry.Set<ScriptCollisionSystem>(ScriptCollisionSystem());
   scriptCollisionSystem.Init(&registry, eventBus);
   game_module::RegisterEventSystems(registry, eventBus);
   registry.Set<ScriptHotReload>(ScriptHotReload());
@@ -733,6 +736,7 @@ void Game::Setup() {
 
   auto scriptSystem = registry_->RegisterSystem<ScriptComponent>(ScriptSystem());
   auto& inputSystem = engine_bootstrap::InstallInputSystem(*registry_, event_bus_);
+  InstallUIButtonSystem(*registry_, event_bus_);
   engine_bootstrap::RegisterAllComponentBindings();
   LuaSystemRegistry::clear();
   LuaSystemRegistry::registerSystem(inputSystem);

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <sol/sol.hpp>
 
 #include "Components/UIStyleStateComponent.h"
@@ -17,6 +18,10 @@ struct LuaBinding<UIStyleStateComponent> {
     using namespace LuaComponentHelpers;
     if (t["bg_color"].valid()) patch.SetBg(SafeGetColor(t, "bg_color"));
     if (t["border_color"].valid()) patch.SetBorder(SafeGetColor(t, "border_color"));
+    if (t["border_width"].valid()) {
+      patch.SetBorderWidth(
+          static_cast<std::uint8_t>(std::clamp(SafeGetOptionalValue<int>(t, "border_width", 0), 0, 255)));
+    }
     if (t["text_color"].valid()) patch.SetText(SafeGetColor(t, "text_color"));
     if (t["opacity"].valid()) {
       patch.SetOpacity(static_cast<std::uint8_t>(SafeGetOptionalValue<int>(t, "opacity", 255)));
@@ -42,8 +47,9 @@ struct LuaBinding<UIStyleStateComponent> {
 
   static void bindUsertype(sol::state& lua) {
     lua.new_usertype<UIStylePatch>("ui_style_patch", sol::no_constructor, "bg_color", &UIStylePatch::bgColor,
-                                   "border_color", &UIStylePatch::borderColor, "text_color", &UIStylePatch::textColor,
-                                   "opacity", &UIStylePatch::opacity, "flags", &UIStylePatch::flags);
+                                   "border_color", &UIStylePatch::borderColor, "border_width",
+                                   &UIStylePatch::borderWidth, "text_color", &UIStylePatch::textColor, "opacity",
+                                   &UIStylePatch::opacity, "flags", &UIStylePatch::flags);
     lua.new_usertype<UIStyleStateComponent>(
         kUsertypeName, sol::no_constructor, "hover", &UIStyleStateComponent::hover, "press",
         &UIStyleStateComponent::press, "focus", &UIStyleStateComponent::focus, "checked",

@@ -20,19 +20,24 @@ struct LuaBinding<UIButtonComponent> {
     const bool isActive = SafeGetOptionalValue<bool>(t, "is_active", true);
     const bool isFixed = SafeGetOptionalValue<bool>(t, "is_fixed", true);
     const sol::protected_function clickFn = SafeGetProtectedFunction(t, "on_click");
+    const sol::protected_function focusFn = SafeGetProtectedFunction(t, "on_focus");
 
     auto key = SafeGetOptionalValue<std::string>(t, "key", "");
     if (key.empty()) {
       key = SafeGetOptionalValue<std::string>(t, "input_key", "");
     }
-    auto controllerButton = SafeGetOptionalValue<std::string>(t, "controller_button", "");
+    auto controllerButton = SafeGetOptionalValue<std::string>(t, "gamepad", "");
     if (controllerButton.empty()) {
       controllerButton = SafeGetOptionalValue<std::string>(t, "gamepad_button", "");
+    }
+    if (controllerButton.empty()) {
+      controllerButton = SafeGetOptionalValue<std::string>(t, "controller_button", "");
     }
     auto action = SafeGetOptionalValue<std::string>(t, "action", "");
 
     UIButtonComponent btn(isActive, isFixed, t, clickFn, std::move(key), std::move(controllerButton),
                           std::move(action));
+    btn.focusFunction = focusFn;
     btn.hoverSound = SafeGetOptionalValue<std::string>(t, "hover_sound", "");
     btn.clickSound = SafeGetOptionalValue<std::string>(t, "click_sound", "");
     btn.focusSound = SafeGetOptionalValue<std::string>(t, "focus_sound", "");
@@ -53,12 +58,12 @@ struct LuaBinding<UIButtonComponent> {
         &UIButtonComponent::isFixed, "is_hovered", &UIButtonComponent::isHovered, "is_pressed",
         &UIButtonComponent::isPressed, "has_hover_color", &UIButtonComponent::hasHoverColor, "has_press_color",
         &UIButtonComponent::hasPressColor, "hover_color", &UIButtonComponent::hoverColor, "press_color",
-        &UIButtonComponent::pressColor, "key", &UIButtonComponent::key, "input_key", &UIButtonComponent::key,
-        "controller_button", &UIButtonComponent::controllerButton, "gamepad_button",
-        &UIButtonComponent::controllerButton, "action", &UIButtonComponent::action, "hover_sound",
+        &UIButtonComponent::pressColor, "key", &UIButtonComponent::key, "input_key", &UIButtonComponent::key, "gamepad",
+        &UIButtonComponent::controllerButton, "controller_button", &UIButtonComponent::controllerButton,
+        "gamepad_button", &UIButtonComponent::controllerButton, "action", &UIButtonComponent::action, "hover_sound",
         &UIButtonComponent::hoverSound, "click_sound", &UIButtonComponent::clickSound, "focus_sound",
-        &UIButtonComponent::focusSound, "on_click", &UIButtonComponent::clickFunction, "trigger",
-        [](UIButtonComponent& self, sol::optional<Entity> entity) {
+        &UIButtonComponent::focusSound, "on_click", &UIButtonComponent::clickFunction, "on_focus",
+        &UIButtonComponent::focusFunction, "trigger", [](UIButtonComponent& self, sol::optional<Entity> entity) {
           if (!self.isActive) return false;
           if (self.clickFunction != sol::lua_nil) {
             sol::protected_function clickFn = self.clickFunction;

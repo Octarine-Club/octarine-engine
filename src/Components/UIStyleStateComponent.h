@@ -11,17 +11,20 @@ struct UIStylePatch {
   octarine::Color textColor{0, 0, 0, 0};
   std::uint8_t opacity = 255;
   std::uint8_t flags = 0;
-  std::uint16_t reserved = 0;
+  std::uint8_t borderWidth = 0;
+  std::uint8_t reserved = 0;
 
   static constexpr std::uint8_t kHasBg = 1u << 0;
   static constexpr std::uint8_t kHasBorder = 1u << 1;
   static constexpr std::uint8_t kHasText = 1u << 2;
   static constexpr std::uint8_t kHasOpacity = 1u << 3;
+  static constexpr std::uint8_t kHasBorderWidth = 1u << 4;
 
   [[nodiscard]] bool HasBg() const noexcept { return (flags & kHasBg) != 0; }
   [[nodiscard]] bool HasBorder() const noexcept { return (flags & kHasBorder) != 0; }
   [[nodiscard]] bool HasText() const noexcept { return (flags & kHasText) != 0; }
   [[nodiscard]] bool HasOpacity() const noexcept { return (flags & kHasOpacity) != 0; }
+  [[nodiscard]] bool HasBorderWidth() const noexcept { return (flags & kHasBorderWidth) != 0; }
 
   void SetBg(const octarine::Color c) noexcept {
     bgColor = c;
@@ -38,6 +41,10 @@ struct UIStylePatch {
   void SetOpacity(const std::uint8_t a) noexcept {
     opacity = a;
     flags |= kHasOpacity;
+  }
+  void SetBorderWidth(const std::uint8_t w) noexcept {
+    borderWidth = w;
+    flags |= kHasBorderWidth;
   }
 };
 

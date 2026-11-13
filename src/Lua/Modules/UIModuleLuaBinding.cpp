@@ -187,24 +187,59 @@ void ApplyScroll(Registry* r, const Entity entity, const sol::optional<sol::tabl
   }
 }
 
-void ApplyFocus(Registry* r, const Entity entity) {
-  if (r == nullptr || !r->IsAlive(entity)) return;
+void SetFocusFallback(Registry* r, const Entity target) {
+  auto q = r->CreateQuery<UIFocusComponent>();
+  q->Update();
+  q->ForEach([target](const Entity e, UIFocusComponent& foc) {
+    foc.isFocused = (e == target && foc.isFocusable && !foc.isDisabled && !foc.isInert);
+  });
+}
+
+sol::optional<Entity> GetFocusedFallback(Registry* r) {
+  auto q = r->CreateQuery<UIFocusComponent>();
+  q->Update();
+  Entity found{static_cast<EcsId>(-1)};
+  q->ForEach([r, &found](const Entity e, const UIFocusComponent& foc) {
+    const bool visible = !r->HasComponent<UIRectComponent>(e) || r->GetComponent<UIRectComponent>(e).visible;
+    if (foc.isFocused && foc.isFocusable && !foc.isDisabled && !foc.isInert && visible) {
+      found = e;
+    }
+  });
+  if (found.GetId() != static_cast<std::uint32_t>(-1)) return found;
+  return sol::nullopt;
+}
+
+void ApplyFocus(Registry* r, const sol::optional<Entity> maybeEntity) {
+  if (r == nullptr) return;
+  if (!maybeEntity.has_value()) {
+    const Entity invalid{static_cast<EcsId>(-1)};
+    if (auto* btnSys = r->TryGet<UIButtonSystem>()) {
+      btnSys->SetFocus(invalid);
+    } else {
+      SetFocusFallback(r, invalid);
+    }
+    return;
+  }
+  const Entity entity = *maybeEntity;
+  if (!r->IsAlive(entity)) return;
   if (!r->HasComponent<UIFocusComponent>(entity)) {
     r->AddComponent(entity, UIFocusComponent{});
   }
   if (auto* btnSys = r->TryGet<UIButtonSystem>()) {
     btnSys->SetFocus(entity);
   } else {
-    r->GetComponent<UIFocusComponent>(entity).isFocused = true;
+    SetFocusFallback(r, entity);
   }
 }
 
 sol::optional<Entity> GetFocusedEntity(Registry* r) {
+  if (r == nullptr) return sol::nullopt;
   if (auto* btnSys = r->TryGet<UIButtonSystem>()) {
     const Entity focused = btnSys->GetFocusedEntity();
     if (focused.GetId() != static_cast<std::uint32_t>(-1)) return focused;
+    return sol::nullopt;
   }
-  return sol::nullopt;
+  return GetFocusedFallback(r);
 }
 
 bool ApplyDebugDraw(Registry* r, const sol::optional<bool>& enabled) {
@@ -245,7 +280,7 @@ void LuaModuleBinding<UIModule>::install(sol::state& lua, LuaBindingContext& ctx
   ui.set_function("scroll", [&ctx](const Entity entity, const sol::optional<sol::table>& opts) {
     ApplyScroll(ctx.GetRegistry(), entity, opts);
   });
-  ui.set_function("focus", [&ctx](const Entity entity) { ApplyFocus(ctx.GetRegistry(), entity); });
+  ui.set_function("focus", [&ctx](const sol::optional<Entity> entity) { ApplyFocus(ctx.GetRegistry(), entity); });
   ui.set_function("get_focused", [&ctx]() { return GetFocusedEntity(ctx.GetRegistry()); });
   ui.set_function("debug_draw",
                   [&ctx](const sol::optional<bool>& enabled) { return ApplyDebugDraw(ctx.GetRegistry(), enabled); });

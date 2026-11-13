@@ -246,12 +246,15 @@ local btn = load_entity({
     components = {
         square    = { color = { r = 60, g = 40, b = 90, a = 230 } },  -- panel body
         ui_button = {
-            is_active         = true,
-            is_fixed          = true,
-            key               = "return, space", -- trigger via keyboard Return or Space
-            controller_button = "a, south",      -- trigger via gamepad A / South button
-            action            = "ui_confirm",    -- trigger via bound input action
-            on_click          = function(self, entity)
+            is_active = true,
+            is_fixed  = true,
+            key       = "return, space", -- trigger via keyboard Return or Space
+            gamepad   = "south",         -- trigger via gamepad South / A button (or gamepad_button / controller_button)
+            action    = "ui_confirm",    -- trigger via bound input action
+            on_focus  = function(self, entity)
+                -- fires on keyboard/gamepad focus moves (suppressed on mouse clicks)
+            end,
+            on_click  = function(self, entity)
                 self.is_active = false        -- `self` is the ui_button table; guard re-fire
                 load_scene("scenes/arena.lua")
             end,
@@ -277,13 +280,14 @@ ui.z_index(label, 1)                                      -- draw the text above
   button is ignored (and, being world-space, would not follow the anchor
   anyway). Colliders remain the hit path only for world-space buttons that have
   a `transform` instead of a `ui_rect`.
-- **`on_click(self, entity)`** — `self` is the `ui_button` table (set extra
+- **`on_click(self, entity)` / `on_focus(self, entity)`** — `self` is the `ui_button` table (set extra
   fields on it to read them back here); `entity` is the button entity. Fetch the
-  live component elsewhere with `registry.get_ui_button(entity)`.
+  live component elsewhere with `registry.get_ui_button(entity)`. `on_focus` fires on
+  keyboard/gamepad focus moves (suppressed on mouse press).
 - **Keyboard, controller, and action bindings** — Set `key` (or `input_key`),
-  `controller_button` (or `gamepad_button`), and/or `action`. Multiple comma-separated
+  `gamepad` (or `gamepad_button` / `controller_button`), and/or `action`. Multiple comma-separated
   inputs are supported (e.g. `key = "return, space"`). Input names are case-insensitive
-  and normalized across common aliases (e.g. `"south"` matches `"a"`, `"east"` matches `"b"`).
+  and normalized across canonical positional buttons and Xbox/PS aliases (`"south"` matches `"a"` / `"cross"`).
   Pressing a mapped input calls `on_click(self, entity)` directly — identical to clicking with the mouse.
 - **Programmatic trigger** — Buttons can be pressed from code via `btn:trigger(entity)`.
 - **`is_active = false`** disables hit-testing and input triggers without destroying the entity —

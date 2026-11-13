@@ -23,7 +23,7 @@
         },
         {
           "file": "src/Systems/UIButtonSystem.h",
-          "line": 387
+          "line": 378
         }
       ],
       "subscribe_sites": [
@@ -97,13 +97,17 @@
       "emit_sites": [
         {
           "file": "src/Engine/FrameLoop.cpp",
-          "line": 268
+          "line": 323
+        },
+        {
+          "file": "src/Systems/InputSystem.cpp",
+          "line": 403
         }
       ],
       "subscribe_sites": [
         {
           "file": "src/Systems/InputSystem.h",
-          "line": 57,
+          "line": 61,
           "owner": "InputSystem"
         },
         {
@@ -134,13 +138,13 @@
       "emit_sites": [
         {
           "file": "src/Engine/FrameLoop.cpp",
-          "line": 231
+          "line": 236
         }
       ],
       "subscribe_sites": [
         {
           "file": "src/Systems/InputSystem.h",
-          "line": 53,
+          "line": 57,
           "owner": "InputSystem"
         },
         {
@@ -163,17 +167,17 @@
       "emit_sites": [
         {
           "file": "src/Engine/FrameLoop.cpp",
-          "line": 237
+          "line": 242
         },
         {
           "file": "src/Engine/FrameLoop.cpp",
-          "line": 245
+          "line": 250
         }
       ],
       "subscribe_sites": [
         {
           "file": "src/Systems/InputSystem.h",
-          "line": 54,
+          "line": 58,
           "owner": "InputSystem"
         },
         {
@@ -200,13 +204,13 @@
       "emit_sites": [
         {
           "file": "src/Engine/FrameLoop.cpp",
-          "line": 249
+          "line": 254
         }
       ],
       "subscribe_sites": [
         {
           "file": "src/Systems/InputSystem.h",
-          "line": 55,
+          "line": 59,
           "owner": "InputSystem"
         },
         {

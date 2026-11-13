@@ -1683,6 +1683,16 @@ input = {}
 
 function input.bind(...) end
 
+function input.bind_gamepad(...) end
+
+function input.bind_key(...) end
+
+function input.gamepad_axis(...) end
+
+function input.gamepad_stick(...) end
+
+function input.get_bindings(...) end
+
 function input.is_action_down(...) end
 
 function input.is_action_pressed(...) end
@@ -1731,7 +1741,13 @@ function input.on_mouse_up(...) end
 
 function input.on_mouse_wheel(...) end
 
+function input.set_bindings(...) end
+
 function input.unbind(...) end
+
+function input.unbind_gamepad(...) end
+
+function input.unbind_key(...) end
 
 
 function is_audio_muted(...) end

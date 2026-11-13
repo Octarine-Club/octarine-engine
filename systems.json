@@ -113,7 +113,9 @@
       "tier": null,
       "setup_order": null,
       "queried_components": [],
-      "emits": [],
+      "emits": [
+        "GamepadButtonEvent"
+      ],
       "subscribes": [
         "GamepadButtonEvent",
         "KeyInputEvent",

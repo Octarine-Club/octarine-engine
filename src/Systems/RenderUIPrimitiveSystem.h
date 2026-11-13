@@ -128,7 +128,8 @@ class RenderUIPrimitiveSystem {
         [&](const Entity entity, const UIRectComponent& rect, const SquarePrimitiveComponent& square) {
           const auto colors =
               octarine::ui::ResolveVisualState(registry, entity, square.color, square.borderColor, square.color);
-          EmplaceSquare(renderQueue, rect, square, colors.bg, colors.border);
+          const float borderThickness = EffectiveBorderThickness(registry, entity, square, colors);
+          EmplaceSquare(renderQueue, rect, square, colors.bg, colors.border, borderThickness);
         });
     circleQuery_->ForEach(
         [&](const Entity entity, const UIRectComponent& rect, const CirclePrimitiveComponent& circle) {
@@ -153,16 +154,32 @@ class RenderUIPrimitiveSystem {
     return octarine::ui::ResolveVisualState(registry, entity, baseColor, baseColor, baseColor).bg;
   }
 
+  // Guarantees a visible 2px focus ring when :focus sets a border-color without specifying border-width,
+  // while honoring explicit :focus { border-width: N; } or other pseudo-state border-width overrides.
+  static float EffectiveBorderThickness(Registry* registry, const Entity entity, const SquarePrimitiveComponent& square,
+                                        const octarine::ui::ResolvedVisualColors& resolved) {
+    if (resolved.borderWidth >= 0.0f) {
+      return resolved.borderWidth;
+    }
+    if (registry && resolved.border.a > 0 && registry->HasComponent<UIFocusComponent>(entity) &&
+        registry->GetComponent<UIFocusComponent>(entity).isFocused &&
+        registry->HasComponent<UIStyleStateComponent>(entity) &&
+        registry->GetComponent<UIStyleStateComponent>(entity).focus.HasBorder()) {
+      return std::max(square.borderThickness, 2.0f);
+    }
+    return square.borderThickness;
+  }
+
   static void EmplaceSquare(RenderQueue& renderQueue, const UIRectComponent& rect,
                             const SquarePrimitiveComponent& square, const octarine::Color& activeColor,
-                            const octarine::Color& activeBorderColor) {
+                            const octarine::Color& activeBorderColor, const float borderThickness) {
     if (!rect.visible) return;
     const float ratio = std::clamp(square.fillRatio, 0.0f, 1.0f);
-    if (ratio <= 0.0f && square.borderThickness <= 0.0f && square.trackColor.a == 0) return;
+    if (ratio <= 0.0f && borderThickness <= 0.0f && square.trackColor.a == 0) return;
 
     EmplaceSquareTrack(renderQueue, rect, square, ratio);
     EmplaceSquareFill(renderQueue, rect, square, activeColor, ratio);
-    EmplaceSquareBorder(renderQueue, rect, square, activeBorderColor);
+    EmplaceSquareBorder(renderQueue, rect, square, activeBorderColor, borderThickness);
   }
 
   static void EmplaceSquareTrack(RenderQueue& renderQueue, const UIRectComponent& rect,
@@ -229,13 +246,14 @@ class RenderUIPrimitiveSystem {
   }
 
   static void EmplaceSquareBorder(RenderQueue& renderQueue, const UIRectComponent& rect,
-                                  const SquarePrimitiveComponent& square, const octarine::Color& borderColor) {
-    if (square.borderThickness <= 0.0f || borderColor.a == 0) return;
+                                  const SquarePrimitiveComponent& square, const octarine::Color& borderColor,
+                                  const float borderThickness = -1.0f) {
+    const float bt = (borderThickness >= 0.0f) ? borderThickness : square.borderThickness;
+    if (bt <= 0.0f || borderColor.a == 0) return;
 
     const float fullW = rect.Width();
     const float fullH = rect.Height();
     const auto layer = static_cast<unsigned int>(rect.layer);
-    const float bt = square.borderThickness;
     const SDL_Color bcol{borderColor.r, borderColor.g, borderColor.b, borderColor.a};
     const SDL_BlendMode bmode = octarine::ToSdlBlendMode(square.blendMode);
 

@@ -223,22 +223,21 @@ return immediately after.
 |-------|----------|
 | User entities | Cleared via `Registry::ClearUserEntities`. |
 | Active tilemap | Unloaded via `TilemapSystem::Unload` (all chunks cleared and streamed prop entities despawned). |
-| Lua input action bindings | Cleared via `InputSystem::ResetLuaState`. |
-| `input.on_key_*` / `input.on_mouse_*` callbacks | Cleared. |
+| `input.on_*` callbacks | Cleared via `InputSystem::ResetLuaState` (`on_key_*`, `on_mouse_*`, `on_gamepad_*`). |
 | Per-frame held / pressed / released input state | Cleared (so a tap that started during the swap doesn't stick). |
 | Tracked assets for the previous scene | Released after the new scene acquires. Refcounted. |
 
-Inputs in particular: every `input.bind`, every `input.on_*`, and every
-action map entry the previous scene installed is gone after the swap. The
-new scene's `setup` (or top-level script) re-installs whatever it needs.
-Use a guard if your `setup` might run twice:
+Action bindings installed with `input.set_bindings` / `input.bind*` **survive**
+scene transitions in `InputSystem`, while `input.on_*` callbacks are cleared
+and must be re-registered in the new scene's `setup` (or script load):
 
 ```lua
 setup = function(scene)
-    if not scene._installed then
-        input.bind("jump", "space")
-        scene._installed = true
-    end
+    -- Re-register callbacks per scene (cleared on swap):
+    input.on_key_down(handle_key)
+
+    -- Or install/refresh declarative action bindings idempotently:
+    input.set_bindings(DEFAULT_BINDINGS)
 end,
 ```
 

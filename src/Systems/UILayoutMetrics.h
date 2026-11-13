@@ -182,6 +182,7 @@ struct ResolvedVisualColors {
   octarine::Color bg{};
   octarine::Color border{};
   octarine::Color text{};
+  float borderWidth = -1.0f;
 };
 
 struct InteractiveEntityFlags {
@@ -201,6 +202,7 @@ inline octarine::Color ApplyOpacityMod(octarine::Color c, const std::uint8_t opa
 inline void ApplyStylePatch(const UIStylePatch& patch, ResolvedVisualColors& out, std::uint8_t& opacity) {
   if (patch.HasBg()) out.bg = patch.bgColor;
   if (patch.HasBorder()) out.border = patch.borderColor;
+  if (patch.HasBorderWidth()) out.borderWidth = static_cast<float>(patch.borderWidth);
   if (patch.HasText()) out.text = patch.textColor;
   if (patch.HasOpacity()) opacity = patch.opacity;
 }
@@ -219,6 +221,7 @@ inline octarine::Color OffsetColorRgb(octarine::Color c, const int delta) noexce
 
 inline void ApplyNonBgStylePatch(const UIStylePatch& patch, ResolvedVisualColors& out, std::uint8_t& opacity) {
   if (patch.HasBorder()) out.border = patch.borderColor;
+  if (patch.HasBorderWidth()) out.borderWidth = static_cast<float>(patch.borderWidth);
   if (patch.HasText()) out.text = patch.textColor;
   if (patch.HasOpacity()) opacity = patch.opacity;
 }
@@ -270,6 +273,13 @@ inline InteractiveEntityFlags ReadInteractiveFlags(Registry* registry, const Ent
   return flags;
 }
 
+inline void ApplyUncheckedInteractivePatch(const UIStyleStateComponent& st, const InteractiveEntityFlags& flags,
+                                           ResolvedVisualColors& out, std::uint8_t& opacity) {
+  if (flags.isFocused) ApplyStylePatch(st.focus, out, opacity);
+  if (flags.isHovered) ApplyStylePatch(st.hover, out, opacity);
+  if (flags.isPressed) ApplyStylePatch(st.press, out, opacity);
+}
+
 inline ResolvedVisualColors ResolveVisualState(Registry* registry, const Entity entity, const octarine::Color& baseBg,
                                                const octarine::Color& baseBorder, const octarine::Color& baseText) {
   ResolvedVisualColors out{baseBg, baseBorder, baseText};
@@ -279,13 +289,10 @@ inline ResolvedVisualColors ResolveVisualState(Registry* registry, const Entity 
   std::uint8_t opacity = 255;
   if (registry->HasComponent<UIStyleStateComponent>(entity)) {
     const auto& st = registry->GetComponent<UIStyleStateComponent>(entity);
-    if (flags.isChecked) {
+    if (flags.isChecked)
       ApplyCheckedVisualState(st, flags, out, opacity);
-    } else {
-      if (flags.isFocused) ApplyStylePatch(st.focus, out, opacity);
-      if (flags.isHovered) ApplyStylePatch(st.hover, out, opacity);
-      if (flags.isPressed) ApplyStylePatch(st.press, out, opacity);
-    }
+    else
+      ApplyUncheckedInteractivePatch(st, flags, out, opacity);
     if (flags.isDisabled) ApplyStylePatch(st.disabled, out, opacity);
   }
   out.bg = ApplyOpacityMod(out.bg, opacity);
