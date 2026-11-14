@@ -42,10 +42,41 @@ jobs:
       - name: Disable Jekyll Processing
         run: touch build/player-release/docs/html/.nojekyll
 
-      - name: Deploy to GitHub Pages
+      - name: Deploy Versioned Docs to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./build/player-release/docs/html
           destination_dir: ${{ github.ref_name }} # e.g. /v0.1.0/
           keep_files: true # Prevents deleting previous versions
+
+      - name: Stage Root Redirect to Latest Release
+        if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
+        env:
+          DOC_VERSION: ${{ github.ref_name }}
+        run: |
+          mkdir -p docs-root
+          touch docs-root/.nojekyll
+          cat > docs-root/index.html <<EOF
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <meta http-equiv="refresh" content="0; url=./${DOC_VERSION}/">
+            <link rel="canonical" href="./${DOC_VERSION}/">
+            <title>Octarine Engine Documentation</title>
+            <script>window.location.replace("./${DOC_VERSION}/");</script>
+          </head>
+          <body>
+            <p>Redirecting to <a href="./${DOC_VERSION}/">${DOC_VERSION} documentation</a>...</p>
+          </body>
+          </html>
+          EOF
+
+      - name: Deploy Root Redirect to GitHub Pages
+        if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./docs-root
+          keep_files: true
