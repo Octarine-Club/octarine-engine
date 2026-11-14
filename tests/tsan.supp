@@ -1,0 +1,8 @@
+# Octarine Engine - ThreadSanitizer (TSan) suppressions for 3rd-party libraries
+
+# SDL3 Linux D-Bus client (SDL_Init / SDL_Quit -> dbus_connection_close in libdbus-1.so.3):
+# libdbus-1 acquires internal connection and dispatch/slot mutexes in opposite orders
+# between initialization and connection teardown on the main thread.
+called_from_lib:libdbus-1.so
+deadlock:libdbus-1.so
+deadlock:dbus_connection_close

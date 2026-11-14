@@ -14,8 +14,15 @@ on:
       - 'src/ECS/**'
       - 'src/General/ThreadPool*'
       - 'src/Systems/KDTreeCollisionSystem*'
+      - 'src/Systems/CollisionResponse*'
+      - 'src/Dev/DevListenServer*'
       - 'tests/CommandBufferTest.cpp'
       - 'tests/SimulationFuzzTest.cpp'
+      - 'tests/KDTreeCollisionSystemTest.cpp'
+      - 'tests/CollisionResponseTest.cpp'
+      - 'tests/DevListenServerTest.cpp'
+      - 'tests/UserSettingsTest.cpp'
+      - 'tests/tsan.supp'
       - '.github/workflows/sanitize-tsan.yml'
 
 jobs:
@@ -49,11 +56,11 @@ jobs:
 
       - name: Run engine tests (ctest under TSan)
         env:
-          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1:suppressions=${{ github.workspace }}/tests/tsan.supp
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             echo "Running targeted concurrency test suite under TSan..."
-            ctest --test-dir build/player-debug -R "CommandBufferTest|SimulationFuzzTest" --output-on-failure
+            ctest --test-dir build/player-debug -R "^(CommandBufferTest|SimulationFuzzTest|KDTreeCollisionSystemTest|CollisionResponseTest|DevListenServerTest|UserSettingsTest)$" --output-on-failure
           else
             ctest --test-dir build/player-debug --output-on-failure
           fi
