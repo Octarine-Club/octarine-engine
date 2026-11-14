@@ -5,6 +5,11 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      redirect_version:
+        description: 'Optional release tag (e.g. v0.2.4) to point the root index.html redirect to'
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -51,9 +56,9 @@ jobs:
           keep_files: true # Prevents deleting previous versions
 
       - name: Stage Root Redirect to Latest Release
-        if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
+        if: (startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')) || inputs.redirect_version != ''
         env:
-          DOC_VERSION: ${{ github.ref_name }}
+          DOC_VERSION: ${{ inputs.redirect_version || github.ref_name }}
         run: |
           mkdir -p docs-root
           touch docs-root/.nojekyll
@@ -74,7 +79,7 @@ jobs:
           EOF
 
       - name: Deploy Root Redirect to GitHub Pages
-        if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
+        if: (startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')) || inputs.redirect_version != ''
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
