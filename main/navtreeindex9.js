@@ -1,6 +1,5 @@
 var NAVTREEINDEX9 =
 {
-"namespaceoctarine_1_1ui.html#ab938588940154ea42fd614d9d07aa134":[1,0,9,7,24],
 "namespaceoctarine_1_1ui.html#ac27827dd5837f3fedc3f936d6caa2a7c":[1,0,9,7,14],
 "namespaceoctarine_1_1ui.html#acec7882120477ce74a022ffbc0f3b516":[1,0,9,7,9],
 "namespaces.html":[1,0],
@@ -249,5 +248,6 @@ var NAVTREEINDEX9 =
 "structColorGridComponent.html#a6cb3e1c71d02b16a0c84d39e8825ce5e":[2,0,54,10],
 "structColorGridComponent.html#a8328d5a81da6c34caee83b8a47417736":[2,0,54,9],
 "structColorGridComponent.html#a8c1e6d14bcb16c55b8052db960d6d87c":[2,0,54,2],
-"structColorGridComponent.html#a8fc673e51df9fb386a963778f980fdfd":[2,0,54,6]
+"structColorGridComponent.html#a8fc673e51df9fb386a963778f980fdfd":[2,0,54,6],
+"structColorGridComponent.html#ab78e029f888fb97e4bb856eb186893ac":[2,0,54,5]
 };

@@ -95,22 +95,17 @@ $(function(){initNavTree('index.html','',''); });
 </div><!--header-->
 <div class="contents">
 <div class="textblock"><p><a class="anchor" id="md_docs_2mainpage"></a></p>
-<p>Welcome to the API documentation for the <b>Octarine Engine</b>!</p>
-<p>Octarine Engine is a lightweight, high-performance 2D game engine built with C++20. It features a custom archetype-based Entity-Component System (ECS), integrated Lua 5.4 scripting via sol2, SDL3 multimedia backends, Dear ImGui debug overlays, and a signature yellowish-purple aesthetic.</p>
-<h1 class="doxsection"><a class="anchor" id="autotoc_md1"></a>
-Key Subsystems</h1>
+<p>Welcome to the C++ API documentation for <b>Octarine Engine</b> — a lightweight, C++20 2D game engine with a custom 16 KB SoA archetype ECS, integrated Lua 5.4 scripting (<span class="tt">sol2</span>), SDL3 backends, a declarative UI framework (<span class="tt">.oxml</span>/<span class="tt">.oss</span>), and chunked LDtk tilemaps.</p>
+<p>For narrative guides and workflows, see the markdown documentation in the repository (<span class="tt">docs/</span>):</p>
 <ul>
-<li><b>ECS &amp; Memory Architecture:</b> 64-bit generational handles, 16KB 64-byte aligned SoA chunks, active/inactive partition shuffling, archetype transition graph, inverted index query matching, and lock-free command buffers.</li>
-<li><b>Lua 5.4 Scripting:</b> Zero-copy in-chunk proxy access via <span class="tt">sol2</span>, domain modules, declarative hierarchy trees, and state-preserving script hot reloading.</li>
-<li><b>Input &amp; Controllers:</b> Action mapping (<span class="tt">input.set_bindings</span> / <span class="tt">get_bindings</span>), canonical positional gamepad buttons, deadzone-scaled analog sticks, hysteresis triggers, hotplugging, and UI focus navigation. See <span class="tt">docs/input-and-controllers.md</span>.</li>
-<li><b>Declarative UI Framework (<span class="tt">.oxml</span> &amp; <span class="tt">.oss</span>):</b> XML-inspired layout templates, CSS-like stylesheets with variables and pseudo-states, unified imperative/snapshot/reactive MVVM bindings, and single-entity composite ECS widgets. See <span class="tt">docs/ui-framework.md</span>.</li>
-<li><b>Chunked Tilemaps:</b> Infinite 2D LDtk chunked tilemaps with pre-batched static layer geometry (<span class="tt"><a class="el" href="RenderableType_8h.html#aa2168f0abf1ffa0a45bf500c50f13f94a4c73c7f7cbd0f24c5faa2cdef87fbfb5">TILE_CHUNK</a></span>), IntGrid bitmasks, 2D DDA raycasting, edge-socket procedural stitching, and dynamic prop streaming. See <span class="tt">docs/tilemaps.md</span>.</li>
-<li><b>Rendering Architecture:</b> Lock-free multi-producer render queue, 64-bit packed sort key layout, frustum culling, and sprite render cache powered by SDL3.</li>
-<li><b>Simulation Pipeline:</b> Kahn's topological sort system DAG, two-tier Transform system, median-cut/SAT Collision system, and optional native C++ game modules (<span class="tt">OCTARINE_GAME_MODULE_DIR</span>; see <a href="making-games.md#14-native-c-game-modules"><span class="tt">docs/making-games.md</span></a>).</li>
-<li><b>Asset Pipeline:</b> Dual-path catalog loading, headless reference validation, texture atlas baker, BS.1770 audio normalization, and <span class="tt"><a class="el" href="classAssetPak.html">AssetPak</a></span> archives.</li>
-<li><b>Security &amp; Asset Protection:</b> OCPK encrypted asset bundles (ChaCha20 + 128-bit MAC), in-memory seekable stream decryption, Lua bytecode opcode scrambling, dynamic symbol stripping, and runtime loose-file lockdown. See <span class="tt">docs/security.md</span>.</li>
+<li><b>Getting Started:</b> <a href="https://github.com/Octarine-Club/octarine-engine/blob/main/docs/QUICKSTART.md">Quickstart</a> | <a href="https://github.com/Octarine-Club/octarine-engine/blob/main/docs/making-games.md">Making Games</a> | <a href="https://github.com/Octarine-Club/octarine-engine/blob/main/docs/extension-recipes.md">Extension Recipes</a></li>
+<li><b>Architecture &amp; ECS:</b> <a href="https://github.com/Octarine-Club/octarine-engine/blob/main/docs/ecs-architecture.md">ECS Architecture</a> | <a href="https://github.com/Octarine-Club/octarine-engine/blob/main/docs/ecs-components.md">ECS Components</a> | <a href="https://github.com/Octarine-Club/octarine-engine/blob/main/docs/systems.md">Systems</a> | <a href="https://github.com/Octarine-Club/octarine-engine/blob/main/docs/events.md">Events</a></li>
+<li><b>Lua &amp; Gameplay Subsystems:</b> <a href="https://github.com/Octarine-Club/octarine-engine/blob/main/docs/lua-scripting.md">Lua Scripting</a> | <a href="https://github.com/Octarine-Club/octarine-engine/blob/main/docs/scenes.md">Scenes</a> | <a href="https://github.com/Octarine-Club/octarine-engine/blob/main/docs/input-and-controllers.md">Input &amp; Controllers</a></li>
+<li><b>UI &amp; World:</b> <a href="https://github.com/Octarine-Club/octarine-engine/blob/main/docs/ui-framework.md">UI Framework</a> | <a href="https://github.com/Octarine-Club/octarine-engine/blob/main/docs/ui-layout.md">UI Layout</a> | <a href="https://github.com/Octarine-Club/octarine-engine/blob/main/docs/tilemaps.md">Tilemaps</a></li>
+<li><b>Tooling, Shipping &amp; Quality:</b> <a href="https://github.com/Octarine-Club/octarine-engine/blob/main/docs/dev-tools.md">Dev Tools</a> | <a href="https://github.com/Octarine-Club/octarine-engine/blob/main/docs/asset-pipeline.md">Asset Pipeline</a> | <a href="https://github.com/Octarine-Club/octarine-engine/blob/main/docs/profiling.md">Profiling</a> | <a href="https://github.com/Octarine-Club/octarine-engine/blob/main/docs/security.md">Security</a> | <a href="https://github.com/Octarine-Club/octarine-engine/blob/main/docs/device-builds.md">Device Builds</a></li>
 </ul>
-<p>Explore the classes, namespaces, and files using the sidebar to dive deeper into the engine's internals. </p>
+<p>The published online reference is hosted at <b><a href="https://octarine-club.github.io/octarine-engine/">octarine-club.github.io/octarine-engine</a></b>.</p>
+<p>Use the navigation sidebar to explore engine namespaces, classes, and source files. </p>
 </div></div><!-- PageDoc -->
 <a href="doxygen_crawl.html"></a>
 </div><!-- contents -->

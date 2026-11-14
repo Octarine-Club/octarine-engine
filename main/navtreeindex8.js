@@ -33,7 +33,6 @@ var NAVTREEINDEX8 =
 "hierarchy.html":[2,2],
 "index.html":[],
 "index.html":[0],
-"index.html#autotoc_md1":[0,0],
 "namespaceCollections.html":[1,0,0],
 "namespaceCollections.html#a5228e2aa7e2ddf283208af6e4433af9d":[1,0,0,0],
 "namespaceConstants.html":[1,0,1],
@@ -249,5 +248,6 @@ var NAVTREEINDEX8 =
 "namespaceoctarine_1_1ui.html#aaa623e434301e9011c03d1ad6ae22031":[1,0,9,7,7],
 "namespaceoctarine_1_1ui.html#aae29415d3ca38f20049c74f72f7a3b55":[1,0,9,7,17],
 "namespaceoctarine_1_1ui.html#ab25517f64f94c0ef15d35d46891604eb":[1,0,9,7,21],
-"namespaceoctarine_1_1ui.html#ab56f27b0555435954a4f54acae208057":[1,0,9,7,23]
+"namespaceoctarine_1_1ui.html#ab56f27b0555435954a4f54acae208057":[1,0,9,7,23],
+"namespaceoctarine_1_1ui.html#ab938588940154ea42fd614d9d07aa134":[1,0,9,7,24]
 };

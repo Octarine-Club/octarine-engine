@@ -1,6 +1,5 @@
 var NAVTREEINDEX10 =
 {
-"structColorGridComponent.html#ab78e029f888fb97e4bb856eb186893ac":[2,0,54,5],
 "structColorGridComponent.html#abbb99ef21177b2fde1d00a5d9613b236":[2,0,54,3],
 "structColorGridComponent.html#ade52bde612660c077b960f21313925e3":[2,0,54,1],
 "structColorGridComponent.html#afa3280755e9e8b3f72e79fa70bc70262":[2,0,54,7],
@@ -249,5 +248,6 @@ var NAVTREEINDEX10 =
 "structLuaModuleBinding_3_01UIModule_01_4.html":[2,0,154],
 "structLuaModuleDescriptor.html":[2,0,155],
 "structLuaModuleDescriptor.html#a28645c539fcd1971919771622de3259b":[2,0,155,0],
-"structLuaModuleDescriptor.html#a8923119151cf665683fe8db20e3304de":[2,0,155,1]
+"structLuaModuleDescriptor.html#a8923119151cf665683fe8db20e3304de":[2,0,155,1],
+"structLuaModuleRegistry_1_1Entry.html":[2,0,156,0]
 };
