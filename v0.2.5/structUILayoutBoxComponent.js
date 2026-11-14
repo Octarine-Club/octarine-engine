@@ -1,0 +1,28 @@
+var structUILayoutBoxComponent =
+[
+    [ "SetHeightFr", "structUILayoutBoxComponent.html#a9ac571feb8681514c5fb44736d857c86", null ],
+    [ "SetHeightPercent", "structUILayoutBoxComponent.html#accdba336f998cd1b560d292e8cbc2c40", null ],
+    [ "SetHeightPx", "structUILayoutBoxComponent.html#aa505723035aaf97827245bbef5b5a6d9", null ],
+    [ "SetMargin", "structUILayoutBoxComponent.html#a7f6ac2128c795a495b419312a6b065ad", null ],
+    [ "SetWidthFr", "structUILayoutBoxComponent.html#ad6ff1ebe45c9d7653599678f4ea7ecd4", null ],
+    [ "SetWidthPercent", "structUILayoutBoxComponent.html#af137e627d0464c202c0f0f7b7a52d451", null ],
+    [ "SetWidthPx", "structUILayoutBoxComponent.html#ac67426d20678f96d3754b732dd94974f", null ],
+    [ "height", "structUILayoutBoxComponent.html#a80040e3d0a90a713a87a16800aca529f", null ],
+    [ "heightUnit", "structUILayoutBoxComponent.html#ada88fc4577ec07b7f6a8699486d4eea7", null ],
+    [ "marginBottom", "structUILayoutBoxComponent.html#a1662300ea5d813fde7a0a5a0b6e2c51c", null ],
+    [ "marginLeft", "structUILayoutBoxComponent.html#a7639e8e87939b4fa99474f48fd3f4411", null ],
+    [ "marginRight", "structUILayoutBoxComponent.html#ad0f444b39b5af5f9394be46b1a4aa185", null ],
+    [ "marginTop", "structUILayoutBoxComponent.html#ac0cf6a45d790e7fb6825eda9b13de919", null ],
+    [ "maxHeight", "structUILayoutBoxComponent.html#a732c3bf5edc3cd2ab10a83ed9464fa54", null ],
+    [ "maxHeightUnit", "structUILayoutBoxComponent.html#a60704ab7ac3683af73c960064941beff", null ],
+    [ "maxWidth", "structUILayoutBoxComponent.html#a1e006ed63ea0a47edd1ff70064cb281c", null ],
+    [ "maxWidthUnit", "structUILayoutBoxComponent.html#a46b41ade474baaa477538a07653b1f84", null ],
+    [ "minHeight", "structUILayoutBoxComponent.html#a8b2eff93d347a2cbb2917726911bffaf", null ],
+    [ "minHeightUnit", "structUILayoutBoxComponent.html#a0f9cc9e807285c181e3b525defa3bd55", null ],
+    [ "minWidth", "structUILayoutBoxComponent.html#ad22a50909ba8c929458f3b57212d7b0c", null ],
+    [ "minWidthUnit", "structUILayoutBoxComponent.html#a1d221247f65b8a2041f00af113d8fc2b", null ],
+    [ "reserved", "structUILayoutBoxComponent.html#a2d0060ca86a39a2c602e773633d726ce", null ],
+    [ "visible", "structUILayoutBoxComponent.html#ab28e61ee219f543d739a3f6f49a3d3c5", null ],
+    [ "width", "structUILayoutBoxComponent.html#adad8f97aa7a475cd579f74a0ce737789", null ],
+    [ "widthUnit", "structUILayoutBoxComponent.html#a9941f6ed78f6f538b05dec2c92abb450", null ]
+];
