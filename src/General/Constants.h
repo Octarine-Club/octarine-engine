@@ -20,7 +20,7 @@ static constexpr size_t kCollisionResponseParallelThreshold = 2048;
 static constexpr size_t kRenderCommandBufferSize = 256 * 1024;
 
 // Pre-allocated RenderQueue slot capacity for lock-free atomic multi-producer writes.
-constexpr static size_t kInitialRenderQueueCapacity = 256 * 1024;
+constexpr static size_t kInitialRenderQueueCapacity = 128 * 1024;
 
 static constexpr int kDebugUIBaseLayer = 1000;
 

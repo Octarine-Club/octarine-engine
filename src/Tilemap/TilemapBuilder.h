@@ -51,8 +51,10 @@ class TilemapBuilder {
   }
 
   static void ReserveLayerMesh(TileLayerMesh& mesh, const size_t additionalTileCount) {
-    mesh.localVertices.reserve(mesh.localVertices.size() + additionalTileCount * 4u);
-    mesh.indices.reserve(mesh.indices.size() + additionalTileCount * 6u);
+    auto& verts = mesh.MutableVertices();
+    auto& indices = mesh.MutableIndices();
+    verts.reserve(verts.size() + additionalTileCount * 4u);
+    indices.reserve(indices.size() + additionalTileCount * 6u);
   }
 
   static void AppendStaticTileQuad(TileLayerMesh& mesh, const TilesetDesc& ts, const TileQuadDesc& quad) {
@@ -75,18 +77,20 @@ class TilemapBuilder {
 
     const float clampedAlpha = std::clamp(quad.alpha, 0.0f, 1.0f);
     const SDL_FColor color{1.0f, 1.0f, 1.0f, clampedAlpha};
-    const auto baseIdx = static_cast<int>(mesh.localVertices.size());
-    mesh.localVertices.push_back(SDL_Vertex{{quad.localX, quad.localY}, color, {u0, v0}});
-    mesh.localVertices.push_back(SDL_Vertex{{quad.localX + gridSize, quad.localY}, color, {u1, v0}});
-    mesh.localVertices.push_back(SDL_Vertex{{quad.localX + gridSize, quad.localY + gridSize}, color, {u1, v1}});
-    mesh.localVertices.push_back(SDL_Vertex{{quad.localX, quad.localY + gridSize}, color, {u0, v1}});
+    auto& verts = mesh.MutableVertices();
+    auto& indices = mesh.MutableIndices();
+    const auto baseIdx = static_cast<int>(verts.size());
+    verts.push_back(SDL_Vertex{{quad.localX, quad.localY}, color, {u0, v0}});
+    verts.push_back(SDL_Vertex{{quad.localX + gridSize, quad.localY}, color, {u1, v0}});
+    verts.push_back(SDL_Vertex{{quad.localX + gridSize, quad.localY + gridSize}, color, {u1, v1}});
+    verts.push_back(SDL_Vertex{{quad.localX, quad.localY + gridSize}, color, {u0, v1}});
 
-    mesh.indices.push_back(baseIdx + 0);
-    mesh.indices.push_back(baseIdx + 1);
-    mesh.indices.push_back(baseIdx + 2);
-    mesh.indices.push_back(baseIdx + 0);
-    mesh.indices.push_back(baseIdx + 2);
-    mesh.indices.push_back(baseIdx + 3);
+    indices.push_back(baseIdx + 0);
+    indices.push_back(baseIdx + 1);
+    indices.push_back(baseIdx + 2);
+    indices.push_back(baseIdx + 0);
+    indices.push_back(baseIdx + 2);
+    indices.push_back(baseIdx + 3);
   }
 
   static void AppendYSortTile(std::vector<YSortTileCmd>& outTiles, const TilesetDesc& ts, const TileQuadDesc& quad) {
@@ -177,10 +181,10 @@ class TilemapBuilder {
     }
   }
 
-  static void ScaleSingleTemplate(ChunkTemplate& tmpl, const int32_t scaledTileSize, const float exactFactor) noexcept {
+  static void ScaleSingleTemplate(ChunkTemplate& tmpl, const int32_t scaledTileSize, const float exactFactor) {
     tmpl.tileSize = scaledTileSize;
     for (auto& layer : tmpl.staticLayers) {
-      for (auto& v : layer.localVertices) {
+      for (auto& v : layer.MutableVertices()) {
         v.position.x *= exactFactor;
         v.position.y *= exactFactor;
       }

@@ -84,7 +84,9 @@ void InstallCoreSingletons(Registry& registry, EngineContext& context, const int
                            const bool withFramePathCaches, sol::state* lua) {
   const octarine::Rect camera{0, 0, static_cast<float>(windowWidth), static_cast<float>(windowHeight)};
 
-  registry.Set<RenderQueue>(RenderQueue());
+  const size_t rqCapacity = (context.config != nullptr) ? context.config->GetEngineOptions().renderQueueCapacity
+                                                        : Constants::kInitialRenderQueueCapacity;
+  registry.Set<RenderQueue>(RenderQueue(rqCapacity));
   registry.Set<CameraComponent>(CameraComponent{camera});
   registry.Set<TilemapSystem>(TilemapSystem());
   auto& assetManager = registry.Set<AssetManager>(AssetManager());

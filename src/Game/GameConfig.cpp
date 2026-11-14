@@ -135,6 +135,7 @@ bool GameConfig::LoadConfig(const std::unordered_map<std::string, std::string>& 
   success &= SetValue(settings, "HotReloadPollSeconds", &GameConfig::SetHotReloadPollSeconds, false);
   success &= SetValue(settings, "DebugOverlayBackgroundColor", &GameConfig::SetDebugOverlayBackgroundColor, false);
   success &= SetValue(settings, "AngleUnit", &GameConfig::SetAngleUnit, false);
+  success &= SetValue(settings, "RenderQueueCapacity", &GameConfig::SetRenderQueueCapacity, false);
 
   if (base_width_ < 0 || base_height_ < 0) {
     Logger::Error("BaseResolutionWidth and BaseResolutionHeight cannot be negative (got " +
@@ -335,4 +336,13 @@ void GameConfig::SetLogLevel(const std::string& logLevel) {
   if (logLevel.empty()) return;
   Logger::SetLevel(logLevel);
   Logger::Info("Log level set to: " + logLevel);
+}
+
+void GameConfig::SetRenderQueueCapacity(const int capacity) {
+  if (capacity < 1024 || capacity > 1024 * 1024) {
+    Logger::Warn("RenderQueueCapacity must be in [1024, 1048576]; keeping current value.");
+    return;
+  }
+  engine_options_.renderQueueCapacity = static_cast<size_t>(capacity);
+  Logger::Info("RenderQueue capacity set to: " + std::to_string(capacity));
 }

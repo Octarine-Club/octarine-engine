@@ -125,6 +125,7 @@ class GameConfig {
   void SetHotReloadPollSeconds(float seconds);
   void SetDebugOverlayBackgroundColor(const std::string& color);
   void SetAngleUnit(const std::string& unit);
+  void SetRenderQueueCapacity(int capacity);
   // Runtime override of the compile-time default log level. Invoked from LoadConfig; pushes the
   // value straight into spdlog via Logger::SetLevel, so subsequent Logger calls honor it.
   void SetLogLevel(const std::string& logLevel);
