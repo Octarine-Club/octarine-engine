@@ -402,10 +402,7 @@ class KDTreeCollisionSystem {
 
   void DrainAsync() {
     WaitForAsync();
-    if (asyncState_) {
-      asyncState_->in_flight.store(false, std::memory_order_relaxed);
-      asyncState_->ready.store(false, std::memory_order_relaxed);
-    }
+    ResetAsyncFlags();
   }
 
   [[nodiscard]] static glm::vec2 TransformLocalPoint(const glm::vec2 localOffset,
@@ -630,6 +627,15 @@ class KDTreeCollisionSystem {
     EmitCollisionEvents(eventBus, syncPairsScratch_);
   }
 
+  void ResetAsyncFlags() {
+    if (!asyncState_) {
+      return;
+    }
+    std::lock_guard<std::mutex> lk(asyncState_->mutex);
+    asyncState_->in_flight.store(false, std::memory_order_relaxed);
+    asyncState_->ready.store(false, std::memory_order_relaxed);
+  }
+
   void UpdateAsynchronous(EventBus* eventBus) {
     if (!asyncState_) {
       asyncState_ = std::make_unique<AsyncState>();
@@ -640,8 +646,7 @@ class KDTreeCollisionSystem {
         return;
       }
       PROFILE_NAMED_SCOPE("Emit Events");
-      asyncState_->in_flight.store(false, std::memory_order_relaxed);
-      asyncState_->ready.store(false, std::memory_order_relaxed);
+      ResetAsyncFlags();
       EmitCollisionEvents(eventBus, asyncState_->pairs);
       cachedBoxes_.swap(asyncState_->boxes);
     }
@@ -681,8 +686,8 @@ class KDTreeCollisionSystem {
       {
         std::lock_guard<std::mutex> lk(state->mutex);
         state->ready.store(true, std::memory_order_release);
+        state->cv.notify_one();
       }
-      state->cv.notify_one();
     });
   }
 

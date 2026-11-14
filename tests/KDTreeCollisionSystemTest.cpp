@@ -242,6 +242,45 @@ void TestMultiShapeCollisions() {
 
 }  // namespace
 
+// Exercises rapid async collision start/consume/teardown sequences under TSan.
+static void RunAsyncTeardownStep(const bool waitAndConsume, const bool checkOverlap) {
+  Registry reg;
+  auto bus = std::make_unique<EventBus>();
+  EngineContext ctx;
+  ctx.eventBus = bus.get();
+  reg.Set<EngineContext>(ctx);
+
+  auto collision = reg.RegisterBulkSystem(KDTreeCollisionSystem(false));
+
+  const Entity e1 = reg.CreateEntity();
+  reg.AddComponent(e1, GlobalTransformComponent{glm::vec2(0.0f, 0.0f), glm::vec2(1.0f, 1.0f), 0.0f});
+  reg.AddComponent(e1, BoxColliderComponent{32, 32});
+  reg.AddComponent(e1, EntityMaskComponent{});
+
+  const Entity e2 = reg.CreateEntity();
+  reg.AddComponent(e2, GlobalTransformComponent{glm::vec2(10.0f, 0.0f), glm::vec2(1.0f, 1.0f), 0.0f});
+  reg.AddComponent(e2, BoxColliderComponent{32, 32});
+  reg.AddComponent(e2, EntityMaskComponent{});
+
+  reg.Update(1.0f / 60.0f);
+  if (waitAndConsume) {
+    collision.Func().WaitForAsync();
+    reg.Update(1.0f / 60.0f);
+    if (checkOverlap) {
+      Check(collision.Func().IsOverlapping(e1, e2), "async lifecycle: e1 and e2 overlap");
+    }
+  }
+}
+
+static void TestAsyncTeardownLifecycle() {
+  for (int i = 0; i < 64; ++i) {
+    // Case A: wait + consume + immediate destroy
+    RunAsyncTeardownStep(true, i == 0);
+    // Case B: in-flight immediate destroy without WaitForAsync
+    RunAsyncTeardownStep(false, false);
+  }
+}
+
 int main() {
   // --- Entering pair is emitted on first contact.
   // Boxes at (0,0) and (16,0) with size 32 overlap by 16 px.
@@ -423,6 +462,7 @@ int main() {
     reg.Update(1.0f / 60.0f);
   }
 
+  TestAsyncTeardownLifecycle();
   TestMultiShapeCollisions();
 
   return octarine::test::Result();
