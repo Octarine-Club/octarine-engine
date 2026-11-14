@@ -18,7 +18,7 @@ param(
     [Parameter(Mandatory = $true)][string]$Dir,
     [string]$VersionName = "0.1.0",
     [int]$VersionCode = 1,
-    [string]$EngineVersion = "0.2.4"
+    [string]$EngineVersion = "0.2.5"
 )
 
 $ErrorActionPreference = "Stop"
