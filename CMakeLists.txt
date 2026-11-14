@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.15...4.4)
 # =============================================================================
 
 project(OctarineEngine
-        VERSION 0.2.3
+        VERSION 0.2.4
         DESCRIPTION "A lightweight 2D game engine of a yellowish-purple color"
         LANGUAGES CXX
 )
