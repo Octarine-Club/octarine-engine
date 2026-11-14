@@ -28,11 +28,14 @@ class EngineRuntime {
   // Create the window + accelerated renderer (resizable, or hidden when `headless` is true).
   // Returns false on failure; on success Window()/SdlRenderer() are non-null.
   [[nodiscard]] bool CreateWindow(const std::string& title, int width, int height, bool headless = false,
-                                  bool resizable = true);
+                                  bool resizable = true, bool applyDefaultIcon = true);
 
   // Set or replace the window icon from an in-memory PNG payload.
   // Returns false on invalid input or decoding failure.
   bool SetWindowIcon(const void* pngData, size_t pngSize);
+
+  // Set or replace the window icon with the built-in Octarine Engine PNG icon.
+  bool ApplyDefaultWindowIcon();
 
 #ifdef OCTARINE_WITH_IMGUI
   // Stand up the ImGui context + SDL3/SDLRenderer3 backends and the nav config flags.

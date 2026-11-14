@@ -4,10 +4,33 @@
 #include <SDL3_image/SDL_image.h>
 #include <SDL3_ttf/SDL_ttf.h>
 
+#include <algorithm>
+#include <cmath>
 #include <string>
 
 #include "General/Icons/OctarineIcon.h"
 #include "General/Logger.h"
+
+namespace {
+constexpr int kMaxWindowIconDimPx = 256;
+
+SDL_Surface* DownscaleIconSurfaceIfNeeded(SDL_Surface* surface) {
+  if (!surface || (surface->w <= kMaxWindowIconDimPx && surface->h <= kMaxWindowIconDimPx)) {
+    return surface;
+  }
+  const int maxSide = std::max(surface->w, surface->h);
+  const int targetW =
+      std::max(1, static_cast<int>(std::lround(static_cast<double>(surface->w) * kMaxWindowIconDimPx / maxSide)));
+  const int targetH =
+      std::max(1, static_cast<int>(std::lround(static_cast<double>(surface->h) * kMaxWindowIconDimPx / maxSide)));
+  SDL_Surface* scaled = SDL_ScaleSurface(surface, targetW, targetH, SDL_SCALEMODE_LINEAR);
+  if (!scaled) {
+    return surface;
+  }
+  SDL_DestroySurface(surface);
+  return scaled;
+}
+}  // namespace
 
 #ifdef OCTARINE_WITH_IMGUI
 #include "Debug/DebugTheme.h"
@@ -38,7 +61,7 @@ bool EngineRuntime::InitSubsystems(const bool headless) {
 }
 
 bool EngineRuntime::CreateWindow(const std::string& title, int width, int height, const bool headless,
-                                 const bool resizable) {
+                                 const bool resizable, const bool applyDefaultIcon) {
   SDL_WindowFlags windowFlags = 0;
   if (headless) {
     windowFlags = SDL_WINDOW_HIDDEN;
@@ -60,11 +83,15 @@ bool EngineRuntime::CreateWindow(const std::string& title, int width, int height
     return false;
   }
 
-  if (!headless) {
-    SetWindowIcon(octarine::icons::kOctarineIconPng, octarine::icons::kOctarineIconPngSize);
+  if (!headless && applyDefaultIcon) {
+    ApplyDefaultWindowIcon();
   }
 
   return true;
+}
+
+bool EngineRuntime::ApplyDefaultWindowIcon() {
+  return SetWindowIcon(octarine::icons::kOctarineIconPng, octarine::icons::kOctarineIconPngSize);
 }
 
 bool EngineRuntime::SetWindowIcon(const void* pngData, const size_t pngSize) {
@@ -83,6 +110,7 @@ bool EngineRuntime::SetWindowIcon(const void* pngData, const size_t pngSize) {
     return false;
   }
 
+  surface = DownscaleIconSurfaceIfNeeded(surface);
   const bool ok = SDL_SetWindowIcon(window_, surface);
   SDL_DestroySurface(surface);
   return ok;

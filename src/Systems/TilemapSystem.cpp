@@ -92,7 +92,7 @@ void InitChunkScreenVertices(ActiveChunk& chunk) {
   }
   chunk.layerScreenVertices.resize(chunk.templatePtr->staticLayers.size());
   for (size_t i = 0; i < chunk.templatePtr->staticLayers.size(); ++i) {
-    chunk.layerScreenVertices[i] = chunk.templatePtr->staticLayers[i].localVertices;
+    chunk.layerScreenVertices[i] = chunk.templatePtr->staticLayers[i].Vertices();
   }
 }
 
@@ -596,11 +596,13 @@ void SubmitChunkStaticLayers(ActiveChunk& chunk, RenderQueue& renderQueue, const
                              const float screenOriginY, const float zoom) {
   for (size_t layerIdx = 0; layerIdx < chunk.templatePtr->staticLayers.size(); ++layerIdx) {
     const auto& layer = chunk.templatePtr->staticLayers[layerIdx];
+    const auto& localVerts = layer.Vertices();
+    const auto& indices = layer.Indices();
     auto& screenVerts = chunk.layerScreenVertices[layerIdx];
-    if (screenVerts.empty() || layer.indices.empty()) continue;
+    if (screenVerts.empty() || indices.empty()) continue;
 
     for (size_t v = 0; v < screenVerts.size(); ++v) {
-      const auto& localPos = layer.localVertices[v].position;
+      const auto& localPos = localVerts[v].position;
       screenVerts[v].position.x = std::round(screenOriginX + localPos.x * zoom);
       screenVerts[v].position.y = std::round(screenOriginY + localPos.y * zoom);
     }
@@ -608,9 +610,9 @@ void SubmitChunkStaticLayers(ActiveChunk& chunk, RenderQueue& renderQueue, const
     SDL_Texture* tex = layer.cachedTexture;
     auto& cmd = renderQueue.EmplaceTileChunk(layer.renderLayer, layer.renderDepth, tex);
     cmd.vertices = screenVerts.data();
-    cmd.indices = layer.indices.data();
+    cmd.indices = indices.data();
     cmd.vertexCount = static_cast<int>(screenVerts.size());
-    cmd.indexCount = static_cast<int>(layer.indices.size());
+    cmd.indexCount = static_cast<int>(indices.size());
     cmd.texture = tex;
     cmd.blendMode = SDL_BLENDMODE_BLEND;
   }

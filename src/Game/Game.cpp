@@ -509,14 +509,21 @@ void ApplyInitialWindowSettings(Registry& registry, const GameConfig& gameConfig
   }
 }
 
-void ApplyProjectWindowIcon(Registry& registry, const GameConfig& gameConfig, EngineRuntime& runtime,
-                            const bool headless) {
-  if (headless) return;
+bool HasProjectWindowIcon(Registry& registry, const GameConfig& gameConfig) {
   const auto* pak = registry.TryGet<AssetPak>();
   const auto iniBytes = ReadProjectIniBytes(gameConfig, pak);
-  if (!iniBytes) return;
+  if (!iniBytes) return false;
+  return !octarine::project::ProjectIni::Parse(*iniBytes).icon.empty();
+}
+
+bool ApplyProjectWindowIcon(Registry& registry, const GameConfig& gameConfig, EngineRuntime& runtime,
+                            const bool headless) {
+  if (headless) return false;
+  const auto* pak = registry.TryGet<AssetPak>();
+  const auto iniBytes = ReadProjectIniBytes(gameConfig, pak);
+  if (!iniBytes) return false;
   const auto ini = octarine::project::ProjectIni::Parse(*iniBytes);
-  if (ini.icon.empty()) return;
+  if (ini.icon.empty()) return false;
 
   if (pak != nullptr && pak->IsOpen() && pak->Contains(ini.icon)) {
     if (SDL_IOStream* io = pak->OpenIO(ini.icon)) {
@@ -524,7 +531,7 @@ void ApplyProjectWindowIcon(Registry& registry, const GameConfig& gameConfig, En
       if (void* data = SDL_LoadFile_IO(io, &dataSize, true)) {
         runtime.SetWindowIcon(data, dataSize);
         SDL_free(data);
-        return;
+        return true;
       }
     }
   }
@@ -534,8 +541,10 @@ void ApplyProjectWindowIcon(Registry& registry, const GameConfig& gameConfig, En
   if (void* data = SDL_LoadFile(iconPath.string().c_str(), &dataSize)) {
     runtime.SetWindowIcon(data, dataSize);
     SDL_free(data);
+    return true;
   }
 #endif
+  return false;
 }
 }  // namespace
 
@@ -547,13 +556,14 @@ bool Game::CreateWindowAndScene(bool projectLoaded) {
 
   const auto [initialWidth, initialHeight] = ResolveInitialWindowSize(*registry_, gameConfig, headless_);
   const bool resizable = gameConfig.GetEngineOptions().windowResizable;
-  if (!runtime_.CreateWindow(title, initialWidth, initialHeight, headless_, resizable)) {
+  const bool hasProjectIcon = projectLoaded && HasProjectWindowIcon(*registry_, gameConfig);
+  if (!runtime_.CreateWindow(title, initialWidth, initialHeight, headless_, resizable, !hasProjectIcon)) {
     return false;
   }
 
   ApplyInitialWindowSettings(*registry_, gameConfig, runtime_, headless_);
-  if (projectLoaded) {
-    ApplyProjectWindowIcon(*registry_, gameConfig, runtime_, headless_);
+  if (hasProjectIcon && !ApplyProjectWindowIcon(*registry_, gameConfig, runtime_, headless_) && !headless_) {
+    runtime_.ApplyDefaultWindowIcon();
   }
 
   return renderer_->CreateScene(runtime_.SdlRenderer(), gameConfig.windowWidth, gameConfig.windowHeight);

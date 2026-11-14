@@ -151,7 +151,7 @@ void ParseStaticTileLayer(const Json& layer, const TilesetDef& ts, const unsigne
     }
   }
 
-  if (!mesh.localVertices.empty()) {
+  if (!mesh.Vertices().empty()) {
     outTemplate.staticLayers.push_back(std::move(mesh));
   }
 }
@@ -498,28 +498,31 @@ void SliceStaticLayersForSubChunk(const ChunkTemplate& full, const float subX0, 
     subMesh.renderLayer = layer.renderLayer;
     subMesh.renderDepth = layer.renderDepth;
 
-    const size_t quadCount = layer.localVertices.size() / 4u;
+    const auto& srcVerts = layer.Vertices();
+    const size_t quadCount = srcVerts.size() / 4u;
     for (size_t q = 0; q < quadCount; ++q) {
-      const auto& v0 = layer.localVertices[q * 4u];
+      const auto& v0 = srcVerts[q * 4u];
       if (v0.position.x < subX0 - 0.5f || v0.position.x > subX1 || v0.position.y < subY0 - 0.5f ||
           v0.position.y > subY1) {
         continue;
       }
-      const auto baseIdx = static_cast<int>(subMesh.localVertices.size());
+      auto& dstVerts = subMesh.MutableVertices();
+      auto& dstIndices = subMesh.MutableIndices();
+      const auto baseIdx = static_cast<int>(dstVerts.size());
       for (size_t k = 0; k < 4u; ++k) {
-        SDL_Vertex vert = layer.localVertices[q * 4u + k];
+        SDL_Vertex vert = srcVerts[q * 4u + k];
         vert.position.x -= subX0;
         vert.position.y -= subY0;
-        subMesh.localVertices.push_back(vert);
+        dstVerts.push_back(vert);
       }
-      subMesh.indices.push_back(baseIdx + 0);
-      subMesh.indices.push_back(baseIdx + 1);
-      subMesh.indices.push_back(baseIdx + 2);
-      subMesh.indices.push_back(baseIdx + 0);
-      subMesh.indices.push_back(baseIdx + 2);
-      subMesh.indices.push_back(baseIdx + 3);
+      dstIndices.push_back(baseIdx + 0);
+      dstIndices.push_back(baseIdx + 1);
+      dstIndices.push_back(baseIdx + 2);
+      dstIndices.push_back(baseIdx + 0);
+      dstIndices.push_back(baseIdx + 2);
+      dstIndices.push_back(baseIdx + 3);
     }
-    if (!subMesh.localVertices.empty()) {
+    if (!subMesh.Vertices().empty()) {
       outSub.staticLayers.push_back(std::move(subMesh));
     }
   }

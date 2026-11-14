@@ -247,7 +247,7 @@ void ParseLuaStaticLayer(const sol::table& layerTable, const TilesetMap& tileset
       }
     }
   }
-  if (!mesh.localVertices.empty()) {
+  if (!mesh.Vertices().empty()) {
     outTmpl.staticLayers.push_back(std::move(mesh));
   }
 }

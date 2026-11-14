@@ -140,4 +140,6 @@ struct EngineOptions {
   // Unit that angles are authored and displayed in (Lua tables, set_rotation).
   // Storage stays radians regardless. config.ini: AngleUnit=radians|degrees.
   octarine::AngleUnit angleUnit = octarine::AngleUnit::Degrees;
+  // Pre-allocated RenderQueue slot capacity. config.ini: RenderQueueCapacity=<1024..1048576>.
+  size_t renderQueueCapacity = Constants::kInitialRenderQueueCapacity;
 };

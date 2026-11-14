@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -72,6 +73,11 @@ enum class StitchMode : uint8_t {
   ArenaFixed = 2,
 };
 
+struct TileLayerGeometry {
+  std::vector<SDL_Vertex> localVertices{};
+  std::vector<int> indices{};
+};
+
 struct TileLayerMesh {
   std::string layerName{};
   std::string tilesetAssetId{};
@@ -79,8 +85,37 @@ struct TileLayerMesh {
   SDL_Texture* cachedTexture = nullptr;
   unsigned int renderLayer = 0;
   float renderDepth = 0.0f;
-  std::vector<SDL_Vertex> localVertices{};
-  std::vector<int> indices{};
+
+  [[nodiscard]] const std::vector<SDL_Vertex>& Vertices() const noexcept {
+    return geometry_ ? geometry_->localVertices : EmptyVertices();
+  }
+  [[nodiscard]] const std::vector<int>& Indices() const noexcept {
+    return geometry_ ? geometry_->indices : EmptyIndices();
+  }
+  [[nodiscard]] std::vector<SDL_Vertex>& MutableVertices() { return EnsureUnique().localVertices; }
+  [[nodiscard]] std::vector<int>& MutableIndices() { return EnsureUnique().indices; }
+  [[nodiscard]] const TileLayerGeometry* GeometryIdentity() const noexcept { return geometry_.get(); }
+
+ private:
+  std::shared_ptr<TileLayerGeometry> geometry_{};
+
+  TileLayerGeometry& EnsureUnique() {
+    if (!geometry_) {
+      geometry_ = std::make_shared<TileLayerGeometry>();
+    } else if (geometry_.use_count() > 1) {
+      geometry_ = std::make_shared<TileLayerGeometry>(*geometry_);
+    }
+    return *geometry_;
+  }
+
+  static const std::vector<SDL_Vertex>& EmptyVertices() noexcept {
+    static const std::vector<SDL_Vertex> kEmpty;
+    return kEmpty;
+  }
+  static const std::vector<int>& EmptyIndices() noexcept {
+    static const std::vector<int> kEmpty;
+    return kEmpty;
+  }
 };
 
 struct YSortTileCmd {

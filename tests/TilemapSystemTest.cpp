@@ -231,8 +231,22 @@ void TestLdtkParserAndFlipBits() {
         "Ground_Overlay renderDepth orders above Ground_Base");
 
   // Verify flip bits on Ground_Overlay: tile 0 has f=1 (FlipX), tile 1 has f=2 (FlipY), tile 2 has f=3 (FlipX+FlipY).
-  const auto& overlayVerts = tmpl0.staticLayers[1].localVertices;
+  const auto& overlayVerts = tmpl0.staticLayers[1].Vertices();
   CheckEq(overlayVerts.size(), static_cast<size_t>(12), "3 overlay quads = 12 vertices");
+
+  // Verify copy-on-write sharing across ChunkTemplate copies
+  ChunkTemplate cowCopy = tmpl0;
+  CheckEq(cowCopy.staticLayers[0].GeometryIdentity(), tmpl0.staticLayers[0].GeometryIdentity(),
+          "Copied ChunkTemplate shares static layer geometry buffer");
+  CheckEq(cowCopy.staticLayers[1].GeometryIdentity(), tmpl0.staticLayers[1].GeometryIdentity(),
+          "Copied ChunkTemplate shares overlay geometry buffer before mutation");
+  const size_t origVerts = tmpl0.staticLayers[1].Vertices().size();
+  cowCopy.staticLayers[1].MutableVertices().push_back(SDL_Vertex{});
+  Check(cowCopy.staticLayers[1].GeometryIdentity() != tmpl0.staticLayers[1].GeometryIdentity(),
+        "MutableVertices() detaches copy-on-write geometry on write");
+  CheckEq(tmpl0.staticLayers[1].Vertices().size(), origVerts, "Source template geometry remains unmodified");
+  CheckEq(cowCopy.staticLayers[0].GeometryIdentity(), tmpl0.staticLayers[0].GeometryIdentity(),
+          "Unmodified layer keeps shared geometry after sibling layer detaches");
   // Tile 0 (f=1 FlipX): top-left u > top-right u, top-left v < bottom-left v
   Check(overlayVerts[0].tex_coord.x > overlayVerts[1].tex_coord.x, "f=1 swaps U (FlipX)");
   Check(overlayVerts[0].tex_coord.y < overlayVerts[3].tex_coord.y, "f=1 preserves V");
