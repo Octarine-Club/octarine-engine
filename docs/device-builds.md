@@ -225,7 +225,7 @@ PROJECT <dir>)` and the wiring is gated on the top-level
 In shipped releases, all game assets, scripts, configs, and manifests are packaged inside the encrypted `asset_bundle.pak` rather than loose files on disk (see [`docs/security.md`](security.md)).
 
 - **Windows ZIP**: flat layout, engine `.exe` + `asset_bundle.pak` + every transitive DLL vcpkg
-  app-local-deployed (SDL3, image/mixer/ttf, freetype, libpng, jpeg, zlib, …)
+  app-local-deployed (SDL3, image/mixer/ttf, freetype, libpng, zlib, …)
   + MSVC runtime DLLs sourced from the compiler's own redist (NOT the
   ambient VS install). The CRT DLLs ship beside the EXE so Windows' loader
   prefers them over older copies in `System32`.
@@ -252,10 +252,11 @@ reach the compile — check the preset and that you used `octarine_package`.
 
 ### macOS codesign + notarize + staple
 
-Tag pushes (`v*`) auto-codesign the `.dmg` with a Developer ID Application
-cert, submit to `notarytool`, and staple the ticket. Without this, Gatekeeper
-shows "unidentified developer" on every install and quarantine-flagged copies
-won't open offline. Required secrets:
+Downstream game release pipelines using `scripts/octarine-macos-notarize.sh` and
+`scripts/octarine-macos.entitlements` (on `v*` tag pushes) codesign the `.dmg`
+with a Developer ID Application cert, submit to `notarytool`, and staple the
+ticket. Without this, Gatekeeper shows "unidentified developer" on every install
+and quarantine-flagged copies won't open offline. Required secrets:
 
 | Secret                              | Value                                                          |
 |-------------------------------------|----------------------------------------------------------------|
@@ -455,30 +456,29 @@ Verify the signing cert with `apksigner verify --print-certs`:
   app\build\outputs\bundle\release\app-release.aab
 ```
 
-CI signing — set GitHub Actions secrets `OCTARINE_ANDROID_KEYSTORE` (base64
-of the `.jks`), `OCTARINE_ANDROID_STORE_PASSWORD`,
-`OCTARINE_ANDROID_KEY_ALIAS`, `OCTARINE_ANDROID_KEY_PASSWORD`. The
-`android.yml` workflow decodes the keystore per run and forwards the
-properties to Gradle. With the secrets unset (fork PRs), `bundleRelease`
-falls back to the debug key — still a useful build-passes signal, not
-Play-uploadable.
+> [!NOTE]
+> Automated Android CI workflows are currently disabled in this repository while mobile shipping support is experimental. Downstream game pipelines automating Android releases can configure the secrets below (`OCTARINE_ANDROID_*` and `PLAY_SERVICE_ACCOUNT_JSON`) to decode the keystore per run and forward signing properties to Gradle; without signing properties, `bundleRelease` falls back to the debug key.
+
+Required downstream CI signing secrets: `OCTARINE_ANDROID_KEYSTORE` (base64 of the `.jks`),
+`OCTARINE_ANDROID_STORE_PASSWORD`, `OCTARINE_ANDROID_KEY_ALIAS`, and
+`OCTARINE_ANDROID_KEY_PASSWORD`.
 
 ### Play Store upload (internal track)
 
-Tag pushes (`v*`) auto-upload the AAB to the **Play Store internal track** via
-`r0adkll/upload-google-play@v1`. Requires a Google Cloud service account with
-**Release Manager** on the `com.octarine.example` Play Console entry. Secret:
+For downstream release workflows uploading the AAB to the **Play Store internal track**
+(e.g., via `r0adkll/upload-google-play@v1`), configure a Google Cloud service account
+with **Release Manager** on your Play Console entry (`com.octarine.example` in the
+template) and store its key in:
 
 | Secret                              | Value                                              |
 |-------------------------------------|----------------------------------------------------|
 | `PLAY_SERVICE_ACCOUNT_JSON`         | Full JSON key contents (NOT base64).               |
 
-Generate the key at Google Cloud Console → IAM & Admin → Service Accounts →
-Keys tab → Add Key → JSON. Paste the file contents into the GitHub secret.
-Non-tag pushes and missing-secret runs skip the upload step cleanly. Internal
-track is the only track this workflow targets — promote to closed/open/
-production manually from the Play Console release dashboard. Downstream
-projects fork the workflow and substitute their own `packageName`.
+Generate the key at Google Cloud Console -> IAM & Admin -> Service Accounts ->
+Keys tab -> Add Key -> JSON. Paste the file contents into the GitHub secret.
+Internal track is the standard initial target — promote to closed, open, or
+production manually from the Play Console release dashboard, and substitute your
+game's own `packageName`.
 
 ### R8 / minification
 
@@ -524,41 +524,31 @@ points at the last known-good commit.
 
 ## 8. CI — what runs where
 
-| Workflow                    | Runner          | Triggers                                | Output                                         |
-|-----------------------------|-----------------|-----------------------------------------|------------------------------------------------|
-| `.github/workflows/package.yml`  | matrix (win/linux/mac/mac-universal) | dispatch + push to `main` + tags `v*` + PRs | per-OS ZIP/TGZ/DMG                |
+| Workflow                       | Scope / Jobs                          | Triggers                                     | Output                                                         |
+|--------------------------------|---------------------------------------|----------------------------------------------|----------------------------------------------------------------|
+| `.github/workflows/build.yml`  | `plan`, `build`, `sanitize`, `coverage`, `lint` | `pull_request`, `push` to `main`, `workflow_dispatch` | Multi-OS build + unit tests, ASan/UBSan, coverage, lint checks |
+| `.github/workflows/package.yml`| Desktop matrix (Linux / Windows / macOS) | Tags `v*` on `main`, `workflow_dispatch` | Standalone SDK archives attached to GitHub Releases            |
 
-*(Mobile CI: Automated workflows for Android and iOS are removed from running while mobile shipping support is experimental to ensure day-to-day engine developments on desktop are not blocked.)*
+Additional repository workflows include `docs.yml`, `benchmark.yml`, `nightly-tidy.yml`, `sanitize-tsan.yml`, and `autoformat.yml`.
+
+> [!NOTE]
+> Automated Android and iOS CI workflows are not active in GitHub Actions while mobile shipping support is experimental, ensuring desktop development is not blocked. Local Android builds remain functional via Gradle under `android/` with `-DOCTARINE_ENABLE_ANDROID=ON`.
 
 ### Common machinery
 
-Workflows share:
+Workflows share `.github/actions/vcpkg-cache-env`:
 
-- `VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"` — vcpkg uses the GitHub
-  Actions cache for binary artifacts. First-ever run for a new triplet is
-  cold (~60 minutes); subsequent runs warm-hit the cache (~5–10 minutes per
-  leg).
-- A `Resolve version` step that converts tag pushes `v0.1.2` →
-  `version_name=0.1.2`, `version_code=<git rev-list --count HEAD>`. Non-tag
-  runs leave both blank and the driver falls through to `project.ini` /
-  defaults. This is how a tag drives both stores' version numbers without
-  editing the file.
-- The example project is checked out into `example_repo/` from
-  `Octarine-Club/octarine-engine-example` and used as the staged project.
+- `VCPKG_BINARY_SOURCES=clear;files,<RUNNER_TEMP>/vcpkg-bincache,readwrite` backed by `actions/cache@v4`, plus a Lua 5.4.9 source tarball pre-fetch. Cold cache runs rebuild dependencies (~20–60 minutes); warm cache hits cut leg times substantially (~5–10 minutes per leg).
 
-### `package.yml` — desktop matrix
+### `package.yml` — standalone engine SDK releases
 
-Per-OS leg: configures `ship-release` (or `ship-mac-universal`) against
-`example_repo`, builds, runs `cmake --build … --target package`. The
-install-time manifest bake inside CPack is the CI gate. macOS universal
-additionally `lipo -archs` the binary out of the mounted DMG to assert both
-slices made it through.
+Per-OS legs configure the `player-release` and `ship-release` presets and publish standalone engine SDK archives named `OctarineEngine-{version}-{linux|windows|macos}-{player|ship}.{tar.gz|zip}` to GitHub Releases.
 
-### Mobile CI (Deferred while Experimental)
+Game projects package standalone per-game installers locally or in their own game CI using `cmake --preset ship-release -DOCTARINE_PACKAGE_PROJECT=/path/to/game` (or `ship-mac-universal`) followed by `cmake --build --preset ship-release --target package`.
 
-Automated Android CI workflows (`android.yml`, `android-emulator.yml`) and iOS workflows (`ios.yml`, `ios-ipa.yml` on `defer/ios`) are not active in GitHub Actions while mobile shipping support is experimental.
+### Mobile builds (experimental)
 
-Local Android builds remain functional via Gradle under `android/` with `-DOCTARINE_ENABLE_ANDROID=ON` supplied by the host Gradle configuration.
+Local Android builds run through Gradle under `android/` (passing `-DOCTARINE_ENABLE_ANDROID=ON` via CMake arguments), and downstream game repositories can wire their own store-signing workflows as needed.
 
 ---
 
@@ -619,7 +609,7 @@ A transitive DLL didn't ship beside the EXE. The packaging code globs
 `$<TARGET_FILE_DIR>/*.dll` to grab vcpkg's app-local copies; if you're not
 using `octarine_package` (e.g. a manual install), you'll need to bundle
 them yourself. `$<TARGET_RUNTIME_DLLS>` only lists *direct* imports and
-misses transitive deps like freetype/libpng/jpeg/zlib.
+misses transitive deps like freetype/libpng/zlib.
 
 ### Desktop binary access-violates in Release (Windows MSVC)
 
@@ -661,7 +651,7 @@ Java_org_libsdl_app_`.
 
 Expected — first run for a new triplet builds every dep from source.
 SDL3 + image/mixer/ttf + freetype/harfbuzz/libpng/libogg/libvorbis is
-~20–60 minutes. The GitHub Actions binary cache (`x-gha`) makes subsequent
+~20–60 minutes. The GitHub Actions `files` binary cache (`.github/actions/vcpkg-cache-env` + `actions/cache@v4`) makes subsequent
 CI runs ~5–10 minutes per leg; locally, set `VCPKG_BINARY_SOURCES` to a
 shared `files` cache to amortize across checkouts.
 
@@ -711,15 +701,13 @@ cd android
 # -> android/app/build/outputs/bundle/release/app-release.aab
 ```
 
-**Push a release tag** and CI produces the shipping artifacts:
+**Push a release tag** on `main` to trigger the engine SDK release workflow:
 
 ```bash
 git tag v0.1.0 && git push --tags
 ```
 
-Tag push fires the desktop release workflow:
-
-- `package.yml` — per-OS ZIP/TGZ/DMG + universal macOS DMG.
+Tag pushes trigger `.github/workflows/package.yml`, which publishes standalone engine SDK archives (`OctarineEngine-{version}-{linux|windows|macos}-{player|ship}.{tar.gz|zip}`) to GitHub Releases. To build per-game desktop installers, run the `ship-release` (or `ship-mac-universal`) preset with `-DOCTARINE_PACKAGE_PROJECT=<path>` and `--target package`.
 
 ---
 

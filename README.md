@@ -8,19 +8,33 @@
 ![C++20](https://img.shields.io/badge/C++-20-blue.svg?style=for-the-badge&logo=c%2B%2B)
 ![Lua](https://img.shields.io/badge/Lua-5.4-blue.svg?style=for-the-badge&logo=lua)
 
-Octarine Engine is a lightweight, high-performance 2D game engine built with C++20. It features a custom archetype-based Entity-Component System (ECS), integrated Lua scripting, and a unique yellowish-purple aesthetic.
+Octarine Engine is a lightweight, high-performance 2D game engine built with C++20. It features a custom archetype-based Entity-Component System (ECS), integrated Lua 5.4 scripting (`sol2`), SDL3 multimedia backends, a declarative UI framework (`.oxml`/`.oss`), and chunked LDtk tilemaps.
 
-New here? Start with [`docs/QUICKSTART.md`](docs/QUICKSTART.md) — the shortest path from a fresh clone to a verified code change.
+- **New here?** Start with [`docs/QUICKSTART.md`](docs/QUICKSTART.md) (building the engine) or [`docs/making-games.md`](docs/making-games.md) (building a game).
+- **C++ API Reference:** Published Doxygen documentation at **[octarine-club.github.io/octarine-engine](https://octarine-club.github.io/octarine-engine/)**.
+
+### Documentation
+
+- [Making Games](docs/making-games.md) — project structure, `config.ini`, assets, Lua scripting, and native C++ modules
+- [Quickstart](docs/QUICKSTART.md) — clone, build, test, and verify engine changes
+- [Lua Scripting](docs/lua-scripting.md) — script callbacks, component proxies, globals, `storage`, and `settings`
+- [ECS Architecture](docs/ecs-architecture.md) and [ECS Components](docs/ecs-components.md) — 16 KB SoA chunks, DAG scheduling, and all 39 components
+- [Systems](docs/systems.md) and [Events](docs/events.md) — execution order, collision shapes, and `EventBus`
+- [Scenes](docs/scenes.md) and [Input & Controllers](docs/input-and-controllers.md) — scene switching, action bindings, and gamepad support
+- [UI Framework](docs/ui-framework.md) and [UI Layout](docs/ui-layout.md) — declarative `.oxml`/`.oss`, observables, and procedural flex/anchors
+- [Tilemaps](docs/tilemaps.md) — chunked LDtk maps, DDA raycasting, IntGrid masks, and procedural stitching
+- [Dev Tools](docs/dev-tools.md) — `--dev`, `dev.*` ImGui panels, LuaLS stubs, `--headless`, and `--dev-listen`
+- [Asset Pipeline](docs/asset-pipeline.md), [Profiling](docs/profiling.md), [Security](docs/security.md), and [Device Builds](docs/device-builds.md)
 
 ## Tech Stack
 
-- **Graphics:** SDL3
+- **Multimedia:** SDL3 (`SDL3`, `SDL3_image`, `SDL3_ttf`, `SDL3_mixer`)
 - **Scripting:** Lua 5.4 with [sol2](https://github.com/ThePhD/sol2) bindings
-- **ECS:** Custom Archetype-based implementation
+- **ECS:** Custom 16 KB SoA archetype implementation with DAG scheduling
 - **Math:** [GLM](https://github.com/g-truc/glm)
-- **UI:** [ImGui](https://github.com/ocornut/imgui) with custom sol2 bindings
+- **Debug UI:** [Dear ImGui](https://github.com/ocornut/imgui) with custom `sol2` bindings (`--dev` / non-shipped builds)
 - **Logging:** [spdlog](https://github.com/gabime/spdlog)
-- **Dependency Management:** [vcpkg](https://github.com/microsoft/vcpkg)
+- **Dependency Management:** [vcpkg](https://github.com/microsoft/vcpkg) (manifest mode)
 
 ---
 
@@ -80,34 +94,73 @@ cmake --preset player-profile
 cmake --build --preset player-profile
 ```
 
-The compiled binaries will be located in `build/[preset-name]/bin/`.
+The compiled binaries will be located in `build/<preset>/bin/<config>/` (for example, `build/player-debug/bin/debug/OctarineEngine`).
 
-For producing shippable desktop artifacts (Windows ZIP/NSIS, Linux TGZ, macOS DMG; Android and iOS shipping support is experimental)
-see [`docs/device-builds.md`](docs/device-builds.md). Shipping config is the `ship-release`
-preset (and `ship-mac-universal` for universal macOS).
+To scaffold a standalone game project outside the engine tree:
+
+```bash
+./scripts/octarine-new.sh --name "My Game" --package-id com.example.mygame --dir ./my-game
+# Optional helper when setting up a local engine or native-module build:
+./scripts/octarine-init-build.sh
+```
+
+Run the verification suite after engine changes:
+
+```bash
+./scripts/octarine-verify.sh --fast
+ctest --test-dir build/player-debug --output-on-failure
+```
+
+For producing shippable desktop artifacts (Windows ZIP/NSIS, Linux TGZ, macOS DMG; Android and iOS shipping support is experimental),
+see [`docs/device-builds.md`](docs/device-builds.md). Shipping presets are `ship-release`
+(and `ship-mac-universal` for universal macOS).
 
 Contributing? See [`CONTRIBUTING.md`](CONTRIBUTING.md) for workflow, coding
 standards, commit style, and how to register new source files.
 
 ### Running the Engine
 
-Octarine Engine accepts the game directory as a positional argument:
+Octarine Engine accepts the game directory as a positional argument or via `--project-root`:
 
 ```bash
 # Run a game project
-./OctarineEngine ./projects/my-game
+./build/player-debug/bin/debug/OctarineEngine ./projects/my-game
 
-# Run with a specific startup mode (e.g. for benchmarking)
-./OctarineEngine ./projects/my-game --startup-mode stress
+# Run with dev overlays, LuaLS type-stub refresh, and hot reload
+./build/player-debug/bin/debug/OctarineEngine ./projects/my-game --dev
+
+# Run headlessly, with a custom startup mode, or bake assets
+./build/player-debug/bin/debug/OctarineEngine ./projects/my-game --headless --startup-mode stress
+./build/player-debug/bin/debug/OctarineEngine ./projects/my-game --startup-mode bake
 ```
+
+See [`docs/dev-tools.md`](docs/dev-tools.md) for `--scripts-dir`, `--use-manifest`, and `--dev-listen <port>`.
 
 ---
 
 ## Benchmarking
 
+### C++ Microbenchmarks and Macro Runs
+
+The primary benchmark suite is the headless C++ benchmark runner (`OctarineBenchmarks`):
+
+```bash
+./scripts/bench-micro.sh
+```
+
+For whole-game macro runs against a game directory:
+
+```bash
+# Run against octarine-engine-example using player-profile
+scripts/bench.sh
+
+# Run against a specific game directory
+OCT_BENCH_GAME=/path/to/game scripts/bench.sh
+```
+
 ### Continuous Benchmarking
 
-The engine runs automated performance benchmarks via GitHub Actions on every push to `main` and Pull Request.
+The `.github/workflows/benchmark.yml` workflow runs on self-hosted runners via manual dispatch (`workflow_dispatch`).
 
 Interactive historical performance dashboard:
 **[Octarine Engine Performance Dashboard](https://octarine-club.github.io/octarine-engine/dev/bench/)**

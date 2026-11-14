@@ -1,34 +1,35 @@
 # Lua Scripting Guide
 
-Octarine Engine is designed to be driven by Lua scripts. This guide covers the
-`script` component, the update loop, reading and writing components at runtime,
-the full input API, and the ImGui debug UI surface.
+Octarine Engine is driven by Lua 5.4 scripts (`sol2`). This guide covers project layout, `config.ini`, the `script` component (inline and file-backed hot reload), component proxies, global helpers, `storage.*`, `settings.*`, `input.*`, ImGui/developer tooling, and C++ component-binding rules.
 
-For a complete working example, refer to the sibling `Octarine-Engine-Example/`
-directory.
+For a complete runnable example, see [`Octarine-Engine-Example`](https://github.com/Octarine-Club/octarine-engine-example).
 
 ---
 
 ## 1. Project Structure
 
-A typical Lua project for Octarine Engine should have the following structure:
+Scaffold a standalone project with `./scripts/octarine-new.sh --name "My Game" --package-id com.example.mygame --dir ./my-game`. A typical layout:
 
 ```text
 MyGame/
-├── config.ini          # Main configuration file
-├── game.lua            # Entry point script
-├── scripts/            # Additional Lua scripts
-├── images/             # Sprite textures
-├── fonts/              # TTF fonts
-├── sounds/             # Audio files
-└── tilemaps/           # Map data (.map and .png files)
+├── config.ini          # Engine and window configuration
+├── project.ini         # Package identity for shipping builds
+├── game.lua            # Startup script referenced by config.ini
+├── scripts/            # Additional Lua modules and entity scripts
+├── scenes/             # Scene files loaded via load_scene()
+├── ui/                 # Declarative .oxml templates and .oss stylesheets
+├── images/             # Textures (.png, .bmp) and optional .meta sidecars
+├── fonts/              # Fonts (.ttf)
+├── sounds/             # Audio (.wav, .ogg)
+├── tilemaps/           # LDtk maps (.ldtk) and tilesets
+└── types/              # Auto-generated octarine_api.lua on --dev launch
 ```
 
 ---
 
 ## 2. Configuration (`config.ini`)
 
-The `config.ini` file defines the game's initial window settings and engine options.
+`config.ini` lives at the project root:
 
 ```ini
 Title=My Awesome Game
@@ -37,36 +38,34 @@ BaseResolutionWidth=1280
 BaseResolutionHeight=720
 DefaultWindowWidth=1280
 DefaultWindowHeight=720
-DefaultPresentationMode=expand # 'expand', 'letterbox', 'integer_scale', or 'stretch'
-DefaultScalingMode=nearest # 'nearest' or 'linear'
-FpsTarget=60               # frame-rate cap; 0 = uncapped (default 60)
-AngleUnit=degrees          # 'degrees' (default) or 'radians'
+DefaultWindowMode=windowed       # 'windowed', 'borderless', or 'exclusive'
+DefaultPresentationMode=expand   # 'expand', 'letterbox', 'integer_scale', or 'stretch'
+DefaultScalingMode=nearest       # 'nearest', 'linear', or 'pixelart'
+FpsTarget=60                     # frame-rate cap; 0 = uncapped (default 60)
+AngleUnit=degrees                # 'degrees' (default) or 'radians'
 ```
 
-`AngleUnit` sets the unit for every angle you author or read from Lua —
-`rotation` in a component table, `set_rotation()`, and the `rotation`
-component's `value`. Storage stays radians; this converts at the boundary.
-It defaults to `degrees`, so a project authored in radians must set
-`AngleUnit=radians` or its angles will be read as degrees.
+`AngleUnit` controls the unit applied at every Lua boundary (`rotation` in entity tables, `set_rotation()`, and the `rotation` component's `value`). Internal engine storage is always radians. Because `AngleUnit` defaults to `degrees`, scripts written in radians must set `AngleUnit=radians`.
+
+Launch with `--dev` to refresh `<assets>/types/octarine_api.lua` automatically for IDE LuaLS autocomplete (see [`docs/dev-tools.md`](dev-tools.md)).
 
 ---
 
-## 3. The Script Component
+## 3. The `script` Component
 
-Attach a `script` table to any entity to give it per-frame Lua behaviour. The
-engine calls two callbacks on it each frame:
+Attach a `script` table to any entity for per-frame Lua callbacks:
 
 | Callback | When called |
 |---|---|
-| `on_update(self, entity, dt)` | Every frame, in system order |
+| `on_update(self, entity, dt)` | Every simulation step, in system order (`dt` in seconds) |
 | `on_collision(self, entity, other)` | When this entity's collider enters contact with `other` |
 | `on_collision_exit(self, entity, other)` | When this entity's collider separates from `other` |
-| `on_debug_gui(self, entity)` | Every frame, but only when debug UI overlay is visible |
-| `on_click(self, entity)` | When the entity has a `ui_button` component and is clicked or input-triggered |
+| `on_debug_gui(self, entity)` | Every frame when debug UI is visible (compiled out in shipped builds) |
+| `on_click(self, entity)` | When an entity with `ui_button` is activated via pointer or UI focus |
 
-- **`self`** is the script table itself — store per-entity state here.
-- **`entity`** is the numeric entity ID — pass it to `registry.*` and helper globals.
-- **`dt`** is delta time in seconds since the last frame.
+- **`self`** is the script's own Lua table; store per-entity state directly on `self`.
+- **`entity`** is the entity handle (`entity:get_id()` returns the raw ID).
+- **`dt`** is the simulation delta time in seconds.
 
 ```lua
 load_entity({
@@ -75,19 +74,25 @@ load_entity({
         sprite    = { texture_asset_id = "player", width = 32, height = 32, layer = 2 },
         rigidbody = { velocity = { x = 0, y = 0 } },
         script    = {
-            speed    = 80,
+            speed    = 120,
             cooldown = 0,
             on_update = function(self, entity, dt)
                 self.cooldown = self.cooldown - dt
-                -- movement and actions handled here each frame
             end,
         },
-    }
+    },
 })
 ```
 
-Scripts are plain Lua tables — any key you add to the table persists across
-frames and is accessible through `self`.
+### File-Backed Scripts and Hot Reload
+
+To opt a `script` component into live hot reload on non-shipped builds, reference a Lua file returning a script table via `source`:
+
+```lua
+script = { source = "scripts/player.lua" }
+```
+
+When `scripts/player.lua` changes on disk, `ScriptHotReload` reloads callbacks while preserving existing table data, and keeps prior callbacks intact if a syntax error occurs.
 
 ---
 
@@ -95,75 +100,103 @@ frames and is accessible through `self`.
 
 ### `registry.get_*` / `registry.has_*`
 
-The `registry` table exposes a getter and a presence check for every component.
-The pattern is `registry.get_<key>` / `registry.has_<key>`, where the key for
-each component is listed in [`docs/ecs-components.md`](ecs-components.md).
+`registry` exposes `registry.has_<key>(entity)` and `registry.get_<key>(entity)` for every registered component (see [`docs/ecs-components.md`](ecs-components.md) for all 39 keys and fields), plus lifetime and pause helpers:
 
 ```lua
--- Read and mutate a component (get returns a mutable proxy)
 local pos = registry.get_position(entity)
 pos.x = pos.x + 10
 
--- Guard before accessing an optional component
 if registry.has_lifetime(entity) then
     local lt = registry.get_lifetime(entity)
     lt:extend(1.0)
 end
 
--- Rigidbody velocity
 local rb = registry.get_rigidbody(entity)
 rb.velocity.x = 150
 rb.velocity.y = 0
 ```
 
-### Entity hierarchy
+### Entity Hierarchy & Lifecycle
 
 | Function | Description |
 |---|---|
-| `registry.get_parent(entity)` | Returns the parent entity, or `nil` if the entity has no parent |
-| `registry.set_parent(child, parent)` | Parents `child` under `parent`, detaching it from any previous parent. Self-parenting and cycles are rejected with an error log. |
+| `registry.is_alive(entity)` | Returns `true` if `entity` is currently alive |
+| `registry.get_parent(entity)` | Returns parent entity, or `nil` |
+| `registry.set_parent(child, parent)` | Reparents `child` under `parent` (self/cycle reparenting is rejected) |
+| `registry.is_paused()` / `registry.set_paused(bool)` | Query or toggle ECS simulation pause state |
 
-Parented entities inherit their parent's transform — see
-[`docs/ecs-architecture.md`](ecs-architecture.md) for how the hierarchy is resolved.
-
-### Convenience helpers
-
-These globals are shorthand for the most common reads and writes:
+### Convenience & Gameplay Globals
 
 | Function | Description |
 |---|---|
-| `get_position(entity)` | Returns `{x, y}` |
-| `set_position(entity, x, y)` | Teleports the entity |
-| `get_name(entity)` | Returns the entity's name string |
-| `set_name(entity, name)` | Sets the name |
-| `set_sprite_src_rect(entity, x, y)` | Sets the sprite source-rect origin |
-| `find_entity_by_name(name)` | Returns the entity ID, or `nil` |
-| `blam(entity_or_table)` | Destroys an entity, or every entity in a table. Destruction is deferred to the end of the frame's update, so the entity is still alive (and queryable) for the rest of the current frame; duplicate blams of the same entity within a frame collapse to one |
+| `load_entity(table)` | Spawns an entity (and optional nested `entities`); returns root handle or `nil` |
+| `blam(entity_or_table)` | Queues deferred end-of-frame destruction (single entity or list) |
+| `find_entity_by_name(name)` | Returns entity handle or `nil` |
+| `get_entity_count()` | Returns live entity count |
+| `get_name(entity)` / `set_name(entity, name)` | Read or update `name` component |
+| `get_position(entity)` / `get_position_xy(entity)` | Returns `{x, y}` table, or `(x, y)` multiple return values |
+| `set_position(entity, x, y)` | Teleports entity |
+| `set_rotation(entity, angle)` | Sets rotation in `AngleUnit` |
+| `set_sprite_src_rect(entity, x, y)` | Updates sprite source rectangle origin |
+| `are_colliding(e1, e2)` | Returns `true` if `e1` and `e2` are currently overlapping |
+| `load_scene(path)` / `reload_scene()` / `stop_scene()` / `clear_scene()` | Deferred scene transition and cleanup |
+| `load_asset(table)` / `acquire_scene_assets(scene)` / `get_asset_path(rel)` | Load or resolve project assets |
+| `play_sound(clip_id, volume?)` | Plays an audio asset (`volume` optional) |
+| `get_master_volume()` / `set_master_volume(v)` | Global audio gain |
+| `is_audio_muted()` / `set_audio_muted(bool)` | Mute or unmute mixer output |
+| `get_camera_position()` / `get_camera_zoom()` / `set_camera_zoom(z)` | Camera viewport origin and zoom |
+| `get_game_map_dimensions()` / `set_game_map_dimensions(w, h)` | Clamp camera bounds |
+| `log(msg)` / `log_i(msg)` / `log_w(msg)` / `log_e(msg)` / `log_table(tbl, label?)` | Logging helpers |
+| `read_file_lines(path)` / `write_project_file(path, text)` | Safe file I/O helpers |
+| `get_fps()` / `get_avg_fps()` / `get_frame_time()` / `get_memory_usage()` / `get_perf_stats()` | Runtime performance telemetry |
+| `get_env(name)` / `quit_game()` | Process environment lookup and clean shutdown |
 
-### Other Lua globals
+Runtime window, display, and determinism globals (see also [`docs/dev-tools.md`](dev-tools.md)):
+`is_fullscreen` / `set_fullscreen`, `get_window_mode` / `set_window_mode`, `get_presentation_mode` / `set_presentation_mode`, `get_texture_scale_mode` / `set_texture_scale_mode`, `get_vsync` / `set_vsync`, `get_window_size` / `set_window_size`, `get_base_resolution`, `get_logical_size`, `get_displays`, `get_display_modes`, `set_window_display`, `get_fps_target` / `set_fps_target`, `set_deterministic`, `is_deterministic`, `set_sim_seed`, `set_fixed_dt` / `get_fixed_dt`, `set_sim_substeps` / `get_sim_substeps`, `get_state_hash`, `write_state_dump`, `set_headless` / `is_headless`, `set_debug_gui` / `toggle_debug_gui`.
 
-| Function | Description |
-|---|---|
-| `log(message)` | Print to the engine console |
-| `load_asset(table)` | Load a texture, font, or sound |
-| `load_entity(table)` | Spawn a new entity; returns the root entity handle (or `nil` on an invalid table) |
-| `get_asset_path(path)` | Resolve a project-relative path to an absolute path |
-| `play_sound(asset_id)` | Play a sound or music track |
-| `get_camera_position()` | Returns `{x, y}` of the camera viewport origin |
-| `get_game_map_dimensions()` | Returns `{w, h}` of the playable area |
-| `set_game_map_dimensions(w, h)` | Set the world bounds for camera clamping |
-| `read_file_lines(path)` | Read a file and return its lines as a table |
-| `quit_game()` | Gracefully exit the engine |
+Bootstrap read-only globals: `oct_startup_mode`, `oct_dev_mode`, `game_window_width`, `game_window_height`.
 
 ---
 
-## 5. Input
+## 5. Sandboxed Save Storage (`storage`) and User Settings (`settings`)
 
-The `input` table handles keyboard, mouse, and gamepad action binding, polling, analog sticks, and event callbacks. For the complete gamepad, trigger, and UI focus guide, see [`docs/input-and-controllers.md`](input-and-controllers.md).
+### `storage` (Per-Game Save Root)
 
-### Binding actions
+`storage.*` performs sandboxed file I/O under the platform save directory (`SDL_GetPrefPath`, overridable via `OCTARINE_SAVE_PATH`). Paths attempting `..` traversal or absolute escapes are rejected.
 
-Declare your action map with `input.set_bindings(tbl, opts?)` or add individual bindings with `input.bind_key` / `input.bind_gamepad`. Action bindings **persist across scenes** (`load_scene` / `reload_scene`); only transient key states and `input.on_*` callbacks are cleared on scene swaps (see [`docs/scenes.md`](scenes.md)).
+| Function | Description |
+|---|---|
+| `storage.write(rel_path, contents) -> bool` | Write string contents |
+| `storage.read(rel_path) -> string?` | Read file contents, or `nil` if missing |
+| `storage.write_table(rel_path, tbl) -> bool` | Serialize a Lua table safely |
+| `storage.read_table(rel_path) -> table?` | Load a serialized Lua table (evaluated in an empty environment) |
+| `storage.exists(rel_path) -> bool` | Check if save path exists |
+| `storage.remove(rel_path) -> bool` | Delete save file |
+| `storage.list(rel_path?) -> string[]` | List entries under save root or subdirectory |
+
+### `settings` (`user_settings.ini`)
+
+`settings.*` defines schema defaults, reads/writes typed user preferences (including built-in keys such as `master_volume`, `audio_muted`, `fps_target`, `window_mode`, `presentation_mode`, `texture_scale_mode`, and `vsync`), and persists changes to `user_settings.ini` in the save root:
+
+```lua
+settings.define({
+    sfx_volume = 0.8,
+    screen_shake = true,
+    difficulty = "normal",
+})
+
+local vol = settings.get("sfx_volume")
+settings.set("screen_shake", false)
+settings.save()
+```
+
+Full `settings` API: `settings.define(key_or_table, default?)`, `settings.get(key, fallback?)`, `settings.set(key, val)`, `settings.has(key)`, `settings.get_default(key)`, `settings.reset(key)`, `settings.reset_all()`, `settings.get_all()`, `settings.save()` (plus global shorthands `get_user_setting`, `set_user_setting`, `save_user_settings`).
+
+---
+
+## 6. Input
+
+The `input` module handles action binding, keyboard/mouse/gamepad polling, and device callbacks. See [`docs/input-and-controllers.md`](input-and-controllers.md) for the complete reference.
 
 ```lua
 input.set_bindings({
@@ -174,190 +207,48 @@ input.set_bindings({
     fire       = { keys = { "space" },      gamepad = { "south", "rt" } },
 })
 
--- Merge changes without clearing unrelated actions:
-input.set_bindings({ fire = { keys = "f" } }, { merge = true })
-
--- Or inspect / incrementally edit single device bindings:
-local bindings = input.get_bindings() -- { [action] = { keys = {...}, gamepad = {...} } }
-input.bind_key("fire", "j")
-input.unbind_key("fire", "j")
-input.bind_gamepad("fire", "rb")
-input.unbind_gamepad("fire")          -- clears gamepad buttons for "fire", keeps keys
-```
-
-Gamepad button names follow positional canonical names (`south`, `east`, `west`, `north`, `lb`, `rb`, `lt`, `rt`, `ls`, `rs`, `dpad_up`..`dpad_right`, `start`, `back`, `guide`); Xbox, PlayStation, and SDL aliases are accepted and normalized automatically.
-
-### Polling
-
-```lua
--- Actions (fires for any key or gamepad button bound to the action)
-input.is_action_down("fire")        -- held this frame
-input.is_action_pressed("fire")     -- just went down this frame
-input.is_action_released("fire")    -- just came up this frame
-
--- Raw keys & gamepad
-input.is_key_down("escape")
-input.is_key_pressed("f5")
-input.is_gamepad_connected()
-input.is_gamepad_pressed("south")
-local stick = input.gamepad_stick("left", 0.18) -- vec2 in [-1, 1]
-local trig  = input.gamepad_axis("rt", 0.05)    -- float in [0, 1]
-
--- Mouse
-local pos   = input.mouse_position()   -- returns {x, y}, viewport-aware
-local wheel = input.mouse_wheel()      -- returns {x, y} per-frame delta
-input.is_mouse_down(1)                 -- 1 = left, 2 = right, 3 = middle
-input.is_mouse_pressed(1)
-input.is_mouse_released(1)
-```
-
-### Callbacks
-
-```lua
-input.on_key_down(function(key_name) ... end)
-input.on_key_up(function(key_name) ... end)
-input.on_gamepad_down(function(btn_name) ... end) -- canonical button name
-input.on_gamepad_up(function(btn_name) ... end)
-input.on_mouse_down(function(btn, x, y) ... end)
-input.on_mouse_up(function(btn, x, y) ... end)
-input.on_mouse_wheel(function(dx, dy) ... end)
-```
-
-### Example: 8-way movement
-
-```lua
-local function movement_update(self, entity, dt)
-    local dx, dy = 0, 0
-    if input.is_action_down("move_up")    then dy = dy - 1 end
-    if input.is_action_down("move_down")  then dy = dy + 1 end
-    if input.is_action_down("move_left")  then dx = dx - 1 end
-    if input.is_action_down("move_right") then dx = dx + 1 end
-
-    local rb = registry.get_rigidbody(entity)
-    if dx ~= 0 or dy ~= 0 then
-        local len = math.sqrt(dx * dx + dy * dy)
-        rb.velocity.x = (dx / len) * self.speed
-        rb.velocity.y = (dy / len) * self.speed
-    else
-        rb.velocity.x = 0
-        rb.velocity.y = 0
-    end
+if input.is_action_down("fire") and input.is_focused() then
+    -- window has input focus and fire is active
 end
-
-load_entity({
-    components = {
-        transform = { position = { x = 200, y = 200 } },
-        sprite    = { texture_asset_id = "player", width = 32, height = 32, layer = 2 },
-        rigidbody = { velocity = { x = 0, y = 0 } },
-        script    = { speed = 120, on_update = movement_update },
-    }
-})
 ```
 
----
-
-## 6. ImGui Debug UI
-
-The engine exposes full [Dear ImGui](https://github.com/ocornut/imgui) bindings
-to Lua. Wire debug windows through the `on_debug_gui` callback — it only fires
-when the in-game debug UI is visible, so release builds pay zero cost.
-
-```lua
-load_entity({
-    components = {
-        script = {
-            spawn_x = 100,
-            spawn_y = 100,
-            on_debug_gui = function(self, entity)
-                if ImGui.Begin("Spawn Tool") then
-                    self.spawn_x = ImGui.InputInt("X", self.spawn_x)
-                    self.spawn_y = ImGui.InputInt("Y", self.spawn_y)
-
-                    if ImGui.Button("Spawn Enemy") then
-                        load_entity({
-                            components = {
-                                transform    = { position = { x = self.spawn_x, y = self.spawn_y } },
-                                sprite       = { texture_asset_id = "enemy", width = 32, height = 32, layer = 2 },
-                                box_collider = { width = 32, height = 32 },
-                            }
-                        })
-                    end
-                end
-                ImGui.End()
-            end,
-        }
-    }
-})
-```
-
-The full ImGui API is documented in the
-[Dear ImGui wiki](https://github.com/ocornut/imgui/wiki) and the engine's
-generated Lua stub at
-[`lua_api.smoke.lua`](https://github.com/Octarine-Club/octarine-engine/blob/main/lua_api.smoke.lua)
-(search for `ImGui.`).
+Action bindings persist across `load_scene()` / `reload_scene()`; `input.on_*` callbacks are cleared on scene swap. Also check `input.is_focused()` and `input.is_hovered()` for window focus and pointer hover state.
 
 ---
 
-## 7. Domain Modules (`ui`, `tilemap`, `input`)
+## 7. ImGui, Dev Tools, and Domain Modules
 
-The engine exposes core subsystems as dedicated global modules:
-
-- **`ui`**: The declarative and procedural UI framework. Provides `ui.mount` for `.oxml` and `.oss` layout rendering, `ui.observable` for reactive MVVM state binding, `ui.register_widget` for custom tags, `ui.debug_draw` for wireframe debugging, and procedural layout helpers (`ui.canvas`, `ui.anchor`, `ui.flex`, `ui.box`, `ui.clip`, `ui.nine_slice`, `ui.scroll`, `ui.focus`, `ui.get_focused`). See [`docs/ui-framework.md`](ui-framework.md) and [`docs/ui-layout.md`](ui-layout.md).
-- **`tilemap`**: Infinite 2D LDtk chunked tilemap runtime. Provides level loading (`tilemap.load`), edge-socket procedural stitching, IntGrid spatial queries (`tilemap.is_solid_at`), 2D DDA raycasting (`tilemap.raycast`), circle and AABB penetration resolution, and dynamic prop streaming with consumed persistence. See [`docs/tilemaps.md`](tilemaps.md).
-- **`input`**: Action mapping and raw device input handling (`input.set_bindings`, `input.get_bindings`, `input.is_action_pressed`, `input.gamepad_stick`, `input.on_gamepad_down`). See § 5 above and [`docs/input-and-controllers.md`](input-and-controllers.md).
+- **`dev` / `ImGui`:** Non-shipped builds expose `ImGui.*`, `script.on_debug_gui(self, entity)`, and engine-wide `dev.*` helpers (`dev.register_panel`, `dev.register_action`, `dev.register_toggle`, `dev.watch`, `dev.select_entity`). See [`docs/dev-tools.md`](dev-tools.md).
+- **`ui`:** Declarative `.oxml`/`.oss` UI framework (`ui.mount`, `ui.observable`, `ui.register_widget`, `ui.debug_draw`) and procedural layout helpers (`ui.canvas`, `ui.anchor`, `ui.flex`, `ui.box`, `ui.clip`, `ui.nine_slice`, `ui.scroll`, `ui.focus`, `ui.get_focused`). See [`docs/ui-framework.md`](ui-framework.md) and [`docs/ui-layout.md`](ui-layout.md).
+- **`tilemap`:** Infinite chunked LDtk tilemaps, IntGrid masks, 2D DDA raycasting, circle/AABB resolution, and procedural stitching. See [`docs/tilemaps.md`](tilemaps.md).
 
 ---
 
-## 8. Adding Component Methods (engine contributors & native game modules)
+## 8. Adding Component Methods (Engine Contributors & Native Game Modules)
 
-When you add a Lua binding for an engine or native game-module component
-(`LuaBinding<X>`), the `bindUsertype` call exposes both fields and **member
-functions** to scripts:
+When adding a `LuaBinding<T>` specialization, `bindUsertype` can expose both fields and member functions to Lua:
 
 ```cpp
-lua.new_usertype<LifetimeComponent>(kUsertypeName,
-    "duration",           &LifetimeComponent::duration,
+lua.new_usertype<LifetimeComponent>(
+    kUsertypeName, sol::no_constructor,
     "remaining_duration", sol::readonly(&LifetimeComponent::remainingDuration),
-    "extend",             &LifetimeComponent::Extend,
-    "reset",              &LifetimeComponent::Reset,
-    "is_alive",           &LifetimeComponent::IsAlive);
+    "duration",
+    sol::property([](const LifetimeComponent& s) { return s.lifetimeDuration; },
+                  [](LifetimeComponent& s, const float d) { s.lifetimeDuration = d; }),
+    "is_alive", &LifetimeComponent::IsAlive,
+    "extend",   &LifetimeComponent::Extend,
+    "reset",    &LifetimeComponent::Reset);
 ```
 
-### Hard rule
+### Component Method Invariant
 
-A component method may **read and write the component's own fields only**.
+A component method may read and write **the component's own fields only**:
 
-No:
+- No `Registry&` access or cross-entity reads/writes.
+- No `EventBus*` access or event emission.
+- No archetype mutation (`AddComponent` / `RemoveComponent` / `BlamEntity`).
+- No heap allocation, file I/O, or external side effects.
 
-- `Registry&` access (no looking up sibling components, no other entities).
-- `EventBus*` access (no `EmitEvent`).
-- Cross-entity reads or writes.
-- Archetype mutation (`AddComponent` / `RemoveComponent` / `DestroyEntity`).
-- Allocation, file I/O, or any other side effect.
+Anything requiring cross-entity coordination or events belongs in a system. Bind read-only derived values with `sol::readonly` or `sol::property(&T::Accessor)`, and enforce field invariants inside setter properties.
 
-Anything that needs to cross those lines belongs in a **system**, not a method.
-The moment a method wants to touch a sibling entity or fire an event, move the
-logic out and call it from the relevant system's update.
-
-### Why this matters
-
-Component methods run from Lua at unpredictable points in the frame — inside an
-`on_update`, inside an `on_debug_gui`, inside a callback chain. Systems run in
-known order with known invariants (input → simulation → render). Touching the
-registry from a method during, say, a render-pass debug-gui call can mutate
-state mid-frame and cause iterator invalidation, stale archetype caches, or
-visible single-frame glitches. Keeping methods data-only means you can call
-them anywhere safely.
-
-### Patterns
-
-- **Mutators with invariants** — bind with `sol::property` and a clamping
-  setter so Lua can't bypass the invariant by direct field assignment.
-  `HealthComponent::currentHealth` is the canonical example.
-- **Derived read-only state** — bind with `sol::property(&T::accessor)` so
-  scripts get field-style access (`health.is_dead`) without exposing a setter.
-- **Plain getters/setters** — bind the member function directly.
-
-For the canonical reference, read the comment block in
-[`src/Lua/Bindings/LuaBinding.h`](../src/Lua/Bindings/LuaBinding.h) and
-[`HealthComponentLuaBinding.h`](../src/Lua/Bindings/HealthComponentLuaBinding.h).
+Reference implementations: [`LuaBinding.h`](../src/Lua/Bindings/LuaBinding.h), [`LifetimeComponentLuaBinding.h`](../src/Lua/Bindings/LifetimeComponentLuaBinding.h), and [`RegisterTransformCoreBindings.cpp`](../src/Lua/Bindings/RegisterTransformCoreBindings.cpp).

@@ -158,7 +158,7 @@ Modify a single byte inside `asset_bundle.pak` using a hex editor. Launch the ga
 | **Hot Reloading** | Active (`FileWatcher`) | Disabled (read-only package) |
 | **Lua Script Format** | Plaintext `.lua` files | Stripped (`-s`) & opcode-scrambled bytecode |
 | **CLI Arguments** | Custom project paths allowed | Locked (runs bundled package only) |
-| **Debug Overlay / ImGui** | Enabled (`F1` toggle) | Stripped from binary |
+| **Debug Overlay / ImGui** | Compiled in (`--dev` enables Dev UI / ImGui; `F1` collider toggle) | Stripped from binary |
 | **Lua Environment** | Open (`string.dump`, `load` available) | Sealed (`string.dump`, `load`, `loadfile` nil'd) |
 | **Binary Symbols** | Full debug & exported symbols | Hidden & stripped down to `_main` |
 | **Logs** | Full info & debug output | Errors and warnings only; info logs stripped |

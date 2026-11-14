@@ -12,11 +12,10 @@ Profiling instrumentation is compiled out by default (zero overhead). Turn it on
 ```bash
 cmake --preset player-profile
 cmake --build build/player-profile
-./build/player-profile/bin/relwithdebinfo/OctarineEngine-player ../Octarine-Engine-Example
+./build/player-profile/bin/relwithdebinfo/OctarineEngine ../Octarine-Engine-Example
 ```
 
-`OCTARINE_ENABLE_PROFILING` defines `OCTARINE_PROFILING`, which activates the `PerfUtils` macros. With
-it off, every macro below expands to `((void)0)`.
+`OCTARINE_ENABLE_PROFILING` defines `OCTARINE_PROFILING`, which activates the `PerfUtils` macros. With it off, every macro below expands to `((void)0)`. Use `--headless` for reproducible headless runs without a GPU/window, or `--dev` to inspect live metrics in-game via `RenderDebugGUISystem`.
 
 ## In-code timers — `src/General/PerfUtils.h`
 
@@ -45,10 +44,22 @@ It builds the `player-profile` preset if needed, runs with `SDL_VIDEODRIVER=dumm
 `scripts/parse_bench_output.py`. Override the game dir with `OCT_BENCH_GAME` and the scene with
 `OCT_BENCH_MODE` (default `stress`; the example game also accepts `main`, `map_editor`, `overlap`).
 
-## Micro-benchmarks — Google Benchmark
+## Micro-benchmarks — `scripts/bench-micro.sh` & Google Benchmark
 
-Targeted benchmarks for hot paths (e.g. entity create/blam, pool spawn) live in `tests/benchmarks/`
-and build into `OctarineBenchmarks` when `OCTARINE_ENABLE_BENCHMARKS=ON`:
+Targeted headless C++ benchmarks for hot paths (ECS, systems, pipeline stages, frame loops, and misc) live in `tests/benchmarks/` and build into `OctarineBenchmarks` when `OCTARINE_ENABLE_BENCHMARKS=ON`. Use `scripts/bench-micro.sh` as the primary entry point (no window, GPU, or game project required):
+
+```bash
+# Quick microbenchmark run (default preset: player-release)
+scripts/bench-micro.sh --tier Sys --quick
+
+# Full run with 3 repetitions + PMU hardware counters, saved as a baseline
+scripts/bench-micro.sh --full --label before
+
+# Compare after changes against the baseline via scripts/bench_compare.py
+scripts/bench-micro.sh --full --label after --baseline build/bench-results/<timestamp>_before.json
+```
+
+Or invoke CMake / `OctarineBenchmarks` directly:
 
 ```bash
 cmake --preset player-profile -DOCTARINE_ENABLE_BENCHMARKS=ON
@@ -58,10 +69,7 @@ cmake --build build/player-profile --target OctarineBenchmarks
 
 ## CI and the dashboard
 
-`.github/workflows/benchmark.yml` runs nightly on a self-hosted runner (for stable numbers), and on
-manual dispatch. It runs both the micro and macro suites and publishes results via
-`benchmark-action/github-action-benchmark` to GitHub Pages (the project's Pages site, under
-`dev/bench/`), so you can watch trends over time.
+`.github/workflows/benchmark.yml` runs on manual `workflow_dispatch` on a self-hosted runner (for stable numbers; the nightly schedule is currently disabled). It runs both the micro and macro suites and publishes results via `benchmark-action/github-action-benchmark` to GitHub Pages (under `dev/bench/`) so you can track trends over time.
 
 Regressions past the **200%** alert threshold are flagged but **do not fail** the run — the dashboard
 and alert are advisory. Benchmarks are intentionally not part of the per-PR gate (they need the

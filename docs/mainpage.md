@@ -1,19 +1,15 @@
 # Octarine Engine Documentation
 
-Welcome to the API documentation for the **Octarine Engine**!
+Welcome to the C++ API documentation for **Octarine Engine** — a lightweight, C++20 2D game engine with a custom 16 KB SoA archetype ECS, integrated Lua 5.4 scripting (`sol2`), SDL3 backends, a declarative UI framework (`.oxml`/`.oss`), and chunked LDtk tilemaps.
 
-Octarine Engine is a lightweight, high-performance 2D game engine built with C++20. It features a custom archetype-based Entity-Component System (ECS), integrated Lua 5.4 scripting via sol2, SDL3 multimedia backends, Dear ImGui debug overlays, and a signature yellowish-purple aesthetic.
+For narrative guides and workflows, see the markdown documentation in the repository (`docs/`):
 
-## Key Subsystems
+* **Getting Started:** [Quickstart](https://github.com/Octarine-Club/octarine-engine/blob/main/docs/QUICKSTART.md) | [Making Games](https://github.com/Octarine-Club/octarine-engine/blob/main/docs/making-games.md) | [Extension Recipes](https://github.com/Octarine-Club/octarine-engine/blob/main/docs/extension-recipes.md)
+* **Architecture & ECS:** [ECS Architecture](https://github.com/Octarine-Club/octarine-engine/blob/main/docs/ecs-architecture.md) | [ECS Components](https://github.com/Octarine-Club/octarine-engine/blob/main/docs/ecs-components.md) | [Systems](https://github.com/Octarine-Club/octarine-engine/blob/main/docs/systems.md) | [Events](https://github.com/Octarine-Club/octarine-engine/blob/main/docs/events.md)
+* **Lua & Gameplay Subsystems:** [Lua Scripting](https://github.com/Octarine-Club/octarine-engine/blob/main/docs/lua-scripting.md) | [Scenes](https://github.com/Octarine-Club/octarine-engine/blob/main/docs/scenes.md) | [Input & Controllers](https://github.com/Octarine-Club/octarine-engine/blob/main/docs/input-and-controllers.md)
+* **UI & World:** [UI Framework](https://github.com/Octarine-Club/octarine-engine/blob/main/docs/ui-framework.md) | [UI Layout](https://github.com/Octarine-Club/octarine-engine/blob/main/docs/ui-layout.md) | [Tilemaps](https://github.com/Octarine-Club/octarine-engine/blob/main/docs/tilemaps.md)
+* **Tooling, Shipping & Quality:** [Dev Tools](https://github.com/Octarine-Club/octarine-engine/blob/main/docs/dev-tools.md) | [Asset Pipeline](https://github.com/Octarine-Club/octarine-engine/blob/main/docs/asset-pipeline.md) | [Profiling](https://github.com/Octarine-Club/octarine-engine/blob/main/docs/profiling.md) | [Security](https://github.com/Octarine-Club/octarine-engine/blob/main/docs/security.md) | [Device Builds](https://github.com/Octarine-Club/octarine-engine/blob/main/docs/device-builds.md)
 
-* **ECS & Memory Architecture:** 64-bit generational handles, 16KB 64-byte aligned SoA chunks, active/inactive partition shuffling, archetype transition graph, inverted index query matching, and lock-free command buffers.
-* **Lua 5.4 Scripting:** Zero-copy in-chunk proxy access via `sol2`, domain modules, declarative hierarchy trees, and state-preserving script hot reloading.
-* **Input & Controllers:** Action mapping (`input.set_bindings` / `get_bindings`), canonical positional gamepad buttons, deadzone-scaled analog sticks, hysteresis triggers, hotplugging, and UI focus navigation. See [`docs/input-and-controllers.md`](input-and-controllers.md).
-* **Declarative UI Framework (`.oxml` & `.oss`):** XML-inspired layout templates, CSS-like stylesheets with variables and pseudo-states, unified imperative/snapshot/reactive MVVM bindings, and single-entity composite ECS widgets. See [`docs/ui-framework.md`](ui-framework.md).
-* **Chunked Tilemaps:** Infinite 2D LDtk chunked tilemaps with pre-batched static layer geometry (`TILE_CHUNK`), IntGrid bitmasks, 2D DDA raycasting, edge-socket procedural stitching, and dynamic prop streaming. See [`docs/tilemaps.md`](tilemaps.md).
-* **Rendering Architecture:** Lock-free multi-producer render queue, 64-bit packed sort key layout, frustum culling, and sprite render cache powered by SDL3.
-* **Simulation Pipeline:** Kahn's topological sort system DAG, two-tier Transform system, median-cut/SAT Collision system, and optional native C++ game modules (`OCTARINE_GAME_MODULE_DIR`; see [`docs/making-games.md`](making-games.md#14-native-c-game-modules)).
-* **Asset Pipeline:** Dual-path catalog loading, headless reference validation, texture atlas baker, BS.1770 audio normalization, and `AssetPak` archives.
-* **Security & Asset Protection:** OCPK encrypted asset bundles (ChaCha20 + 128-bit MAC), in-memory seekable stream decryption, Lua bytecode opcode scrambling, dynamic symbol stripping, and runtime loose-file lockdown. See [`docs/security.md`](security.md).
+The published online reference is hosted at **[octarine-club.github.io/octarine-engine](https://octarine-club.github.io/octarine-engine/)**.
 
-Explore the classes, namespaces, and files using the sidebar to dive deeper into the engine's internals.
+Use the navigation sidebar to explore engine namespaces, classes, and source files.

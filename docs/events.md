@@ -17,7 +17,7 @@ collisions, and audio triggers flow through it rather than through direct calls 
 `EventBus` (`src/EventBus/EventBus.h`) keys subscriptions by `std::type_index`, so any C++ type can be
 an event; there's no base-class requirement beyond deriving from the empty `Event` marker
 (`src/EventBus/Event.h`). The single bus instance lives in the engine's `EngineContext` singleton
-(`src/Engine/EngineContext.h`), reachable as `registry->Get<EngineContext>().eventBus`. Systems
+(`src/Game/EngineContext.h`), reachable as `registry->Get<EngineContext>().eventBus`. Systems
 usually receive it in their `Init` / `SubscribeToEvents` hook rather than fetching it themselves.
 
 API:
@@ -57,18 +57,16 @@ Subscriptions are wired once during startup (`Game::Setup`, each system's `Init`
 | `AudioPlayEvent` | `clipId: string`, `volume: float` | Lua `play_sound()` (`AudioModuleLuaBinding.cpp`), `UIButtonSystem` (button hover/click/focus sound hooks) | `AudioSystem::OnAudioPlay` |
 | `CollisionBatchEvent` | `pairs: const std::vector<std::pair<Entity, Entity>>&` (frame's *entering* pairs — first-contact overlaps not seen last frame) | `KDTreeCollisionSystem` (narrowphase) | `ScriptCollisionSystem::OnCollisionBatch` (plus optional native game module systems) |
 | `CollisionExitBatchEvent` | `pairs: const std::vector<std::pair<Entity, Entity>>&` (frame's *exiting* pairs — overlaps active last frame that separated this frame) | `KDTreeCollisionSystem` (narrowphase) | `ScriptCollisionSystem::OnCollisionExitBatch` |
-| `GamepadButtonEvent` | `which: SDL_JoystickID`, `button: SDL_GamepadButton`, `buttonName: string`, `isPressed: bool` | `Game::ProcessInput` / `FrameLoop` (SDL gamepad button events) | `InputSystem::OnGamepadButton`, `UIButtonSystem::OnGamepadButton` |
-| `KeyInputEvent` | `inputKey: SDL_Keycode`, `inputModifier: SDL_Keymod`, `isPressed: bool` | `Game::ProcessInput` (SDL key events) | `InputSystem::OnKeyInput`, `FrameLoop::OnKeyInputEvent`, `UIButtonSystem::OnKeyInput` |
-| `MouseInputEvent` | `event: SDL_MouseButtonEvent` | `Game::ProcessInput` (SDL mouse-button events) | `InputSystem::OnMouseInput`, `UIButtonSystem::OnMouseInput` |
-| `MouseWheelEvent` | `dx: float`, `dy: float` | `Game::ProcessInput` (SDL wheel events) | `InputSystem::OnMouseWheel` |
+| `GamepadButtonEvent` | `which: SDL_JoystickID`, `button: SDL_GamepadButton`, `buttonName: string`, `isPressed: bool` | `FrameLoop::ProcessInput` (`src/Engine/FrameLoop.cpp`), `InputSystem` (`src/Systems/InputSystem.cpp`) | `InputSystem::OnGamepadButton`, `UIButtonSystem::OnGamepadButton` |
+| `KeyInputEvent` | `inputKey: SDL_Keycode`, `inputModifier: SDL_Keymod`, `isPressed: bool` | `FrameLoop::ProcessInput` (`src/Engine/FrameLoop.cpp`) | `InputSystem::OnKeyInput`, `FrameLoop::OnKeyInputEvent`, `UIButtonSystem::OnKeyInput` |
+| `MouseInputEvent` | `event: SDL_MouseButtonEvent` | `FrameLoop::ProcessInput` (`src/Engine/FrameLoop.cpp`) | `InputSystem::OnMouseInput`, `UIButtonSystem::OnMouseInput` |
+| `MouseWheelEvent` | `dx: float`, `dy: float` | `FrameLoop::ProcessInput` (`src/Engine/FrameLoop.cpp`) | `InputSystem::OnMouseWheel`, `UIButtonSystem::OnMouseWheel` |
 
 Event types live in `src/Events/`.
 
 ### Flows at a glance
 
-- **Input:** SDL events → `Game::ProcessInput` / `FrameLoop` emit `KeyInputEvent` / `MouseInputEvent` /
-  `MouseWheelEvent` / `GamepadButtonEvent` → `InputSystem` folds them into per-frame state (also `FrameLoop` for engine
-  hotkeys, `UIButtonSystem` for mouse clicks and keyboard/gamepad/action bindings).
+- **Input:** SDL events -> `FrameLoop::ProcessInput` (`src/Engine/FrameLoop.cpp`) emits `KeyInputEvent`, `MouseInputEvent`, `MouseWheelEvent`, and `GamepadButtonEvent` -> `InputSystem` folds them into per-frame state (alongside `FrameLoop` for engine hotkeys and `UIButtonSystem` for pointer/wheel/key/gamepad UI interactions).
 - **Collision:** `KDTreeCollisionSystem` detects overlaps and emits a single `CollisionBatchEvent` carrying
   the frame's *entering* pairs (first-contact overlaps not seen last frame) and a `CollisionExitBatchEvent`
   carrying separating pairs → `ScriptCollisionSystem` (and any subscribed native game module systems)
@@ -80,4 +78,7 @@ Event types live in `src/Events/`.
 
 Add `src/Events/<Name>Event.h` (derive from `Event`, give it a constructor over its payload). Emit it
 with `EmitEvent<Name>(...)` at the producing site, and subscribe in each consumer's `Init` /
-`SubscribeToEvents`. No registration list to update — the bus discovers types on first use.
+`SubscribeToEvents`. The bus discovers types on first use; run `python3 scripts/gen_api_catalogs.py`
+afterward to keep `events.json` in sync.
+
+For full C++ symbol documentation, see the [Doxygen API Reference](https://octarine-club.github.io/octarine-engine/).

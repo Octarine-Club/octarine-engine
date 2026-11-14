@@ -84,17 +84,26 @@ Queries are cached; they only re-evaluate the archetype graph when the registry'
 Octarine supports three primary ways to process entities:
 
 1. **Serial Systems (`RegisterSystem`):**
-   Standard iteration on the main thread.
+   Iterates matching entities on the main thread (calls optional `Prepare(Registry*)` before iteration and `CommandBuffer` playback afterward).
+
    ```cpp
-   registry.RegisterSystem<Transform, RigidBody>([](Entity e, Transform& t, RigidBody& rb) {
-       t.position += rb.velocity;
-   });
+   registry.RegisterSystem<PositionComponent, RigidBodyComponent>(
+       [](Entity e, PositionComponent& pos, RigidBodyComponent& rb) {
+         pos.value += rb.velocity;
+       });
    ```
 
 2. **Parallel Systems (`RegisterParallelSystem`):**
-   Distributes chunks across a `ThreadPool`. Since chunks are independent memory regions, this is safe for per-entity
-   independent writes.
-   *Note: Use a `CommandBuffer` to queue registry modifications during parallel updates.*
+   Distributes chunks across the `ThreadPool`. Because chunks are disjoint memory regions, per-entity independent writes are thread-safe.
+
+   > [!NOTE]
+   > Parallel systems must defer structural changes (creating/destroying entities, adding/removing components) through a `CommandBuffer`, which plays back automatically after `ParallelForEach`.
+
+3. **Bulk Systems (`RegisterBulkSystem`):**
+   Invokes a system callable once per frame with a `ContextFacade`, useful for multi-query or custom-query pipelines (`TransformSystem`, `KDTreeCollisionSystem`, `UILayoutSystem`).
+
+4. **DAG Execution Ordering (`Order`):**
+   Declare explicit dependencies between system handles with `registry.Order(a).After(b)` and `.Before(c)`. The registry schedules systems via Kahn's topological sort (with registration order as tie-breaker) and calls `ValidateInvariants()` in debug/test diagnostics.
 
 3. **Bulk Systems (`RegisterBulkSystem`):**
    Provides access to raw `Iterable` blocks. This is used for advanced optimizations where you might want to process
@@ -152,9 +161,11 @@ fields only — no `Registry&`, no `EventBus*`, no cross-entity touches, no
 allocation. Anything beyond that belongs in a system. See [Lua scripting:
 adding component methods](lua-scripting.md#8-adding-component-methods).
 
-### Creating a System
+### Creating and Inspecting Systems
 
-Implement your logic in `src/Systems/` and register it in `Game::Setup()`.
+Implement engine systems in `src/Systems/` and register them (with `Order(...).After(...).Before(...)` dependencies) in `src/Engine/SimulationSystems.cpp` or `Game::Setup()` (`src/Game/Game.cpp`). External game modules register additional systems through `GameModuleHooks` (`src/Engine/GameModuleHooks.h`).
+
+For deterministic debugging and headless testing, use `StateInspector` (`src/ECS/StateInspector.h`) to dump summaries/entities/canonical state, hash snapshots (`ComputeStateHash`), and diff snapshots (`DiffSnapshots`). See the [Doxygen API Reference](https://octarine-club.github.io/octarine-engine/) for full C++ class and method signatures, and [Extension Recipes](extension-recipes.md) for a step-by-step walkthrough.
 
 - Use `RegisterSystem` for most logic.
 - Use `RegisterParallelSystem` for heavy computations (physics, animations).

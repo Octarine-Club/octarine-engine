@@ -60,8 +60,8 @@ return {
     -- Optional: ids the static scan can't see (runtime spawns, load-time injection).
     preload = { "explosion", "music-gameplay" },
 
-    -- Optional: only texture_asset_id is tracked as an asset reference today; the `map`
-    -- file is not yet parsed or rendered by the engine. See docs/tilemaps.md.
+    -- Optional: tracked as a scene asset ref; for chunked LDtk/procedural tilemaps,
+    -- call tilemap.load() in setup(). See tilemaps.md.
     tilemap = {
         texture_asset_id = assets["tilemap-forest"],
         map = "tilemaps/forest.map",
@@ -323,10 +323,11 @@ setup = function(scene)
         if key == "f5" then reload_scene() end
     end)
 end,
+```
 
 ---
 
-## Worked example: title → gameplay → game over
+## Worked example: title -> gameplay -> game over
 
 ```lua
 -- scenes/title.lua
@@ -352,7 +353,7 @@ return {
 -- scenes/gameplay.lua
 return {
     preload = { "explosion" }, -- spawned procedurally on death
-    entities = { /* player, enemies, walls … */ },
+    entities = { --[[ player, enemies, walls ... ]] },
     setup = function(scene)
         scene.score = 0
         input.bind("shoot", "space")
@@ -384,10 +385,7 @@ return {
 
 ## Troubleshooting
 
-**Scene loads but inputs don't respond** — `input.bind` / `input.on_*`
-calls have to happen *after* the swap, i.e. in the new scene's `setup` or
-its top-level script. Bindings on the global Lua state from before the
-swap were cleared.
+**Scene loads but `on_*` callbacks don't fire** — `input.on_*` callbacks (`on_key_down`, `on_mouse_down`, etc.) are cleared by `InputSystem::ResetLuaState` on every swap and must be re-registered inside the new scene's `setup` (or script top level). Action bindings (`input.set_bindings`, `input.bind*`) survive swaps.
 
 **Asset error: "unresolved asset reference"** — the scene scan saw an id
 the catalog doesn't have. Add the file under the project tree (it'll be

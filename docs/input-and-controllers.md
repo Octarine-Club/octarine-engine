@@ -6,7 +6,7 @@ Octarine handles keyboard, mouse, and gamepads through the global `input` Lua mo
 
 ## 1. Quickstart: Declarative Action Bindings
 
-Define all game actions in one table with `input.set_bindings(tbl, opts?)` at startup (for example in `game.lua` or an `input_map` module). Bindings **survive scene transitions** (`scene.load_scene` / `reload_scene`).
+Define all game actions in one table with `input.set_bindings(tbl, opts?)` at startup (for example in `game.lua` or an `input_map` module). Bindings **survive scene transitions** (`load_scene` / `reload_scene`).
 
 ```lua
 input.set_bindings({
@@ -74,11 +74,12 @@ if input.is_action_pressed("pause")    then toggle_pause() end
 if input.is_action_down("alt_fire")    then charge_beam() end
 if input.is_action_released("alt_fire") then release_beam() end
 
--- Raw keyboard & mouse
-if input.is_key_pressed("escape") then ... end
+-- Raw keyboard, mouse & window focus
+if input.is_focused() and input.is_hovered() then ... end
+if input.is_key_down("w") or input.is_key_pressed("escape") or input.is_key_released("space") then ... end
 local pos   = input.mouse_position() -- vec2 { x, y }, viewport-local
 local wheel = input.mouse_wheel()    -- vec2 { x, y }
-if input.is_mouse_pressed(1) then ... end -- 1 = left, 2 = right, 3 = middle
+if input.is_mouse_down(1) or input.is_mouse_pressed(1) or input.is_mouse_released(1) then ... end -- 1 = left, 2 = right, 3 = middle
 
 -- Raw gamepad
 if input.is_gamepad_connected() then ... end
@@ -168,7 +169,7 @@ input.on_mouse_wheel(function(dx, dy) ... end)
 ```
 
 - **Multi-Gamepad Active Pad Switching:** Hotplugging (`SDL_EVENT_GAMEPAD_ADDED` / `REMOVED`) is handled automatically. Pressing a button or moving an axis past `0.25` switches the active polled gamepad to that controller ID (`NoteGamepadActivity`).
-- **What Survives Scene Transitions:** `InputSystem::ResetLuaState()` runs on `scene.load_scene` / `reload_scene`. It clears all `input.on_*` Lua callback closures and transient held/pressed/released states so inputs cannot stick across scenes. **Action bindings (`set_bindings`, `bind_key`, `bind_gamepad`) survive across scenes** — install them once at startup, or re-apply idempotently with `input.set_bindings(...)`.
+- **What Survives Scene Transitions:** `InputSystem::ResetLuaState()` runs on `load_scene` / `reload_scene`. It clears all `input.on_*` Lua callback closures and transient held/pressed/released states so inputs cannot stick across scenes. **Action bindings (`set_bindings`, `bind_key`, `bind_gamepad`) survive across scenes** — install them once at startup, or re-apply idempotently with `input.set_bindings(...)`.
 
 ---
 
@@ -194,4 +195,4 @@ UI elements in `.oxml` and Lua `ui_button` components hook directly into keyboar
 - **Auto-Focus:** Connecting a controller (`SDL_EVENT_GAMEPAD_ADDED`) or pressing `south` when nothing is focused automatically focuses the first visible focusable UI element if no `south` shortcut matched.
 - **Focus Styling (`.oss`):** `:focus` pseudo-states support `border-color`, `background-color`, `color`, `opacity`, and `border-width`. If `:focus` sets `border-color` without an explicit `border-width`, a `2px` minimum border floor is applied automatically for controller readability.
 
-See [`docs/ui-framework.md`](ui-framework.md) and [`lua_api.smoke.lua`](../lua_api.smoke.lua) for full widget attributes and EmmyLua signatures.
+See [`ui-framework.md`](ui-framework.md) and [`lua-scripting.md`](lua-scripting.md) (or [`dev-tools.md`](dev-tools.md) for `<assets>/types/octarine_api.lua`) for widget attributes and generated EmmyLua stubs.

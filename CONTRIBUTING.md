@@ -42,16 +42,17 @@ cmake --build --preset player-debug
 ctest --test-dir build/player-debug --output-on-failure
 ```
 
-Two tests live in `tests/`:
+The test suite in `tests/` (`tests/CMakeLists.txt`) contains 38 CTest targets, including:
 
 - **`LuaApiSmokeTest`** — replays `Game::Setup`'s Lua-binding sequence
   headlessly, asserts every component / module / system surface is reachable
   from Lua, and re-emits the EmmyLua stub at `lua_api.smoke.lua`. CI fails on
-  drift, so commit the regenerated stub whenever a binding changes.
+  drift; regenerate catalogs with `LuaApiSmokeTest` and
+  `python3 scripts/gen_api_catalogs.py` whenever a binding changes.
 - **`AssetPipelineTest`** — exercises `.meta` sidecar parsing, catalog build,
   manifest round-trip, and validation against a fixture asset tree.
 
-CI runs both on the Linux player-debug leg.
+Run the local verification wrapper (`scripts/octarine-verify.sh --fast`, or `--full` for C++20 modules/sanitizers), architecture checks (`python3 scripts/check_architecture.py`), and catalog drift check (`python3 scripts/gen_api_catalogs.py --check`) before pushing. CI also runs an ASan+UBSan leg (`-DOCTARINE_SANITIZE=asan`) and a Clang diff-coverage gate (`>= 80%` on modified lines under `src/`, excluding `src/Debug/Panels`).
 
 ## Coding standards
 
@@ -133,8 +134,8 @@ target's include path (via `cmake/octarine_library.cmake`), so spell a header by
 path from `src/`:
 
 ```cpp
-#include "EventBus/EventBus.h"      // ✅ src-rooted
-#include "../EventBus/EventBus.h"   // ❌ parent-relative — rejected by CI
+#include "EventBus/EventBus.h"      // Good: src-rooted
+#include "../EventBus/EventBus.h"   // Avoid: parent-relative (rejected by CI)
 ```
 
 Parent-relative paths break when a file moves and let the same header be spelled two
@@ -181,13 +182,20 @@ player-debug leg.
 - New components: `src/Components/<Name>Component.h`. POD struct, no
   behavior beyond own-field methods (see [Lua scripting:
   adding component methods](docs/lua-scripting.md#8-adding-component-methods)).
-- New systems: `src/Systems/<Name>System.{h,cpp}`. Register in `Game::Setup`.
+- New systems: `src/Systems/<Name>System.{h,cpp}`. Register simulation systems in
+  `src/Engine/SimulationSystems.cpp` with `registry.Order(...).After(...)` (or in
+  `Game::Setup` for core engine subsystems) and register new `.cpp` files in `src/CMakeLists.txt`.
 - New Lua component bindings: `src/Lua/Bindings/<X>ComponentLuaBinding.h` +
-  one line in `RegisterAllBindings.cpp`.
+  register `LuaComponentRegistry::registerComponent<X>()` in the appropriate
+  split TU (`RegisterTransformCoreBindings.cpp`, `RegisterRenderBindings.cpp`,
+  `RegisterPhysicsAudioScriptBindings.cpp`, or `RegisterUIBindings.cpp`), then
+  regenerate catalogs (`LuaApiSmokeTest` + `python3 scripts/gen_api_catalogs.py`).
 - New Lua module (free-function globals): `src/Lua/Modules/<X>ModuleLuaBinding.{h,cpp}` +
-  one line in `RegisterAllModules.cpp` + add the `.cpp` to the `octarine_lua` list in `src/CMakeLists.txt`.
-- New events: `src/Events/<X>Event.h`. Emit via `EmitEvent<X>`; subscribe in
-  the consuming system's `Init`.
+  one line in `RegisterAllModules.cpp` + add the `.cpp` to the `octarine_lua` list in
+  `src/CMakeLists.txt` + regenerate catalogs.
+- New events: `src/Events/<X>Event.h`. Emit via `EmitEvent<X>`; retain the
+  `[[nodiscard]] SubscriptionHandle` returned by `SubscribeEvent` in the
+  consuming system.
 
 ## Commit messages
 

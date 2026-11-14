@@ -14,17 +14,19 @@ Systems are registered on the `Registry` during engine startup and driven once p
 `Registry::Update(dt)`:
 
 - `RegisterSystem<Components...>(fn)` — serial, one call per matching entity.
-- `RegisterParallelSystem<Components...>(fn)` — same, but chunks are spread across a thread pool.
-  The callback must be data-parallel (no shared mutable state); registry mutations go through an
-  `EntityCommandBuffer` played back after the pass.
-- `RegisterBulkSystem<Components...>(fn)` — called once per frame with the whole matching set, for
-  full-pass work (transforms, collision broadphase).
+- `RegisterParallelSystem<Components...>(fn)` — same, but chunks are spread across a `ThreadPool`.
+  The callback must be data-parallel (no shared mutable state); structural registry mutations go
+  through a `CommandBuffer` played back automatically after the pass.
+- `RegisterBulkSystem<Components...>(fn)` — called once per frame with a `ContextFacade` for
+  multi-query or custom-query full-pass work (transforms, collision broadphase, UI layout).
 
-**Registration order is execution order.** There is no separate scheduling layer — the sequence below
-is exactly the order written in `Game::Setup` (which composes the shared boot phases in
-`src/Engine/EngineBootstrap.{h,cpp}`). That file is the source of truth; this table mirrors it. A
-handful of systems are *not* per-frame: they are event-driven or invoked on demand (see the later
-sections).
+**Execution order is scheduled as a DAG.** Systems declare explicit constraints with
+`registry.Order(a).After(b)` and `.Before(c)`. `Registry` resolves the final execution order with
+Kahn's topological sort (breaking ties by registration order). Simulation systems live in
+`src/Engine/SimulationSystems.cpp`, and `Game::Setup()` (`src/Game/Game.cpp`) composes them with
+`src/Engine/EngineBootstrap.{h,cpp}` and any `GameModuleHooks` game-module systems. Those files are
+the source of truth; the table below mirrors the resulting schedule. A handful of systems are *not*
+per-frame: they are event-driven or invoked on demand (see the later sections).
 
 ## Per-frame update order
 
@@ -33,12 +35,12 @@ sections).
 | 1 | `ScriptSystem` | serial · `ScriptComponent` | Runs each entity's Lua `on_update` (and `on_debug_gui`) callback. |
 | 2 | `AudioSystem` | serial · `AudioSourceComponent` | Drives the mixer / audio-track pool; also handles `AudioPlayEvent` (see below). |
 | 3 | `AnimationSystem` | parallel · `SpriteComponent, AnimationComponent` | Advances frame timers and updates the sprite source rect. |
-| 4 | `LifetimeSystem` | bulk · `LifetimeComponent` | Counts down entity lifetime and despawns on expiry. |
-| 5 | `VelocityIntegrationSystem` | parallel · `PositionComponent, RigidBodyComponent` | Integrates velocity into local position. Runs **before** transform resolution. |
-| 6 | `OffScreenDespawnSystem` | parallel · `PositionComponent, SpriteComponent` | Despawns non-player entities that leave the playable bounds. |
-| 7 | `TransformSystem` | bulk · `GlobalTransformComponent` (+ optional position/scale/rotation/pivot/sprite/primitive/collider) | Resolves the entity hierarchy into world-space `GlobalTransformComponent`, resolving each entity's anchor against its own geometry on the way. Flat parallel pass for every entity, then a breadth-first depth-bucketed pass for hierarchy members only. |
-| 8 | `KDTreeCollisionSystem` | bulk · `GlobalTransformComponent, BoxColliderComponent, EntityMaskComponent` | Broadphase + OBB narrowphase; **emits one `CollisionBatchEvent`** carrying all overlapping pairs. |
-| 9 | `UpdateListenerTransformSystem` | bulk · `GlobalTransformComponent, AudioListenerComponent` | Snapshots the active listener's position/velocity for the spatial-audio chain. |
+| 4 | `VelocityIntegrationSystem` | parallel · `PositionComponent, RigidBodyComponent` | Integrates velocity into local position. Runs **before** `TransformSystem` and `KDTreeCollisionSystem`. |
+| 5 | `TransformSystem` | bulk · `GlobalTransformComponent` (+ optional position/scale/rotation/pivot/sprite/primitive/collider) | Resolves the entity hierarchy into world-space `GlobalTransformComponent`, resolving each entity's anchor against its own geometry on the way. Runs **after** `VelocityIntegrationSystem`. |
+| 6 | `OffScreenDespawnSystem` | parallel · `PositionComponent, SpriteComponent` | Despawns non-player entities that leave the playable bounds. Scheduled **after** `TransformSystem`. |
+| 7 | `KDTreeCollisionSystem` | bulk · `GlobalTransformComponent, EntityMaskComponent` + `Box/Circle/Capsule/Triangle/LineColliderComponent` | Median-cut k-d tree broadphase + analytic/SAT narrowphase (supports `SetSynchronous(true)` for headless determinism). Scheduled **after** `TransformSystem` and `VelocityIntegrationSystem`; emits `CollisionBatchEvent` and `CollisionExitBatchEvent`. |
+| 8 | `LifetimeSystem` | bulk · `LifetimeComponent` | Counts down entity lifetime and schedules despawn on expiry via `CommandBuffer`. |
+| 9 | `UpdateListenerTransformSystem` | bulk · `GlobalTransformComponent` (+ `AudioListenerComponent`) | Snapshots the active listener's position and velocity after `TransformSystem`. |
 | 10 | `AudioCullingSystem` | serial · `GlobalTransformComponent, AudioSourceComponent` | Gates spatial sources by listener radius (adds/removes the active tag + sink). |
 | 11 | `SpatialAudioSystem` | serial · `GlobalTransformComponent, AudioSourceComponent, AudioSinkComponent` | Distance attenuation + stereo pan for active spatial sources. |
 | 12 | `DopplerSystem` | serial · `GlobalTransformComponent, RigidBodyComponent, AudioSourceComponent, AudioSinkComponent` | Doppler pitch shift from relative emitter/listener velocity. |
@@ -56,12 +58,9 @@ draws it after `Update` (see [`ecs-architecture.md`](ecs-architecture.md) § Ren
 
 ### Why the order matters
 
-- **Velocity (5) → Transform (7) → Collision (8) / UI Layout (14) / Render (15–20):** local position must be integrated
-  before transforms resolve, transforms must be world-space before collision and world rendering read
-  them, and UI layout must run before UI render systems enqueue their geometry.
-- **Listener (9) → cull (10) → spatial (11) → doppler (12):** the spatial-audio chain depends on the
-  current listener snapshot, then progressively narrows to the sources that need full processing.
-- **Camera (13) → Tilemap Render (15) → Sprite Render (16):** camera viewport updates determine tile chunk culling bounds before tile geometry and world sprites are submitted.
+- **Velocity (4) -> Transform (5) -> Collision (7) / Offscreen Despawn (6) / UI Layout (14) / Render (15-20):** local position must be integrated before transforms resolve, transforms must be world-space before collision, despawn bounds checks, and world rendering read them, and UI layout must run before UI render systems enqueue their geometry.
+- **Listener (9) -> cull (10) -> spatial (11) -> doppler (12):** the spatial-audio chain depends on the current listener snapshot, then progressively narrows to the sources that need full processing.
+- **Camera (13) -> Tilemap Render (15) -> Sprite Render (16):** camera viewport updates determine tile chunk culling bounds before tile geometry and world sprites are submitted (`Order(tilemapRender).After(cameraFollow).Before(renderSprite)`).
 
 ## Event-driven systems
 
@@ -71,7 +70,7 @@ events on the [event bus](events.md):
 | System | Reacts to | What it does |
 |--------|-----------|--------------|
 | `ScriptCollisionSystem` | `CollisionBatchEvent`, `CollisionExitBatchEvent` | Dispatches Lua `on_collision` and `on_collision_exit` callbacks. |
-| `UIButtonSystem` | `MouseInputEvent`, `KeyInputEvent`, `GamepadButtonEvent` | Hit-tests mouse clicks and handles keyboard, gamepad, and action bindings. Evaluates topmost Z-order hit testing, scissor clipping (`UIClipComponent`), backdrop pointer blocking (`pointer-events: stop`), inert subtree skipping, and spatial directional navigation. |
+| `UIButtonSystem` | `MouseInputEvent`, `KeyInputEvent`, `GamepadButtonEvent`, `MouseWheelEvent` | Hit-tests mouse clicks and wheel scrolling, and handles keyboard, gamepad, and action bindings. Evaluates topmost Z-order hit testing, scissor clipping (`UIClipComponent`), backdrop pointer blocking (`pointer-events: stop`), inert subtree skipping, and spatial directional navigation. |
 
 ## Services and on-demand systems
 
@@ -89,7 +88,10 @@ Not per-frame query systems, but part of the engine:
 
 ## Adding a system
 
-`src/Systems/<Name>System.{h,cpp}` (a `.cpp` also goes in the `octarine_systems` list in
-`src/CMakeLists.txt`), then register it in `Game::Setup` at the right point in the order above. If it
-needs a Lua surface, add a `LuaSystemBinding` (see [`lua-scripting.md`](lua-scripting.md)); if it
-reacts to events, subscribe in its `Init` / `SubscribeToEvents` hook (see [`events.md`](events.md)).
+1. Add `src/Systems/<Name>System.{h,cpp}` (register any new `.cpp` under `octarine_systems` in `src/CMakeLists.txt`).
+2. Register simulation systems in `src/Engine/SimulationSystems.cpp` or engine-loop systems in `Game::Setup()` (`src/Game/Game.cpp`), and declare explicit DAG ordering via `registry.Order(...).After(...).Before(...)`. External native game projects can register systems through `GameModuleHooks` (`src/Engine/GameModuleHooks.h`) without editing `src/`.
+3. If it needs a Lua surface, add a module binding (`src/Lua/Modules/`) and register it in `RegisterAllModules.cpp`.
+4. If it reacts to events, subscribe in `Init` / `SubscribeToEvents` (see [`events.md`](events.md)).
+5. Keep generated catalogs in sync by running `python3 scripts/gen_api_catalogs.py` (which updates `systems.json`).
+
+For full C++ symbol documentation, see the [Doxygen API Reference](https://octarine-club.github.io/octarine-engine/).

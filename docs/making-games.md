@@ -1,12 +1,8 @@
 # Making Games with Octarine Engine
 
-A practical guide for game developers. It covers how to set up a project, the
-core concepts you'll use every day, and where to go for deeper reference.
+A practical guide for game developers covering project setup, configuration, ECS entities, collisions, scripting, scenes, assets, audio, camera, UI, tilemaps, CI, and optional native C++ game modules.
 
-The companion example project,
-[Octarine-Engine-Example](https://github.com/Octarine-Club/octarine-engine-example),
-is a small but complete game that exercises every feature described here — run
-it alongside this guide whenever an example would help.
+The companion example project, [Octarine-Engine-Example](https://github.com/Octarine-Club/octarine-engine-example), demonstrates every engine feature in a runnable project. For the C++ engine reference, see the **[published Doxygen docs](https://octarine-club.github.io/octarine-engine/)**.
 
 ---
 
@@ -23,100 +19,85 @@ it alongside this guide whenever an example would help.
 9. [Assets](#9-assets)
 10. [Audio](#10-audio)
 11. [Camera](#11-camera)
-12. [Game CI](#12-game-ci)
-13. [Native C++ Game Modules](#13-native-c-game-modules)
-14. [Further Reading](#14-further-reading)
+12. [UI, Tilemaps, Saves, and Dev Mode](#12-ui-tilemaps-saves-and-dev-mode)
+13. [Game CI](#13-game-ci)
+14. [Native C++ Game Modules](#14-native-c-game-modules)
+15. [Further Reading](#15-further-reading)
 
 ---
 
 ## 1. Prerequisites
 
-Before writing game code you need a built copy of the engine.
+Before writing game code you need a built copy of the engine (`OctarineEngine`).
 
 ### Option A — Download a versioned release (recommended)
 
-Pre-built engine binaries are published as assets on every
-[GitHub Release](https://github.com/Octarine-Club/octarine-engine/releases).
+Pre-built SDK archives are published on every [GitHub Release](https://github.com/Octarine-Club/octarine-engine/releases):
 
-1. Open the release matching your target engine version (e.g. `v0.1.0`).
-2. Download the SDK binary for your platform:
-
-| Asset | Platform |
+| Asset (`player` dev runtime / `ship` hardened build) | Platform |
 |---|---|
-| `OctarineEngine-{version}-linux.tar.gz` | Linux x64 |
-| `OctarineEngine-{version}-windows.zip` | Windows x64 |
-| `OctarineEngine-{version}-macos.tar.gz` | macOS (arm64) |
-
-3. Extract the archive and run the binary directly — no install step required:
+| `OctarineEngine-{version}-linux-{player\|ship}.tar.gz` | Linux x64 |
+| `OctarineEngine-{version}-windows-{player\|ship}.zip` | Windows x64 |
+| `OctarineEngine-{version}-macos-{player\|ship}.tar.gz` | macOS |
 
 ```bash
 # Linux / macOS
-tar -xzf OctarineEngine-0.1.0-linux.tar.gz
+tar -xzf OctarineEngine-0.2.4-linux-player.tar.gz
 ./OctarineEngine path/to/MyGame
 
 # Windows (PowerShell)
-Expand-Archive OctarineEngine-0.1.0-windows.zip
+Expand-Archive OctarineEngine-0.2.4-windows-player.zip
 .\OctarineEngine.exe path/to/MyGame
 ```
 
 ### Option B — Build from source
 
-Requires CMake 3.15+, a C++20-capable compiler (MSVC 2022, GCC 12+, or Clang 14+),
-and vcpkg (the engine uses manifest mode and manages its own dependencies).
+Requires CMake 3.15+, a C++20 compiler (MSVC 2022, GCC 12+, or Clang 14+), and vcpkg (manifest mode).
 
 ```bash
 git clone https://github.com/Octarine-Club/octarine-engine
 cd octarine-engine
 cmake --preset player-debug
 cmake --build build/player-debug
+./build/player-debug/bin/debug/OctarineEngine path/to/MyGame --dev
 ```
-
-The resulting binary is `build/player-debug/bin/debug/OctarineEngine` (Linux/macOS)
-or `build\player-debug\bin\debug\OctarineEngine.exe` (Windows).
-
-**Run against your project**
-
-```bash
-./build/player-debug/bin/debug/OctarineEngine path/to/MyGame
-```
-
-The engine takes your game's root directory as its only positional argument. The
-`config.ini` there tells it what startup script to run.
 
 ---
 
 ## 2. Project Structure
 
-A minimal project needs only `config.ini` and `game.lua`. A more typical layout:
+Scaffold a new standalone project directly from the engine repository:
 
+```bash
+./scripts/octarine-new.sh --name "My Game" --package-id com.studio.mygame --dir ./MyGame
 ```
+
+Optional: run `./scripts/octarine-init-build.sh` inside a game project directory to initialize build configuration against a local engine checkout or installed SDK.
+
+A minimal project needs `config.ini` and `game.lua`. A typical project layout:
+
+```text
 MyGame/
 ├── config.ini              # window settings, startup script
+├── project.ini             # release/store packaging metadata
 ├── game.lua                # entry point — runs first
-├── scenes/
-│   ├── title.lua
-│   ├── gameplay.lua
-│   └── game_over.lua
-├── scripts/
-│   └── lib/                # reusable Lua helpers
-│       ├── input_map.lua
-│       └── player_controller.lua
-├── images/                 # .png / .jpg textures
+├── scenes/                 # scene files (title.lua, gameplay.lua)
+├── scripts/                # reusable Lua modules and entity scripts
+├── ui/                     # .oxml layout templates and .oss stylesheets
+├── images/                 # .png / .bmp textures + optional .meta sidecars
 ├── fonts/                  # .ttf fonts
 ├── sounds/                 # .wav / .ogg audio
-└── tilemaps/               # .map files + tileset PNGs
+├── tilemaps/               # LDtk .ldtk maps + tilesets
+└── types/                  # generated octarine_api.lua on --dev launch
 ```
-
-There are no enforced path conventions beyond `config.ini` and the startup
-script — organise the rest however suits your project.
 
 ---
 
 ## 3. Configuration
 
-### `config.ini` — runtime window settings
+### `config.ini` — runtime settings
 
-`config.ini` lives at the project root and controls window setup:
+`config.ini` lives at the project root:
 
 ```ini
 Title=My Awesome Game
@@ -125,110 +106,59 @@ BaseResolutionWidth=1280
 BaseResolutionHeight=720
 DefaultWindowWidth=1280
 DefaultWindowHeight=720
-DefaultPresentationMode=expand  # 'expand', 'letterbox', 'integer_scale', or 'stretch'
-DefaultScalingMode=nearest      # 'nearest' for pixel art, 'linear' for smooth
-FpsTarget=60                    # frame-rate cap; 0 = uncapped (default 60)
-AngleUnit=degrees               # 'degrees' (default) or 'radians' for authored angles
+DefaultWindowMode=windowed       # 'windowed', 'borderless', or 'exclusive'
+DefaultPresentationMode=expand   # 'expand', 'letterbox', 'integer_scale', or 'stretch'
+DefaultScalingMode=nearest       # 'nearest', 'linear', or 'pixelart'
+FpsTarget=60                     # frame-rate cap; 0 = uncapped (default 60)
+AngleUnit=degrees                # 'degrees' (default) or 'radians'
 ```
 
-`AngleUnit` picks the unit you write and read angles in — `rotation` in component
-tables, `set_rotation()`, and the `rotation` component's `value`. The engine always
-stores and composes in radians; the unit is a conversion applied at those boundaries,
-so it costs nothing at runtime and changing it never alters engine behaviour, only how your
-numbers are spelled.
-
-**It defaults to `degrees`.** A project written against radians must say
-`AngleUnit=radians` explicitly — otherwise a `rotation` of `1.57` is read as
-1.57°, not a quarter turn, with no error to point at. The effective unit is
-logged at startup so you can confirm which one is live.
-
-It is global to the project. A number in a scene file or a shared Lua library
-means whatever this key says, so a snippet copied between two projects with
-different settings will silently change meaning. Pick one early and leave it.
-
-`StartupScript` is the first Lua file that runs. Everything else — scenes,
-assets, entities — is loaded from there.
+`AngleUnit` selects the unit at every Lua boundary (`rotation` in entity tables, `set_rotation()`, and the `rotation` component's `value`). Internal storage stays radians. Because it defaults to `degrees`, projects written in radians must declare `AngleUnit=radians`.
 
 ### `project.ini` — packaging and release identity
 
-`project.ini` is the single source of truth for your game's release identity.
-It is read by the engine's CMake packaging helper, Android Gradle build, and
-the engine version check. The format is flat `key = value` (no sections).
+`project.ini` is the source of truth read by CMake packaging and engine version checks:
 
 ```ini
-name          = My Awesome Game
-package_id    = com.studio.myawesomegame    # reverse-DNS, required for shipping
-version_name  = 1.0.0                       # semver displayed in stores / About
-version_code  = 1                           # monotonic integer for store updates
-vendor        = My Studio
-description   = A short description for store listings.
-icon          = images/icon.png             # source PNG for icon generation
-engine_version = 0.1.0                     # engine version this project targets
+name           = My Awesome Game
+package_id     = com.studio.myawesomegame
+version_name   = 1.0.0
+version_code   = 1
+vendor         = My Studio
+description    = A short description for store listings.
+icon           = images/icon.png
+engine_version = 0.2.4
 ```
 
 | Key | Required for shipping | Notes |
 |---|---|---|
 | `name` | Yes | Display name |
-| `package_id` | Yes | Reverse-DNS (e.g. `com.studio.mygame`) |
+| `package_id` | Yes | Reverse-DNS identifier (`com.studio.mygame`) |
 | `version_name` | Yes | SemVer string |
-| `version_code` | No | Monotonic int; defaults to 1 |
+| `version_code` | No | Monotonic integer; defaults to `1` |
 | `vendor` | No | Studio / publisher name |
-| `description` | No | One-line store summary |
+| `description` | No | One-line summary |
 | `icon` | No | Source image for icon generation |
-| `engine_version` | No | Declared engine version; checked at package time |
-
-The `engine_version` field is used by the `setup-engine` action in game CI (see
-[Game CI](#game-ci)) and checked at CMake configure time — a mismatch emits a
-warning so you know when a game project is being built against a newer or older
-engine than intended.
+| `engine_version` | No | Checked by CI and CMake configure |
 
 ---
 
 ## 4. Core Concepts
 
-### Entities and Components
-
-Octarine uses an **Entity-Component System (ECS)**. The key ideas:
-
-- An **entity** is just an ID — a number with no data of its own.
-- **Components** are plain data structs attached to entities (`position`,
-  `sprite`, `rigidbody`, etc.).
-- **Systems** are the engine's update loops — they query for entities with a
-  given set of components and act on them each frame.
-
-You never subclass anything or register callbacks on a base class. Instead you
-compose entities from components and attach a `script` component when an entity
-needs custom per-frame behaviour.
-
-### Lua is the game layer
-
-All game logic lives in Lua. The engine exposes its entire surface through:
-
-- **Free globals** — `load_entity`, `load_scene`, `play_sound`, `get_position`,
-  `set_position`, `blam`, `log`, etc.
-- **Namespace tables** — `input.*`, `ImGui.*`, `registry.*`
-- **The `script` component** — attach `on_update`, `on_collision`, `on_collision_exit`,
-  and `on_debug_gui` callbacks to any entity.
-
-You do not need to touch C++ to make a game, though performance-critical games can
-optionally attach a [Native C++ Game Module](#14-native-c-game-modules).
-
-### Scenes
-
-A scene is a Lua file. `load_scene("scenes/gameplay.lua")` replaces the current
-scene with a new one. Scenes can be declarative (return a table the engine
-processes) or procedural (build the scene themselves). See [Scenes](#8-scenes).
+- **Entities & Components:** Octarine uses an archetype-based Entity-Component System (ECS). Entities are 64-bit generational handles; components are plain data structs (`position`, `sprite`, `rigidbody`, etc.).
+- **Lua Gameplay Layer:** Scripts interact through free globals (`load_entity`, `load_scene`, `play_sound`, `blam`, `log`), namespace modules (`input.*`, `ui.*`, `tilemap.*`, `storage.*`, `settings.*`, `registry.*`, `dev.*`, `ImGui.*`), and `script` component callbacks (`on_update`, `on_collision`, `on_collision_exit`, `on_debug_gui`, `on_click`).
+- **Native Escape Hatch:** Compute-heavy workloads can attach optional C++ components and systems via [`#14. Native C++ Game Modules`](#14-native-c-game-modules).
 
 ---
 
 ## 5. Your First Entity
 
-Pass a table to `load_entity` from anywhere in your Lua code:
+Pass a table to `load_entity` from `game.lua` or any scene script:
 
 ```lua
 load_entity({
-    tag = "player",         -- optional group label
-    name = "Player",        -- optional display name
+    tag = "player",
+    name = "Player",
     components = {
         transform = {
             position = { x = 100, y = 100 },
@@ -248,45 +178,32 @@ load_entity({
             width  = 32,
             height = 32,
         },
-    }
+    },
 })
 ```
 
-For the full list of available components and their fields see
-[`docs/ecs-components.md`](ecs-components.md).
+See [`docs/ecs-components.md`](ecs-components.md) for all 39 registered components and `transform` spawn shorthand fields.
 
 ---
 
 ## 6. Collision and Callbacks
 
-Add `box_collider` (or `circle_collider`) to any entity that should participate
-in collision detection. The engine resolves overlaps every frame using a
-median-cut broadphase and Separating Axis Theorem (SAT) narrowphase, then fires
-enter and exit events.
+Octarine supports five collider components resolved by `KDTreeCollisionSystem` using a spatial broadphase and Separating Axis Theorem (SAT) narrowphase: `box_collider`, `circle_collider`, `capsule_collider`, `triangle_collider`, and `line_collider`.
 
 ### Collision masks
 
-Masks let you control which entity groups can collide with each other. The engine
-performs a bitwise AND between an entity's `collision_mask` (on `box_collider` or
-`circle_collider`) and the other entity's `entity_mask`; a non-zero result means
-the overlap registers.
+The engine bitwise-ANDs an entity's collider `collision_mask` against the other entity's `entity_mask`; a non-zero result registers contact:
 
 ```lua
--- entity_mask groups the entity into one or more collision layers
-entity_mask  = { value = 2 }                                          -- layer 2 = "enemies"
-
--- box_collider filters which layers this entity reacts to
-box_collider = { width = 32, height = 32, collision_mask = 1 }        -- reacts to layer 1 ("player")
+entity_mask  = { value = 2 },
+box_collider = { width = 32, height = 32, collision_mask = 1 },
 ```
 
-### Handling collisions in Lua (`on_collision` / `on_collision_exit`)
+### Handling collisions in Lua
 
-`ScriptCollisionSystem` automatically forwards first-contact and separation events
-to the `on_collision` and `on_collision_exit` callbacks on an entity's `script`
-component:
+`ScriptCollisionSystem` dispatches first-contact and separation events to `on_collision` and `on_collision_exit`:
 
 ```lua
--- Projectile that despawns on hit or after 4 seconds
 load_entity({
     components = {
         transform    = { position = { x = 50, y = 300 } },
@@ -298,86 +215,32 @@ load_entity({
         script = {
             damage = 25,
             on_collision = function(self, entity, other)
-                blam(entity) -- destroy projectile on impact
+                blam(entity)
             end,
         },
-    }
-})
-
--- Target that tracks HP in its script table
-load_entity({
-    components = {
-        transform    = { position = { x = 500, y = 300 } },
-        sprite       = { texture_asset_id = "enemy", width = 32, height = 32, layer = 2 },
-        entity_mask  = { value = 2 },
-        box_collider = { width = 32, height = 32, collision_mask = 4 },
-        script = {
-            hp = 100,
-            on_collision = function(self, entity, other)
-                self.hp = self.hp - 25
-                if self.hp <= 0 then
-                    blam(entity)
-                end
-            end,
-        },
-    }
+    },
 })
 ```
 
-For high-entity-count games (such as bullet-heaven / horde-survival games with
-thousands of simultaneous projectiles and enemies), you can also handle collision
-batches and custom health/damage components natively in C++ via a
-[Native C++ Game Module](#14-native-c-game-modules).
+For large entity counts, handle `CollisionBatchEvent` and `CollisionExitBatchEvent` directly in a native C++ system.
 
 ---
 
 ## 7. Scripting Entities
 
-Attach a `script` component to give an entity per-frame Lua behaviour. The
-engine calls `on_update(self, entity, dt)` every frame and `on_debug_gui(self,
-entity)` when in-game debug UI is visible. `self` is the script table — store
-per-entity state there.
-
-See [`docs/lua-scripting.md`](lua-scripting.md) for the full scripting guide:
-update loop, `registry.get_*` / `registry.has_*`, all global helpers, input
-binding, and ImGui debug UI.
+Attach inline tables (`script = { on_update = function(self, entity, dt) ... end }`) or hot-reloadable file-backed tables (`script = { source = "scripts/player.lua" }`) to entities. See [`docs/lua-scripting.md`](lua-scripting.md) for callbacks, `registry.*`, `storage.*`, `settings.*`, and input APIs.
 
 ---
 
 ## 8. Scenes
 
-`load_scene(path)` replaces the current scene. Scene transitions are
-synchronous — `load_scene` does not return to the caller.
-
-```lua
-load_scene("scenes/gameplay.lua")
-reload_scene()      -- hot-reload the current scene (useful during development)
-```
-
-Switching scenes from inside a script:
-
-```lua
-script = {
-    on_update = function(self, entity, dt)
-        if input.is_key_pressed("r")      then load_scene("scenes/gameplay.lua") end
-        if input.is_key_pressed("escape") then load_scene("scenes/title.lua")    end
-    end,
-}
-```
-
-Scene files can be declarative (return a table), procedural (return a function),
-or side-effect style (build the scene at top level as the file executes). See
-[`docs/scenes.md`](scenes.md) for the full lifecycle, file shape, and asset
-preload flow.
+Call `load_scene("scenes/gameplay.lua")` to queue a deferred scene swap at the end of the current frame step, or `reload_scene()` during development. See [`docs/scenes.md`](scenes.md) for declarative vs. procedural scene files, asset preloading, and lifecycle guarantees.
 
 ---
 
 ## 9. Assets
 
-Assets must be loaded before any entity references them. The recommended
-approach is `acquire_scene_assets` — it accepts `preload` lists and scans
-entity definitions for asset references automatically. Explicit `load_asset`
-calls are also supported.
+Preload assets per scene with `acquire_scene_assets` or load individually via `load_asset`:
 
 ```lua
 load_asset({ type = "texture", id = "player",    file = "images/player.png" })
@@ -385,42 +248,33 @@ load_asset({ type = "font",    id = "main-font", file = "fonts/arial.ttf", font_
 load_asset({ type = "sound",   id = "jump-sfx",  file = "sounds/jump.wav" })
 ```
 
-All asset paths are relative to the project root. Use `get_asset_path` when
-building paths dynamically:
-
-```lua
-local path = get_asset_path("images/player.png")
-```
-
-For shipping builds, bake assets into a manifest with:
+Bake assets and generate `asset_manifest.lua` cleanly in CI or pre-release via:
 
 ```bash
-./OctarineEngine path/to/MyGame -m bake
+./OctarineEngine path/to/MyGame --startup-mode bake
 ```
 
-See [`docs/asset-pipeline.md`](asset-pipeline.md) for `.meta` sidecars, atlas
-packing, audio normalisation, and the full bake/manifest workflow.
+See [`docs/asset-pipeline.md`](asset-pipeline.md) for `.meta` sidecars, atlas packing, and audio normalization.
 
 ---
 
 ## 10. Audio
 
 ```lua
-play_sound("jump-sfx")          -- one-shot
-play_sound("music-gameplay")    -- looped music
+play_sound("jump-sfx")
+play_sound("music-gameplay", 0.6)
 ```
 
-For spatial audio, add `audio_listener` to the player/camera entity and
-`audio_source` to emitting entities. The engine handles attenuation
-automatically.
+For spatial attenuation, attach `audio_listener` to the camera/player entity and `audio_source` to emitters:
 
 ```lua
 audio_listener = {}
 
 audio_source = {
-    asset_id = "enemy-growl",
-    loop     = true,
-    volume   = 0.8,
+    clip_id = "enemy-growl",
+    loop    = true,
+    volume  = 0.8,
+    spatial = true,
 }
 ```
 
@@ -428,98 +282,48 @@ audio_source = {
 
 ## 11. Camera
 
-The camera follows whichever entity carries a `camera_follow` component. Only
-one should be active at a time.
-
-```lua
-camera_follow = {}
-```
-
-```lua
-local cam = get_camera_position()            -- returns {x, y}
-set_game_map_dimensions(width_px, height_px) -- clamp scrolling to world bounds
-```
-
-Entities with `fixed = true` on their `sprite`, `square`, or `text_label`
-render in screen space, unaffected by camera movement — use this for HUD
-elements.
+Attach `camera_follow = {}` to the target entity, query or update zoom via `get_camera_position()`, `get_camera_zoom()`, `set_camera_zoom(zoom)`, and bound scrolling with `set_game_map_dimensions(width_px, height_px)`. Render HUD elements in screen space by setting `fixed = true` on `sprite`, `square`, or `text_label`.
 
 ---
 
-## 12. Game CI
+## 12. UI, Tilemaps, Saves, and Dev Mode
 
-The `setup-engine` composite action downloads the right SDK binary for the
-current runner platform and adds it to `PATH`. Use it in game repo workflows to
-bake assets or run the game headlessly without building the engine from source.
+- **Declarative & Procedural UI (`ui.*`):** Author XML-like `.oxml` templates and CSS-like `.oss` stylesheets with reactive `ui.observable()` bindings and `ui.register_widget()`, or compose layouts in Lua with `ui.anchor`, `ui.flex`, `ui.scroll`, and `ui.focus`. See [`docs/ui-framework.md`](ui-framework.md) and [`docs/ui-layout.md`](ui-layout.md).
+- **Infinite Chunked Tilemaps (`tilemap.*`):** Stream `.ldtk` chunks or Lua-generated chunks around the camera, query IntGrid masks, cast 2D DDA rays, resolve circle/AABB collisions, and spawn persistent props. See [`docs/tilemaps.md`](tilemaps.md).
+- **Saves & User Preferences (`storage.*`, `settings.*`):** Store save files under the OS save directory with `storage.write_table` / `read_table`, and manage persistent user preferences in `user_settings.ini` with `settings.define` / `get` / `set` / `save`. See [`docs/lua-scripting.md`](lua-scripting.md#5-sandboxed-save-storage-storage-and-user-settings-settings).
+- **Developer Tools & LuaLS Stubs (`--dev`, `dev.*`):** Launch with `--dev` to enable Dear ImGui overlays, `dev.*` custom debug panels, live hot reload, and automatic IDE autocomplete generation at `<assets>/types/octarine_api.lua`. See [`docs/dev-tools.md`](dev-tools.md).
 
-### Basic usage
+---
+
+## 13. Game CI
+
+Use the `setup-engine` composite action in game repositories to download matching pre-built SDK binaries and validate assets or headless test scenarios:
 
 ```yaml
-# .github/workflows/ci.yml (in your game repo)
+# .github/workflows/ci.yml
 jobs:
   ci:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: Octarine-Club/octarine-engine/.github/actions/setup-engine@v0.1.0
+      - uses: Octarine-Club/octarine-engine/.github/actions/setup-engine@v0.2.4
         with:
-          engine-version: '0.1.0'   # pin to the version in project.ini
+          engine-version: '0.2.4'
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      # Bake the asset manifest (validates all asset references)
-      - run: OctarineEngine . -m bake
+      - run: OctarineEngine . --startup-mode bake
 ```
 
-### Pinning the engine version
-
-Declare the engine version in your `project.ini` so it is visible alongside
-your other identity metadata:
-
-```ini
-engine_version = 0.1.0
-```
-
-When you package the game (`cmake --preset ship-release ...`) the engine
-compares this value against its own version at configure time and warns if
-they differ, making version drift visible before it reaches CI.
-
-### Available outputs
-
-| Output | Description |
-|---|---|
-| `engine-path` | Directory containing the engine binary |
-| `engine-bin` | Full path to the `OctarineEngine` binary |
-
-### Multi-platform matrix
-
-```yaml
-strategy:
-  matrix:
-    os: [ubuntu-latest, windows-latest, macos-latest]
-runs-on: ${{ matrix.os }}
-steps:
-  - uses: Octarine-Club/octarine-engine/.github/actions/setup-engine@v0.1.0
-    with:
-      engine-version: '0.1.0'
-  - run: OctarineEngine . -m bake
-```
+Set `engine_version = 0.2.4` in `project.ini` so CMake packaging and CI match the pinned SDK release. `setup-engine` exports `engine-path` and `engine-bin` outputs for cross-platform `ubuntu-latest`, `windows-latest`, and `macos-latest` matrices.
 
 ---
 
 ## 14. Native C++ Game Modules
 
-While most games can be written entirely in Lua, games with heavy simulation
-workloads (e.g., thousands of agents with custom steering, spatial grids, or
-projectile/combat pipelines) can compile game-specific C++ components, systems,
-events, Lua bindings, unit tests, and benchmarks directly into the engine via
-`OCTARINE_GAME_MODULE_DIR` — without adding any game-specific code to the engine
-repository.
+For CPU-intensive gameplay logic (thousands of units, custom spatial grids, native combat pipelines), compile a game-specific C++ library directly into the engine via `-DOCTARINE_GAME_MODULE_DIR=/path/to/MyGame/native`.
 
 ### 1. Directory Layout in Your Game Project
-
-Place your C++ module in a subdirectory of your game repository (conventionally
-`native/`):
 
 ```text
 MyGame/
@@ -527,8 +331,8 @@ MyGame/
 ├── project.ini
 ├── game.lua
 └── native/
-    ├── CMakeLists.txt              # Defines octarine_game_module
-    ├── GameModule.cpp              # Implements game_module::* hooks
+    ├── CMakeLists.txt
+    ├── GameModule.cpp
     ├── Components/
     │   └── HealthComponent.h
     ├── Systems/
@@ -538,19 +342,17 @@ MyGame/
     │   └── DamageDealtEvent.h
     ├── Lua/Bindings/
     │   └── HealthComponentLuaBinding.h
-    ├── tests/                      # Optional CTest suite
+    ├── tests/
     │   ├── CMakeLists.txt
     │   └── CombatSystemTest.cpp
-    └── benchmarks/                 # Optional Google Benchmark suite
+    └── benchmarks/
         ├── CMakeLists.txt
         └── SystemBenchmarks.cpp
 ```
 
 ### 2. Defining `octarine_game_module` (`native/CMakeLists.txt`)
 
-When CMake is invoked with `-DOCTARINE_GAME_MODULE_DIR=/path/to/MyGame/native`,
-the engine adds that directory to the build, defines `OCTARINE_HAS_GAME_MODULE`
-on `octarine_core`, and links `octarine_game_module` into `octarine_engine`:
+When `-DOCTARINE_GAME_MODULE_DIR` is set, CMake defines `OCTARINE_HAS_GAME_MODULE` on `octarine_core` and links `octarine_game_module` into `octarine_engine`:
 
 ```cmake
 # MyGame/native/CMakeLists.txt
@@ -574,7 +376,7 @@ target_link_libraries(octarine_game_module PUBLIC
 
 ### 3. Implementing the Game Module Hooks (`native/GameModule.cpp`)
 
-Implement the entry points declared in `Engine/GameModuleHooks.h`:
+Implement all six hooks declared in [`src/Engine/GameModuleHooks.h`](../src/Engine/GameModuleHooks.h):
 
 ```cpp
 // MyGame/native/GameModule.cpp
@@ -583,69 +385,64 @@ Implement the entry points declared in `Engine/GameModuleHooks.h`:
 #include "Components/HealthComponent.h"
 #include "ECS/Registry.h"
 #include "EventBus/EventBus.h"
-#include "Lua/Bindings/ComponentBindingsRegistry.h"
 #include "Lua/Bindings/HealthComponentLuaBinding.h"
-#include "Lua/Bindings/LuaBindingContext.h"
+#include "Lua/Bindings/LuaComponentRegistry.h"
+#include "Lua/LuaBindingContext.h"
 #include "Systems/CombatSystem.h"
 
 namespace game_module {
 
 void RegisterComponentBindings() {
-  ComponentBindingsRegistry::Instance().Register<HealthComponent>();
+  LuaComponentRegistry::registerComponent<HealthComponent>();
 }
 
 void InstallSingletons(Registry& registry) {
-  // Set or initialize game-specific ECS singletons on the registry
   (void)registry;
 }
 
 void RegisterSimulationSystems(Registry& registry, const std::unique_ptr<EventBus>& eventBus,
                                SystemId velocityIntegration) {
   (void)eventBus;
-  // Register per-frame simulation systems (Serial, Parallel, or Bulk).
-  // Use `registry.Order(velocityIntegration).After(mySystem);` if a system
-  // spawns entities or updates velocities before VelocityIntegrationSystem runs.
+  // Order systems before or after velocityIntegration via registry.Order(...).After(...).
   (void)registry;
   (void)velocityIntegration;
 }
 
 void RegisterEventSystems(Registry& registry, const std::unique_ptr<EventBus>& eventBus) {
-  // Register event-driven systems (e.g., subscribing to CollisionBatchEvent)
-  registry.RegisterSystem<CombatSystem>(&registry, eventBus);
+  auto combat = registry.RegisterSystem<CombatSystem>(&registry, eventBus);
+  (void)combat;
 }
 
 void InstallLuaFunctions(sol::state& lua, LuaBindingContext& ctx) {
-  // Expose custom Lua globals or system helper functions
   (void)lua;
   (void)ctx;
+}
+
+void RegisterDebugUI(Registry& registry) {
+  (void)registry;
 }
 
 }  // namespace game_module
 ```
 
+> [!IMPORTANT]
+> When subscribing to `EventBus` inside a native system, pass `<OwnerClass, EventType>` to `eventBus->SubscribeEvent<CombatSystem, CollisionBatchEvent>(this, &CombatSystem::OnCollision)` and store the returned `[[nodiscard]] SubscriptionHandle` on the class instance.
+
 ### 4. Adding Game Module Unit Tests (`native/tests/CMakeLists.txt`)
 
-When `OCTARINE_ENABLE_TESTS=ON` and `${OCTARINE_GAME_MODULE_DIR}/tests/CMakeLists.txt`
-exists, the engine automatically includes it and creates an aggregate build target
-named `octarine_game_module_tests`. You can use the engine's test helper macros
-(`octarine_add_engine_test`, `octarine_add_core_test`, `octarine_add_test`) and
-include `"TestHarness.h"`:
+`octarine_add_engine_test(TARGET CTEST_NAME SOURCE)` creates the test executable and registers it with CTest automatically (`add_test` is built into the macro):
 
 ```cmake
 # MyGame/native/tests/CMakeLists.txt
-octarine_add_engine_test(OctarineCombatSystemTest
+octarine_add_engine_test(OctarineCombatSystemTest CombatSystemTest
     CombatSystemTest.cpp
 )
 target_link_libraries(OctarineCombatSystemTest PRIVATE octarine_game_module)
-add_test(NAME CombatSystemTest COMMAND OctarineCombatSystemTest)
 ```
 
 ### 5. Adding Game Module Benchmarks (`native/benchmarks/CMakeLists.txt`)
 
-When `OCTARINE_ENABLE_BENCHMARKS=ON` and
-`${OCTARINE_GAME_MODULE_DIR}/benchmarks/CMakeLists.txt` exists, the engine
-includes it after defining `OctarineBenchmarks` so your game module can attach
-custom `Sys/`, `Pipeline/`, or `Frame/` benchmarks:
+When `OCTARINE_ENABLE_BENCHMARKS=ON`, CMake includes `benchmarks/CMakeLists.txt` after defining `OctarineBenchmarks`:
 
 ```cmake
 # MyGame/native/benchmarks/CMakeLists.txt
@@ -660,66 +457,35 @@ target_include_directories(OctarineBenchmarks PRIVATE
 ### 6. Building, Testing, and Running with a Game Module
 
 ```bash
-# Configure and build the engine with your game's native module
 cmake --preset player-debug \
   -DOCTARINE_GAME_MODULE_DIR=/path/to/MyGame/native \
   -DOCTARINE_ENABLE_TESTS=ON
 cmake --build build/player-debug
 
-# Run your game
-./build/player-debug/bin/debug/OctarineEngine /path/to/MyGame
-
-# Run all engine and game-module unit tests
+./build/player-debug/bin/debug/OctarineEngine /path/to/MyGame --dev
 ctest --test-dir build/player-debug --output-on-failure
-
-# Or run the verification gate with your game module enabled
-OCTARINE_GAME_MODULE_DIR=/path/to/MyGame/native scripts/octarine-verify.sh --fast
+OCTARINE_GAME_MODULE_DIR=/path/to/MyGame/native ./scripts/octarine-verify.sh --fast
 ```
 
 ---
 
 ## 15. Further Reading
 
-### Engine documentation
-
-| Doc | What's in it |
+| Guide | Topic |
 |---|---|
-| [`docs/ui-framework.md`](ui-framework.md) | Declarative `.oxml` layouts, `.oss` stylesheets, data binding, reactive MVVM, and custom widgets |
-| [`docs/ui-layout.md`](ui-layout.md) | Procedural canvas/anchor UI layout and low-level `ui.*` helpers |
-| [`docs/ecs-components.md`](ecs-components.md) | Every component — all fields, types, and defaults |
-| [`docs/lua-scripting.md`](lua-scripting.md) | Full Lua scripting guide |
-| [`docs/input-and-controllers.md`](input-and-controllers.md) | Action binding (`set_bindings`), canonical gamepad buttons, analog sticks, triggers, and UI focus |
-| [`docs/scenes.md`](scenes.md) | Scene lifecycle, declarative vs. procedural forms |
-| [`docs/asset-pipeline.md`](asset-pipeline.md) | `.meta` sidecars, baking, atlases, audio normalisation |
-| [`docs/systems.md`](systems.md) | Built-in systems and the order they run |
-| [`docs/events.md`](events.md) | The event bus — every event type and how to use them |
-| [`docs/tilemaps.md`](tilemaps.md) | Infinite LDtk chunked tilemaps, spatial queries, collision, and prop streaming |
-| [`docs/device-builds.md`](device-builds.md) | Shipping for desktop and Android |
-
-### Lua API reference
-
-[`lua_api.smoke.lua`](https://github.com/Octarine-Club/octarine-engine/blob/main/lua_api.smoke.lua)
-is the authoritative, auto-generated EmmyLua stub of the entire Lua surface.
-Load it into your editor (VS Code + the Lua Language Server extension is
-recommended) for autocomplete and inline docs.
-
-### Example project
-
-[Octarine-Engine-Example](https://github.com/Octarine-Club/octarine-engine-example)
-is a complete, runnable game showing every engine feature in practice.
-
-### Engine repository
-
-Source, issue tracker, and releases:
-[github.com/Octarine-Club/octarine-engine](https://github.com/Octarine-Club/octarine-engine)
-
-### Lua 5.4
-
-The engine embeds Lua 5.4. Reference manual: [lua.org/manual/5.4](https://www.lua.org/manual/5.4/)
-
-### Dear ImGui
-
-The UI binding closely mirrors the C++ API. The
-[ImGui wiki](https://github.com/ocornut/imgui/wiki) and header comments in
-[`imgui.h`](https://github.com/ocornut/imgui/blob/master/imgui.h) are the best
-references for functions not yet in the engine's Lua stub.
+| [`docs/ecs-architecture.md`](ecs-architecture.md) | Archetype SoA storage, queries, DAG scheduling, and invariants |
+| [`docs/ecs-components.md`](ecs-components.md) | All 39 components — fields, Lua keys, and usertype methods |
+| [`docs/systems.md`](systems.md) | Built-in systems and execution order |
+| [`docs/events.md`](events.md) | `EventBus` and built-in engine events |
+| [`docs/lua-scripting.md`](lua-scripting.md) | Full Lua scripting guide, `storage.*`, and `settings.*` |
+| [`docs/input-and-controllers.md`](input-and-controllers.md) | Action binding, canonical gamepad buttons, analog sticks, and UI focus |
+| [`docs/scenes.md`](scenes.md) | Scene file schema and lifecycle |
+| [`docs/ui-framework.md`](ui-framework.md) | Declarative `.oxml`/`.oss`, observables, and custom widgets |
+| [`docs/ui-layout.md`](ui-layout.md) | Procedural canvas, anchor, flex, clip, nine-slice, and scroll layout |
+| [`docs/tilemaps.md`](tilemaps.md) | Infinite LDtk chunked tilemaps, DDA raycasting, and prop streaming |
+| [`docs/dev-tools.md`](dev-tools.md) | `--dev`, `dev.*`, LuaLS stubs, `--headless`, and `--dev-listen` |
+| [`docs/asset-pipeline.md`](asset-pipeline.md) | `.meta` sidecars, baking, atlases, and audio normalization |
+| [`docs/profiling.md`](profiling.md) | Profiling build, PerfUtils, and `OctarineBenchmarks` |
+| [`docs/security.md`](security.md) | OCPK encryption, Lua bytecode protection, and sandboxing |
+| [`docs/device-builds.md`](device-builds.md) | Desktop and experimental Android shipping builds |
+| [`lua_api.smoke.lua`](../lua_api.smoke.lua) | Auto-generated EmmyLua stub (load in LuaLS; refreshed on `--dev` into `types/octarine_api.lua`) |

@@ -38,9 +38,15 @@ default still produce a catalog entry as long as the extension matches.
 
 | Type | Extensions | Default id |
 |------|-----------|-----------|
-| Texture | `.png`, `.jpg`, `.jpeg`, `.bmp` | Filename stem (e.g. `tank.png` → `tank`). |
+| Texture | `.png`, `.bmp` | Filename stem (e.g. `tank.png` -> `tank`). |
 | Font | `.ttf`, `.otf` | `<stem>-<size>` per requested glyph size (default size `16`). |
-| Audio | `.wav`, `.ogg`, `.mp3`, `.flac` | Filename stem. |
+| Audio | `.wav`, `.ogg` | Filename stem (`.mp3`/`.flac` require enabling extra `sdl3-mixer` features in `vcpkg.json`). |
+| UI View | `.oxml` | Project-relative path / stem (validated on `-m bake`; hot-reloaded in dev). |
+| UI Style | `.oss` | Project-relative path / stem (validated on `-m bake`; hot-reloaded in dev). |
+| Tilemap | `.ldtk`, `.ldtkl` | Project-relative path / stem (loaded via `tilemap.load`). |
+
+> [!NOTE]
+> `sdl3-image` is built with PNG + core BMP support only (`"features": ["png"]` in `vcpkg.json`); JPEG decoding (`libjpeg-turbo`) is disabled. Even though `AssetCatalog` still classifies `.jpg`/`.jpeg` filenames during directory scans, runtime `IMG_LoadTexture_IO` will reject JPEG files.
 
 Override the derived id via `meta.id` in the sidecar (§ 3). Id collisions
 across the project are a hard error — the bake refuses to emit and the dev
@@ -57,7 +63,7 @@ Schema is type-specific. Anything not set falls through to the project
 default (from `GameConfig`) and then to the engine default. A missing
 sidecar means "all defaults".
 
-### Texture (`*.png.meta`, `*.jpg.meta`, …)
+### Texture (`*.png.meta`, `*.bmp.meta`)
 
 ```lua
 return {
@@ -360,6 +366,7 @@ you flipped one of those, delete the manifest and re-run.
 | Scene asset scanner | `src/AssetManager/SceneAssetScanner.{h,cpp}` |
 | `load_asset` / `acquire_scene_assets` Lua bindings | `src/Lua/Modules/SceneModuleLuaBinding.cpp` |
 | Runtime acquire / refcount / release | `src/AssetManager/AssetManager.{h,cpp}` |
-| AssetPak archive & ChaCha20 encryption (shipped) | `src/AssetManager/AssetPak.{h,cpp}`, `src/AssetManager/Crypto.{h,cpp}` |
+| Asset hot reload watcher | `src/AssetManager/AssetHotReload.{h,cpp}` |
+| AssetPak archive & ChaCha20 encryption (shipped) | `src/AssetManager/AssetPak.{h,cpp}`, `src/Crypto/{ChaCha20,KeyDerivation,LuaProtect}.h` |
 
 For end-to-end details on how assets are bundled, encrypted, and protected in production packages, see [`docs/security.md`](security.md).

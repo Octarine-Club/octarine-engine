@@ -28,7 +28,7 @@ Every `.oxml` view compiles directly into standard Octarine ECS entities and dat
 5. [Custom Reusable Widgets](#5-custom-reusable-widgets)
    - [Declarative `.oxml` Templates (`<Use>`, `<Param>`, Named `<Slot />`)](#declarative-oxml-templates-use-param-named-slot-)
    - [Programmatic Lua Widgets (`ui.register_widget`)](#programmatic-lua-widgets-uiregister_widget)
-6. [Focus Navigation, Z-Order Hit Testing & Scrolling](#6-focus-navigation-z-order-hit-testing--scrolling)
+6. [Focus Navigation, Z-Order Hit Testing, Pointer Blocking & Inert States](#6-focus-navigation-z-order-hit-testing-pointer-blocking--inert-states)
 7. [UI Debug Wireframe Overlay (`ui.debug_draw`)](#7-ui-debug-wireframe-overlay-uidebug_draw)
 8. [Lifecycle, Hot Reload & Asset Baking](#8-lifecycle-hot-reload--asset-baking)
 9. [Lua API Reference (`ui.*` & `view` Handle)](#9-lua-api-reference-ui--view-handle)
@@ -143,7 +143,7 @@ Octarine UI uses a single runtime spine (`context` + `ref` + `controller`) that 
                    └──────────────────┬───────────────────┘
                                       │
         ┌─────────────────────────────┼─────────────────────────────┐
-        ▼                             ▼                             ▼
+        v                             v                             v
 ┌───────────────────┐       ┌───────────────────┐       ┌───────────────────────┐
 │  1. Code-Behind   │       │  2. Data Context  │       │   3. Reactive MVVM    │
 │  ref="playBtn"    │       │  context = table  │       │ context = observable  │
@@ -217,7 +217,7 @@ local settings_view = ui.mount("assets/ui/settings.oxml", {
     context = settings_vm,
     controller = {
         onDifficultyChanged = function(self, newDiff, entity)
-            log.info("Difficulty changed to: " .. tostring(newDiff))
+            log_i("Difficulty changed to: " .. tostring(newDiff))
         end,
     },
 })
@@ -242,7 +242,7 @@ Unlike manual multi-entity setups that require separate background and text enti
 | `<Panel>` | Styled container (`UIFlexComponent` + background/border/9-slice). Defaults to column direction. Supports flex-wrap. | `direction="row\|column"`, `wrap="true\|false"`, `gap`, `cross-gap`, `padding`, `slice="l,t,r,b"`, `pointer-events="stop\|none"` |
 | `<Row>` | Horizontal flex container (`direction="row"`). Supports flex-wrap. | `gap`, `cross-gap`, `wrap="true\|false"`, `padding`, `justify`, `align`, `pointer-events="stop\|none"` |
 | `<Column>` | Vertical flex container (`direction="column"`). Supports flex-wrap. | `gap`, `cross-gap`, `wrap="true\|false"`, `padding`, `justify`, `align`, `pointer-events="stop\|none"` |
-| `<Grid>` | Fixed-column grid container (`direction="row"`, `wrap="true"`). Partitions children into $N$ equal-width columns. | `columns="N"`, `gap`, `cross-gap`, `padding`, `justify`, `align`, `pointer-events="stop\|none"` |
+| `<Grid>` | Fixed-column grid container (`direction="row"`, `wrap="true"`). Partitions children into `N` equal-width columns. | `columns="N"`, `gap`, `cross-gap`, `padding`, `justify`, `align`, `pointer-events="stop\|none"` |
 | `<Box>` | Non-flex container or spacer with explicit sizing. | `width`, `height`, `anchor`, `pointer-events="stop\|none"` |
 | `<Label>` | Text display (`TextLabelComponent`). Supports `{...}` interpolation, word wrapping (`wrap="true"`), drop shadows, and outlines. | `text`, `font`, `color`, `text-align`, `text-valign`, `wrap="true\|false\|<px>"`, `max-width`, `outline`, `outline-width`, `outline-color`, `shadow-color`, `shadow-offset` |
 | `<Image>` | Texture / atlas region (`SpriteComponent`). Resolves full texture dimensions when `srcRect` is empty. Supports 9-slice borders. | `src="asset_id"`, `slice="l,t,r,b"` (or `"all"`), `color` |
@@ -262,7 +262,7 @@ Octarine supports multi-line flex wrapping and fixed-column grids directly in `.
 `<Grid>` is a specialized row flex container (`direction="row"`, `wrap="true"`) that partitions available width evenly across `columns` slots:
 - **Equal Column Sizing**: Each column cell is automatically assigned width:
   $$\text{cellWidth} = \frac{\text{availWidth} - \text{gap} \times (\text{columns} - 1)}{\text{columns}}$$
-- **Automatic Wrapping & Row Advancement**: After every $N$ items, the layout wraps to a new row, advancing by the tallest item in the previous row plus `cross-gap`.
+- **Automatic Wrapping & Row Advancement**: After every `N` items, the layout wraps to a new row, advancing by the tallest item in the previous row plus `cross-gap`.
 - **Intrinsic Auto Height (`height="auto"`)**: Wrapped containers and grids compute their total height dynamically based on the number of wrapped lines and cross gaps.
 
 ```xml
@@ -698,6 +698,7 @@ When running a development build (`player-debug` or `player-release`), `FrameLoo
 | `view:set_inert(bool)` | Suspends button clicks, shortcuts, and focus navigation across the entire view subtree while preserving authored visuals. |
 | `view:is_inert() -> bool` | Returns `true` if the view is currently inert. |
 | `view:is_mounted() -> bool` | Returns `true` if the view's entities are currently alive and mounted. |
+| `view:focus_first()` | Moves keyboard/gamepad focus to the first visible, non-inert focusable child inside the view. |
 | `view:unmount()` | Destroys the view's entity subtree and unregisters all event subscriptions. |
 | `view:destroy()` | Alias for `view:unmount()`. |
 

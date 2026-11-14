@@ -215,8 +215,8 @@ Verify the result is signed with your upload key, not the debug key:
 
 ### CI signing
 
-`.github/workflows/android.yml` decodes the keystore from a GitHub secret per run and forwards it
-to Gradle. Configure these repository secrets (Settings → Secrets and variables → Actions):
+Downstream Android CI pipelines can decode a base64 keystore from a GitHub secret per run and
+forward signing properties to Gradle. Configure these repository secrets (Settings -> Secrets and variables -> Actions):
 
 | Secret                              | Value                                                     |
 |-------------------------------------|-----------------------------------------------------------|
@@ -261,9 +261,7 @@ multiple tracks per release.
 
 `minifyEnabled` defaults to `false` on the release build type. `proguard-rules.pro` already keeps
 the SDL JNI surface plus a safety-net `native <methods>;` rule, so flipping it on is a probe rather
-than a leap of faith. CI runs the probe automatically on every push/dispatch via the
-`android (minify probe)` job (single-ABI arm64-v8a `bundleRelease -Poctarine.minify=true` plus
-SDL JNI symbol assertion). Run it locally before a release:
+than a leap of faith. Run it locally before a release to verify single-ABI arm64-v8a shrinking:
 
 ```powershell
 .\gradlew.bat bundleRelease -Poctarine.minify=true -Poctarine.projectDir=C:\path\to\MyGame

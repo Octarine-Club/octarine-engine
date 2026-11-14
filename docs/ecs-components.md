@@ -1,29 +1,57 @@
 # ECS Component Reference
 
-This document lists all components available to Lua in the Octarine Engine, including their fields, types, and
-functionality.
+This document lists all components available to Lua in Octarine Engine, including their authoring schemas and runtime usertype fields.
 
-Components are added to entities within the `components` table of an entity definition.
+Components are added inside the `components` table of an entity definition. All 39 registered components in `components.json` also expose `registry.has_<key>(entity)` and `registry.get_<key>(entity)` accessors at runtime (`transform` and `entity_mask` are `LuaEntityLoader` spawn shorthands rather than standalone registered components, alongside top-level entity keys `name`, `tag`/`tags`, `group`/`groups`, and `entities`).
 
 ---
 
 ## Core Components
 
-### `transform`
+### `name`
 
-Defines the position, scale, and rotation of an entity in the world.
+Stores a human-readable entity identifier (`NameComponent`). Can also be set via top-level `name = "..."` on an entity table.
 
-| Field      | Type           | Default          | Description                                              |
-|------------|----------------|------------------|----------------------------------------------------------|
-| `position` | `table {x, y}` | `{x=0, y=0}`     | The world position of the entity's top-left corner.      |
-| `scale`    | `table {x, y}` or `number` | `{x=1, y=1}` | The scale of the entity, applied about its anchor. A bare number scales both axes. |
-| `rotation` | `number`       | `0.0`            | Rotation, in the project's `AngleUnit` (degrees by default). |
-| `pivot`    | `table {x, y}` | *(centre)*       | Anchor for rotation *and* scale. Builds a `pivot` component. |
+```lua
+components = { name = "Player" }               -- bare string shorthand
+components = { name = { value = "Player" } }   -- or { name = "Player" }
+```
+
+Runtime (`registry.get_name(entity)`): `name` (`string`, read/write).
+
+### `transform` (spawn shorthand)
+
+Spawn-time shorthand expanded by `LuaEntityLoader` into `position`, `scale`, `rotation`, and `pivot` components.
+
+| Field      | Type                      | Default      | Description                                              |
+|------------|---------------------------|--------------|----------------------------------------------------------|
+| `position` | `table {x, y}`            | `{x=0, y=0}` | The local position (world position if top-level).        |
+| `scale`    | `table {x, y}` or `number`| `{x=1, y=1}` | The scale of the entity, applied about its anchor. A bare number scales both axes. |
+| `rotation` | `number`                  | `0.0`        | Rotation, in the project's `AngleUnit` (degrees by default). |
+| `pivot`    | `table {x, y}`            | *(centre)*   | Anchor for rotation *and* scale. Builds a `pivot` component. |
 
 ```lua
 components = { transform = { scale = 2 } }                  -- uniform: both axes at once
 components = { transform = { scale = { x = 2, y = 5 } } }   -- per-axis
 ```
+
+### `position`
+
+Standalone 2D position component (`{ value = { x, y } }`). Also populated by `transform.position`.
+
+Runtime (`registry.get_position(entity)`): `value` (`vec2`), `x` (`number`), `y` (`number`).
+
+### `rotation`
+
+Standalone orientation component (`number` or `{ value = number }`), authored in the project's configured `AngleUnit` and converted to radians internally.
+
+Runtime (`registry.get_rotation(entity)`): `value` (`number`, read/write in the configured `AngleUnit`).
+
+### `scale`
+
+Standalone 2D scale factor (`number`, `{ x, y }`, or `{ value = { x, y } }`).
+
+Runtime (`registry.get_scale(entity)`): `value` (`vec2`), `x` (`number`), `y` (`number`), `scale` (`number`, writes both axes), `is_uniform()` (`boolean` method).
 
 ### `pivot`
 
@@ -59,7 +87,7 @@ p.x = 0                                -- writes through to the component
 place the anchor outside the bounds, which is a convenient way to make something orbit a point.
 
 The size the anchor resolves against comes from the entity's `sprite`, else its `square`, else its
-`boxcollider`. An entity with none of those has nothing to anchor to and falls back to `position`.
+`box_collider`. An entity with none of those has nothing to anchor to and falls back to `position`.
 
 **Omitting the component anchors to the centre of the entity's geometry** — the same point
 `{x=0.5, y=0.5}` resolves to. So you only need a `pivot` to move the anchor somewhere other than
@@ -115,15 +143,20 @@ Gives an entity physical properties like velocity.
 
 Renders a 2D texture from the asset manager.
 
-| Field              | Type      | Default      | Description                                          |
-|--------------------|-----------|--------------|------------------------------------------------------|
-| `texture_asset_id` | `string`  | **Required** | The ID of the loaded texture asset.                  |
-| `width`            | `number`  | **Required** | The render width.                                    |
-| `height`           | `number`  | **Required** | The render height.                                   |
-| `layer`            | `number`  | `1`          | Z-index for rendering order (higher is on top).      |
-| `fixed`            | `boolean` | `false`      | If true, the sprite ignores the camera (UI element). |
-| `src_rect_x`       | `number`  | `0`          | X-offset in the source texture.                      |
-| `src_rect_y`       | `number`  | `0`          | Y-offset in the source texture.                      |
+| Field              | Type                 | Default            | Description                                          |
+|--------------------|----------------------|--------------------|------------------------------------------------------|
+| `texture_asset_id` | `string`             | **Required**       | The ID of the loaded texture asset.                  |
+| `width`            | `number`             | **Required**       | The render width.                                    |
+| `height`           | `number`             | **Required**       | The render height.                                   |
+| `layer`            | `number`             | `1`                | Z-index for rendering order (higher is on top).      |
+| `fixed`            | `boolean`            | `false`            | If true, the sprite ignores the camera (UI element). |
+| `src_rect_x`       | `number`             | `0`                | X-offset in the source texture.                      |
+| `src_rect_y`       | `number`             | `0`                | Y-offset in the source texture.                      |
+| `color_mod`        | `table {r, g, b, a}` | `{255,255,255,255}`| Multiplicative color tint (`0-255`).                 |
+| `alpha`            | `integer`            | `255`              | Convenience alpha override (`0-255`; wins over `color_mod.a`). |
+| `blend_mode`       | `string`             | `"blend"`          | Blend mode (`"none"`, `"blend"`, `"add"`, `"mod"`).  |
+
+Runtime (`registry.get_sprite(entity)`): `width` (read-only), `height` (read-only), `asset_id` (read-only), `layer`, `color_mod`, `alpha`, `blend_mode`.
 
 ### `animation`
 
@@ -134,18 +167,88 @@ Adds frame-based animation to a `sprite`.
 | `num_frames` | `number` | `1`     | Total number of frames in the animation. |
 | `speed_rate` | `number` | `1`     | Animation speed in frames per second.    |
 
+Runtime (`registry.get_animation(entity)`): `num_frames`, `current_frame`, `frame_rate_speed`, `should_loop`, `is_finished`.
+
 ### `square`
 
-Renders a simple colored rectangle.
+Renders a colored rectangle (optionally rounded, bordered, or filled partially as a bar/track).
 
-| Field      | Type                 | Default                | Description              |
-|------------|----------------------|------------------------|--------------------------|
-| `position` | `table {x, y}`       | `{x=0, y=0}`           | Local offset position.   |
-| `width`    | `number`             | `0`                    | Width of the rectangle.  |
-| `height`   | `number`             | `0`                    | Height of the rectangle. |
-| `color`    | `table {r, g, b, a}` | `{r=0, g=0, b=0, a=0}` | The color (0-255).       |
-| `layer`    | `number`             | `1`                    | Rendering layer.         |
-| `fixed`    | `boolean`            | `false`                | If true, ignores camera. |
+| Field              | Type                 | Default                | Description                                           |
+|--------------------|----------------------|------------------------|-------------------------------------------------------|
+| `position`         | `table {x, y}`       | `{x=0, y=0}`           | Local offset position.                                |
+| `width`            | `number`             | `0`                    | Width of the rectangle.                               |
+| `height`           | `number`             | `0`                    | Height of the rectangle.                              |
+| `color`            | `table {r, g, b, a}` | `{r=0, g=0, b=0, a=0}` | Fill color (`0-255`).                                 |
+| `layer`            | `number`             | `1`                    | Rendering layer.                                      |
+| `fixed`            | `boolean`            | `false`                | If true, ignores camera (alias: `is_fixed`).          |
+| `border_thickness` | `number`             | `0`                    | Border stroke width in pixels.                        |
+| `border_color`     | `table {r, g, b, a}` | `{255, 255, 255, 255}` | Border color (`0-255`).                               |
+| `track_color`      | `table {r, g, b, a}` | `{0, 0, 0, 0}`         | Background track color behind `fill_ratio` (`0-255`). |
+| `corner_radius`    | `number`             | `0`                    | Corner rounding radius in pixels.                     |
+| `fill_ratio`       | `number`             | `1.0`                  | Horizontal fill fraction (`0.0..1.0`).                |
+| `blend_mode`       | `string`             | `"blend"`              | Blend mode (`"none"`, `"blend"`, `"add"`, `"mod"`).   |
+
+Runtime (`registry.get_square(entity)`): exposes `width`, `height`, `color`, `position`, `layer`, `is_fixed`, `border_thickness`, `border_color`, `track_color`, `corner_radius`, `fill_ratio`, `blend_mode`.
+
+### `circle`
+
+Renders a filled or outlined circle.
+
+| Field        | Type                 | Default                | Description                                         |
+|--------------|----------------------|------------------------|-----------------------------------------------------|
+| `position`   | `table {x, y}`       | `{x=0, y=0}`           | Local center offset.                                |
+| `radius`     | `number`             | `0`                    | Circle radius in pixels.                            |
+| `thickness`  | `number`             | `1`                    | Outline stroke width when `filled = false`.         |
+| `color`      | `table {r, g, b, a}` | `{r=0, g=0, b=0, a=0}` | Circle color (`0-255`).                             |
+| `layer`      | `number`             | `1`                    | Rendering layer.                                    |
+| `fixed`      | `boolean`            | `false`                | If true, ignores camera (runtime field: `is_fixed`).|
+| `filled`     | `boolean`            | `true`                 | Draws filled interior when `true`, ring when `false`.|
+| `blend_mode` | `string`             | `"blend"`              | Blend mode (`"none"`, `"blend"`, `"add"`, `"mod"`). |
+
+### `capsule`
+
+Renders a filled or outlined capsule (rounded line segment).
+
+| Field        | Type                 | Default                | Description                                         |
+|--------------|----------------------|------------------------|-----------------------------------------------------|
+| `start`      | `table {x, y}`       | `{x=0, y=0}`           | Local start point.                                  |
+| `end`        | `table {x, y}`       | `{x=0, y=0}`           | Local end point.                                    |
+| `radius`     | `number`             | `0`                    | Capsule radius in pixels.                           |
+| `thickness`  | `number`             | `1`                    | Outline stroke width when `filled = false`.         |
+| `fill_ratio` | `number`             | `1.0`                  | Progress fill ratio (`0.0..1.0`).                   |
+| `color`      | `table {r, g, b, a}` | `{r=0, g=0, b=0, a=0}` | Capsule color (`0-255`).                            |
+| `layer`      | `number`             | `1`                    | Rendering layer.                                    |
+| `fixed`      | `boolean`            | `false`                | If true, ignores camera (runtime field: `is_fixed`).|
+| `filled`     | `boolean`            | `true`                 | Draws filled interior when `true`.                  |
+| `blend_mode` | `string`             | `"blend"`              | Blend mode (`"none"`, `"blend"`, `"add"`, `"mod"`). |
+
+### `triangle`
+
+Renders a filled or outlined triangle.
+
+| Field        | Type                 | Default                | Description                                         |
+|--------------|----------------------|------------------------|-----------------------------------------------------|
+| `p1`, `p2`, `p3` | `table {x, y}`   | `{x=0, y=0}`           | Local triangle vertex coordinates.                  |
+| `thickness`  | `number`             | `1`                    | Outline stroke width when `filled = false`.         |
+| `color`      | `table {r, g, b, a}` | `{r=0, g=0, b=0, a=0}` | Triangle color (`0-255`).                           |
+| `layer`      | `number`             | `1`                    | Rendering layer.                                    |
+| `fixed`      | `boolean`            | `false`                | If true, ignores camera (runtime field: `is_fixed`).|
+| `filled`     | `boolean`            | `true`                 | Draws filled interior when `true`.                  |
+| `blend_mode` | `string`             | `"blend"`              | Blend mode (`"none"`, `"blend"`, `"add"`, `"mod"`). |
+
+### `line`
+
+Renders a line segment.
+
+| Field        | Type                 | Default                | Description                                         |
+|--------------|----------------------|------------------------|-----------------------------------------------------|
+| `start`      | `table {x, y}`       | `{x=0, y=0}`           | Local start point.                                  |
+| `end`        | `table {x, y}`       | `{x=0, y=0}`           | Local end point.                                    |
+| `thickness`  | `number`             | `1`                    | Stroke width in pixels.                             |
+| `color`      | `table {r, g, b, a}` | `{r=0, g=0, b=0, a=0}` | Line color (`0-255`).                               |
+| `layer`      | `number`             | `1`                    | Rendering layer.                                    |
+| `fixed`      | `boolean`            | `false`                | If true, ignores camera (runtime field: `is_fixed`).|
+| `blend_mode` | `string`             | `"blend"`              | Blend mode (`"none"`, `"blend"`, `"add"`, `"mod"`). |
 
 ### `text_label`
 
@@ -170,7 +273,7 @@ Renders text using a loaded font, with optional alignment, word wrapping, drop s
 | `outline_width`     | `number`                            | `0`                    | Outline stroke thickness in pixels (clamped to `0..4`; alias: `outline_thickness`).             |
 | `outline_color`     | `table {r, g, b, a}`                | `{r=0, g=0, b=0, a=255}`| Outline stroke color (`0-255`). Defaults `outline_width` to `1` if unset and alpha `> 0`.       |
 
-At runtime (`local lbl = registry.get_text_label(entity)`), you can also mutate `lbl.outline_width`, `lbl.outline_color`, `lbl.shadow_offset`, `lbl.shadow_color`, or call `lbl:set_outline(color_or_width, width?)` (accepts a boolean, pixel width, CSS/hex color string like `"#102030"`, or `{r, g, b, a}` table).
+At runtime (`local lbl = registry.get_text_label(entity)`), you can mutate `text`, `color`, `layer`, `position`, `is_fixed`, `h_align`, `v_align`, `wrap_width`, `wrap`, `outline_width` (`outline_thickness`), `outline_color`, `shadow_offset`, `shadow_color`, or call `lbl:set_outline(color_or_width, width?)` (accepts a boolean, pixel width, CSS/hex color string like `"#102030"`, or `{r, g, b, a}` table).
 
 ---
 
@@ -188,6 +291,16 @@ Attaches custom Lua behavior to an entity.
 | `on_debug_gui`      | `function` | Called during ImGui pass: `function(self, entity)`.                    |
 | `source`            | `string`   | Optional project-relative script path returning the callback table (enables hot reload). |
 
+### `script_callbacks`
+
+Typed native/Lua callback component exposing `script_table`, `on_hit`, and `on_death` slots.
+
+| Field          | Type       | Default | Description                      |
+|----------------|------------|---------|----------------------------------|
+| `script_table` | `table`    | `nil`   | Associated state table.          |
+| `on_hit`       | `function` | `nil`   | Hit callback function/object.    |
+| `on_death`     | `function` | `nil`   | Death callback function/object.  |
+
 ### `box_collider`
 
 Defines a rectangular area for collision detection.
@@ -197,6 +310,7 @@ Defines a rectangular area for collision detection.
 | `width`          | `number`       | `1`          | Width of the collider box.                   |
 | `height`         | `number`       | `1`          | Height of the collider box.                  |
 | `offset`         | `table {x, y}` | `{x=0, y=0}` | Offset from the entity's transform position. |
+| `is_fixed`       | `boolean`      | `false`      | If true, ignores camera transform.           |
 | `collision_mask` | `number`       | `1`          | Bitmask for filtering collisions.            |
 
 ### `circle_collider`
@@ -205,9 +319,43 @@ Defines a circular area for collision detection.
 
 | Field            | Type           | Default      | Description                                  |
 |------------------|----------------|--------------|----------------------------------------------|
-| `radius`         | `number`       | `0.5`        | Radius of the collider circle.               |
-| `offset`         | `table {x, y}` | `{x=0, y=0}` | Offset from the entity's transform position. |
+| `radius`         | `number`       | `1.0`        | Radius of the collider circle.               |
+| `offset`         | `table {x, y}` | `{x=0, y=0}` | Offset from transform position (alias: `position`). |
+| `is_fixed`       | `boolean`      | `false`      | If true, ignores camera transform.           |
 | `collision_mask` | `number`       | `1`          | Bitmask for filtering collisions.            |
+
+### `capsule_collider`
+
+Defines a capsule collider from two local endpoints and a radius.
+
+| Field            | Type           | Default      | Description                        |
+|------------------|----------------|--------------|------------------------------------|
+| `start`          | `table {x, y}` | `{x=0, y=0}` | Local capsule start endpoint.      |
+| `end`            | `table {x, y}` | `{x=0, y=0}` | Local capsule end endpoint.        |
+| `radius`         | `number`       | `1.0`        | Capsule radius.                    |
+| `is_fixed`       | `boolean`      | `false`      | If true, ignores camera transform. |
+| `collision_mask` | `number`       | `1`          | Bitmask for filtering collisions.  |
+
+### `triangle_collider`
+
+Defines a triangle collider from three local vertices.
+
+| Field            | Type           | Default      | Description                        |
+|------------------|----------------|--------------|------------------------------------|
+| `p1`, `p2`, `p3` | `table {x, y}` | `{x=0, y=0}` | Local triangle vertices.           |
+| `is_fixed`       | `boolean`      | `false`      | If true, ignores camera transform. |
+| `collision_mask` | `number`       | `1`          | Bitmask for filtering collisions.  |
+
+### `line_collider`
+
+Defines a line-segment collider from two local endpoints.
+
+| Field            | Type           | Default      | Description                        |
+|------------------|----------------|--------------|------------------------------------|
+| `start`          | `table {x, y}` | `{x=0, y=0}` | Local segment start point.         |
+| `end`            | `table {x, y}` | `{x=0, y=0}` | Local segment end point.           |
+| `is_fixed`       | `boolean`      | `false`      | If true, ignores camera transform. |
+| `collision_mask` | `number`       | `1`          | Bitmask for filtering collisions.  |
 
 ### `camera_follow`
 
@@ -216,35 +364,52 @@ Example: `camera_follow = {}`
 
 ### `audio_listener`
 
-Marks an entity as the spatial audio listener. Attenuation is computed relative
-to this entity's position. Has no fields — only one listener should exist per scene.
-Example: `audio_listener = {}`
+Marks an entity as the spatial audio listener. Attenuation and Doppler shifts are computed relative to this entity. Only one active listener should exist per scene.
+
+| Field            | Type     | Default  | Description                                       |
+|------------------|----------|----------|---------------------------------------------------|
+| `max_distance`   | `number` | `1000.0` | Maximum listener hearing distance for culling.    |
+| `rolloff`        | `number` | `1.0`    | Attenuation rolloff factor.                       |
+| `doppler_factor` | `number` | `1.0`    | Multiplier applied to Doppler pitch shift.        |
+| `speed_of_sound` | `number` | `343.0`  | Medium speed of sound in pixels/units per second. |
 
 ### `audio_source`
 
-Attaches a looping or triggered sound to an entity. The engine spatializes it
-relative to the `audio_listener`.
+Attaches a triggered or looping sound to an entity, optionally spatialized relative to the `audio_listener`.
 
-| Field      | Type      | Default | Description                                        |
-|------------|-----------|---------|----------------------------------------------------|
-| `asset_id` | `string`  | `""`    | The ID of the loaded sound asset.                  |
-| `loop`     | `boolean` | `false` | If true, the sound loops continuously.             |
-| `volume`   | `number`  | `1.0`   | Playback volume (0.0–1.0).                         |
+| Field              | Type      | Default      | Description                                              |
+|--------------------|-----------|--------------|----------------------------------------------------------|
+| `clip_id`          | `string`  | **Required** | The ID of the loaded sound asset (must be present).      |
+| `volume`           | `number`  | `1.0`        | Playback volume (`0.0-1.0`).                             |
+| `pitch`            | `number`  | `1.0`        | Playback pitch multiplier.                               |
+| `loop`             | `boolean` | `false`      | If true, the sound loops continuously.                   |
+| `play_on_spawn`    | `boolean` | `true`       | Starts playback automatically when spawned.              |
+| `despawn_on_finish`| `boolean` | `false`      | Despawns the entity once non-looping playback finishes.  |
+| `spatial`          | `boolean` | `false`      | Enables distance attenuation and stereo panning.         |
+| `min_distance`     | `number`  | `50.0`       | Distance inside which spatial volume stays at full gain. |
+| `max_distance`     | `number`  | `1000.0`     | Distance beyond which spatial audio attenuates/culls.    |
+| `doppler`          | `boolean` | `false`      | Enables Doppler shift from relative `rigidbody` velocity.|
 
 ### `ui_button`
 
 Makes an entity clickable and input-triggerable. Triggering via a mapped key, controller button, or action calls `on_click`, identical to clicking with the mouse.
 
-| Field               | Type       | Default | Description                                                                                                   |
-|---------------------|------------|---------|---------------------------------------------------------------------------------------------------------------|
-| `is_active`         | `boolean`  | `true`  | Whether the button is interactive.                                                                            |
-| `on_click`          | `function` | `nil`   | Function called on click or input trigger: `function(self, entity)`.                                          |
-| `key`               | `string`   | `""`    | Keyboard key(s) that trigger the button (e.g. `"space"`, `"return, space"`). Also aliased as `input_key`.     |
-| `controller_button` | `string`   | `""`    | Gamepad button(s) that trigger the button (e.g. `"a"`, `"south, start"`). Also aliased as `gamepad_button`.  |
-| `action`            | `string`   | `""`    | Named input action configured in `input` that triggers the button (e.g. `"ui_confirm"`, `"jump"`).           |
+| Field               | Type                 | Default            | Description                                                                                                  |
+|---------------------|----------------------|--------------------|--------------------------------------------------------------------------------------------------------------|
+| `is_active`         | `boolean`            | `true`             | Whether the button is interactive.                                                                           |
+| `is_fixed`          | `boolean`            | `true`             | If true, button hit-testing ignores camera scroll.                                                           |
+| `on_click`          | `function`           | `nil`              | Function called on click or input trigger: `function(self, entity)`.                                         |
+| `on_focus`          | `function`           | `nil`              | Function called when the button receives focus.                                                              |
+| `key`               | `string`             | `""`               | Keyboard key(s) that trigger the button (e.g. `"space"`, `"return, space"`). Alias: `input_key`.             |
+| `controller_button` | `string`             | `""`               | Gamepad button(s) that trigger the button (e.g. `"a"`, `"south, start"`). Aliases: `gamepad`, `gamepad_button`. |
+| `action`            | `string`             | `""`               | Named input action configured in `input` that triggers the button (e.g. `"ui_confirm"`, `"jump"`).           |
+| `hover_color`       | `table {r, g, b, a}` | *(unset)*          | Optional hover tint when pointer is over the button.                                                         |
+| `press_color`       | `table {r, g, b, a}` | *(unset)*          | Optional press tint while held.                                                                              |
+| `hover_sound`       | `string`             | `""`               | Audio clip ID played via `AudioPlayEvent` on hover enter.                                                    |
+| `click_sound`       | `string`             | `""`               | Audio clip ID played via `AudioPlayEvent` on click/trigger.                                                  |
+| `focus_sound`       | `string`             | `""`               | Audio clip ID played via `AudioPlayEvent` on focus enter.                                                    |
 
-Methods:
-- `button:trigger(entity)` — Programmatically activates the button, invoking `on_click`.
+Runtime (`registry.get_ui_button(entity)`): also exposes `is_hovered`, `is_pressed`, `has_hover_color`, `has_press_color`, and `button:trigger(entity?) -> boolean` to programmatically invoke `on_click`.
 
 ### `ui_canvas`
 
@@ -290,8 +455,8 @@ Configures CSS-like flexbox or grid layout for child entities.
 | `gap`            | `number`  | `0.0`       | Spacing in pixels between children along the main axis.                                  |
 | `cross_gap`      | `number`  | `-1.0`      | Spacing in pixels between wrapped lines or rows/columns (`-1.0` uses `gap`).             |
 | `wrap`           | `boolean` | `false`     | When `true`, children that exceed container extent wrap onto new lines.                  |
-| `columns`        | `integer` | `0`         | When `> 0`, enables fixed-column grid partitioning into $N$ equal-width columns.          |
-| `padding_left`   | `number`  | `0.0`       | Left padding inset in pixels.                                                            |
+| `columns`        | `integer` | `0`         | When `> 0`, enables fixed-column grid partitioning into `N` equal-width columns.          |
+| `padding_left`   | `number`  | `0.0`       | Left padding inset in pixels (uniform `padding` shorthand also accepted).                |
 | `padding_top`    | `number`  | `0.0`       | Top padding inset in pixels.                                                             |
 | `padding_right`  | `number`  | `0.0`       | Right padding inset in pixels.                                                           |
 | `padding_bottom` | `number`  | `0.0`       | Bottom padding inset in pixels.                                                          |
@@ -310,7 +475,7 @@ Defines sizing constraints and outer margins on UI elements.
 | `max_width`     | `number` / `string` | `""`     | Upper clamp on width (empty = unconstrained).                                               |
 | `min_height`    | `number` / `string` | `"0px"`  | Lower clamp on height.                                                                      |
 | `max_height`    | `number` / `string` | `""`     | Upper clamp on height (empty = unconstrained).                                              |
-| `margin_left`   | `number` | `0.0`    | Left outer margin in pixels.                                                                |
+| `margin_left`   | `number` | `0.0`    | Left outer margin in pixels (uniform `margin` shorthand also accepted).                     |
 | `margin_top`    | `number` | `0.0`    | Top outer margin in pixels.                                                                 |
 | `margin_right`  | `number` | `0.0`    | Right outer margin in pixels.                                                                |
 | `margin_bottom` | `number` | `0.0`    | Bottom outer margin in pixels.                                                              |
@@ -330,7 +495,7 @@ Specifies 9-patch border insets on an image or panel, preserving unstretched cor
 
 | Field    | Type     | Default | Description                                |
 |----------|----------|---------|--------------------------------------------|
-| `left`   | `number` | `0.0`   | Left border inset in source texels.        |
+| `left`   | `number` | `0.0`   | Left border inset in source texels (uniform `border` shorthand also accepted). |
 | `top`    | `number` | `0.0`   | Top border inset in source texels.         |
 | `right`  | `number` | `0.0`   | Right border inset in source texels.       |
 | `bottom` | `number` | `0.0`   | Bottom border inset in source texels.      |
@@ -368,7 +533,7 @@ Configures keyboard and gamepad focus navigation, state flags, and directional l
 
 ### `ui_style_state`
 
-Stores visual overrides for interactive pseudo-states (`hover`, `press`, `focus`, `checked`, `disabled`), each containing `bg_color`, `border_color`, `text_color`, and `opacity`.
+Stores visual overrides (`ui_style_patch`) for interactive states: `hover`, `press`, `focus`, `checked`, `checked_hover`, `checked_press`, and `disabled`. Each `ui_style_patch` contains `bg_color`, `border_color`, `border_width`, `text_color`, `opacity`, and `flags`.
 
 ### `ui_rect`
 
@@ -489,7 +654,7 @@ Components compose naturally. These combinations cover most game object archetyp
 {
     components = {
         transform    = { position = { x = 400, y = 400 } },
-        audio_source = { asset_id = "ambient-wind", loop = true, volume = 0.6 },
+        audio_source = { clip_id = "ambient-wind", loop = true, volume = 0.6, spatial = true },
     }
 }
 ```

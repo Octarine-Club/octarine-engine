@@ -1,6 +1,6 @@
 # Quickstart
 
-The shortest path from a fresh clone to a code change you can verify. For deeper material, jump to one of the topic docs listed at the bottom.
+The shortest path from a fresh clone to a code change you can verify. For full C++ class/method reference, see the **[published Doxygen API docs](https://octarine-club.github.io/octarine-engine/)**.
 
 ## 1. Build
 
@@ -14,20 +14,29 @@ cmake --preset player-debug -DOCTARINE_GAME_MODULE_DIR=/path/to/game/native
 cmake --build build/player-debug
 ```
 
-CMake presets live in `CMakePresets.json`. The common ones:
+CMake presets live in [`../CMakePresets.json`](../CMakePresets.json):
 
-| Preset            | When to use                                       |
-|-------------------|---------------------------------------------------|
-| `player-debug`    | Day-to-day dev with ImGui debug overlays & Lua UI |
-| `player-release`  | Optimized runtime, no ImGui (live-scan catalog) |
-| `player-profile`  | RelWithDebInfo + `OCTARINE_ENABLE_PROFILING` for timing |
-| `ship-release`    | Canonical shipping config (manifest-load catalog) |
+| Preset | When to use |
+|---|---|
+| `player-debug` | Day-to-day dev with ImGui debug overlays & Lua UI |
+| `player-release` | Optimized dev runtime, no ImGui (live-scan catalog) |
+| `player-profile` | RelWithDebInfo + `OCTARINE_ENABLE_PROFILING` for timing |
+| `ship-release` | Canonical shipping config (manifest-load catalog, security hardening) |
+| `ship-mac-universal` | Universal macOS shipping build (`arm64` + `x86_64`) |
+
+To scaffold a new game project outside the engine tree:
+
+```bash
+./scripts/octarine-new.sh --name "My Game" --package-id com.example.mygame --dir ./my-game
+```
+
+Run `./scripts/octarine-init-build.sh` inside a game project directory (or with engine args) to configure build directories against a local engine checkout or installed SDK.
 
 ### Linux build prerequisites
 
-vcpkg builds SDL3 (and its `alsa` dependency) **from source** on first configure, so the host needs the windowing/audio dev headers and autotools **before** that build runs. If they're absent, the SDL3 build doesn't fail loudly — it silently disables the missing backends, and you only find out at runtime when the engine exits with `SDL_Init Error: No available video device` (or `No available audio device`). The vcpkg binary cache then keeps that broken build around, so installing the packages later isn't enough on its own — see the note below.
+vcpkg builds SDL3 (and its `alsa` dependency) **from source** on first configure, so the host needs the windowing/audio dev headers and autotools **before** that build runs. If they are absent, SDL3 silently disables the missing backends and the engine later exits with `SDL_Init Error: No available video device` (or `No available audio device`). Because vcpkg caches that build, installing packages afterward is not enough on its own.
 
-On Debian/Ubuntu/Pop!\_OS:
+On Debian/Ubuntu:
 
 ```bash
 sudo apt install cmake ninja-build \
@@ -39,14 +48,14 @@ sudo apt install cmake ninja-build \
   libasound2-dev libpulse-dev libdbus-1-dev libdrm-dev libgbm-dev
 ```
 
-If you already configured once with packages missing, the broken SDL3 lives in vcpkg's binary cache, and `apt install` alone won't trigger a rebuild (the cache key ignores system libraries). Force a clean from-source rebuild:
+If you already configured with missing packages, force a clean rebuild:
 
 ```bash
 rm -rf build/<preset>/vcpkg_installed
 VCPKG_BINARY_SOURCES=clear cmake --preset <preset>
 ```
 
-To confirm the backends actually compiled in, the built binary should contain `wayland`/`x11` (video) and `alsa` (audio):
+To confirm the backends compiled in:
 
 ```bash
 for s in wayland x11 alsa; do strings build/<preset>/bin/debug/OctarineEngine* | grep -qx "$s" && echo "present: $s"; done
@@ -54,23 +63,26 @@ for s in wayland x11 alsa; do strings build/<preset>/bin/debug/OctarineEngine* |
 
 ## 2. Run
 
-The engine takes the game project directory as a positional argument:
+Pass the game project directory as a positional argument (or via `--project-root`):
 
 ```bash
-./build/player-debug/bin/debug/OctarineEngine ../Octarine-Engine-Example
+# Run with dev overlays, live LuaLS stub generation, and hot reload
+./build/player-debug/bin/debug/OctarineEngine ../Octarine-Engine-Example --dev
 ```
 
-[`Octarine-Engine-Example`](https://github.com/Octarine-Club/octarine-engine-example) is the reference project — a small but complete Lua-driven game that exercises every binding the engine ships.
+[`Octarine-Engine-Example`](https://github.com/Octarine-Club/octarine-engine-example) is the reference Lua-driven game project.
 
-Bake-only (headless, no window): runs the asset pipeline and writes `asset_manifest.lua` next to the project. Nonzero exit on any unresolved asset reference.
+Bake-only mode (headless, no window) runs the asset pipeline, writes `asset_manifest.lua` (or encrypted `assets.ocpk` when packaged), and exits nonzero on unresolved references:
 
 ```bash
-./build/player-debug/bin/debug/OctarineEngine ../Octarine-Engine-Example -m bake
+./build/player-debug/bin/debug/OctarineEngine ../Octarine-Engine-Example --startup-mode bake
 ```
+
+See [`docs/dev-tools.md`](dev-tools.md) for `--headless`, `--scripts-dir`, `--use-manifest`, and `--dev-listen <port>`.
 
 ## 3. Verify
 
-Two engine tests are gated behind `OCTARINE_ENABLE_TESTS=ON`:
+The test suite in [`../tests/CMakeLists.txt`](../tests/CMakeLists.txt) registers 38 CTest targets when `OCTARINE_ENABLE_TESTS=ON`:
 
 ```bash
 cmake --preset player-debug -DOCTARINE_ENABLE_TESTS=ON
@@ -78,53 +90,68 @@ cmake --build build/player-debug
 ctest --test-dir build/player-debug --output-on-failure
 ```
 
-- **`LuaApiSmokeTest`** — constructs `Game` headlessly, replays `Game::Setup`'s Lua-binding sequence, and asserts every registered component/module/system surface is reachable from Lua. Also re-emits the EmmyLua stub at `lua_api.smoke.lua` (CI fails on drift; commit the regenerated file).
-- **`AssetPipelineTest`** — exercises `.meta` sidecar parsing, catalog build, manifest round-trip, and validation against a tiny fixture asset tree.
+Key verification tools and tests:
 
-CI (`.github/workflows/build.yml`) runs both on the Linux player-debug leg on every PR.
+- **`LuaApiSmokeTest`** — constructs `Game` headlessly, replays Lua binding setup, asserts every component/module/system surface is reachable, and regenerates [`../lua_api.smoke.lua`](../lua_api.smoke.lua).
+- **`AssetPipelineTest`** — validates `.meta` sidecar parsing, catalog building, and manifest round-trips.
+- **`./scripts/octarine-verify.sh --fast`** (`--full` for C++20 modules/sanitizers) — unified local verification gate.
+- **`python3 scripts/check_architecture.py`** — checks include DAG layering and CMake target parity.
+- **`python3 scripts/gen_api_catalogs.py --check`** — ensures generated catalogs stay synced with `src/`.
 
 ## 4. Where things live
 
 | Path | What's there |
-|------|--------------|
-| `src/ECS/` | Archetype registry, chunk SoA storage, queries |
-| `src/Game/Game.cpp` | Main loop and `Setup` (binding/registration ordering matters) |
-| `src/Components/` | Plain component structs (data only) |
-| `src/Systems/` | Engine systems (input, collision, rendering, audio, ...) |
-| `src/Lua/Bindings/` | `LuaBinding<T>` per component, `LuaSystemBinding<S>` per system surface |
-| `src/Lua/Modules/` | `LuaModuleBinding<M>` — Lua free-function globals (one file per domain) |
-| `src/Renderer/` | SDL3 render path + render queue |
-| `src/EventBus/`, `src/Events/` | Type-erased pub/sub |
-| `src/AssetManager/` | Catalog, `.meta` sidecar parsing, bake/manifest |
-| `src/Engine/GameModuleHooks.h` | Hook interface for optional external native C++ game modules (`OCTARINE_GAME_MODULE_DIR`) |
-| `tests/` | Engine unit & integration test suites (`OCTARINE_ENABLE_TESTS=ON`) |
-| `cmake/`, `scripts/` | Packaging, license aggregation, icon generation |
-| `android/` | Gradle host app (multi-ABI, vcpkg android triplets) |
-| `lua_api.smoke.lua` | Auto-generated EmmyLua stub of the whole Lua surface |
+|---|---|
+| `src/ECS/` | Archetype registry, 16 KB SoA chunks, queries, `CommandBuffer`, `StateInspector` |
+| `src/Engine/` | `EngineBootstrap`, `SimulationSystems`, `FrameLoop`, `SceneLoader`, `GameModuleHooks.h` |
+| `src/Game/` | `Game`, `GameConfig`, `EngineContext`, `UserSettings` |
+| `src/Components/` | POD component structs (data only, descending-size packed) |
+| `src/Systems/` | Simulation, collision, physics, audio, camera, scripting, render-collection systems |
+| `src/UI/` | Declarative UI runtime, `.oxml` parser, `.oss` stylesheet engine, reactive observables |
+| `src/Tilemap/` | Chunked LDtk tilemaps, IntGrid masks, 2D DDA raycasting, procedural stitching |
+| `src/Lua/Bindings/` | `LuaBinding<T>` headers and 4 split `Register*Bindings.cpp` TUs |
+| `src/Lua/Modules/` | `LuaModuleBinding<M>` free-function domain modules |
+| `src/Renderer/` | SDL3 renderer, `RenderQueue`, `RenderKey`, atlas batching |
+| `src/EventBus/`, `src/Events/` | Type-erased pub/sub event bus and event structs |
+| `src/AssetManager/` | Asset catalog, `.meta` sidecars, manifest baking |
+| `src/Crypto/` | OCPK ChaCha20+Poly1305 encryption and Lua bytecode protection |
+| `src/Debug/`, `src/Dev/` | Dear ImGui debug panels, `DebugMenuRegistry`, `--dev-listen` loopback TCP server |
+| `tests/` | Engine unit and integration test suites (`OCTARINE_ENABLE_TESTS=ON`) |
+| `cmake/`, `scripts/` | Build modules, packaging, license aggregation, project scaffolding, verify scripts |
+| `android/` | Gradle host app (multi-ABI, vcpkg Android triplets) |
+| `components.json`, `modules.json`, `systems.json`, `events.json`, `lua_api.smoke.lua` | Auto-generated API catalogs and EmmyLua stub |
 
 ## 5. Adding new code
 
-> **Game-specific C++ vs. Engine C++:** Game-specific components, systems, events, Lua bindings, unit tests, and benchmarks belong in the game project's native module directory (`-DOCTARINE_GAME_MODULE_DIR=/path/to/game/native`) rather than inside the engine repository. See [Native C++ Game Modules in `docs/making-games.md`](making-games.md#14-native-c-game-modules).
+> [!NOTE]
+> Game-specific components, systems, events, Lua bindings, tests, and benchmarks belong in the game project's native module (`-DOCTARINE_GAME_MODULE_DIR=/path/to/game/native`) rather than inside the engine repository. See [Native C++ Game Modules](making-games.md#14-native-c-game-modules) and [`docs/extension-recipes.md`](extension-recipes.md).
 
-| To add to the engine… | Touch points |
-|---------|--------------|
-| A **component** | `src/Components/X.h` + `src/Lua/Bindings/XLuaBinding.h` + a `registerComponent<X>()` line in `src/Lua/Bindings/RegisterAllBindings.cpp`. Header-only — no CMake edit. |
-| A **Lua module** (free-function globals) | `src/Lua/Modules/XModuleLuaBinding.{h,cpp}` + an `install` line in `src/Lua/Modules/RegisterAllModules.cpp` + add the `.cpp` to the `octarine_lua` list in `src/CMakeLists.txt`. |
-| A **system** | `src/Systems/X.h` + a registration call in `Game::Setup` (`RegisterSystem` / `RegisterParallelSystem` / `RegisterBulkSystem`). Optional `LuaSystemBinding<X>` if it exposes a Lua surface. Mind registration order — see [`docs/systems.md`](systems.md). |
-| An **event** | `src/Events/X.h` + `EmitEvent<X>(...)` in producers + `SubscribeEvent<X>(...)` in each consumer's `Init` — see [`docs/events.md`](events.md). |
-| A **new `.cpp`** under `src/` | Add it to the matching per-layer source list in `src/CMakeLists.txt` (`octarine_core`/`_assets`/`_renderer`/`_lua`/`_systems`/`_engine`). |
+| To add to the engine | Touch points |
+|---|---|
+| A **component** | `src/Components/X.h` + `src/Lua/Bindings/XLuaBinding.h` + `LuaComponentRegistry::registerComponent<X>()` in the matching `src/Lua/Bindings/Register*Bindings.cpp` TU (`TransformCore`, `Render`, `PhysicsAudioScript`, or `UI`) + regenerate catalogs (`LuaApiSmokeTest` + `python3 scripts/gen_api_catalogs.py`). |
+| A **Lua module** | `src/Lua/Modules/XModuleLuaBinding.{h,cpp}` + `kLuaModules` in `src/Lua/Modules/RegisterAllModules.cpp` + add `.cpp` to `octarine_lua` in `src/CMakeLists.txt` + regenerate catalogs. |
+| A **system** | `src/Systems/X.{h,cpp}` + add `.cpp` to `octarine_systems` in `src/CMakeLists.txt` + register in `src/Engine/SimulationSystems.cpp` (`registry.Order(...).After(...)`) or `Game::Setup` + regenerate catalogs (`python3 scripts/gen_api_catalogs.py`). |
+| An **event** | `src/Events/X.h` + `EmitEvent<X>(...)` + `[[nodiscard]] SubscriptionHandle SubscribeEvent<TOwner, X>(...)` retained by the consumer + `python3 scripts/gen_api_catalogs.py`. |
+| A **new `.cpp`** under `src/` | Register it in the matching layer list in `src/CMakeLists.txt` (`octarine_core`, `octarine_assets`, `octarine_renderer`, `octarine_systems`, `octarine_lua`, `octarine_engine`). |
 
 ## Deeper reading
 
-- [`docs/ecs-architecture.md`](ecs-architecture.md) — archetype graph, chunk storage, query model
-- [`docs/ecs-components.md`](ecs-components.md) — every component's Lua shape
-- [`docs/lua-scripting.md`](lua-scripting.md) — how Lua scripts wire into the engine
-- [`docs/systems.md`](systems.md) — built-in systems and the order they run in
-- [`docs/events.md`](events.md) — the event bus and every event type
-- [`docs/scenes.md`](scenes.md) — scene file shape, lifecycle, `load_scene` / `reload_scene`
-- [`docs/tilemaps.md`](tilemaps.md) — what the scene `tilemap` field does (and doesn't) today
-- [`docs/asset-pipeline.md`](asset-pipeline.md) — `.meta` sidecars, bake step, atlases, audio normalize
-- [`docs/profiling.md`](profiling.md) — profiling build, PerfUtils, benchmarks, the perf dashboard
+- [`docs/making-games.md`](making-games.md) — end-to-end game creation, project config, assets, Lua, and native C++ modules
+- [`docs/extension-recipes.md`](extension-recipes.md) — step-by-step extension checklists for ECS, Lua, events, and native modules
+- [`docs/ecs-architecture.md`](ecs-architecture.md) — archetype graph, 16 KB SoA chunk storage, queries, and DAG ordering
+- [`docs/ecs-components.md`](ecs-components.md) — spawn schema and all 39 registered components
+- [`docs/systems.md`](systems.md) — built-in systems and DAG execution order
+- [`docs/events.md`](events.md) — the `EventBus` and built-in event types
+- [`docs/lua-scripting.md`](lua-scripting.md) — scripts, callbacks, component proxies, globals, `storage`, and `settings`
+- [`docs/scenes.md`](scenes.md) — scene file schema, lifecycle, `load_scene`, and `reload_scene`
+- [`docs/input-and-controllers.md`](input-and-controllers.md) — action mapping, canonical gamepad controls, and UI focus navigation
+- [`docs/ui-framework.md`](ui-framework.md) — declarative `.oxml` templates, `.oss` stylesheets, and reactive MVVM bindings
+- [`docs/ui-layout.md`](ui-layout.md) — canvas scaling, anchor positioning, flexbox, clipping, nine-slice, and scroll views
+- [`docs/tilemaps.md`](tilemaps.md) — chunked LDtk tilemaps, IntGrid spatial queries, 2D DDA raycasting, stitching, and prop streaming
+- [`docs/dev-tools.md`](dev-tools.md) — `--dev`, `dev.*` panels, LuaLS stubs, `--headless`, frame capture, and `--dev-listen`
+- [`docs/asset-pipeline.md`](asset-pipeline.md) — `.meta` sidecars, bake step, atlases, and audio normalization
+- [`docs/profiling.md`](profiling.md) — profiling build, PerfUtils, `OctarineBenchmarks`, and benchmark dashboard
+- [`docs/security.md`](security.md) — OCPK bundle encryption, Lua bytecode protection, and filesystem sandboxing
 - [`docs/device-builds.md`](device-builds.md) — shipping artifacts for desktop (and experimental Android/iOS)
-- [`docs/commenting-guide.md`](commenting-guide.md) — code commenting philosophy and guidelines
-- `lua_api.smoke.lua` — generated, exhaustive reference for the live Lua surface
+- [`docs/commenting-guide.md`](commenting-guide.md) — code commenting standards
+- [`lua_api.smoke.lua`](../lua_api.smoke.lua) — auto-generated EmmyLua reference for the live Lua surface

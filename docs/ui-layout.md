@@ -137,7 +137,7 @@ Attaches or configures `UIFlexComponent` on `entity` for flexbox or grid layout.
 | `gap` | `0.0` | Spacing in pixels between children along the main axis. |
 | `cross_gap` | `-1.0` (uses `gap`) | Spacing in pixels between wrapped lines or rows/columns. |
 | `wrap` | `false` | When `true`, children that exceed container extent wrap onto new lines. |
-| `columns` | `0` | When `> 0`, enables fixed-column grid partitioning into $N$ equal-width columns. |
+| `columns` | `0` | When `> 0`, enables fixed-column grid partitioning into `N` equal-width columns. |
 | `padding` | `0.0` | Shorthand padding applied to all four edges. |
 | `padding_left`, `padding_top`, `padding_right`, `padding_bottom` | `padding` | Explicit per-edge padding in pixels. |
 | `justify` | `"stretch"` | Main-axis distribution (`"start"`, `"center"`, `"end"`, `"space_between"`, `"space_around"`, `"stretch"`). |
