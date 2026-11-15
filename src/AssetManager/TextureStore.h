@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 
 // Owns the resident SDL_Texture* handles keyed by asset id, the project default scale mode, and the
@@ -23,6 +24,10 @@ class TextureStore {
   ~TextureStore() { Clear(); }
 
   void SetDefaultScaleMode(std::optional<SDL_ScaleMode> mode) { default_scale_mode_ = mode; }
+  bool SetExplicitScaleMode(const std::string& id, SDL_ScaleMode mode);
+  [[nodiscard]] bool HasExplicitScaleMode(const std::string& id) const noexcept {
+    return explicit_scale_ids_.contains(id);
+  }
 
   // Create a texture from an already-opened, owned IO stream (consumed and closed by the loader).
   // Applies the default scale mode, replaces any prior handle under `id`, and bumps the generation.
@@ -43,6 +48,7 @@ class TextureStore {
 
  private:
   std::map<std::string, SDL_Texture*> textures_;
+  std::set<std::string> explicit_scale_ids_;
   std::optional<SDL_ScaleMode> default_scale_mode_;
   // Bumped whenever a texture is added, replaced, or removed. Sprite renderers compare against their
   // cached value to know when to re-resolve a stale SDL_Texture* pointer.

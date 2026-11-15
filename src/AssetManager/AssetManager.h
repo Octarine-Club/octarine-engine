@@ -120,6 +120,7 @@ class AssetManager {
   [[nodiscard]] MIX_Audio* GetAudioClip(const std::string& assetId) const;
   [[nodiscard]] std::string GetFullPath(const std::string& relativePath) const;
   void SetDefaultScaleMode(const std::string& scaleMode);
+  bool SetTextureScaleMode(const std::string& assetId, ScaleMode scaleMode);
   [[nodiscard]] std::uint64_t TextureGeneration() const { return texture_store_.Generation(); }
   [[nodiscard]] std::uint64_t FontGeneration() const noexcept { return font_store_.Generation(); }
 

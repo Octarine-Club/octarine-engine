@@ -380,6 +380,10 @@ std::string AssetManager::GetFullPath(const std::string& relativePath) const {
   return assetPath.string();
 }
 
+bool AssetManager::SetTextureScaleMode(const std::string& assetId, const ScaleMode scaleMode) {
+  return texture_store_.SetExplicitScaleMode(assetId, ToSdlScaleMode(scaleMode));
+}
+
 void AssetManager::SetDefaultScaleMode(const std::string& scaleMode) {
   const auto parsed = ParseScaleModeString(scaleMode);
   if (!parsed.has_value()) {
@@ -392,7 +396,7 @@ void AssetManager::SetDefaultScaleMode(const std::string& scaleMode) {
   for (const auto& [id, texture] : texture_store_.All()) {
     if (texture == nullptr) continue;
     const CatalogEntry* entry = catalog_.Find(id);
-    if (entry == nullptr || !entry->hasExplicitScaleMode) {
+    if ((entry == nullptr || !entry->hasExplicitScaleMode) && !texture_store_.HasExplicitScaleMode(id)) {
       SDL_SetTextureScaleMode(texture, sdlMode);
     }
   }

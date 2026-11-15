@@ -97,7 +97,8 @@ std::optional<SDL_FRect> PrepareSceneTargetForWindow(Renderer& renderer, SDL_Ren
   const int targetW = std::max(1, static_cast<int>(std::lround(compositeRect.w)));
   const int targetH = std::max(1, static_cast<int>(std::lround(compositeRect.h)));
   renderer.EnsureSceneTargetSize(sdlRenderer, targetW, targetH);
-  return compositeRect;
+  return SDL_FRect{std::round(compositeRect.x), std::round(compositeRect.y), static_cast<float>(targetW),
+                   static_cast<float>(targetH)};
 }
 
 void SyncViewportRectFromWindow(SDL_Window* window, SDL_Renderer* sdlRenderer, const GameConfig& config,
@@ -178,6 +179,8 @@ void FrameLoop::SyncSceneTargetAndScale(GameConfig& config) {
   PrepareSceneTargetForWindow(*renderer_, runtime_->SdlRenderer(), config, &lua_, isHeadlessOrCapture);
   if (auto* ctx = registry_->TryGet<EngineContext>()) {
     ctx->sceneRenderScale = renderer_->GetRenderScale();
+    ctx->sceneRenderScaleX = renderer_->GetRenderScaleX();
+    ctx->sceneRenderScaleY = renderer_->GetRenderScaleY();
   }
 }
 
@@ -519,6 +522,11 @@ void FrameLoop::Render(const float deltaTime) {
 
   const auto compositeRect = PrepareSceneTargetForWindow(*renderer_, runtime_->SdlRenderer(), gameConfig, &lua_,
                                                          isHeadless || !capture_path_.empty());
+  if (auto* ctx = registry_->TryGet<EngineContext>()) {
+    ctx->sceneRenderScale = renderer_->GetRenderScale();
+    ctx->sceneRenderScaleX = renderer_->GetRenderScaleX();
+    ctx->sceneRenderScaleY = renderer_->GetRenderScaleY();
+  }
 
   renderer_->BeginScene(runtime_->SdlRenderer());
 

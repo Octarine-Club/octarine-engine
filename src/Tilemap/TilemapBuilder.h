@@ -35,8 +35,8 @@ struct TileQuadDesc {
 
 class TilemapBuilder {
  public:
-  // Half-texel UV inset prevents bilinear/nearest sampling bleeding across adjacent atlas cells.
-  static constexpr float kUvInsetPx = 0.002f;
+  // UV inset prevents subpixel float/FP16 sampling from stepping into adjacent spacing gutters.
+  static constexpr float kUvInsetPx = 0.025f;
 
   [[nodiscard]] static bool IsPaletteTemplateName(const std::string& identifier) noexcept {
     if (identifier == "Chunk_Palette" || identifier == "Palette" || identifier == "__Palette") {
@@ -95,6 +95,7 @@ class TilemapBuilder {
 
   static void AppendYSortTile(std::vector<YSortTileCmd>& outTiles, const TilesetDesc& ts, const TileQuadDesc& quad) {
     const float gridSize = std::max(1.0f, quad.size);
+    const float inset = std::min(kUvInsetPx, gridSize * 0.25f);
     YSortTileCmd cmd;
     cmd.tilesetAssetId = ts.assetId;
     cmd.tilesetRelPath = ts.relPath;
@@ -103,7 +104,7 @@ class TilemapBuilder {
     cmd.width = gridSize;
     cmd.height = gridSize;
     cmd.sortLocalY = cmd.localY + gridSize;
-    cmd.srcRect = SDL_FRect{quad.srcX, quad.srcY, gridSize, gridSize};
+    cmd.srcRect = SDL_FRect{quad.srcX + inset, quad.srcY + inset, gridSize - 2.0f * inset, gridSize - 2.0f * inset};
 
     int flipVal = SDL_FLIP_NONE;
     if (quad.flipX) flipVal |= SDL_FLIP_HORIZONTAL;

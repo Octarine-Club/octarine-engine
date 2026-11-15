@@ -1,11 +1,13 @@
 #include <benchmark/benchmark.h>
 
+#include <algorithm>
 #include <sstream>
 #include <string>
 
 #include "BenchCommon.h"
 #include "Components/CameraComponents.h"
 #include "ECS/Registry.h"
+#include "Game/EngineContext.h"
 #include "Game/GameConfig.h"
 #include "Renderer/RenderQueue.h"
 #include "Systems/TilemapSystem.h"
@@ -97,6 +99,31 @@ static void BM_TilemapRenderTick3x3(benchmark::State& state) {
   bench::ReportPerEntity(state, 9.0 * (1024 + 256 + 64));
 }
 BENCHMARK(BM_TilemapRenderTick3x3)->Name("Sys/Tilemap/RenderTick3x3");
+
+static void BM_TilemapRenderTick3x3Expand(benchmark::State& state) {
+  Registry registry;
+  TilemapSystem sys;
+  SetupBenchTilemap(registry, sys);
+  auto& cfg = registry.Get<GameConfig>();
+  cfg.windowWidth = 1314;
+  cfg.windowHeight = 720;
+  auto& ctx = registry.Set<EngineContext>(EngineContext{});
+  ctx.sceneRenderScaleX = 1920.0F / 1314.0F;
+  ctx.sceneRenderScaleY = 1052.0F / 720.0F;
+  ctx.sceneRenderScale = std::max(ctx.sceneRenderScaleX, ctx.sceneRenderScaleY);
+  auto& cam = registry.Get<CameraComponent>();
+  cam.zoom = 0.911875F;
+  cam.viewport = octarine::Rect{-240.13F, -150.49F, 1314.0F / cam.zoom, 720.0F / cam.zoom};
+  auto& rq = registry.Get<RenderQueue>();
+
+  for (auto _ : state) {
+    rq.Clear();
+    sys.Tick(&registry);
+    benchmark::DoNotOptimize(rq.Size());
+  }
+  bench::ReportPerEntity(state, 9.0 * (1024 + 256 + 64));
+}
+BENCHMARK(BM_TilemapRenderTick3x3Expand)->Name("Sys/Tilemap/RenderTick3x3Expand");
 
 static void BM_TilemapIsSolidAtBatch(benchmark::State& state) {
   const auto n = static_cast<int>(state.range(0));

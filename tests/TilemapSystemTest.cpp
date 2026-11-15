@@ -6,7 +6,9 @@
 #include <fstream>
 #include <sol/sol.hpp>
 #include <string>
+#include <vector>
 
+#include "AssetManager/AssetManager.h"
 #include "Components/CameraComponents.h"
 #include "Components/ChunkResidentComponent.h"
 #include "ECS/EntityPool.h"
@@ -18,12 +20,14 @@
 #include "Lua/LuaBindingContext.h"
 #include "Lua/Modules/TilemapModuleLuaBinding.h"
 #include "Renderer/RenderQueue.h"
+#include "Renderer/Renderer.h"
 #include "Systems/TilemapSystem.h"
 #include "TestHarness.h"
 #include "Tilemap/LdtkParser.h"
 #include "Tilemap/TilemapBuilder.h"
 #include "Tilemap/TilemapLoader.h"
 #include "Tilemap/TilemapMath.h"
+#include "stb/stb_image_write.h"  // header-only; IMPL lives in AtlasBaker.cpp
 
 using octarine::test::Check;
 using octarine::test::CheckEq;
@@ -1116,6 +1120,244 @@ void TestDataDrivenCollisionLayersAndOptions() {
   }
 }
 
+bool WriteGutteredTilesetPng(const std::string& path) {
+  // 34x34 RGBA PNG: 2x2 grid of 16x16 tiles with a 1px transparent-black (0,0,0,0) gutter.
+  // Top-left & bottom tiles = solid ground (200, 180, 120, 255); top-right tile = YSort (100, 210, 140, 255).
+  constexpr int kSize = 34;
+  std::vector<unsigned char> pixels(kSize * kSize * 4, 0);
+  auto fillTile = [&](const int ox, const int oy, const unsigned char r, const unsigned char g, const unsigned char b) {
+    for (int y = 0; y < 16; ++y) {
+      for (int x = 0; x < 16; ++x) {
+        const size_t idx = (static_cast<size_t>(oy + y) * kSize + static_cast<size_t>(ox + x)) * 4u;
+        pixels[idx + 0] = r;
+        pixels[idx + 1] = g;
+        pixels[idx + 2] = b;
+        pixels[idx + 3] = 255;
+      }
+    }
+  };
+  fillTile(0, 0, 200, 180, 120);
+  fillTile(17, 0, 100, 210, 140);
+  fillTile(0, 17, 200, 180, 120);
+  fillTile(17, 17, 200, 180, 120);
+  return stbi_write_png(path.c_str(), kSize, kSize, 4, pixels.data(), kSize * 4) != 0;
+}
+
+void TestExpandSubpixelTargetPixelSnapping() {
+  std::cout << "[expand-seams] Physical target-pixel snapping eliminates Expand/1080p tilemap & chunk seams\n";
+  SDL_Init(0);
+
+  const auto tempDir = std::filesystem::temp_directory_path() / "octarine-tilemap-expand-seam-test";
+  std::error_code ec;
+  std::filesystem::remove_all(tempDir, ec);
+  std::filesystem::create_directories(tempDir, ec);
+  const std::string tilesetPath = (tempDir / "gutter_tileset.png").string();
+  Check(WriteGutteredTilesetPng(tilesetPath), "wrote 34x34 guttered tileset PNG");
+
+  struct ViewportCase {
+    const char* label;
+    int logicalW;
+    int logicalH;
+    int targetW;
+    int targetH;
+  };
+  const ViewportCase viewports[] = {
+      {"Native1280x720->1080p", 1280, 720, 1920, 1080},
+      {"Expand1314x720->1920x1052", 1314, 720, 1920, 1052},
+  };
+  struct CameraCase {
+    float camX;
+    float camY;
+    float zoom;
+  };
+  const CameraCase cameras[] = {
+      {-200.37f, -120.81f, 0.9f},
+      {-240.13f, -150.49f, 0.911875f},
+      {-63.55f, -63.55f, 1.013194f},
+  };
+
+  for (const auto& vp : viewports) {
+    SDL_Surface* backbuf = SDL_CreateSurface(vp.targetW, vp.targetH, SDL_PIXELFORMAT_RGBA32);
+    SDL_Renderer* sdlRenderer = backbuf != nullptr ? SDL_CreateSoftwareRenderer(backbuf) : nullptr;
+    Check(sdlRenderer != nullptr, std::string(vp.label) + ": software SDL_Renderer created");
+    if (sdlRenderer == nullptr) {
+      SDL_DestroySurface(backbuf);
+      continue;
+    }
+
+    Renderer renderer;
+    renderer.SetLogicalSize(vp.logicalW, vp.logicalH);
+    Check(renderer.EnsureSceneTargetSize(sdlRenderer, vp.targetW, vp.targetH),
+          std::string(vp.label) + ": EnsureSceneTargetSize succeeded");
+
+    Registry registry;
+    auto& cfg = registry.Set<GameConfig>(GameConfig{});
+    cfg.SetBaseWidth(1280);
+    cfg.SetBaseHeight(720);
+    cfg.windowWidth = vp.logicalW;
+    cfg.windowHeight = vp.logicalH;
+
+    auto& assets = registry.Set<AssetManager>(AssetManager());
+    assets.SetDefaultScaleMode("pixelart");
+
+    auto& ctx = registry.Set<EngineContext>(EngineContext{});
+    ctx.sdlRenderer = sdlRenderer;
+    ctx.assets = &assets;
+    ctx.sceneRenderScale = renderer.GetRenderScale();
+    ctx.sceneRenderScaleX = renderer.GetRenderScaleX();
+    ctx.sceneRenderScaleY = renderer.GetRenderScaleY();
+
+    registry.Set<RenderQueue>(RenderQueue(8192));
+    registry.Set<CameraComponent>(CameraComponent{
+        octarine::Rect{cameras[0].camX, cameras[0].camY, static_cast<float>(vp.logicalW) / cameras[0].zoom,
+                       static_cast<float>(vp.logicalH) / cameras[0].zoom},
+        cameras[0].zoom});
+
+    TilemapData data;
+    data.sourceFormat = "seam_test";
+    data.tileSize = 16;
+    data.chunkGridWidth = 4;
+    data.chunkGridHeight = 4;
+    TilesetDesc ts{"gutter_tiles", tilesetPath, 34.0f, 34.0f, 16};
+    data.tilesetAssets.emplace_back(ts.assetId, ts.relPath);
+
+    ChunkTemplate tmpl;
+    tmpl.identifier = "Chunk_0_0";
+    tmpl.tileSize = 16;
+    tmpl.gridWidth = 4;
+    tmpl.gridHeight = 4;
+    TileLayerMesh groundMesh;
+    groundMesh.layerName = "Ground";
+    groundMesh.tilesetAssetId = ts.assetId;
+    groundMesh.tilesetRelPath = ts.relPath;
+    groundMesh.renderLayer = 0u;
+    TilemapBuilder::ReserveLayerMesh(groundMesh, 16u);
+    for (int ty = 0; ty < 4; ++ty) {
+      for (int tx = 0; tx < 4; ++tx) {
+        const float srcY = ((tx + ty) % 2 == 0) ? 0.0f : 17.0f;
+        TilemapBuilder::AppendStaticTileQuad(
+            groundMesh, ts,
+            TileQuadDesc{static_cast<float>(tx * 16), static_cast<float>(ty * 16), 0.0f, srcY, 16.0f, 1.0f});
+      }
+    }
+    tmpl.staticLayers.push_back(std::move(groundMesh));
+    // Adjacent 2x2 YSort block in chunk (0,0) covering local [16..48, 16..48] (scaled 2x -> [32..96, 32..96]).
+    for (int yy = 1; yy <= 2; ++yy) {
+      for (int xx = 1; xx <= 2; ++xx) {
+        TilemapBuilder::AppendYSortTile(
+            tmpl.ysortTiles, ts,
+            TileQuadDesc{static_cast<float>(xx * 16), static_cast<float>(yy * 16), 17.0f, 0.0f, 16.0f});
+      }
+    }
+    data.templates.push_back(std::move(tmpl));
+    TilemapBuilder::FinalizeTilemapData(data);
+
+    TilemapSystem sys;
+    TilemapLoadOptions loadOpts;
+    loadOpts.stitchMode = StitchMode::Toroidal;
+    loadOpts.tileScale = 2.0f;
+    loadOpts.loadRadius = 6;
+    loadOpts.unloadRadius = 7;
+    Check(sys.LoadFromData(registry, std::move(data), loadOpts), std::string(vp.label) + ": LoadFromData succeeded");
+
+    SDL_Texture* fallbackTex = assets.GetTexture("gutter_tiles");
+    SDL_ScaleMode loadedMode = SDL_SCALEMODE_INVALID;
+    Check(fallbackTex != nullptr && SDL_GetTextureScaleMode(fallbackTex, &loadedMode) &&
+              loadedMode == SDL_SCALEMODE_NEAREST,
+          std::string(vp.label) + ": fallback tileset texture forces SDL_SCALEMODE_NEAREST under pixelart default");
+    assets.SetDefaultScaleMode("linear");
+    assets.SetDefaultScaleMode("pixelart");
+    loadedMode = SDL_SCALEMODE_INVALID;
+    Check(SDL_GetTextureScaleMode(fallbackTex, &loadedMode) && loadedMode == SDL_SCALEMODE_NEAREST,
+          std::string(vp.label) + ": fallback tileset retains SDL_SCALEMODE_NEAREST across SetDefaultScaleMode");
+
+    const float scaleX = renderer.GetRenderScaleX();
+    const float scaleY = renderer.GetRenderScaleY();
+
+    for (size_t ci = 0; ci < sizeof(cameras) / sizeof(cameras[0]); ++ci) {
+      const auto& camCfg = cameras[ci];
+      auto& cam = registry.Get<CameraComponent>();
+      cam.zoom = camCfg.zoom;
+      cam.viewport = octarine::Rect{camCfg.camX, camCfg.camY, static_cast<float>(vp.logicalW) / camCfg.zoom,
+                                    static_cast<float>(vp.logicalH) / camCfg.zoom};
+
+      auto& rq = registry.Get<RenderQueue>();
+      rq.Clear();
+      sys.Tick(&registry);
+      rq.Sort();
+
+      int unalignedVertices = 0;
+      for (const RenderKey& key : rq) {
+        if (key.type != TILE_CHUNK) continue;
+        const auto& cmd = key.payload.tileChunk;
+        for (int v = 0; v < cmd.vertexCount; ++v) {
+          const float px = cmd.vertices[v].position.x * scaleX;
+          const float py = cmd.vertices[v].position.y * scaleY;
+          if (std::abs(px - std::round(px)) > 0.01f || std::abs(py - std::round(py)) > 0.01f) {
+            ++unalignedVertices;
+          }
+        }
+      }
+      CheckEq(unalignedVertices, 0,
+              std::string(vp.label) + " cam#" + std::to_string(ci) + ": all tile vertices snap to target pixels");
+
+      renderer.BeginScene(sdlRenderer);
+      renderer.DrawQueue(rq, sdlRenderer);
+      renderer.EndScene(sdlRenderer);
+
+      SDL_SetRenderTarget(sdlRenderer, renderer.GetSceneTexture());
+      SDL_Surface* readSurf = SDL_RenderReadPixels(sdlRenderer, nullptr);
+      SDL_SetRenderTarget(sdlRenderer, nullptr);
+      Check(readSurf != nullptr, std::string(vp.label) + " cam#" + std::to_string(ci) + ": readback scene texture");
+      if (readSurf != nullptr) {
+        int badPixels = 0;
+        for (int py = 0; py < vp.targetH; ++py) {
+          for (int px = 0; px < vp.targetW; ++px) {
+            Uint8 r = 0, g = 0, b = 0, a = 0;
+            SDL_ReadSurfacePixel(readSurf, px, py, &r, &g, &b, &a);
+            const bool isGround = (r == 200 && g == 180 && b == 120);
+            const bool isYsort = (r == 100 && g == 210 && b == 140);
+            if (!isGround && !isYsort) {
+              ++badPixels;
+            }
+          }
+        }
+        CheckEq(badPixels, 0,
+                std::string(vp.label) + " cam#" + std::to_string(ci) + ": zero background/gutter seam pixels");
+
+        // Also check interior of the chunk-(0,0) 2x2 YSort block [world 36..92, 36..92] has zero ground seam bleed.
+        const int yx0 = static_cast<int>(std::ceil((38.0f - camCfg.camX) * camCfg.zoom * scaleX));
+        const int yx1 = static_cast<int>(std::floor((90.0f - camCfg.camX) * camCfg.zoom * scaleX));
+        const int yy0 = static_cast<int>(std::ceil((38.0f - camCfg.camY) * camCfg.zoom * scaleY));
+        const int yy1 = static_cast<int>(std::floor((90.0f - camCfg.camY) * camCfg.zoom * scaleY));
+        int ysortSeamPixels = 0;
+        for (int py = std::max(0, yy0); py <= std::min(vp.targetH - 1, yy1); ++py) {
+          for (int px = std::max(0, yx0); px <= std::min(vp.targetW - 1, yx1); ++px) {
+            Uint8 r = 0, g = 0, b = 0, a = 0;
+            SDL_ReadSurfacePixel(readSurf, px, py, &r, &g, &b, &a);
+            if (r != 100 || g != 210 || b != 140) {
+              ++ysortSeamPixels;
+            }
+          }
+        }
+        Check(yx1 > yx0 && yy1 > yy0,
+              std::string(vp.label) + " cam#" + std::to_string(ci) + ": YSort patch is onscreen");
+        CheckEq(ysortSeamPixels, 0,
+                std::string(vp.label) + " cam#" + std::to_string(ci) + ": zero YSort tile seam pixels");
+        SDL_DestroySurface(readSurf);
+      }
+    }
+
+    registry.ValidateInvariants();
+    renderer.DestroyScene();
+    SDL_DestroyRenderer(sdlRenderer);
+    SDL_DestroySurface(backbuf);
+  }
+
+  std::filesystem::remove_all(tempDir, ec);
+  SDL_Quit();
+}
+
 }  // namespace
 
 int main() {
@@ -1133,6 +1375,7 @@ int main() {
   TestPaletteAndProceduralVariants();
   TestMultiChunkLevelSlicing();
   TestDataDrivenCollisionLayersAndOptions();
+  TestExpandSubpixelTargetPixelSnapping();
 
   return octarine::test::ReportSummary("TilemapSystemTest");
 }

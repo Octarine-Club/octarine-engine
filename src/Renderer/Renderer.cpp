@@ -182,6 +182,14 @@ void Renderer::CompositeSceneToWindow(SDL_Renderer* sdlRenderer, const SDL_FRect
   }
 }
 
+namespace {
+bool IsUnclampedExpandSceneSize(const int sceneW, const int sceneH, const int windowW, const int windowH) noexcept {
+  const float idealW = static_cast<float>(sceneH) * static_cast<float>(windowW) / static_cast<float>(windowH);
+  const float idealH = static_cast<float>(sceneW) * static_cast<float>(windowH) / static_cast<float>(windowW);
+  return std::abs(static_cast<float>(sceneW) - idealW) <= 2.0F || std::abs(static_cast<float>(sceneH) - idealH) <= 2.0F;
+}
+}  // namespace
+
 SDL_FRect Renderer::ComputeCompositeRect(const int sceneW, const int sceneH, const int windowW, const int windowH,
                                          const PresentationMode mode) {
   if (windowW <= 0 || windowH <= 0) {
@@ -190,23 +198,26 @@ SDL_FRect Renderer::ComputeCompositeRect(const int sceneW, const int sceneH, con
   if (sceneW <= 0 || sceneH <= 0 || mode == PresentationMode::Stretch) {
     return {0.0F, 0.0F, static_cast<float>(windowW), static_cast<float>(windowH)};
   }
+  if (mode == PresentationMode::Expand && IsUnclampedExpandSceneSize(sceneW, sceneH, windowW, windowH)) {
+    return {0.0F, 0.0F, static_cast<float>(windowW), static_cast<float>(windowH)};
+  }
 
   if (mode == PresentationMode::IntegerScale && windowW >= sceneW && windowH >= sceneH) {
     const int scale = std::max(1, std::min(windowW / sceneW, windowH / sceneH));
     const auto w = static_cast<float>(sceneW * scale);
     const auto h = static_cast<float>(sceneH * scale);
-    const float x = (static_cast<float>(windowW) - w) * 0.5F;
-    const float y = (static_cast<float>(windowH) - h) * 0.5F;
+    const float x = std::round((static_cast<float>(windowW) - w) * 0.5F);
+    const float y = std::round((static_cast<float>(windowH) - h) * 0.5F);
     return {x, y, w, h};
   }
 
   const float scaleX = static_cast<float>(windowW) / static_cast<float>(sceneW);
   const float scaleY = static_cast<float>(windowH) / static_cast<float>(sceneH);
   const float scale = std::min(scaleX, scaleY);
-  const float w = static_cast<float>(sceneW) * scale;
-  const float h = static_cast<float>(sceneH) * scale;
-  const float x = (static_cast<float>(windowW) - w) * 0.5F;
-  const float y = (static_cast<float>(windowH) - h) * 0.5F;
+  const auto w = static_cast<float>(std::max(1, static_cast<int>(std::lround(static_cast<float>(sceneW) * scale))));
+  const auto h = static_cast<float>(std::max(1, static_cast<int>(std::lround(static_cast<float>(sceneH) * scale))));
+  const float x = std::round((static_cast<float>(windowW) - w) * 0.5F);
+  const float y = std::round((static_cast<float>(windowH) - h) * 0.5F);
   return {x, y, w, h};
 }
 
