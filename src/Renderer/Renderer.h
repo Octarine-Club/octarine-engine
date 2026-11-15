@@ -86,6 +86,8 @@ class Renderer {
   [[nodiscard]] float GetRenderScale() const {
     return render_scale_x_ > render_scale_y_ ? render_scale_x_ : render_scale_y_;
   }
+  [[nodiscard]] float GetRenderScaleX() const noexcept { return render_scale_x_; }
+  [[nodiscard]] float GetRenderScaleY() const noexcept { return render_scale_y_; }
 
   // Dev/headless capture: read the scene texture back to a surface and write it to `path` as a
   // BMP. Lets a headless run (SDL_VIDEODRIVER=dummy, software renderer) produce a viewable frame

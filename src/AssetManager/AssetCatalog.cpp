@@ -160,6 +160,7 @@ std::optional<ScaleMode> DefaultScaleModeFromConfig(const GameConfig& gameConfig
 
 void ApplyManifestTextureFields(CatalogEntry& entry, const sol::table& e) {
   if (const sol::optional<std::string> mode = e["scale_mode"]; mode) entry.scaleMode = ParseScaleMode(*mode);
+  entry.hasExplicitScaleMode = e["explicit_scale_mode"].get_or(false);
   if (const sol::optional<std::string> atlas = e["atlas"]; atlas) entry.atlas = *atlas;
   if (const sol::optional<bool> noAtlas = e["no_atlas"]; noAtlas) entry.noAtlas = *noAtlas;
   if (const sol::optional<std::string> atlasId = e["atlas_id"]; atlasId) entry.atlasId = *atlasId;
@@ -343,6 +344,9 @@ void ScanCatalogFile(const fs::path& path, sol::state& lua, const std::optional<
 void WriteTextureManifestFields(std::ostream& out, const CatalogEntry& entry) {
   if (entry.scaleMode.has_value()) {
     out << ", scale_mode = \"" << toScaleModeString(*entry.scaleMode) << "\"";
+  }
+  if (entry.hasExplicitScaleMode) {
+    out << ", explicit_scale_mode = true";
   }
   if (entry.atlas.has_value()) {
     out << ", atlas = \"" << EscapeLua(*entry.atlas) << "\"";

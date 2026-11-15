@@ -30,4 +30,6 @@ struct EngineContext {
   octarine::UserSettings* userSettings = nullptr;
   const PerformanceStats* perfStats = nullptr;
   float sceneRenderScale = 1.0F;
+  float sceneRenderScaleX = 1.0F;
+  float sceneRenderScaleY = 1.0F;
 };

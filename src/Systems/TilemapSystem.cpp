@@ -1,8 +1,11 @@
 #include "Systems/TilemapSystem.h"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
+#include <limits>
 
 #include "AssetManager/AssetManager.h"
 #include "Components/CameraComponents.h"
@@ -126,6 +129,28 @@ SDL_Texture* FindTextureByStemOrCatalog(AssetManager* assetManager, const std::s
     return assetManager->GetTexture(entry->id);
   }
   return nullptr;
+}
+
+void LoadSingleTilesetTexture(AssetManager& assetManager, const EngineContext& ctx, const std::string& assetId,
+                              const std::string& relPath) {
+  if (assetManager.GetTexture(assetId) != nullptr) {
+    return;
+  }
+  const CatalogEntry* entry = assetManager.GetCatalog().Find(assetId);
+  if (entry == nullptr && !relPath.empty()) {
+    const std::string stem = std::filesystem::path(relPath).stem().string();
+    entry = assetManager.GetCatalog().Find(stem);
+  }
+  if (entry != nullptr) {
+    assetManager.Acquire(entry->id, ctx.sdlRenderer, ctx.mixer);
+    return;
+  }
+  if (!relPath.empty()) {
+    assetManager.AddTexture(ctx.sdlRenderer, assetId, relPath);
+    // Tilesets with atlas gutters must never inherit linear/pixelart filtering when uncatalogued,
+    // even if AssetManager::SetDefaultScaleMode runs later.
+    assetManager.SetTextureScaleMode(assetId, ScaleMode::Nearest);
+  }
 }
 
 }  // namespace
@@ -385,19 +410,7 @@ void TilemapSystem::EnsureTilesetTexturesLoaded(Registry& registry) {
   const auto* ctx = registry.TryGet<EngineContext>();
   if (assetManager != nullptr && ctx != nullptr && ctx->sdlRenderer != nullptr) {
     for (const auto& [assetId, relPath] : project_data_.tilesetAssets) {
-      if (assetManager->GetTexture(assetId) != nullptr) {
-        continue;
-      }
-      const CatalogEntry* entry = assetManager->GetCatalog().Find(assetId);
-      if (entry == nullptr && !relPath.empty()) {
-        const std::string stem = std::filesystem::path(relPath).stem().string();
-        entry = assetManager->GetCatalog().Find(stem);
-      }
-      if (entry != nullptr) {
-        assetManager->Acquire(entry->id, ctx->sdlRenderer, ctx->mixer);
-      } else if (!relPath.empty()) {
-        assetManager->AddTexture(ctx->sdlRenderer, assetId, relPath);
-      }
+      LoadSingleTilesetTexture(*assetManager, *ctx, assetId, relPath);
     }
   }
   cached_texture_gen_ = 0;
@@ -592,8 +605,137 @@ void TilemapSystem::Tick(Registry* registry) {
 
 namespace {
 
-void SubmitChunkStaticLayers(ActiveChunk& chunk, RenderQueue& renderQueue, const float screenOriginX,
-                             const float screenOriginY, const float zoom) {
+struct TilemapSnapTransform {
+  double camX = 0.0;
+  double camY = 0.0;
+  double zoom = 1.0;
+  float scaleX = 1.0F;
+  float scaleY = 1.0F;
+};
+
+// Step a finite float by 1 ULP without calling libm `nextafterf` (which sets FP exception/errno
+// state and prevents Clang/GCC from inlining and SIMD-vectorizing the tile quad loop).
+constexpr float NextFloatUp(const float x) noexcept {
+  if (x >= std::numeric_limits<float>::max()) {
+    return x;
+  }
+  if (x == 0.0F) {
+    return std::bit_cast<float>(std::uint32_t{1U});
+  }
+  const auto bits = std::bit_cast<std::uint32_t>(x);
+  const std::uint32_t nextBits = (x > 0.0F) ? (bits + 1U) : (bits - 1U);
+  return std::bit_cast<float>(nextBits);
+}
+
+constexpr float NextFloatDown(const float x) noexcept {
+  if (x <= std::numeric_limits<float>::lowest()) {
+    return x;
+  }
+  if (x == 0.0F) {
+    return std::bit_cast<float>(std::uint32_t{0x80000001U});
+  }
+  const auto bits = std::bit_cast<std::uint32_t>(x);
+  const std::uint32_t nextBits = (x < 0.0F) ? (bits + 1U) : (bits - 1U);
+  return std::bit_cast<float>(nextBits);
+}
+
+// Snap unified world-space vertex positions onto exact physical render-target pixels
+// (`scene_texture_`) and guard against software-renderer truncation (`fcvtzs`) toward zero.
+float SnapTargetPixelToLogical(const double targetPx, const float safeScale) noexcept {
+  const auto scale = static_cast<double>(safeScale);
+  auto logical = static_cast<float>(targetPx / scale);
+  const auto targetPxF = static_cast<float>(targetPx);
+  for (int i = 0; i < 8; ++i) {
+    const float prod = logical * safeScale;
+    if (targetPx > 0.0 && prod < targetPxF) {
+      logical = NextFloatUp(logical);
+    } else if (targetPx < 0.0 && prod > targetPxF) {
+      logical = NextFloatDown(logical);
+    } else {
+      break;
+    }
+  }
+  return logical;
+}
+
+float SnapWorldToLogicalTargetPixel(const double worldCoord, const double camCoord, const double zoom,
+                                    const float renderScale) noexcept {
+  const float safeScale = (renderScale > 0.001F) ? renderScale : 1.0F;
+  const double targetPx = std::round((worldCoord - camCoord) * zoom * static_cast<double>(safeScale));
+  return SnapTargetPixelToLogical(targetPx, safeScale);
+}
+
+void ComputeSnappedLogicalQuadBounds(const double worldStart, const double worldSize, const double camCoord,
+                                     const double zoom, const float renderScale, float& outMin,
+                                     float& outMax) noexcept {
+  const float safeScale = (renderScale > 0.001F) ? renderScale : 1.0F;
+  const auto scale = static_cast<double>(safeScale);
+  const double startTargetPx = std::round((worldStart - camCoord) * zoom * scale);
+  const double endTargetPx = std::round((worldStart + worldSize - camCoord) * zoom * scale);
+  const double spanPx = std::max(1.0, endTargetPx - startTargetPx);
+
+  outMin = SnapTargetPixelToLogical(startTargetPx, safeScale);
+  outMax = SnapTargetPixelToLogical(endTargetPx, safeScale);
+  if (outMax <= outMin) {
+    outMax = outMin + (1.0F / safeScale);
+  }
+  const auto minSpan = static_cast<float>(spanPx);
+  for (int i = 0; i < 8; ++i) {
+    if ((outMax - outMin) * safeScale >= minSpan) {
+      break;
+    }
+    outMax = NextFloatUp(outMax);
+  }
+}
+
+void ComputeSnappedLogicalSpan(const double worldStart, const double worldSize, const double camCoord,
+                               const double zoom, const float renderScale, float& outPos, float& outSize) noexcept {
+  float outMax = 0.0F;
+  ComputeSnappedLogicalQuadBounds(worldStart, worldSize, camCoord, zoom, renderScale, outPos, outMax);
+  outSize = outMax - outPos;
+}
+
+void SnapStaticQuadVertices(const SDL_Vertex* localQuad, SDL_Vertex* screenQuad, const double worldOriginX,
+                            const double worldOriginY, const TilemapSnapTransform& xform) noexcept {
+  const auto localX0 = static_cast<double>(localQuad[0].position.x);
+  const auto localY0 = static_cast<double>(localQuad[0].position.y);
+  const auto localW = static_cast<double>(localQuad[2].position.x) - localX0;
+  const auto localH = static_cast<double>(localQuad[2].position.y) - localY0;
+
+  float minX = 0.0F;
+  float maxX = 0.0F;
+  float minY = 0.0F;
+  float maxY = 0.0F;
+  ComputeSnappedLogicalQuadBounds(worldOriginX + localX0, localW, xform.camX, xform.zoom, xform.scaleX, minX, maxX);
+  ComputeSnappedLogicalQuadBounds(worldOriginY + localY0, localH, xform.camY, xform.zoom, xform.scaleY, minY, maxY);
+
+  screenQuad[0].position = SDL_FPoint{minX, minY};
+  screenQuad[1].position = SDL_FPoint{maxX, minY};
+  screenQuad[2].position = SDL_FPoint{maxX, maxY};
+  screenQuad[3].position = SDL_FPoint{minX, maxY};
+}
+
+void SnapStaticLayerVertices(const std::vector<SDL_Vertex>& localVerts, std::vector<SDL_Vertex>& screenVerts,
+                             const double worldOriginX, const double worldOriginY,
+                             const TilemapSnapTransform& xform) noexcept {
+  if (screenVerts.size() % 4u == 0u) {
+    const size_t quadCount = screenVerts.size() / 4u;
+    for (size_t q = 0; q < quadCount; ++q) {
+      SnapStaticQuadVertices(&localVerts[q * 4u], &screenVerts[q * 4u], worldOriginX, worldOriginY, xform);
+    }
+    return;
+  }
+  for (size_t v = 0; v < screenVerts.size(); ++v) {
+    const auto& localPos = localVerts[v].position;
+    screenVerts[v].position.x = SnapWorldToLogicalTargetPixel(worldOriginX + static_cast<double>(localPos.x),
+                                                              xform.camX, xform.zoom, xform.scaleX);
+    screenVerts[v].position.y = SnapWorldToLogicalTargetPixel(worldOriginY + static_cast<double>(localPos.y),
+                                                              xform.camY, xform.zoom, xform.scaleY);
+  }
+}
+
+void SubmitChunkStaticLayers(ActiveChunk& chunk, RenderQueue& renderQueue, const double worldOriginX,
+                             const double worldOriginY, const TilemapSnapTransform& xform) {
   for (size_t layerIdx = 0; layerIdx < chunk.templatePtr->staticLayers.size(); ++layerIdx) {
     const auto& layer = chunk.templatePtr->staticLayers[layerIdx];
     const auto& localVerts = layer.Vertices();
@@ -601,11 +743,7 @@ void SubmitChunkStaticLayers(ActiveChunk& chunk, RenderQueue& renderQueue, const
     auto& screenVerts = chunk.layerScreenVertices[layerIdx];
     if (screenVerts.empty() || indices.empty()) continue;
 
-    for (size_t v = 0; v < screenVerts.size(); ++v) {
-      const auto& localPos = localVerts[v].position;
-      screenVerts[v].position.x = std::round(screenOriginX + localPos.x * zoom);
-      screenVerts[v].position.y = std::round(screenOriginY + localPos.y * zoom);
-    }
+    SnapStaticLayerVertices(localVerts, screenVerts, worldOriginX, worldOriginY, xform);
 
     SDL_Texture* tex = layer.cachedTexture;
     auto& cmd = renderQueue.EmplaceTileChunk(layer.renderLayer, layer.renderDepth, tex);
@@ -619,20 +757,15 @@ void SubmitChunkStaticLayers(ActiveChunk& chunk, RenderQueue& renderQueue, const
 }
 
 void SubmitChunkYSortTiles(const ActiveChunk& chunk, RenderQueue& renderQueue, const unsigned int ysortLayer,
-                           const float worldOriginY, const float screenOriginX, const float screenOriginY,
-                           const float zoom) {
+                           const double worldOriginX, const double worldOriginY, const TilemapSnapTransform& xform) {
   for (const auto& ytile : chunk.templatePtr->ysortTiles) {
     SDL_Texture* tex = ytile.cachedTexture;
-    const float worldSortY = worldOriginY + ytile.sortLocalY;
+    const float worldSortY = static_cast<float>(worldOriginY) + ytile.sortLocalY;
     auto& scmd = renderQueue.EmplaceSprite(ysortLayer, worldSortY, tex);
-    const float x0 = std::round(screenOriginX + ytile.localX * zoom);
-    const float y0 = std::round(screenOriginY + ytile.localY * zoom);
-    const float x1 = std::round(screenOriginX + (ytile.localX + ytile.width) * zoom);
-    const float y1 = std::round(screenOriginY + (ytile.localY + ytile.height) * zoom);
-    scmd.destX = x0;
-    scmd.destY = y0;
-    scmd.destW = std::max(1.0f, x1 - x0);
-    scmd.destH = std::max(1.0f, y1 - y0);
+    ComputeSnappedLogicalSpan(worldOriginX + static_cast<double>(ytile.localX), static_cast<double>(ytile.width),
+                              xform.camX, xform.zoom, xform.scaleX, scmd.destX, scmd.destW);
+    ComputeSnappedLogicalSpan(worldOriginY + static_cast<double>(ytile.localY), static_cast<double>(ytile.height),
+                              xform.camY, xform.zoom, xform.scaleY, scmd.destY, scmd.destH);
     scmd.srcRect = ytile.srcRect;
     scmd.rotation = 0.0f;
     scmd.pivot = SDL_FPoint{0.0f, 0.0f};
@@ -695,31 +828,38 @@ void SubmitChunkCollisionOverlay(RenderQueue& renderQueue, const ChunkTemplate& 
 
 }  // namespace
 
-void TilemapSystem::SubmitChunkRenderCommands(Registry& /*registry*/, RenderQueue& renderQueue,
-                                              AssetManager* assetManager, const float camX, const float camY,
-                                              const float viewW, const float viewH, const float zoom) {
+void TilemapSystem::SubmitChunkRenderCommands(Registry& registry, RenderQueue& renderQueue, AssetManager* assetManager,
+                                              const float camX, const float camY, const float viewW, const float viewH,
+                                              const float zoom) {
   RefreshTemplateTextureCache(assetManager);
   const auto chunkPxW = static_cast<float>(GetChunkPixelWidth());
   const auto chunkPxH = static_cast<float>(GetChunkPixelHeight());
   const auto cullMargin = static_cast<float>(project_data_.tileSize * 2);
 
+  TilemapSnapTransform snapXform{};
+  snapXform.camX = static_cast<double>(camX);
+  snapXform.camY = static_cast<double>(camY);
+  snapXform.zoom = static_cast<double>(zoom);
+  if (const auto* ctx = registry.TryGet<EngineContext>()) {
+    const float fallbackScale = (ctx->sceneRenderScale > 0.001F) ? ctx->sceneRenderScale : 1.0F;
+    snapXform.scaleX = (ctx->sceneRenderScaleX > 0.001F) ? ctx->sceneRenderScaleX : fallbackScale;
+    snapXform.scaleY = (ctx->sceneRenderScaleY > 0.001F) ? ctx->sceneRenderScaleY : fallbackScale;
+  }
+
   for (auto& [key, chunk] : active_chunks_) {
     if (chunk.templatePtr == nullptr) continue;
-    const float worldOriginX = static_cast<float>(chunk.chunkX) * chunkPxW;
-    const float worldOriginY = static_cast<float>(chunk.chunkY) * chunkPxH;
+    const auto worldOriginX = static_cast<double>(chunk.chunkX) * static_cast<double>(chunkPxW);
+    const auto worldOriginY = static_cast<double>(chunk.chunkY) * static_cast<double>(chunkPxH);
+    const auto worldOriginXf = static_cast<float>(worldOriginX);
+    const auto worldOriginYf = static_cast<float>(worldOriginY);
 
-    if (worldOriginX + chunkPxW + cullMargin < camX || worldOriginX - cullMargin > camX + viewW ||
-        worldOriginY + chunkPxH + cullMargin < camY || worldOriginY - cullMargin > camY + viewH) {
+    if (worldOriginXf + chunkPxW + cullMargin < camX || worldOriginXf - cullMargin > camX + viewW ||
+        worldOriginYf + chunkPxH + cullMargin < camY || worldOriginYf - cullMargin > camY + viewH) {
       continue;
     }
 
-    // Use exact world-to-screen coordinates matching RenderSpriteSystem and RenderPrimitiveSystem
-    // so tilemap layers, Y-sort props, and world entities pan and zoom together without relative sliding.
-    const float screenOriginX = (worldOriginX - camX) * zoom;
-    const float screenOriginY = (worldOriginY - camY) * zoom;
-
-    SubmitChunkStaticLayers(chunk, renderQueue, screenOriginX, screenOriginY, zoom);
-    SubmitChunkYSortTiles(chunk, renderQueue, ysort_layer_, worldOriginY, screenOriginX, screenOriginY, zoom);
+    SubmitChunkStaticLayers(chunk, renderQueue, worldOriginX, worldOriginY, snapXform);
+    SubmitChunkYSortTiles(chunk, renderQueue, ysort_layer_, worldOriginX, worldOriginY, snapXform);
   }
 }
 

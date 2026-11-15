@@ -15,6 +15,7 @@ SDL_Texture* TextureStore::Add(SDL_Renderer* renderer, const std::string& id, SD
   if (default_scale_mode_.has_value()) {
     SDL_SetTextureScaleMode(texture, default_scale_mode_.value());
   }
+  explicit_scale_ids_.erase(id);
 
   // Replace prior texture under the same id rather than leaking it.
   if (const auto it = textures_.find(id); it != textures_.end()) {
@@ -30,6 +31,18 @@ SDL_Texture* TextureStore::Add(SDL_Renderer* renderer, const std::string& id, SD
   return texture;
 }
 
+bool TextureStore::SetExplicitScaleMode(const std::string& id, const SDL_ScaleMode mode) {
+  const auto it = textures_.find(id);
+  if (it == textures_.end() || it->second == nullptr) {
+    return false;
+  }
+  if (!SDL_SetTextureScaleMode(it->second, mode)) {
+    return false;
+  }
+  explicit_scale_ids_.insert(id);
+  return true;
+}
+
 SDL_Texture* TextureStore::Get(const std::string& id) const {
   const auto it = textures_.find(id);
   return it == textures_.end() ? nullptr : it->second;
@@ -40,6 +53,7 @@ bool TextureStore::Remove(const std::string& id) {
   if (it == textures_.end()) return false;
   SDL_DestroyTexture(it->second);
   textures_.erase(it);
+  explicit_scale_ids_.erase(id);
   ++generation_;  // invalidate cached SDL_Texture* in sprite renderers
   return true;
 }
@@ -49,4 +63,5 @@ void TextureStore::Clear() {
     SDL_DestroyTexture(texture);
   }
   textures_.clear();
+  explicit_scale_ids_.clear();
 }

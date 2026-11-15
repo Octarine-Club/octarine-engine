@@ -458,6 +458,17 @@ void TestGameConfigAndCompositeRect() {
   Check(std::abs(expClamped.x - 832.0F) < 0.01F && std::abs(expClamped.y - 0.0F) < 0.01F &&
             std::abs(expClamped.w - 3456.0F) < 0.01F && std::abs(expClamped.h - 1440.0F) < 0.01F,
         "ComputeCompositeRect Expand pillarboxes clamped 32:9 aspect inside window");
+
+  // Unclamped Expand fills the exact window even when RoundToEven quantizes logical dimensions
+  const SDL_FRect exp219 = Renderer::ComputeCompositeRect(1708, 720, 2560, 1080, PresentationMode::Expand);
+  Check(std::abs(exp219.x) < 0.01F && std::abs(exp219.y) < 0.01F && std::abs(exp219.w - 2560.0F) < 0.01F &&
+            std::abs(exp219.h - 1080.0F) < 0.01F,
+        "ComputeCompositeRect Expand 21:9 (1708x720 -> 2560x1080) fills exact full window");
+
+  const SDL_FRect expDesktop1080 = Renderer::ComputeCompositeRect(1314, 720, 1920, 1052, PresentationMode::Expand);
+  Check(std::abs(expDesktop1080.x) < 0.01F && std::abs(expDesktop1080.y) < 0.01F &&
+            std::abs(expDesktop1080.w - 1920.0F) < 0.01F && std::abs(expDesktop1080.h - 1052.0F) < 0.01F,
+        "ComputeCompositeRect Expand maximized 1080p (1314x720 -> 1920x1052) fills exact full window");
 }
 
 void TestLuaDisplayApisAndReset() {

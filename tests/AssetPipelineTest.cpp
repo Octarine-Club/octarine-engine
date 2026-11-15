@@ -219,8 +219,55 @@ int main() {
     }
     Check(parity, "every manifest entry matches its scanned counterpart");
 
+    // Reloading a baked manifest must retain explicit per-texture scale_mode choices so
+    // project-wide DefaultScalingMode=pixelart cannot overwrite explicit nearest tilesets.
+    AssetCatalog withExplicitNearest = loaded;
+    withExplicitNearest.UpdateDefaultScaleMode(ScaleMode::PixelArt);
+    const CatalogEntry* heroAfterDefault = withExplicitNearest.Find("hero");
+    const CatalogEntry* bossAfterDefault = withExplicitNearest.Find("boss");
+    Check(heroAfterDefault != nullptr && heroAfterDefault->hasExplicitScaleMode &&
+              heroAfterDefault->scaleMode == ScaleMode::Linear,
+          "manifest preserves explicit sidecar scale_mode across UpdateDefaultScaleMode(pixelart)");
+    Check(bossAfterDefault != nullptr && !bossAfterDefault->hasExplicitScaleMode &&
+              bossAfterDefault->scaleMode == ScaleMode::PixelArt,
+          "manifest allows non-explicit textures to adopt UpdateDefaultScaleMode(pixelart)");
+
     std::error_code ec;
     std::filesystem::remove(manifestPath, ec);
+  }
+
+  std::cout << "[manifest] explicit scale_mode=nearest survives manifest under pixelart default\n";
+  {
+    const std::filesystem::path tmpDir = std::filesystem::temp_directory_path() / "octarine_explicit_nearest_manifest";
+    std::error_code ec;
+    std::filesystem::remove_all(tmpDir, ec);
+    std::filesystem::create_directories(tmpDir / "sprites", ec);
+    std::ofstream(tmpDir / "sprites" / "tileset.png") << "stub";
+    std::ofstream(tmpDir / "sprites" / "tileset.png.meta") << "return { scale_mode = \"nearest\" }\n";
+    std::ofstream(tmpDir / "sprites" / "char.png") << "stub";
+
+    sol::state lua;
+    lua.open_libraries(sol::lib::base, sol::lib::table);
+    AssetCatalog scanned;
+    Check(scanned.Build(tmpDir.string(), lua, std::optional<ScaleMode>(ScaleMode::PixelArt)),
+          "scan with PixelArt default succeeds");
+    const std::string manifestPath = (tmpDir / "asset_manifest.lua").string();
+    Check(scanned.WriteManifest(manifestPath, tmpDir.string()), "WriteManifest preserves explicit nearest");
+
+    AssetCatalog reloaded;
+    sol::state lua2;
+    lua2.open_libraries(sol::lib::base, sol::lib::table);
+    Check(reloaded.LoadManifest(manifestPath, lua2, tmpDir.string()), "LoadManifest succeeds");
+    reloaded.UpdateDefaultScaleMode(ScaleMode::PixelArt);
+
+    const CatalogEntry* tileset = reloaded.Find("tileset");
+    const CatalogEntry* ch = reloaded.Find("char");
+    Check(tileset != nullptr && tileset->hasExplicitScaleMode && tileset->scaleMode == ScaleMode::Nearest,
+          "explicit scale_mode='nearest' preserved after LoadManifest + UpdateDefaultScaleMode(pixelart)");
+    Check(ch != nullptr && !ch->hasExplicitScaleMode && ch->scaleMode == ScaleMode::PixelArt,
+          "unspecified texture stays PixelArt");
+
+    std::filesystem::remove_all(tmpDir, ec);
   }
 #else
   std::cerr << "  WARN ASSET_TEST_FIXTURE_DIR not defined; skipping catalog build checks\n";
