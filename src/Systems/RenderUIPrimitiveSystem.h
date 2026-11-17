@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <cmath>
 #include <memory>
 
 #include "Components/CapsulePrimitiveComponent.h"
@@ -238,8 +239,10 @@ class RenderUIPrimitiveSystem {
       return;
     }
 
+    const float snappedFillW =
+        (ratio >= 1.0f) ? fullW : ((fullW >= 1.0f) ? std::max(1.0f, std::floor(fillW + 0.5f)) : fillW);
     auto& cmd = renderQueue.EmplaceSquare(layer, depth, nullptr, square.blendMode, rect.clipId);
-    cmd.destRect = {rect.left, rect.top, fillW, fullH};
+    cmd.destRect = {rect.left, rect.top, snappedFillW, fullH};
     cmd.color = SDL_Color{activeColor.r, activeColor.g, activeColor.b, activeColor.a};
     cmd.rotation = 0.0f;
     cmd.blendMode = octarine::ToSdlBlendMode(square.blendMode);

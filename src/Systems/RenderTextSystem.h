@@ -75,21 +75,22 @@ class RenderTextSystem {
 
     const Entity entity = ctx.GetEntity();
     const int effectiveWrapWidth = ResolveWrapWidth(registry, entity, text);
-    const float rasterScale = ResolveRasterScale(engineCtx.sceneRenderScale);
+    const bool pixelSharp = assetManager.GetEffectiveScaleMode() != SDL_SCALEMODE_LINEAR;
+    const float rasterScale = ResolveRasterScale(engineCtx.sceneRenderScale, pixelSharp);
     const std::uint64_t fontGen = assetManager.FontGeneration();
 
     auto it = text_cache_.find(entity.id);
     const bool needsRaster = it == text_cache_.end() || it->second.fontId != text.fontId ||
                              it->second.fontGen != fontGen || it->second.text != text.text ||
-                             it->second.wrapWidth != effectiveWrapWidth ||
+                             it->second.wrapWidth != effectiveWrapWidth || it->second.pixelSharp != pixelSharp ||
                              std::abs(it->second.rasterScale - rasterScale) > 0.01F;
     if (needsRaster) {
       float w = 0.0F;
       float h = 0.0F;
       SDL_Texture* texture =
-          RasterizeLabel(assetManager, sdlRenderer, font, text, effectiveWrapWidth, rasterScale, w, h);
+          RasterizeLabel(assetManager, sdlRenderer, font, text, effectiveWrapWidth, rasterScale, pixelSharp, w, h);
       if (texture == nullptr) return;
-      it = StoreEntry(it, entity, text, fontGen, effectiveWrapWidth, rasterScale, texture, w, h);
+      it = StoreEntry(it, entity, text, fontGen, effectiveWrapWidth, rasterScale, pixelSharp, texture, w, h);
     }
 
     // UIRectComponent (written by UILayoutSystem) takes priority over GlobalTransform for position.
@@ -119,8 +120,9 @@ class RenderTextSystem {
     PROFILE_COUNTER_INC(emplacedCounter);
 
     const float scale = effectivelyFixed ? 1.0f : zoom;
-    const float x = effectivelyFixed ? origin.x : (origin.x - camera.x) * zoom;
-    const float y = effectivelyFixed ? origin.y : (origin.y - camera.y) * zoom;
+    const glm::vec2 screenOrigin = ResolveScreenOrigin(origin, camera, zoom, effectivelyFixed, pixelSharp);
+    const float x = screenOrigin.x;
+    const float y = screenOrigin.y;
     const float w = it->second.width * scale;
     const float h = it->second.height * scale;
     const octarine::Color activeTextColor =
@@ -243,6 +245,7 @@ class RenderTextSystem {
     std::uint64_t fontGen = 0;
     int wrapWidth = 0;
     float rasterScale = 1.0F;
+    bool pixelSharp = true;
     SDL_Texture* texture = nullptr;
     float width = 0.0F;
     float height = 0.0F;
@@ -273,23 +276,34 @@ class RenderTextSystem {
     }
   }
 
-  static float ResolveRasterScale(const float rawScale) {
+  static glm::vec2 ResolveScreenOrigin(const glm::vec2 origin, const octarine::Rect& camera, const float zoom,
+                                       const bool effectivelyFixed, const bool pixelSharp) {
+    const glm::vec2 screen =
+        effectivelyFixed ? origin : glm::vec2{(origin.x - camera.x) * zoom, (origin.y - camera.y) * zoom};
+    return pixelSharp ? glm::vec2{std::floor(screen.x + 0.5f), std::floor(screen.y + 0.5f)} : screen;
+  }
+
+  static float ResolveRasterScale(const float rawScale, const bool pixelSharp) {
     if (rawScale <= 1.01F) return 1.0F;
+    if (pixelSharp) {
+      return std::clamp(std::max(1.0F, std::round(rawScale)), 1.0F, 4.0F);
+    }
     const float quantized = std::round(rawScale * 4.0F) * 0.25F;
     return std::clamp(quantized, 1.0F, 4.0F);
   }
 
   std::unordered_map<std::uint64_t, TextCacheEntry>::iterator StoreEntry(
       std::unordered_map<std::uint64_t, TextCacheEntry>::iterator it, Entity entity, const TextLabelComponent& text,
-      std::uint64_t fontGen, int wrapWidth, float rasterScale, SDL_Texture* texture, float width, float height) const {
+      std::uint64_t fontGen, int wrapWidth, float rasterScale, bool pixelSharp, SDL_Texture* texture, float width,
+      float height) const {
     if (it != text_cache_.end()) {
       if (it->second.texture != nullptr) SDL_DestroyTexture(it->second.texture);
-      it->second = {text.fontId, text.text, fontGen, wrapWidth, rasterScale, texture, width, height};
+      it->second = {text.fontId, text.text, fontGen, wrapWidth, rasterScale, pixelSharp, texture, width, height};
       return it;
     }
     return text_cache_
-        .emplace(entity.id,
-                 TextCacheEntry{text.fontId, text.text, fontGen, wrapWidth, rasterScale, texture, width, height})
+        .emplace(entity.id, TextCacheEntry{text.fontId, text.text, fontGen, wrapWidth, rasterScale, pixelSharp, texture,
+                                           width, height})
         .first;
   }
 
@@ -308,7 +322,7 @@ class RenderTextSystem {
   // without re-rasterizing when color or alpha changes.
   static SDL_Texture* RasterizeLabel(const AssetManager& assetManager, SDL_Renderer* sdlRenderer, TTF_Font* font,
                                      const TextLabelComponent& text, const int wrapWidth, const float rasterScale,
-                                     float& outW, float& outH) {
+                                     const bool pixelSharp, float& outW, float& outH) {
     const SDL_Color white{255, 255, 255, 255};
     SDL_Surface* surface = nullptr;
     const GlyphAtlas* atlas = assetManager.GetGlyphAtlas(text.fontId);
@@ -333,7 +347,7 @@ class RenderTextSystem {
       Logger::Error("SDL_CreateTextureFromSurface failed: " + std::string(SDL_GetError()));
       return nullptr;
     }
-    SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_LINEAR);
+    SDL_SetTextureScaleMode(texture, pixelSharp ? SDL_SCALEMODE_NEAREST : SDL_SCALEMODE_LINEAR);
     float texW = 0.0F;
     float texH = 0.0F;
     SDL_GetTextureSize(texture, &texW, &texH);

@@ -182,14 +182,6 @@ void Renderer::CompositeSceneToWindow(SDL_Renderer* sdlRenderer, const SDL_FRect
   }
 }
 
-namespace {
-bool IsUnclampedExpandSceneSize(const int sceneW, const int sceneH, const int windowW, const int windowH) noexcept {
-  const float idealW = static_cast<float>(sceneH) * static_cast<float>(windowW) / static_cast<float>(windowH);
-  const float idealH = static_cast<float>(sceneW) * static_cast<float>(windowH) / static_cast<float>(windowW);
-  return std::abs(static_cast<float>(sceneW) - idealW) <= 2.0F || std::abs(static_cast<float>(sceneH) - idealH) <= 2.0F;
-}
-}  // namespace
-
 SDL_FRect Renderer::ComputeCompositeRect(const int sceneW, const int sceneH, const int windowW, const int windowH,
                                          const PresentationMode mode) {
   if (windowW <= 0 || windowH <= 0) {
@@ -198,11 +190,9 @@ SDL_FRect Renderer::ComputeCompositeRect(const int sceneW, const int sceneH, con
   if (sceneW <= 0 || sceneH <= 0 || mode == PresentationMode::Stretch) {
     return {0.0F, 0.0F, static_cast<float>(windowW), static_cast<float>(windowH)};
   }
-  if (mode == PresentationMode::Expand && IsUnclampedExpandSceneSize(sceneW, sceneH, windowW, windowH)) {
-    return {0.0F, 0.0F, static_cast<float>(windowW), static_cast<float>(windowH)};
-  }
 
-  if (mode == PresentationMode::IntegerScale && windowW >= sceneW && windowH >= sceneH) {
+  if ((mode == PresentationMode::IntegerScale || mode == PresentationMode::Expand) && windowW >= sceneW &&
+      windowH >= sceneH) {
     const int scale = std::max(1, std::min(windowW / sceneW, windowH / sceneH));
     const auto w = static_cast<float>(sceneW * scale);
     const auto h = static_cast<float>(sceneH * scale);
@@ -239,17 +229,25 @@ std::pair<int, int> Renderer::ComputeLogicalSceneSize(const int baseW, const int
   }
 
   float targetAspect = static_cast<float>(windowW) / static_cast<float>(windowH);
+  int availW = windowW;
+  int availH = windowH;
   if (minAspect > 0.0F && targetAspect < minAspect) {
     targetAspect = minAspect;
+    availH = std::clamp(static_cast<int>(std::lround(static_cast<float>(windowW) / minAspect)), 1, windowH);
   }
   if (maxAspect > 0.0F && targetAspect > maxAspect) {
     targetAspect = maxAspect;
+    availW = std::clamp(static_cast<int>(std::lround(static_cast<float>(windowH) * maxAspect)), 1, windowW);
+  }
+
+  if (availW >= baseW && availH >= baseH) {
+    const int k = std::max(1, std::min(availW / baseW, availH / baseH));
+    return {std::max(1, availW / k), std::max(1, availH / k)};
   }
 
   const float baseAspect = static_cast<float>(baseW) / static_cast<float>(baseH);
   int logicalW = baseW;
   int logicalH = baseH;
-
   if (targetAspect >= baseAspect) {
     logicalH = baseH;
     logicalW = RoundToEven(static_cast<float>(baseH) * targetAspect);
@@ -257,7 +255,6 @@ std::pair<int, int> Renderer::ComputeLogicalSceneSize(const int baseW, const int
     logicalW = baseW;
     logicalH = RoundToEven(static_cast<float>(baseW) / targetAspect);
   }
-
   return {std::max(1, logicalW), std::max(1, logicalH)};
 }
 
@@ -313,10 +310,14 @@ inline SDL_FColor ToSdlFColor(const SDL_Color& c) {
 void DrawSprite(SDL_Renderer* renderer, const SpriteCommand& cmd) {
   const SDL_FRect destRect = {cmd.destX, cmd.destY, cmd.destW, cmd.destH};
   const SDL_FRect* srcRectPtr = (cmd.srcRect.w > 0.0f && cmd.srcRect.h > 0.0f) ? &cmd.srcRect : nullptr;
-  const float deg = cmd.rotation * octarine::kRadiansToDegrees;
   SDL_SetTextureColorMod(cmd.texture, cmd.colorMod.r, cmd.colorMod.g, cmd.colorMod.b);
   SDL_SetTextureAlphaMod(cmd.texture, cmd.colorMod.a);
   SDL_SetTextureBlendMode(cmd.texture, cmd.blendMode);
+  if (cmd.rotation == 0.0F && cmd.flip == SDL_FLIP_NONE) {
+    SDL_RenderTexture(renderer, cmd.texture, srcRectPtr, &destRect);
+    return;
+  }
+  const float deg = cmd.rotation * octarine::kRadiansToDegrees;
   SDL_RenderTextureRotated(renderer, cmd.texture, srcRectPtr, &destRect, deg, &cmd.pivot, cmd.flip);
 }
 

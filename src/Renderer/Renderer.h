@@ -40,8 +40,11 @@ class Renderer {
   [[nodiscard]] int GetLogicalWidth() const { return logical_width_; }
   [[nodiscard]] int GetLogicalHeight() const { return logical_height_; }
 
-  // Computes the logical scene size for the specified window backbuffer size under `mode`,
-  // expanding between [minAspect, maxAspect] when `mode == PresentationMode::Expand`.
+  // Computes the logical scene size for the specified window backbuffer size under `mode`.
+  // Under `PresentationMode::Expand`, picks the largest integer pixel scale factor k >= 1
+  // whose logical grid still holds at least `baseW` x `baseH` (inside any [minAspect, maxAspect]
+  // clamp) so targetPixels = logical * k exact, falling back to expanding `baseW`/`baseH`
+  // when the window is smaller than 1x base resolution.
   [[nodiscard]] static std::pair<int, int> ComputeLogicalSceneSize(int baseW, int baseH, int windowW, int windowH,
                                                                    PresentationMode mode, float minAspect = 0.0F,
                                                                    float maxAspect = 0.0F);

@@ -23,7 +23,7 @@ class UILayoutSystem {
       const float ch = (canvas.height > 0.f) ? canvas.height : static_cast<float>(gameConfig.windowHeight);
       UIRectComponent canvasRect{0.f, 0.f, cw, ch, canvas.baseLayer};
       canvasRect.visible = IsEntityVisible(registry, canvasEntity);
-      canvases_scratch_.emplace_back(canvasEntity, canvasRect);
+      canvases_scratch_.emplace_back(canvasEntity, SnapRect(canvasRect));
     });
 
     for (const auto& [canvasEntity, canvasRect] : canvases_scratch_) {
@@ -60,14 +60,24 @@ class UILayoutSystem {
     return true;
   }
 
+  static UIRectComponent SnapRect(UIRectComponent rect) {
+    if (!rect.visible) return rect;
+    rect.left = std::floor(rect.left + 0.5f);
+    rect.top = std::floor(rect.top + 0.5f);
+    rect.right = std::floor(rect.right + 0.5f);
+    rect.bottom = std::floor(rect.bottom + 0.5f);
+    return rect;
+  }
+
   static void WriteRect(Registry* registry, const Entity entity, const UIRectComponent& rect) {
+    const UIRectComponent snapped = SnapRect(rect);
     if (registry->HasComponent<UIRectComponent>(entity)) {
       auto& dst = registry->GetComponent<UIRectComponent>(entity);
       const bool keepBlocksPointer = dst.blocksPointer;
-      dst = rect;
+      dst = snapped;
       dst.blocksPointer = keepBlocksPointer;
     } else {
-      registry->AddComponent(entity, rect);
+      registry->AddComponent(entity, snapped);
     }
   }
 
@@ -486,6 +496,7 @@ class UILayoutSystem {
       childRect.left = crossStart;
       childRect.right = crossStart + crossSpan;
     }
+    childRect = SnapRect(childRect);
     ApplyChildClipAndLayer(registry, child, parentRect, childRect);
     return childRect;
   }
@@ -773,6 +784,7 @@ class UILayoutSystem {
       }
     }
     ApplyNonFlexScrollOffset(registry, parent, childRect);
+    childRect = SnapRect(childRect);
     ApplyChildClipAndLayer(registry, child, parentRect, childRect);
     return childRect;
   }

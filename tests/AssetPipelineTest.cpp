@@ -28,6 +28,7 @@
 #include "AssetManager/AudioNormalizer.h"
 #include "AssetManager/GlyphAtlas.h"
 #include "AssetManager/SceneAssetScanner.h"
+#include "AssetManager/TextureAtlasBaker.h"
 #include "stb/stb_image_write.h"  // header-only; IMPL lives in AtlasBaker.cpp
 
 namespace {
@@ -266,6 +267,34 @@ int main() {
           "explicit scale_mode='nearest' preserved after LoadManifest + UpdateDefaultScaleMode(pixelart)");
     Check(ch != nullptr && !ch->hasExplicitScaleMode && ch->scaleMode == ScaleMode::PixelArt,
           "unspecified texture stays PixelArt");
+
+    std::filesystem::remove_all(tmpDir, ec);
+  }
+
+  std::cout << "[atlas] TextureAtlasBaker preserves common explicit scale_mode=nearest under pixelart default\n";
+  {
+    const std::filesystem::path tmpDir = std::filesystem::temp_directory_path() / "octarine_atlas_scale_mode_test";
+    std::error_code ec;
+    std::filesystem::remove_all(tmpDir, ec);
+    std::filesystem::create_directories(tmpDir / "sprites", ec);
+
+    std::vector<unsigned char> px(4 * 4 * 4, 255);
+    Check(stbi_write_png((tmpDir / "sprites" / "a.png").string().c_str(), 4, 4, 4, px.data(), 16) != 0 &&
+              stbi_write_png((tmpDir / "sprites" / "b.png").string().c_str(), 4, 4, 4, px.data(), 16) != 0,
+          "atlas source PNGs written");
+    std::ofstream(tmpDir / "sprites" / "a.png.meta") << "return { atlas = \"ui\", scale_mode = \"nearest\" }\n";
+    std::ofstream(tmpDir / "sprites" / "b.png.meta") << "return { atlas = \"ui\", scale_mode = \"nearest\" }\n";
+
+    sol::state lua;
+    lua.open_libraries(sol::lib::base, sol::lib::table);
+    AssetCatalog catalog;
+    Check(catalog.Build(tmpDir.string(), lua, std::optional<ScaleMode>(ScaleMode::PixelArt)),
+          "catalog builds with explicit nearest atlas members under pixelart default");
+    Check(TextureAtlasBaker{}.Run(catalog, tmpDir.string()), "TextureAtlasBaker::Run succeeds");
+
+    const CatalogEntry* atlasEntry = catalog.Find("__atlas_ui");
+    Check(atlasEntry != nullptr && atlasEntry->hasExplicitScaleMode && atlasEntry->scaleMode == ScaleMode::Nearest,
+          "baked __atlas_ui preserves common explicit scale_mode=nearest instead of falling back to pixelart");
 
     std::filesystem::remove_all(tmpDir, ec);
   }

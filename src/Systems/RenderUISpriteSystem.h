@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <cmath>
 #include <memory>
 #include <optional>
 
@@ -63,10 +64,10 @@ class RenderUISpriteSystem {
 
     const float srcX = sprite.srcRect.x + atlasOffset.x;
     const float srcY = sprite.srcRect.y + atlasOffset.y;
-    const float sl = std::clamp(nine.left, 0.0f, std::min(srcW * 0.5f, dstW * 0.5f));
-    const float sr = std::clamp(nine.right, 0.0f, std::min(srcW - sl, dstW - sl));
-    const float st = std::clamp(nine.top, 0.0f, std::min(srcH * 0.5f, dstH * 0.5f));
-    const float sb = std::clamp(nine.bottom, 0.0f, std::min(srcH - st, dstH - st));
+    const float sl = std::floor(std::clamp(nine.left, 0.0f, std::min(srcW * 0.5f, dstW * 0.5f)));
+    const float sr = std::floor(std::clamp(nine.right, 0.0f, std::min(srcW - sl, dstW - sl)));
+    const float st = std::floor(std::clamp(nine.top, 0.0f, std::min(srcH * 0.5f, dstH * 0.5f)));
+    const float sb = std::floor(std::clamp(nine.bottom, 0.0f, std::min(srcH - st, dstH - st)));
 
     const float sx[3] = {srcX, srcX + sl, srcX + srcW - sr};
     const float sw[3] = {sl, std::max(0.0f, srcW - sl - sr), sr};

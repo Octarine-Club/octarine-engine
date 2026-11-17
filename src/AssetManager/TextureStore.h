@@ -24,6 +24,7 @@ class TextureStore {
   ~TextureStore() { Clear(); }
 
   void SetDefaultScaleMode(std::optional<SDL_ScaleMode> mode) { default_scale_mode_ = mode; }
+  [[nodiscard]] std::optional<SDL_ScaleMode> DefaultScaleMode() const noexcept { return default_scale_mode_; }
   bool SetExplicitScaleMode(const std::string& id, SDL_ScaleMode mode);
   [[nodiscard]] bool HasExplicitScaleMode(const std::string& id) const noexcept {
     return explicit_scale_ids_.contains(id);

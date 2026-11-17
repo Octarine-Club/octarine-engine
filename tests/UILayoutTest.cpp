@@ -1,7 +1,11 @@
 #include <SDL3/SDL.h>
+#include <SDL3_ttf/SDL_ttf.h>
 
+#include <cmath>
 #include <iostream>
 
+#include "AssetManager/AssetManager.h"
+#include "Components/CameraComponents.h"
 #include "Components/SpriteComponent.h"
 #include "Components/SquarePrimitiveComponent.h"
 #include "Components/TextLabelComponent.h"
@@ -1963,6 +1967,186 @@ void TestLuaFocusApiAnalogSliderAndScrollFallback() {
   registry.ValidateInvariants();
 }
 
+void TestPixelSnappingNineSliceClampAndSharpText() {
+  std::cout << "[pixel-sharp] Pixel-snapped UI layout, 9-slice clamping, and nearest integer-scale text\n";
+
+  // 1. UILayoutSystem snaps odd-height flex centering and shared flex-row boundaries to integers
+  {
+    Registry registry;
+    registry.Set<GameConfig>(GameConfig{});
+    registry.Set<RenderQueue>(RenderQueue(64));
+    registry.RegisterBulkSystem(UILayoutSystem());
+
+    const Entity canvas = registry.CreateEntityWithBundle(UICanvasComponent(true, 1512.0f, 945.0f, 1));
+    UIFlexComponent canvasFlex(FlexDirection::Row, 0.0f, 0.0f, FlexAlign::Center, FlexAlign::Center);
+    registry.AddComponent(canvas, canvasFlex);
+
+    UILayoutBoxComponent modalBox;
+    modalBox.SetWidthPx(400.0f);
+    modalBox.SetHeightPx(600.0f);
+    const Entity modal = registry.CreateEntityWithBundle(modalBox, SquarePrimitiveComponent{});
+    registry.SetParent(modal, canvas);
+
+    registry.Update(0.016f);
+    const auto& modalRect = registry.GetComponent<UIRectComponent>(modal);
+    CheckEq(modalRect.top, 173.0f, "Odd canvas height 945 centers 600px child on integer top=173");
+    CheckEq(modalRect.bottom, 773.0f, "Odd canvas height 945 centers 600px child on integer bottom=773");
+    CheckEq(modalRect.Height(), 600.0f, "Snapped centered child preserves exact 600px height");
+
+    const Entity rowCanvas = registry.CreateEntityWithBundle(UICanvasComponent(true, 100.0f, 40.0f, 2));
+    registry.AddComponent(rowCanvas,
+                          UIFlexComponent(FlexDirection::Row, 0.0f, 0.0f, FlexAlign::Start, FlexAlign::Start));
+    Entity cols[3];
+    for (Entity& col : cols) {
+      UILayoutBoxComponent colBox;
+      colBox.SetWidthFr(1.0f);
+      colBox.SetHeightPx(20.0f);
+      col = registry.CreateEntityWithBundle(colBox, SquarePrimitiveComponent{});
+      registry.SetParent(col, rowCanvas);
+    }
+
+    registry.Update(0.016f);
+    const auto& r0 = registry.GetComponent<UIRectComponent>(cols[0]);
+    const auto& r1 = registry.GetComponent<UIRectComponent>(cols[1]);
+    const auto& r2 = registry.GetComponent<UIRectComponent>(cols[2]);
+    CheckEq(r0.left, 0.0f, "3-col flex split starts c0 at 0");
+    CheckEq(r0.right, 33.0f, "3-col flex split snaps c0.right to 33");
+    CheckEq(r1.left, 33.0f, "c1.left shares snapped edge 33 with c0.right (zero gap/overlap)");
+    CheckEq(r1.right, 67.0f, "3-col flex split snaps c1.right to 67");
+    CheckEq(r2.left, 67.0f, "c2.left shares snapped edge 67 with c1.right");
+    CheckEq(r2.right, 100.0f, "3-col flex split ends c2 at 100");
+  }
+
+  // 2. Integer 9-slice clamping on squeezed odd dest dimensions prevents half-texel UV splits
+  {
+    RenderQueue rq(32);
+    const UIRectComponent rect(10.0f, 20.0f, 25.0f, 41.0f, 4);  // 15x21 squeezed bounds
+    SpriteComponent sprite("panel_bg", 32, 32, 0);
+    const UINineSliceComponent nine(8.0f, 8.0f, 8.0f, 8.0f);
+    const SDL_FRect atlasOffset{0.0f, 0.0f, 32.0f, 32.0f};
+
+    RenderUISpriteSystem::EmitNineSlice(rq, rect, sprite, nine, nullptr, atlasOffset);
+    bool allCornersInteger = !rq.IsEmpty();
+    for (const RenderKey& key : rq) {
+      const auto& sp = key.payload.sprite;
+      if (std::floor(sp.destW) != sp.destW || std::floor(sp.destH) != sp.destH ||
+          std::floor(sp.srcRect.w) != sp.srcRect.w || std::floor(sp.srcRect.h) != sp.srcRect.h ||
+          std::floor(sp.srcRect.x) != sp.srcRect.x || std::floor(sp.srcRect.y) != sp.srcRect.y) {
+        allCornersInteger = false;
+      }
+    }
+    Check(allCornersInteger, "EmitNineSlice floors clamped slice bounds to integer pixels/texels");
+    CheckEq(rq.begin()->payload.sprite.destW, 7.0f, "15px squeezed width floors slice left/right from 7.5 to 7");
+    CheckEq(rq.begin()->payload.sprite.srcRect.w, 7.0f, "15px squeezed width floors slice srcW to 7");
+  }
+
+  // 3. RenderTextSystem uses integer raster scale + SDL_SCALEMODE_NEAREST when scale mode != Linear
+  {
+    static constexpr unsigned char kMinimalTestTtf[] = {
+        0x00, 0x01, 0x00, 0x00, 0x00, 0x0A, 0x00, 0x80, 0x00, 0x03, 0x00, 0x20, 0x4F, 0x53, 0x2F, 0x32, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0xAC, 0x00, 0x00, 0x00, 0x56, 0x63, 0x6D, 0x61, 0x70, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x01, 0x04, 0x00, 0x00, 0x00, 0x2C, 0x67, 0x6C, 0x79, 0x66, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x01, 0x30, 0x00, 0x00, 0x00, 0x22, 0x68, 0x65, 0x61, 0x64, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x54,
+        0x00, 0x00, 0x00, 0x36, 0x68, 0x68, 0x65, 0x61, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x8C, 0x00, 0x00,
+        0x00, 0x24, 0x68, 0x6D, 0x74, 0x78, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xB0, 0x00, 0x00, 0x00, 0x06,
+        0x6C, 0x6F, 0x63, 0x61, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xB8, 0x00, 0x00, 0x00, 0x06, 0x6D, 0x61,
+        0x78, 0x70, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xC0, 0x00, 0x00, 0x00, 0x20, 0x6E, 0x61, 0x6D, 0x65,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xE0, 0x00, 0x00, 0x00, 0x06, 0x70, 0x6F, 0x73, 0x74, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x01, 0xE8, 0x00, 0x00, 0x00, 0x20, 0x00, 0x01, 0x02, 0x58, 0x01, 0x90, 0x00, 0x05,
+        0x00, 0x00, 0x01, 0xF4, 0x01, 0xF4, 0x00, 0x00, 0x00, 0x64, 0x01, 0xF4, 0x01, 0xF4, 0x00, 0x00, 0x01, 0x2C,
+        0x00, 0x32, 0x00, 0xFA, 0x00, 0x64, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x54, 0x45, 0x53, 0x54,
+        0x00, 0x40, 0x00, 0x20, 0x00, 0x7E, 0x03, 0x20, 0xFF, 0x38, 0x00, 0x00, 0x03, 0x20, 0x00, 0xC8, 0x00, 0x00,
+        0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x03, 0x00, 0x01, 0x00, 0x00,
+        0x00, 0x0C, 0x00, 0x04, 0x00, 0x20, 0x00, 0x00, 0x00, 0x04, 0x00, 0x04, 0x00, 0x01, 0x00, 0x00, 0x00, 0x7E,
+        0xFF, 0xFF, 0x00, 0x00, 0x00, 0x20, 0xFF, 0xFF, 0xFF, 0xE1, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+        0x00, 0x32, 0x00, 0x00, 0x02, 0x26, 0x02, 0xBC, 0x00, 0x03, 0x00, 0x00, 0x01, 0x01, 0x01, 0x01, 0x00, 0x32,
+        0x01, 0xF4, 0x00, 0x00, 0xFE, 0x0C, 0x00, 0x00, 0x00, 0x00, 0x02, 0xBC, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x5F, 0x0F, 0x3C, 0xF5, 0x00, 0x0B, 0x03, 0xE8,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x32,
+        0x00, 0x00, 0x02, 0x26, 0x02, 0xBC, 0x00, 0x00, 0x00, 0x08, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x01, 0x00, 0x00, 0x03, 0x20, 0xFF, 0x38, 0x00, 0x00, 0x02, 0x58, 0x00, 0x32, 0x00, 0x00, 0x02, 0x26,
+        0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+        0x02, 0x58, 0x00, 0x32, 0x00, 0x32, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x11, 0x00, 0x00, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x02, 0x00, 0x04, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06,
+        0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xCE, 0x00, 0x32, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+
+    SDL_Init(0);
+    TTF_Init();
+    SDL_Surface* surface = SDL_CreateSurface(128, 128, SDL_PIXELFORMAT_RGBA32);
+    SDL_Renderer* sdlRenderer = surface != nullptr ? SDL_CreateSoftwareRenderer(surface) : nullptr;
+    Check(sdlRenderer != nullptr, "software SDL_Renderer created for RenderTextSystem check");
+
+    if (sdlRenderer != nullptr) {
+      Registry registry;
+      registry.Set<GameConfig>(GameConfig{});
+      registry.Get<GameConfig>().windowWidth = 1280;
+      registry.Get<GameConfig>().windowHeight = 720;
+      CameraComponent cam;
+      cam.viewport = {0.0f, 0.0f, 1280.0f, 720.0f};
+      registry.Set<CameraComponent>(cam);
+      registry.Set<RenderQueue>(RenderQueue(32));
+
+      auto& am = registry.Set<AssetManager>(AssetManager{});
+      am.SetDefaultScaleMode("pixelart");
+      am.AddFontFromMemory("test-16", kMinimalTestTtf, sizeof(kMinimalTestTtf), 16.0f);
+      Check(am.GetFont("test-16") != nullptr, "synthetic TTF loads via AddFontFromMemory");
+
+      EngineContext ctx;
+      ctx.sdlRenderer = sdlRenderer;
+      ctx.sceneRenderScale = 2.25f;
+      registry.Set<EngineContext>(ctx);
+
+      registry.CreateEntityWithBundle(UIRectComponent{10.0f, 10.0f, 200.0f, 40.0f, 1},
+                                      TextLabelComponent{{0.0f, 0.0f}, 1, "AAA", "test-16"});
+
+      TextLabelComponent fixedText{{10.4f, 20.6f}, 1, "BBB", "test-16"};
+      fixedText.isFixed = true;
+      registry.CreateEntityWithBundle(fixedText);
+
+      registry.RegisterSystem<TextLabelComponent>(RenderTextSystem());
+      registry.Update(0.016f);
+
+      const auto& rq = registry.Get<RenderQueue>();
+      CheckEq(rq.Size(), static_cast<size_t>(2), "RenderTextSystem emits 2 TextCommands");
+      if (rq.Size() == 2) {
+        const auto& cmd = rq.begin()->payload.text;
+        const auto& fixedCmd = (rq.begin() + 1)->payload.text;
+        CheckEq(fixedCmd.destRect.x, 10.0f, "Fixed TextLabelComponent without UIRect snaps x to 10");
+        CheckEq(fixedCmd.destRect.y, 21.0f, "Fixed TextLabelComponent without UIRect snaps y to 21");
+        SDL_ScaleMode mode = SDL_SCALEMODE_INVALID;
+        SDL_GetTextureScaleMode(cmd.texture, &mode);
+        Check(mode == SDL_SCALEMODE_NEAREST, "PixelArt/Nearest scale mode uses SDL_SCALEMODE_NEAREST for text");
+        float texW = 0.0f;
+        float texH = 0.0f;
+        SDL_GetTextureSize(cmd.texture, &texW, &texH);
+        Check(std::abs(texW - cmd.destRect.w * 2.0f) < 0.05f,
+              "Pixel-sharp text quantizes 2.25x sceneRenderScale to 2.0x integer multiple");
+
+        // Switch default scale mode to Linear and verify re-rasterization uses SDL_SCALEMODE_LINEAR + 2.25x
+        am.SetDefaultScaleMode("linear");
+        registry.Get<RenderQueue>().Clear();
+        registry.Update(0.016f);
+        const auto& cmdLin = rq.begin()->payload.text;
+        SDL_ScaleMode linMode = SDL_SCALEMODE_INVALID;
+        SDL_GetTextureScaleMode(cmdLin.texture, &linMode);
+        Check(linMode == SDL_SCALEMODE_LINEAR, "Linear scale mode uses SDL_SCALEMODE_LINEAR for text");
+        float linTexW = 0.0f;
+        SDL_GetTextureSize(cmdLin.texture, &linTexW, nullptr);
+        Check(std::abs(linTexW - cmdLin.destRect.w * 2.25f) < 0.05f,
+              "Linear text keeps 0.25x fractional raster scale (2.25x)");
+      }
+    }
+
+    if (sdlRenderer != nullptr) SDL_DestroyRenderer(sdlRenderer);
+    if (surface != nullptr) SDL_DestroySurface(surface);
+    TTF_Quit();
+    SDL_Quit();
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -1986,5 +2170,6 @@ int main() {
   TestGamepadAndFocusNavigationFixes();
   TestOxmlGamepadOnFocusBorderWidthAndHotplug();
   TestLuaFocusApiAnalogSliderAndScrollFallback();
+  TestPixelSnappingNineSliceClampAndSharpText();
   return octarine::test::ReportSummary("UILayoutTest");
 }
