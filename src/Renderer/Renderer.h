@@ -61,10 +61,9 @@ class Renderer {
   // resolution happens in the producer systems (cmd.texture is already a live handle).
   void DrawQueue(const RenderQueue& renderQueue, SDL_Renderer* sdlRenderer) const;
 
-  // Phase 3: unbind the scene texture (RT becomes the window backbuffer) and clear that
-  // backbuffer to black. Debug UI + final composite draw on top of the cleared
-  // backbuffer.
-  void EndScene(SDL_Renderer* sdlRenderer) const;
+  // Phase 3: unbind the scene texture (RT becomes the window backbuffer) and optionally clear that
+  // backbuffer to black (skipped when the subsequent CompositeSceneToWindow covers the full window).
+  void EndScene(SDL_Renderer* sdlRenderer, bool clearBackbuffer = true) const;
 
   // Composite: blit the full scene texture into the window backbuffer.
   void CompositeSceneToWindow(SDL_Renderer* sdlRenderer, const SDL_FRect* destRect = nullptr) const;

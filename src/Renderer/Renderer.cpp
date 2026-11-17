@@ -164,7 +164,7 @@ void Renderer::BeginScene(SDL_Renderer* sdlRenderer) const {
   SDL_RenderClear(sdlRenderer);
 }
 
-void Renderer::EndScene(SDL_Renderer* sdlRenderer) const {
+void Renderer::EndScene(SDL_Renderer* sdlRenderer, const bool clearBackbuffer) const {
 #if defined(__APPLE__) && TARGET_OS_OSX
   SDL_FlushRenderer(sdlRenderer);
   ReclaimStaleMacMetalDrawables(sdlRenderer);
@@ -172,8 +172,10 @@ void Renderer::EndScene(SDL_Renderer* sdlRenderer) const {
   SDL_SetRenderScale(sdlRenderer, 1.0F, 1.0F);
   SDL_SetRenderTarget(sdlRenderer, nullptr);
   SDL_SetRenderScale(sdlRenderer, 1.0F, 1.0F);
-  SDL_SetRenderDrawColor(sdlRenderer, kWindowClearBlack, kWindowClearBlack, kWindowClearBlack, Constants::kUint8Max);
-  SDL_RenderClear(sdlRenderer);
+  if (clearBackbuffer) {
+    SDL_SetRenderDrawColor(sdlRenderer, kWindowClearBlack, kWindowClearBlack, kWindowClearBlack, Constants::kUint8Max);
+    SDL_RenderClear(sdlRenderer);
+  }
 }
 
 void Renderer::CompositeSceneToWindow(SDL_Renderer* sdlRenderer, const SDL_FRect* destRect) const {

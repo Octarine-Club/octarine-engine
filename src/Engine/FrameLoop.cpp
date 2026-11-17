@@ -552,7 +552,32 @@ void FrameLoop::Render(const float deltaTime) {
     draw_collider_system_.Draw(registry_);
   }
 
-  renderer_->EndScene(runtime_->SdlRenderer());
+  bool clearBackbuffer = true;
+  if (compositeRect.has_value() && !gameConfig.GetEngineOptions().showDebugGUI) {
+    int outPixelW = 0;
+    int outPixelH = 0;
+    if (SDL_GetRenderOutputSize(runtime_->SdlRenderer(), &outPixelW, &outPixelH) && compositeRect->x <= 0.0F &&
+        compositeRect->y <= 0.0F && (compositeRect->x + compositeRect->w) >= static_cast<float>(outPixelW) &&
+        (compositeRect->y + compositeRect->h) >= static_cast<float>(outPixelH)) {
+      clearBackbuffer = false;
+    }
+  }
+
+#ifdef OCTARINE_PROFILING
+  {
+    PerfUtils::ScopedTimer compositeTimer("Render: Composite");
+    renderer_->EndScene(runtime_->SdlRenderer(), clearBackbuffer);
+    UpdateViewportInfo(gameConfig.GetEngineOptions().showDebugGUI);
+    if (compositeRect.has_value()) {
+      renderer_->CompositeSceneToWindow(runtime_->SdlRenderer(), &*compositeRect);
+    } else {
+      const auto& viewportInfo = registry_->Get<ViewportInfo>();
+      const SDL_FRect destRect{viewportInfo.x, viewportInfo.y, viewportInfo.width, viewportInfo.height};
+      renderer_->CompositeSceneToWindow(runtime_->SdlRenderer(), &destRect);
+    }
+  }
+#else
+  renderer_->EndScene(runtime_->SdlRenderer(), clearBackbuffer);
 
   UpdateViewportInfo(gameConfig.GetEngineOptions().showDebugGUI);
 
@@ -563,6 +588,7 @@ void FrameLoop::Render(const float deltaTime) {
     const SDL_FRect destRect{viewportInfo.x, viewportInfo.y, viewportInfo.width, viewportInfo.height};
     renderer_->CompositeSceneToWindow(runtime_->SdlRenderer(), &destRect);
   }
+#endif
 
   if (!game_->IsBenchMode()) {
 #ifdef OCTARINE_WITH_IMGUI
