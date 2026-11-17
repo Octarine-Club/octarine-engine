@@ -8,7 +8,7 @@ Octarine Engine provides automated, multi-layered security hardening for shipped
 
 Commercial indie games built with scripting languages and loose assets are frequent targets for extraction and decompilation:
 - **Asset Ripping**: Tools scrape textures, sprites, audio tracks, and fonts from loose folders or standard unencrypted archives (ZIP, TAR).
-- **Bytecode Decompilation**: Public decompilers can reverse standard compiled Lua 5.4 bytecode back into readable Lua source code if debug symbols and standard opcodes are intact.
+- **Bytecode Decompilation**: Public decompilers can reverse standard compiled Lua 5.5 bytecode back into readable Lua source code if debug symbols and standard opcodes are intact.
 - **Save & Script Modification / Cheating**: Players or modders inject modified `.lua` scripts or replace runtime configs to alter game logic, unlock features, or bypass game rules.
 - **Dynamic Inspection & Hooking**: Reverse engineers attach tools like Frida or Cheat Engine to hook standard exported C/Lua functions (`luaL_loadbufferx`, `SDL_LoadFile`) or monitor process memory to dump decrypted scripts.
 
@@ -28,7 +28,7 @@ flowchart TD
     subgraph Packaging["1. Packaging Pipeline (cpack / ship-release)"]
         Src["Game Source (Scripts, Textures, Audio, Configs)"]
         Luac["Bytecode Compiler (luac -s)\nStrip line numbers & local variable names"]
-        Scramble["Opcode Scrambler\n83-Opcode Permutation + Header Magic Change"]
+        Scramble["Opcode Scrambler\n85-Opcode Permutation + Header Magic Change"]
         Pak["AssetPak Packer (OCPK)\nChaCha20 Stream Cipher + FNV-1a Hash Indexing + 128-bit MAC"]
         Src --> Luac --> Scramble --> Pak
         Src --> Pak
@@ -39,7 +39,7 @@ flowchart TD
         Pak --> Bundle
         Bundle --> Stream["Seekable ChaCha20 SDL_IOStream\n(In-memory on-the-fly decryption)"]
         Stream --> Engine["Game Boot & Asset Catalog\n(config.ini, project.ini, asset_manifest.lua)"]
-        Stream --> LuaVM["Lua 5.4 VM\n(Ephemeral descrambling; buffer zeroed; env sealed)"]
+        Stream --> LuaVM["Lua 5.5 VM\n(Ephemeral descrambling; buffer zeroed; env sealed)"]
         Stream --> Audio["SDL_mixer Audio Streaming\n(Decrypted at 64-byte block level)"]
     end
 ```
@@ -56,8 +56,8 @@ All game content—including textures, audio, fonts, tilemaps, `asset_manifest.l
 ### Layer 2: Lua Bytecode Protection & Opcode Scrambling
 Loose `.lua` files are never shipped in production. Instead:
 1. **Debug Stripping**: Scripts are compiled with `luac -s`, stripping all line numbers, source filenames, and local variable names.
-2. **Opcode Permutation**: The Lua 5.4 virtual machine uses 83 bytecode instructions (`OP_MOVE`, `OP_LOADK`, `OP_CALL`, etc.). During packaging, Octarine generates a deterministic bijection derived from your project seed to permute all 83 opcode mappings.
-3. **Magic Signature Masking**: The standard bytecode magic header `\x1bLua\x54` is converted to `\x1bOCT\x54`.
+2. **Opcode Permutation**: The Lua 5.5 virtual machine uses 85 bytecode instructions (`OP_MOVE`, `OP_LOADK`, `OP_CALL`, etc.). During packaging, Octarine generates a deterministic bijection derived from your project seed to permute all 85 opcode mappings.
+3. **Magic Signature Masking**: The standard bytecode magic header `\x1bLua\x55` is converted to `\x1bOCT\x55`.
 4. **String Constant Masking**: Sensitive string literals in the constant pool are masked with a rolling keystream.
 5. **Decompiler Invalidation**: Standard decompilation tools (`unluac`, `luadec`) fail immediately with parse errors or unrecognized opcode crashes.
 

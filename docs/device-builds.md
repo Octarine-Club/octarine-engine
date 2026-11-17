@@ -63,7 +63,7 @@ The three pieces that make this work end to end:
 3. **`asset_bundle.pak` & Security Hardening**:
    CPack bundles all project assets, configs, and scripts into a single
    ChaCha20-encrypted archive (`asset_bundle.pak`) with a 128-bit MAC for tamper
-   detection and scrambled Lua 5.4 bytecode. Loose `.lua` and asset files are
+   detection and scrambled Lua 5.5 bytecode. Loose `.lua` and asset files are
    completely omitted from the distribution bundle. See [`docs/security.md`](security.md)
    for architecture, threat model, and custom key configuration.
 
@@ -538,7 +538,7 @@ Additional repository workflows include `docs.yml`, `benchmark.yml`, `nightly-ti
 
 Workflows share `.github/actions/vcpkg-cache-env`:
 
-- `VCPKG_BINARY_SOURCES=clear;files,<RUNNER_TEMP>/vcpkg-bincache,readwrite` backed by `actions/cache@v4`, plus a Lua 5.4.9 source tarball pre-fetch. Cold cache runs rebuild dependencies (~20–60 minutes); warm cache hits cut leg times substantially (~5–10 minutes per leg).
+- `VCPKG_BINARY_SOURCES=clear;files,<RUNNER_TEMP>/vcpkg-bincache,readwrite` backed by `actions/cache@v4`, plus a Lua 5.5.1 source tarball pre-fetch. Cold cache runs rebuild dependencies (~20–60 minutes); warm cache hits cut leg times substantially (~5–10 minutes per leg).
 
 ### `package.yml` — standalone engine SDK releases
 

@@ -228,7 +228,7 @@ For large entity counts, handle `CollisionBatchEvent` and `CollisionExitBatchEve
 
 ## 7. Scripting Entities
 
-Attach inline tables (`script = { on_update = function(self, entity, dt) ... end }`) or hot-reloadable file-backed tables (`script = { source = "scripts/player.lua" }`) to entities. See [`docs/lua-scripting.md`](lua-scripting.md) for callbacks, `registry.*`, `storage.*`, `settings.*`, and input APIs.
+Attach inline tables (`script = { on_update = function(self, entity, dt) ... end }`) or hot-reloadable file-backed tables (`script = { source = "scripts/player.lua" }`) to entities (Lua 5.5 via `sol2`; see the [Lua 5.5 Manual](https://www.lua.org/manual/5.5/)). See [`docs/lua-scripting.md`](lua-scripting.md) for callbacks, `registry.*`, `storage.*`, `settings.*`, input APIs, and [Lua 5.5 migration notes](lua-scripting.md#9-lua-55-runtime--migration-notes-from-54).
 
 ---
 
@@ -477,7 +477,7 @@ OCTARINE_GAME_MODULE_DIR=/path/to/MyGame/native ./scripts/octarine-verify.sh --f
 | [`docs/ecs-components.md`](ecs-components.md) | All 39 components — fields, Lua keys, and usertype methods |
 | [`docs/systems.md`](systems.md) | Built-in systems and execution order |
 | [`docs/events.md`](events.md) | `EventBus` and built-in engine events |
-| [`docs/lua-scripting.md`](lua-scripting.md) | Full Lua scripting guide, `storage.*`, and `settings.*` |
+| [`docs/lua-scripting.md`](lua-scripting.md) | Full Lua 5.5 scripting guide, migration notes, `storage.*`, and `settings.*` |
 | [`docs/input-and-controllers.md`](input-and-controllers.md) | Action binding, canonical gamepad buttons, analog sticks, and UI focus |
 | [`docs/scenes.md`](scenes.md) | Scene file schema and lifecycle |
 | [`docs/ui-framework.md`](ui-framework.md) | Declarative `.oxml`/`.oss`, observables, and custom widgets |

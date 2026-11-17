@@ -439,7 +439,10 @@ bool AssetCatalog::LoadManifestFromStream(SDL_IOStream* io, sol::state& lua, con
   }
   std::string chunk(static_cast<const char*>(data), size);
   SDL_free(data);
-  DecryptLuaBytes(chunk);
+  if (!DecryptLuaBytes(chunk)) {
+    Logger::Error("AssetCatalog: failed to decrypt or verify manifest (" + debugChunkName + ")");
+    return false;
+  }
 
   sol::protected_function_result result = lua.safe_script(chunk, sol::script_pass_on_error, debugChunkName);
   std::fill(chunk.begin(), chunk.end(), '\0');

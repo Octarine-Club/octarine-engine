@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <lua.hpp>
+#include <sol/sol.hpp>
 #include <string_view>
 
 #include "AssetManager/AssetCatalog.h"
@@ -12,6 +13,7 @@
 #include "Crypto/KeyDerivation.h"
 #include "Crypto/LuaBytecodeScrambler.h"
 #include "Crypto/LuaProtect.h"
+#include "General/Logger.h"
 #include "TestHarness.h"
 
 using octarine::crypto::ChaCha20;
@@ -20,7 +22,251 @@ using octarine::crypto::HashPath;
 using octarine::test::Check;
 using octarine::test::CheckEq;
 
+namespace {
+std::vector<uint8_t> DumpLuaScript(const char* script, const char* chunkName, int strip) {
+  lua_State* L = luaL_newstate();
+  Check(L != nullptr, std::string("luaL_newstate succeeded for ") + chunkName);
+  const int rc = luaL_loadbuffer(L, script, std::strlen(script), chunkName);
+  CheckEq(rc, 0, std::string("luaL_loadbuffer succeeded for ") + chunkName);
+
+  std::vector<uint8_t> dumped;
+  auto dumpWriter = [](lua_State*, const void* p, size_t sz, void* ud) -> int {
+    auto* vec = static_cast<std::vector<uint8_t>*>(ud);
+    const auto* bytes = static_cast<const uint8_t*>(p);
+    vec->insert(vec->end(), bytes, bytes + sz);
+    return 0;
+  };
+
+  const int dumpRc = lua_dump(L, dumpWriter, &dumped, strip);
+  CheckEq(dumpRc, 0, std::string("lua_dump succeeded for ") + chunkName);
+  lua_close(L);
+  return dumped;
+}
+
+void VerifyLua55ScrambleRoundtrip(const char* label, const char* script, const char* chunkName, int strip,
+                                  uint64_t seed, lua_Integer expectedResult) {
+  std::vector<uint8_t> dumped = DumpLuaScript(script, chunkName, strip);
+  Check(dumped.size() >= octarine::crypto::kLua55MinChunkSize,
+        std::string(label) + ": dumped bytecode meets min chunk size");
+  Check(dumped[1] == 'L' && dumped[2] == 'u' && dumped[3] == 'a' && dumped[4] == 0x55,
+        std::string(label) + ": initial bytecode has Lua 5.5 magic");
+
+  const std::vector<uint8_t> originalDump = dumped;
+  Check(octarine::crypto::ScrambleLua55Bytecode(dumped.data(), dumped.size(), seed),
+        std::string(label) + ": ScrambleLua55Bytecode succeeded");
+  Check(dumped[1] == 'O' && dumped[2] == 'C' && dumped[3] == 'T' && dumped[4] == 0x55,
+        std::string(label) + ": scrambled magic is OCT 5.5");
+  Check(dumped != originalDump, std::string(label) + ": scrambled bytecode is distinct from original");
+
+  lua_State* LStock = luaL_newstate();
+  Check(luaL_loadbuffer(LStock, reinterpret_cast<const char*>(dumped.data()), dumped.size(), chunkName) != 0,
+        std::string(label) + ": stock Lua 5.5 VM rejects scrambled bytecode");
+  lua_close(LStock);
+
+  Check(octarine::crypto::DescrambleLua55Bytecode(dumped.data(), dumped.size(), seed),
+        std::string(label) + ": DescrambleLua55Bytecode succeeded");
+  Check(dumped == originalDump, std::string(label) + ": descrambled bytecode matches original byte-for-byte");
+
+  lua_State* LRun = luaL_newstate();
+  CheckEq(luaL_loadbuffer(LRun, reinterpret_cast<const char*>(dumped.data()), dumped.size(), chunkName), 0,
+          std::string(label) + ": stock Lua 5.5 VM accepts descrambled bytecode");
+  CheckEq(lua_pcall(LRun, 0, 1, 0), 0, std::string(label) + ": lua_pcall succeeded");
+  CheckEq(lua_tointeger(LRun, -1), expectedResult, std::string(label) + ": script returns expected integer");
+  lua_close(LRun);
+}
+
+void TestLua55EdgeCasesAndLegacyRejection() {
+  std::cout << "[crypto: Lua 5.5 constants, string dedup, alignment, opcodes, and 5.4 rejection]\n";
+
+  // 1. Large/negative 64-bit integer constants (ZigZag varints), float constants, empty string,
+  //    repeated string constants across nested closures (D->nstr reuse), OP_ERRNNIL, OP_GETVARG.
+  const char* complexScript =
+      "global oct_scrambler_g = 99\n"
+      "local repeated = 'octarine_shared_string_constant'\n"
+      "local empty = ''\n"
+      "local bigPos = 10000000000\n"
+      "local bigNeg = -9876543210\n"
+      "local flt = 3.25\n"
+      "local tbl = { [123456789] = 7, [1] = 2 }\n"
+      "local function sum(...args)\n"
+      "  local s = 'octarine_shared_string_constant'\n"
+      "  if #empty == 0 and s == repeated and flt > 3.0 and (bigPos + bigNeg) > 0 then\n"
+      "    return args[1] + args[2] + args.n + oct_scrambler_g + tbl[123456789]\n"
+      "  end\n"
+      "  return 0\n"
+      "end\n"
+      "return sum(10, 20)\n";
+  VerifyLua55ScrambleRoundtrip("stripped complex Lua 5.5 chunk", complexScript, "=@complex_stripped.lua", 1,
+                               0x0123456789ABCDEFULL, 138);
+
+  // 2. Unstripped chunk with >140 lines to exercise abslineinfo + dumpAlign(sizeof(int)) + f->source.
+  std::string multilineScript = "local acc = 0\n";
+  for (int i = 0; i < 150; ++i) {
+    multilineScript += "acc = acc + 1\n";
+  }
+  multilineScript +=
+      "local function inner() return 'shared_dbg_str' end\n"
+      "local copy = 'shared_dbg_str'\n"
+      "if inner() == copy then return acc end\n"
+      "return -1\n";
+  VerifyLua55ScrambleRoundtrip("unstripped >140-line abslineinfo Lua 5.5 chunk", multilineScript.c_str(),
+                               "@multiline_unstripped.lua", 0, 0xCAFEBABE12345678ULL, 150);
+
+  // 3. Stale Lua 5.4 chunks (\x1bOCT\x54 and \x1bLua\x54) must both be rejected and cleared.
+  std::string legacyOct(
+      "\x1BOCT\x54\x00\x19\x93\r\n\x1A\n"
+      "123456789012345678901234567890",
+      42);
+  Check(!DecryptLuaBytes(legacyOct), "DecryptLuaBytes rejects legacy \\x1bOCT\\x54 chunk");
+  Check(legacyOct.empty(), "DecryptLuaBytes clears legacy \\x1bOCT\\x54 buffer");
+
+  std::string legacyRawLua(
+      "\x1BLua\x54\x00\x19\x93\r\n\x1A\n"
+      "123456789012345678901234567890",
+      42);
+  Check(!DecryptLuaBytes(legacyRawLua), "DecryptLuaBytes rejects raw legacy \\x1bLua\\x54 chunk");
+  Check(legacyRawLua.empty(), "DecryptLuaBytes clears raw legacy \\x1bLua\\x54 buffer");
+
+  // 4. Synthetic Lua 5.5 scrambler edge cases & malformed chunk error paths.
+  auto makeBaseChunk = []() {
+    std::vector<uint8_t> c = {
+        0x1B, 'L',  'u',  'a', 0x55, 0x00, 0x19, 0x93, '\r', '\n', 0x1A, '\n', 4, 0, 0, 0, 0,  // intSize = 4
+        4,    0,    0,    0,   0,                                                              // instSize = 4
+        8,    0,    0,    0,   0,    0,    0,    0,    0,                                      // luaIntSize = 8
+        8,    0,    0,    0,   0,    0,    0,    0,    0,                                      // luaNumSize = 8
+        0x00,                                                                                  // sizeupvalues = 0
+        0x00, 0x00,        // linedefined, lastlinedefined
+        0x00, 0x00, 0x00,  // numparams, flag, maxstacksize
+    };
+    return c;
+  };
+  auto appendZeroDebugAndTail = [](std::vector<uint8_t>& c) {
+    // upvalCount=0, protoCount=0, source=0 (NULL string), lineinfo=0, abslineinfo=0, locvars=0, upnames=0
+    c.insert(c.end(), {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
+  };
+
+  // Valid nil/false/true constants (LUA_VNIL=0, LUA_VFALSE=1, LUA_VTRUE=17)
+  {
+    auto c = makeBaseChunk();
+    c.push_back(0x00);  // codeCount = 0
+    while (c.size() % 4 != 0) c.push_back(0x00);
+    // Align(4) after codeCount=0 lands on 4-byte boundary; re-verify with exact cursor:
+    // Actually baseChunk is 46 bytes; codeCount=0 at 46 -> pos=47 -> Align(4) skips 1 byte to 48!
+    c.clear();
+    c = makeBaseChunk();
+    c.push_back(0x00);  // codeCount = 0 (pos 47)
+    c.push_back(0x00);  // align pad to pos 48
+    c.push_back(0x03);  // kCount = 3
+    c.push_back(0);     // LUA_VNIL
+    c.push_back(1);     // LUA_VFALSE
+    c.push_back(17);    // LUA_VTRUE
+    appendZeroDebugAndTail(c);
+    Check(octarine::crypto::ScrambleLua55Bytecode(c.data(), c.size(), 12345ULL),
+          "ScrambleLua55Bytecode handles nil/false/true constants");
+    Check(octarine::crypto::DescrambleLua55Bytecode(c.data(), c.size(), 12345ULL),
+          "DescrambleLua55Bytecode handles nil/false/true constants");
+  }
+
+  // Invalid NumInfoSize (0 and 17)
+  {
+    auto c = makeBaseChunk();
+    c[12] = 0;
+    Check(!octarine::crypto::ScrambleLua55Bytecode(c.data(), c.size(), 1ULL), "rejects NumInfoSize == 0");
+    c[12] = 17;
+    Check(!octarine::crypto::ScrambleLua55Bytecode(c.data(), c.size(), 1ULL), "rejects NumInfoSize > 16");
+  }
+
+  // Bad header prefix & bad instSize
+  {
+    auto c = makeBaseChunk();
+    c[5] = 0xFF;
+    Check(!octarine::crypto::ScrambleLua55Bytecode(c.data(), c.size(), 1ULL), "rejects bad header prefix");
+    c = makeBaseChunk();
+    c[17] = 8;  // instSize = 8 (!= 4)
+    Check(!octarine::crypto::ScrambleLua55Bytecode(c.data(), c.size(), 1ULL), "rejects instSize != 4");
+  }
+
+  // Varint overflow (in linedefined and in codeCount to also exercise Align(!ok_))
+  {
+    auto c = makeBaseChunk();
+    c.insert(c.end(), 12, 0xFF);
+    c[41] = 0xFF;
+    Check(!octarine::crypto::ScrambleLua55Bytecode(c.data(), c.size(), 1ULL), "rejects varint overflow");
+
+    c = makeBaseChunk();
+    c.insert(c.end(), 12, 0xFF);  // codeCount varint overflow
+    Check(!octarine::crypto::ScrambleLua55Bytecode(c.data(), c.size(), 1ULL), "rejects codeCount varint overflow");
+  }
+
+  // Invalid opcode >= kLua55NumOpcodes
+  {
+    auto c = makeBaseChunk();
+    c.push_back(0x01);  // codeCount = 1 (pos 47)
+    c.push_back(0x00);  // align pad to pos 48
+    c.push_back(0x7F);  // opcode 127 >= 85
+    c.push_back(0x00);
+    c.push_back(0x00);
+    c.push_back(0x00);
+    appendZeroDebugAndTail(c);
+    Check(!octarine::crypto::ScrambleLua55Bytecode(c.data(), c.size(), 1ULL), "rejects invalid opcode >= 85");
+  }
+
+  // Invalid constant tag
+  {
+    auto c = makeBaseChunk();
+    c.push_back(0x00);  // codeCount = 0 (pos 47)
+    c.push_back(0x00);  // align pad to pos 48
+    c.push_back(0x01);  // kCount = 1
+    c.push_back(99);    // invalid tag
+    appendZeroDebugAndTail(c);
+    Check(!octarine::crypto::ScrambleLua55Bytecode(c.data(), c.size(), 1ULL), "rejects invalid constant tag");
+  }
+
+  // Truncated upvalCount, protoCount, lineinfo, abslineinfo
+  {
+    auto c = makeBaseChunk();
+    c.push_back(0x00);  // codeCount = 0
+    c.push_back(0x00);  // align pad
+    c.push_back(0x00);  // kCount = 0
+    c.push_back(0x7F);  // upvalCount = 127 (truncated)
+    Check(!octarine::crypto::ScrambleLua55Bytecode(c.data(), c.size(), 1ULL), "rejects truncated upvalCount");
+
+    c = makeBaseChunk();
+    c.push_back(0x00);  // codeCount = 0
+    c.push_back(0x00);  // align pad
+    c.push_back(0x00);  // kCount = 0
+    c.push_back(0x00);  // upvalCount = 0
+    c.push_back(0x7F);  // protoCount = 127 (truncated)
+    Check(!octarine::crypto::ScrambleLua55Bytecode(c.data(), c.size(), 1ULL), "rejects truncated protoCount");
+
+    c = makeBaseChunk();
+    c.push_back(0x00);  // codeCount = 0
+    c.push_back(0x00);  // align pad
+    c.push_back(0x00);  // kCount = 0
+    c.push_back(0x00);  // upvalCount = 0
+    c.push_back(0x00);  // protoCount = 0
+    c.push_back(0x00);  // source = 0
+    c.push_back(0x00);  // source idx = 0
+    c.push_back(0x7F);  // lineinfo = 127 (truncated)
+    Check(!octarine::crypto::ScrambleLua55Bytecode(c.data(), c.size(), 1ULL), "rejects truncated lineinfo");
+
+    c = makeBaseChunk();
+    c.push_back(0x00);  // codeCount = 0
+    c.push_back(0x00);  // align pad
+    c.push_back(0x00);  // kCount = 0
+    c.push_back(0x00);  // upvalCount = 0
+    c.push_back(0x00);  // protoCount = 0
+    c.push_back(0x00);  // source = 0
+    c.push_back(0x00);  // source idx = 0
+    c.push_back(0x00);  // lineinfo = 0
+    c.push_back(0x7F);  // abslineinfo = 127 (truncated)
+    Check(!octarine::crypto::ScrambleLua55Bytecode(c.data(), c.size(), 1ULL), "rejects truncated abslineinfo");
+  }
+}
+}  // namespace
+
 int main() {
+  Logger::Init();
   std::cout << "[crypto: Fnv1a64 & HashPath]\n";
   {
     constexpr uint64_t emptyHash = Fnv1a64("");
@@ -95,7 +341,7 @@ int main() {
           "straddling block boundary (offset 63) decrypts matching slice");
   }
 
-  std::cout << "[crypto: Lua 5.4 opcode and bytecode scrambling]\n";
+  std::cout << "[crypto: Lua 5.5 opcode and bytecode scrambling]\n";
   {
     lua_State* L = luaL_newstate();
     Check(L != nullptr, "luaL_newstate succeeded");
@@ -118,15 +364,15 @@ int main() {
 
     rc = lua_dump(L, dumpWriter, &dumped, 1);  // strip = 1
     CheckEq(rc, 0, "lua_dump stripped bytecode succeeded");
-    Check(dumped.size() > 34, "dumped bytecode has valid length");
+    Check(dumped.size() >= octarine::crypto::kLua55MinChunkSize, "dumped bytecode has valid length");
     Check(dumped[1] == 'L' && dumped[2] == 'u' && dumped[3] == 'a', "initial bytecode has Lua magic");
 
     std::vector<uint8_t> originalDump = dumped;
     constexpr uint64_t kSeed = 0xDeadBeefCAFE1337ULL;
 
     // Scramble bytecode
-    const bool scrambleOk = octarine::crypto::ScrambleLua54Bytecode(dumped.data(), dumped.size(), kSeed);
-    Check(scrambleOk, "ScrambleLua54Bytecode succeeded");
+    const bool scrambleOk = octarine::crypto::ScrambleLua55Bytecode(dumped.data(), dumped.size(), kSeed);
+    Check(scrambleOk, "ScrambleLua55Bytecode succeeded");
     Check(dumped[1] == 'O' && dumped[2] == 'C' && dumped[3] == 'T', "scrambled magic is OCT");
     Check(dumped != originalDump, "scrambled bytecode is distinct from original");
 
@@ -137,8 +383,8 @@ int main() {
     lua_close(L2);
 
     // Descramble bytecode
-    const bool descrambleOk = octarine::crypto::DescrambleLua54Bytecode(dumped.data(), dumped.size(), kSeed);
-    Check(descrambleOk, "DescrambleLua54Bytecode succeeded");
+    const bool descrambleOk = octarine::crypto::DescrambleLua55Bytecode(dumped.data(), dumped.size(), kSeed);
+    Check(descrambleOk, "DescrambleLua55Bytecode succeeded");
     Check(dumped[1] == 'L' && dumped[2] == 'u' && dumped[3] == 'a', "descrambled magic is restored to Lua");
     Check(dumped == originalDump, "descrambled bytecode matches original dump byte-for-byte");
 
@@ -153,6 +399,8 @@ int main() {
     lua_close(L3);
     lua_close(L);
   }
+
+  TestLua55EdgeCasesAndLegacyRejection();
 
   std::cout << "[crypto: AssetPak bytecode auto-scrambling & DecryptLuaBytes roundtrip]\n";
   {
@@ -205,7 +453,7 @@ int main() {
         SDL_free(rawData);
 
         // Bytecode stream from pak must have scrambled \x1bOCT magic
-        Check(payload.size() >= 34, "payload size is valid");
+        Check(payload.size() >= octarine::crypto::kLua55MinChunkSize, "payload size is valid");
         Check(payload[0] == '\x1B' && payload[1] == 'O' && payload[2] == 'C' && payload[3] == 'T',
               "bytecode in pak was scrambled with OCT magic");
 
@@ -216,7 +464,7 @@ int main() {
         lua_close(LStock);
 
         // DecryptLuaBytes restores original bytecode
-        DecryptLuaBytes(payload);
+        Check(DecryptLuaBytes(payload), "DecryptLuaBytes succeeded");
         Check(payload[0] == '\x1B' && payload[1] == 'L' && payload[2] == 'u' && payload[3] == 'a',
               "DecryptLuaBytes restored Lua magic");
         CheckEq(payload.size(), dumped.size(), "descrambled bytecode matches original size");
@@ -258,6 +506,37 @@ int main() {
         pakOut.write(tampered.data(), static_cast<std::streamsize>(tampered.size()));
       }
       Check(!tamperedPak.Open(tamperedHeaderFile.string()), "AssetPak::Open rejects pak with 1-bit tampered header");
+    }
+
+    // Malformed Lua 5.5 bytecode causes AssetPak::Pack to fail cleanly
+    {
+      const std::filesystem::path badScript = tempDir / "malformed.lua";
+      std::vector<uint8_t> badBytes(48, 0);
+      badBytes[0] = 0x1B;
+      badBytes[1] = 'L';
+      badBytes[2] = 'u';
+      badBytes[3] = 'a';
+      badBytes[4] = 0x55;
+      {
+        std::ofstream badOut(badScript, std::ios::binary);
+        badOut.write(reinterpret_cast<const char*>(badBytes.data()), static_cast<std::streamsize>(badBytes.size()));
+      }
+      const std::filesystem::path badPak = tempDir / "bad_bytecode.pak";
+      Check(!AssetPak::Pack(catalog, badPak.string(), tempDir.string(), {badScript.string()}, {}),
+            "AssetPak::Pack rejects malformed Lua 5.5 bytecode");
+    }
+
+    // Legacy Lua 5.4 manifest chunk is rejected by AssetCatalog::LoadManifestFromStream
+    {
+      const std::string legacyManifest(
+          "\x1BOCT\x54\x00\x19\x93\r\n\x1A\n"
+          "123456789012345678901234567890",
+          42);
+      SDL_IOStream* badManifestIo = SDL_IOFromConstMem(legacyManifest.data(), legacyManifest.size());
+      sol::state lua;
+      AssetCatalog badCatalog;
+      Check(!badCatalog.LoadManifestFromStream(badManifestIo, lua, tempDir.string(), "@legacy_manifest.lua"),
+            "AssetCatalog::LoadManifestFromStream rejects legacy \\x1bOCT\\x54 manifest");
     }
 
     std::filesystem::remove_all(tempDir, ec);

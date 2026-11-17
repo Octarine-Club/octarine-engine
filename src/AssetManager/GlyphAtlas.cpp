@@ -86,7 +86,12 @@ bool GlyphAtlas::Load(SDL_IOStream* pngIo, SDL_IOStream* luaIo, const std::strin
   }
   std::string luaChunk(static_cast<const char*>(luaRaw), luaBytes);
   SDL_free(luaRaw);
-  DecryptLuaBytes(luaChunk);
+  if (!DecryptLuaBytes(luaChunk)) {
+    Logger::Error("GlyphAtlas::Load: failed to decrypt or verify " + debugLuaName);
+    SDL_DestroySurface(source_surface_);
+    source_surface_ = nullptr;
+    return false;
+  }
   sol::protected_function_result rc = lua.safe_script(luaChunk, sol::script_pass_on_error, "@" + debugLuaName);
   std::fill(luaChunk.begin(), luaChunk.end(), '\0');
   luaChunk.clear();

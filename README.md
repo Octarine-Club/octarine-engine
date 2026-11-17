@@ -6,9 +6,9 @@
 
 ![Octarine Engine](https://img.shields.io/badge/Aesthetic-Yellowish--Purple-9370DB?style=for-the-badge)
 ![C++20](https://img.shields.io/badge/C++-20-blue.svg?style=for-the-badge&logo=c%2B%2B)
-![Lua](https://img.shields.io/badge/Lua-5.4-blue.svg?style=for-the-badge&logo=lua)
+![Lua](https://img.shields.io/badge/Lua-5.5-blue.svg?style=for-the-badge&logo=lua)
 
-Octarine Engine is a lightweight, high-performance 2D game engine built with C++20. It features a custom archetype-based Entity-Component System (ECS), integrated Lua 5.4 scripting (`sol2`), SDL3 multimedia backends, a declarative UI framework (`.oxml`/`.oss`), and chunked LDtk tilemaps.
+Octarine Engine is a lightweight, high-performance 2D game engine built with C++20. It features a custom archetype-based Entity-Component System (ECS), integrated Lua 5.5 scripting (`sol2`), SDL3 multimedia backends, a declarative UI framework (`.oxml`/`.oss`), and chunked LDtk tilemaps.
 
 - **New here?** Start with [`docs/QUICKSTART.md`](docs/QUICKSTART.md) (building the engine) or [`docs/making-games.md`](docs/making-games.md) (building a game).
 - **C++ API Reference:** Published Doxygen documentation at **[octarine-club.github.io/octarine-engine](https://octarine-club.github.io/octarine-engine/)**.
@@ -29,7 +29,7 @@ Octarine Engine is a lightweight, high-performance 2D game engine built with C++
 ## Tech Stack
 
 - **Multimedia:** SDL3 (`SDL3`, `SDL3_image`, `SDL3_ttf`, `SDL3_mixer`)
-- **Scripting:** Lua 5.4 with [sol2](https://github.com/ThePhD/sol2) bindings
+- **Scripting:** Lua 5.5 with [sol2](https://github.com/ThePhD/sol2) bindings
 - **ECS:** Custom 16 KB SoA archetype implementation with DAG scheduling
 - **Math:** [GLM](https://github.com/g-truc/glm)
 - **Debug UI:** [Dear ImGui](https://github.com/ocornut/imgui) with custom `sol2` bindings (`--dev` / non-shipped builds)
