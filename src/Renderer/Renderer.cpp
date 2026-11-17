@@ -300,6 +300,82 @@ bool Renderer::CaptureScene(SDL_Renderer* sdlRenderer, const std::string& path) 
 
 namespace {
 
+struct DrawStateCache {
+  struct TexEntry {
+    SDL_Texture* tex = nullptr;
+    Uint8 r = 255;
+    Uint8 g = 255;
+    Uint8 b = 255;
+    Uint8 a = 255;
+    SDL_BlendMode blend = SDL_BLENDMODE_INVALID;
+  };
+
+  static constexpr size_t kMaxTexCache = 8;
+  TexEntry texCache[kMaxTexCache]{};
+  size_t texCount = 0;
+  size_t texClock = 0;
+  SDL_BlendMode drawBlend = SDL_BLENDMODE_INVALID;
+  bool hasDrawColor = false;
+  SDL_Color drawColor{};
+
+  void ApplyTextureState(SDL_Renderer* /*renderer*/, SDL_Texture* tex, const SDL_Color& col,
+                         const SDL_BlendMode blend) {
+    TexEntry* slot = nullptr;
+    for (size_t i = 0; i < texCount; ++i) {
+      if (texCache[i].tex == tex) {
+        slot = &texCache[i];
+        break;
+      }
+    }
+    if (slot == nullptr) {
+      if (texCount < kMaxTexCache) {
+        slot = &texCache[texCount++];
+      } else {
+        slot = &texCache[(texClock++) % kMaxTexCache];
+      }
+      slot->tex = tex;
+      SDL_SetTextureColorMod(tex, col.r, col.g, col.b);
+      SDL_SetTextureAlphaMod(tex, col.a);
+      SDL_SetTextureBlendMode(tex, blend);
+      slot->r = col.r;
+      slot->g = col.g;
+      slot->b = col.b;
+      slot->a = col.a;
+      slot->blend = blend;
+      return;
+    }
+    if (slot->r != col.r || slot->g != col.g || slot->b != col.b) {
+      SDL_SetTextureColorMod(tex, col.r, col.g, col.b);
+      slot->r = col.r;
+      slot->g = col.g;
+      slot->b = col.b;
+    }
+    if (slot->a != col.a) {
+      SDL_SetTextureAlphaMod(tex, col.a);
+      slot->a = col.a;
+    }
+    if (slot->blend != blend) {
+      SDL_SetTextureBlendMode(tex, blend);
+      slot->blend = blend;
+    }
+  }
+
+  void ApplyDrawBlend(SDL_Renderer* renderer, const SDL_BlendMode blend) {
+    if (drawBlend != blend) {
+      SDL_SetRenderDrawBlendMode(renderer, blend);
+      drawBlend = blend;
+    }
+  }
+
+  void ApplyDrawColor(SDL_Renderer* renderer, const SDL_Color& col) {
+    if (!hasDrawColor || drawColor.r != col.r || drawColor.g != col.g || drawColor.b != col.b || drawColor.a != col.a) {
+      SDL_SetRenderDrawColor(renderer, col.r, col.g, col.b, col.a);
+      drawColor = col;
+      hasDrawColor = true;
+    }
+  }
+};
+
 inline SDL_FColor ToSdlFColor(const SDL_Color& c) {
   return {
       static_cast<float>(c.r) / 255.0f,
@@ -309,12 +385,10 @@ inline SDL_FColor ToSdlFColor(const SDL_Color& c) {
   };
 }
 
-void DrawSprite(SDL_Renderer* renderer, const SpriteCommand& cmd) {
+void DrawSprite(SDL_Renderer* renderer, DrawStateCache& state, const SpriteCommand& cmd) {
   const SDL_FRect destRect = {cmd.destX, cmd.destY, cmd.destW, cmd.destH};
   const SDL_FRect* srcRectPtr = (cmd.srcRect.w > 0.0f && cmd.srcRect.h > 0.0f) ? &cmd.srcRect : nullptr;
-  SDL_SetTextureColorMod(cmd.texture, cmd.colorMod.r, cmd.colorMod.g, cmd.colorMod.b);
-  SDL_SetTextureAlphaMod(cmd.texture, cmd.colorMod.a);
-  SDL_SetTextureBlendMode(cmd.texture, cmd.blendMode);
+  state.ApplyTextureState(renderer, cmd.texture, cmd.colorMod, cmd.blendMode);
   if (cmd.rotation == 0.0F && cmd.flip == SDL_FLIP_NONE) {
     SDL_RenderTexture(renderer, cmd.texture, srcRectPtr, &destRect);
     return;
@@ -323,10 +397,10 @@ void DrawSprite(SDL_Renderer* renderer, const SpriteCommand& cmd) {
   SDL_RenderTextureRotated(renderer, cmd.texture, srcRectPtr, &destRect, deg, &cmd.pivot, cmd.flip);
 }
 
-void DrawSquare(SDL_Renderer* renderer, const SquareCommand& cmd) {
-  SDL_SetRenderDrawBlendMode(renderer, cmd.blendMode);
+void DrawSquare(SDL_Renderer* renderer, DrawStateCache& state, const SquareCommand& cmd) {
+  state.ApplyDrawBlend(renderer, cmd.blendMode);
   if (cmd.rotation == 0.0F) {
-    SDL_SetRenderDrawColor(renderer, cmd.color.r, cmd.color.g, cmd.color.b, cmd.color.a);
+    state.ApplyDrawColor(renderer, cmd.color);
     SDL_RenderFillRect(renderer, &cmd.destRect);
     return;
   }
@@ -347,15 +421,14 @@ void DrawSquare(SDL_Renderer* renderer, const SquareCommand& cmd) {
   SDL_RenderGeometry(renderer, nullptr, verts, 4, indices, 6);
 }
 
-void DrawText(SDL_Renderer* renderer, const TextCommand& cmd) {
-  SDL_SetTextureColorMod(cmd.texture, cmd.colorMod.r, cmd.colorMod.g, cmd.colorMod.b);
-  SDL_SetTextureAlphaMod(cmd.texture, cmd.colorMod.a);
+void DrawText(SDL_Renderer* renderer, DrawStateCache& state, const TextCommand& cmd) {
+  state.ApplyTextureState(renderer, cmd.texture, cmd.colorMod, SDL_BLENDMODE_BLEND);
   SDL_RenderTexture(renderer, cmd.texture, nullptr, &cmd.destRect);
 }
 
-void DrawLine(SDL_Renderer* renderer, const LineCommand& cmd, const float renderScale) {
-  SDL_SetRenderDrawBlendMode(renderer, cmd.blendMode);
-  SDL_SetRenderDrawColor(renderer, cmd.color.r, cmd.color.g, cmd.color.b, cmd.color.a);
+void DrawLine(SDL_Renderer* renderer, DrawStateCache& state, const LineCommand& cmd, const float renderScale) {
+  state.ApplyDrawBlend(renderer, cmd.blendMode);
+  state.ApplyDrawColor(renderer, cmd.color);
   const float effectiveThickness = std::max(cmd.thickness, 1.0F);
   if (effectiveThickness * renderScale <= kHairlineScaleThreshold) {
     SDL_RenderLine(renderer, cmd.start.x, cmd.start.y, cmd.end.x, cmd.end.y);
@@ -421,13 +494,13 @@ void DrawFilledCircle(SDL_Renderer* renderer, const CircleCommand& cmd, const in
   SDL_RenderGeometry(renderer, nullptr, verts, segments + 1, indices, segments * 3);
 }
 
-void DrawOutlineCircle(SDL_Renderer* renderer, const CircleCommand& cmd, const int segments,
+void DrawOutlineCircle(SDL_Renderer* renderer, DrawStateCache& state, const CircleCommand& cmd, const int segments,
                        const octarine::Rotation2D stepRot, const bool rotateEllipse, const octarine::Rotation2D rot,
                        const float renderScale) {
   constexpr int kMaxSegments = 64;
   const float effectiveThickness = std::max(cmd.thickness, 1.0F);
   if (effectiveThickness * renderScale <= kHairlineScaleThreshold) {
-    SDL_SetRenderDrawColor(renderer, cmd.color.r, cmd.color.g, cmd.color.b, cmd.color.a);
+    state.ApplyDrawColor(renderer, cmd.color);
     SDL_FPoint points[kMaxSegments + 1];
     glm::vec2 unitDir{1.0f, 0.0f};
     for (int i = 0; i < segments; ++i) {
@@ -462,9 +535,9 @@ void DrawOutlineCircle(SDL_Renderer* renderer, const CircleCommand& cmd, const i
   DrawRingStrip<kMaxSegments>(renderer, outerPts, innerPts, segments, cmd.color);
 }
 
-void DrawCircle(SDL_Renderer* renderer, const CircleCommand& cmd, const float renderScale) {
+void DrawCircle(SDL_Renderer* renderer, DrawStateCache& state, const CircleCommand& cmd, const float renderScale) {
   if (cmd.radiusX <= 0.0f || cmd.radiusY <= 0.0f) return;
-  SDL_SetRenderDrawBlendMode(renderer, cmd.blendMode);
+  state.ApplyDrawBlend(renderer, cmd.blendMode);
 
   constexpr int kMaxSegments = 64;
   constexpr int kMinSegments = 16;
@@ -479,12 +552,12 @@ void DrawCircle(SDL_Renderer* renderer, const CircleCommand& cmd, const float re
   if (cmd.filled) {
     DrawFilledCircle(renderer, cmd, segments, stepRot, rotateEllipse, rot);
   } else {
-    DrawOutlineCircle(renderer, cmd, segments, stepRot, rotateEllipse, rot, renderScale);
+    DrawOutlineCircle(renderer, state, cmd, segments, stepRot, rotateEllipse, rot, renderScale);
   }
 }
 
-void DrawTriangle(SDL_Renderer* renderer, const TriangleCommand& cmd, const float renderScale) {
-  SDL_SetRenderDrawBlendMode(renderer, cmd.blendMode);
+void DrawTriangle(SDL_Renderer* renderer, DrawStateCache& state, const TriangleCommand& cmd, const float renderScale) {
+  state.ApplyDrawBlend(renderer, cmd.blendMode);
   if (cmd.filled) {
     const SDL_FColor fcol = ToSdlFColor(cmd.color);
     const SDL_Vertex verts[3] = {
@@ -546,10 +619,10 @@ void BuildCapsuleContour(const glm::vec2 p1, const glm::vec2 p2, const glm::vec2
   }
 }
 
-void DrawCapsule(SDL_Renderer* renderer, const CapsuleCommand& cmd, const float renderScale) {
-  SDL_SetRenderDrawBlendMode(renderer, cmd.blendMode);
+void DrawCapsule(SDL_Renderer* renderer, DrawStateCache& state, const CapsuleCommand& cmd, const float renderScale) {
+  state.ApplyDrawBlend(renderer, cmd.blendMode);
   if (cmd.radius <= 0.0f) {
-    DrawLine(renderer, LineCommand{cmd.start, cmd.end, cmd.thickness, cmd.color, cmd.blendMode}, renderScale);
+    DrawLine(renderer, state, LineCommand{cmd.start, cmd.end, cmd.thickness, cmd.color, cmd.blendMode}, renderScale);
     return;
   }
   const glm::vec2 p1{cmd.start.x, cmd.start.y};
@@ -558,7 +631,7 @@ void DrawCapsule(SDL_Renderer* renderer, const CapsuleCommand& cmd, const float 
   const float len = glm::length(d);
   if (len < 0.0001f) {
     DrawCircle(
-        renderer,
+        renderer, state,
         CircleCommand{cmd.start, cmd.radius, cmd.radius, 0.0f, cmd.thickness, cmd.color, cmd.blendMode, cmd.filled},
         renderScale);
     return;
@@ -574,7 +647,7 @@ void DrawCapsule(SDL_Renderer* renderer, const CapsuleCommand& cmd, const float 
   if (!cmd.filled) {
     const float effectiveThickness = std::max(cmd.thickness, 1.0F);
     if (effectiveThickness * renderScale <= kHairlineScaleThreshold) {
-      SDL_SetRenderDrawColor(renderer, cmd.color.r, cmd.color.g, cmd.color.b, cmd.color.a);
+      state.ApplyDrawColor(renderer, cmd.color);
       SDL_FPoint points[kTotalVerts + 1];
       for (int i = 0; i < kTotalVerts; ++i) {
         points[i] = {centers[i].x + cmd.radius * normals[i].x, centers[i].y + cmd.radius * normals[i].y};
@@ -613,16 +686,14 @@ void DrawCapsule(SDL_Renderer* renderer, const CapsuleCommand& cmd, const float 
   SDL_RenderGeometry(renderer, nullptr, verts, kTotalVerts + 1, indices, kTotalVerts * 3);
 }
 
-void DrawTileChunk(SDL_Renderer* renderer, const TileChunkCommand& cmd) {
+void DrawTileChunk(SDL_Renderer* renderer, DrawStateCache& state, const TileChunkCommand& cmd) {
   if (cmd.vertices == nullptr || cmd.vertexCount <= 0) {
     return;
   }
   if (cmd.texture != nullptr) {
-    SDL_SetTextureColorMod(cmd.texture, Constants::kUint8Max, Constants::kUint8Max, Constants::kUint8Max);
-    SDL_SetTextureAlphaMod(cmd.texture, Constants::kUint8Max);
-    SDL_SetTextureBlendMode(cmd.texture, cmd.blendMode);
+    state.ApplyTextureState(renderer, cmd.texture, SDL_Color{255, 255, 255, 255}, cmd.blendMode);
   } else {
-    SDL_SetRenderDrawBlendMode(renderer, cmd.blendMode);
+    state.ApplyDrawBlend(renderer, cmd.blendMode);
   }
   SDL_RenderGeometry(renderer, cmd.texture, cmd.vertices, cmd.vertexCount, cmd.indices, cmd.indexCount);
 }
@@ -631,6 +702,7 @@ void DrawTileChunk(SDL_Renderer* renderer, const TileChunkCommand& cmd) {
 
 void Renderer::DrawQueue(const RenderQueue& renderQueue, SDL_Renderer* renderer) const {
   const float renderScale = std::max(render_scale_x_, render_scale_y_);
+  DrawStateCache state{};
   std::uint8_t activeClipId = 0;
   for (const RenderKey& key : renderQueue) {
     if (key.clipId != activeClipId) {
@@ -639,28 +711,28 @@ void Renderer::DrawQueue(const RenderQueue& renderQueue, SDL_Renderer* renderer)
     }
     switch (key.type) {
       case SPRITE:
-        DrawSprite(renderer, key.payload.sprite);
+        DrawSprite(renderer, state, key.payload.sprite);
         break;
       case SQUARE_PRIMITIVE:
-        DrawSquare(renderer, key.payload.square);
+        DrawSquare(renderer, state, key.payload.square);
         break;
       case TEXT:
-        DrawText(renderer, key.payload.text);
+        DrawText(renderer, state, key.payload.text);
         break;
       case CIRCLE_PRIMITIVE:
-        DrawCircle(renderer, key.payload.circle, renderScale);
+        DrawCircle(renderer, state, key.payload.circle, renderScale);
         break;
       case LINE_PRIMITIVE:
-        DrawLine(renderer, key.payload.line, renderScale);
+        DrawLine(renderer, state, key.payload.line, renderScale);
         break;
       case TRIANGLE_PRIMITIVE:
-        DrawTriangle(renderer, key.payload.triangle, renderScale);
+        DrawTriangle(renderer, state, key.payload.triangle, renderScale);
         break;
       case CAPSULE_PRIMITIVE:
-        DrawCapsule(renderer, key.payload.capsule, renderScale);
+        DrawCapsule(renderer, state, key.payload.capsule, renderScale);
         break;
       case TILE_CHUNK:
-        DrawTileChunk(renderer, key.payload.tileChunk);
+        DrawTileChunk(renderer, state, key.payload.tileChunk);
         break;
       default:
         Logger::Error("Unknown renderable type");
