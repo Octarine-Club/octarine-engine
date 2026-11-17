@@ -116,6 +116,16 @@ else ()
     set(OCTARINE_ARCH_FLAG "")
 endif ()
 
+# Work around GCC 15.0–15.2 x86_64 AVX2+FMA SLP tree-vectorizer register-aliasing bug (fixed in GCC 15.3).
+set(OCTARINE_COMPILER_WORKAROUND_FLAGS "")
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU"
+    AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "15.0"
+    AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS "15.3"
+    AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
+    list(APPEND OCTARINE_COMPILER_WORKAROUND_FLAGS -fno-tree-slp-vectorize)
+    message(STATUS "Octarine: enabling -fno-tree-slp-vectorize workaround for GCC ${CMAKE_CXX_COMPILER_VERSION} (< 15.3)")
+endif ()
+
 # Link-Time Optimization (LTO / IPO) for non-Debug configurations
 if (OCTARINE_ENABLE_LTO)
     include(CheckIPOSupported)
@@ -266,6 +276,7 @@ else ()
     else ()
         target_compile_options(${PROJECT_NAME} PRIVATE
                 $<IF:$<CONFIG:Debug>,,${OCTARINE_ARCH_FLAG} -ffast-math>
+                $<$<NOT:$<CONFIG:Debug>>:${OCTARINE_COMPILER_WORKAROUND_FLAGS}>
         )
     endif ()
     target_compile_options(${PROJECT_NAME} PRIVATE
@@ -392,6 +403,7 @@ if (OCTARINE_ENABLE_BENCHMARKS)
         target_compile_options(OctarineBenchmarks PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(OctarineBenchmarks PRIVATE
                 $<IF:$<CONFIG:Debug>,,-Werror ${OCTARINE_ARCH_FLAG} -ffast-math>
+                $<$<NOT:$<CONFIG:Debug>>:${OCTARINE_COMPILER_WORKAROUND_FLAGS}>
                 $<$<NOT:$<CONFIG:Debug>>:-ffunction-sections>
                 $<$<NOT:$<CONFIG:Debug>>:-fdata-sections>
                 $<$<NOT:$<CONFIG:Debug>>:-fvisibility=hidden>

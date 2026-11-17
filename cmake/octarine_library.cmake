@@ -75,6 +75,7 @@ function(octarine_library NAME)
         else ()
             target_compile_options(${NAME} PRIVATE
                     $<IF:$<CONFIG:Debug>,,${OCTARINE_ARCH_FLAG} -ffast-math>
+                    $<$<NOT:$<CONFIG:Debug>>:${OCTARINE_COMPILER_WORKAROUND_FLAGS}>
             )
         endif ()
         target_compile_options(${NAME} PRIVATE
