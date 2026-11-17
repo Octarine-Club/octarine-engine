@@ -4,18 +4,20 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstddef>
+#include <cstdlib>
 #include <functional>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
-// Persistent worker pool sized to hardware concurrency.
+// Persistent worker pool sized to hardware concurrency (overridable via OCTARINE_THREADS).
 class ThreadPool {
  public:
   static ThreadPool& Instance() {
-    static ThreadPool inst(std::max<size_t>(1u, std::thread::hardware_concurrency()));
+    static ThreadPool inst(ResolveThreadCount());
     return inst;
   }
 
@@ -119,6 +121,33 @@ class ThreadPool {
   }
 
  private:
+  static size_t ResolveThreadCount() {
+    const size_t hw = std::max<size_t>(1u, std::thread::hardware_concurrency());
+    std::string raw;
+#ifdef _MSC_VER
+    char* value = nullptr;
+    size_t len = 0;
+    if (_dupenv_s(&value, &len, "OCTARINE_THREADS") == 0 && value != nullptr) {
+      raw = value;
+    }
+    free(value);
+#else
+    if (const char* value = std::getenv("OCTARINE_THREADS")) {
+      raw = value;
+    }
+#endif
+    if (!raw.empty()) {
+      try {
+        const long parsed = std::stol(raw);
+        if (parsed >= 1) {
+          return static_cast<size_t>(parsed);
+        }
+      } catch (...) {
+      }
+    }
+    return hw;
+  }
+
   static std::atomic<bool>& ForceSerialFlag() {
     static std::atomic<bool> flag{false};
     return flag;

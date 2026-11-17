@@ -177,7 +177,6 @@ bool TilemapSystem::LoadFromData(Registry& registry, TilemapData data, const Til
   seed_ = options.seed;
   ysort_layer_ = options.ysortLayer;
   SetWindowRadii(options.loadRadius, options.unloadRadius);
-  resolved_templates_.clear();
   ++map_revision_;
   is_loaded_ = true;
 
@@ -228,7 +227,6 @@ void TilemapSystem::Unload(Registry& registry) {
   DespawnAllChunkProps(registry);
   active_chunks_.clear();
   chunk_overrides_.clear();
-  resolved_templates_.clear();
   consumed_props_.clear();
   file_watcher_ = FileWatcher{};
   loaded_path_.clear();
@@ -254,7 +252,6 @@ bool TilemapSystem::Reload(Registry& registry) {
 
   DespawnAllChunkProps(registry);
   active_chunks_.clear();
-  resolved_templates_.clear();
   TilemapBuilder::ApplyWorldTileScale(*parsed, tile_scale_);
   InvokeVariantGenerator(*parsed, variant_count_, seed_);
   project_data_ = std::move(*parsed);
@@ -289,7 +286,6 @@ void TilemapSystem::SetStitchMode(Registry& registry, const StitchMode mode, con
   const bool seedChanged = (seed_ != seed);
   stitch_mode_ = mode;
   seed_ = seed;
-  resolved_templates_.clear();
   ++map_revision_;
   if (!is_loaded_) {
     return;
@@ -353,7 +349,6 @@ bool TilemapSystem::SetChunkOverride(Registry& registry, const int32_t chunkX, c
     }
     chunk_overrides_[key] = templateId;
   }
-  resolved_templates_.erase(key);
   ++map_revision_;
 
   if (const auto it = active_chunks_.find(key); it != active_chunks_.end()) {
@@ -371,7 +366,6 @@ void TilemapSystem::ClearChunkOverrides(Registry& registry) {
     return;
   }
   chunk_overrides_.clear();
-  resolved_templates_.clear();
   ++map_revision_;
   if (!is_loaded_) {
     return;
@@ -889,14 +883,7 @@ const ChunkTemplate* TilemapSystem::GetTemplateAtChunk(const int32_t chunkX, con
     return nullptr;
   }
   const int64_t key = PackChunkKey(chunkX, chunkY);
-  if (const auto cacheIt = resolved_templates_.find(key); cacheIt != resolved_templates_.end()) {
-    return cacheIt->second;
-  }
   if (const auto it = active_chunks_.find(key); it != active_chunks_.end() && it->second.templatePtr != nullptr) {
-    if (resolved_templates_.size() > 4096u) {
-      resolved_templates_.clear();
-    }
-    resolved_templates_.emplace(key, it->second.templatePtr);
     return it->second.templatePtr;
   }
   const ChunkTemplate* baseTmpl = nullptr;
@@ -914,10 +901,6 @@ const ChunkTemplate* TilemapSystem::GetTemplateAtChunk(const int32_t chunkX, con
       resolvedTmpl = &varIt->second[static_cast<size_t>(h % varIt->second.size())];
     }
   }
-  if (resolved_templates_.size() > 4096u) {
-    resolved_templates_.clear();
-  }
-  resolved_templates_.emplace(key, resolvedTmpl);
   return resolvedTmpl;
 }
 
