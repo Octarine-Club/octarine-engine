@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <string>
+#include <vector>
 
 #include "AssetManager/AssetManager.h"
 #include "Game/EngineOptions.h"
@@ -99,6 +100,8 @@ class Renderer {
 
  private:
   SDL_Texture* scene_texture_ = nullptr;
+  mutable std::vector<SDL_Vertex> batch_verts_;
+  mutable std::vector<int> batch_indices_;
   int logical_width_ = 0;
   int logical_height_ = 0;
   int target_width_ = 0;
