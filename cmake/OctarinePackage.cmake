@@ -59,14 +59,47 @@ set(OCTARINE_PACKAGE_KEY "" CACHE STRING "256-bit encryption key for AssetPak an
 option(OCTARINE_ALLOW_LOOSE_ASSETS "Allow loose config/manifest/asset overrides beside the binary in shipped builds" OFF)
 
 if (OCTARINE_PROTECT_SCRIPTS)
-    find_program(LUAC_EXECUTABLE
-        NAMES luac luac5.4
-        HINTS
-            "${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/tools/lua"
-            "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/lua"
-        REQUIRED
-    )
-    message(STATUS "Octarine: script protection enabled (luac=${LUAC_EXECUTABLE})")
+    set(_octarine_vcpkg_luac_dirs "")
+    foreach (_vcpkg_root "${CMAKE_BINARY_DIR}/vcpkg_installed" "${VCPKG_INSTALLED_DIR}")
+        foreach (_triplet "${VCPKG_HOST_TRIPLET}" "${VCPKG_TARGET_TRIPLET}")
+            if (_vcpkg_root AND _triplet)
+                list(APPEND _octarine_vcpkg_luac_dirs "${_vcpkg_root}/${_triplet}/tools/lua")
+            endif ()
+        endforeach ()
+    endforeach ()
+
+    function(_octarine_find_luac luac_dirs out_ver out_rc)
+        find_program(LUAC_EXECUTABLE
+            NAMES luac luac5.5
+            PATHS ${luac_dirs}
+            NO_DEFAULT_PATH
+        )
+        if (NOT LUAC_EXECUTABLE)
+            find_program(LUAC_EXECUTABLE NAMES luac luac5.5 REQUIRED)
+        endif ()
+
+        execute_process(
+            COMMAND "${LUAC_EXECUTABLE}" -v
+            OUTPUT_VARIABLE _ver
+            ERROR_VARIABLE _err
+            RESULT_VARIABLE _rc
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+        set(${out_ver} "${_ver}${_err}" PARENT_SCOPE)
+        set(${out_rc} "${_rc}" PARENT_SCOPE)
+    endfunction()
+
+    _octarine_find_luac("${_octarine_vcpkg_luac_dirs}" _octarine_luac_ver _octarine_luac_rc)
+    if (NOT _octarine_luac_rc EQUAL 0 OR NOT "${_octarine_luac_ver}" MATCHES "Lua 5\\.5")
+        unset(LUAC_EXECUTABLE CACHE)
+        _octarine_find_luac("${_octarine_vcpkg_luac_dirs}" _octarine_luac_ver _octarine_luac_rc)
+        if (NOT _octarine_luac_rc EQUAL 0 OR NOT "${_octarine_luac_ver}" MATCHES "Lua 5\\.5")
+            message(FATAL_ERROR
+                "Octarine: OCTARINE_PROTECT_SCRIPTS requires luac for Lua 5.5, "
+                "but '${LUAC_EXECUTABLE}' reported '${_octarine_luac_ver}' (rc=${_octarine_luac_rc}).")
+        endif ()
+    endif ()
+    message(STATUS "Octarine: script protection enabled (luac=${LUAC_EXECUTABLE}, ${_octarine_luac_ver})")
 endif ()
 
 # CLI overrides for project identity (precedence: CLI cache var > project.ini > built-in default).

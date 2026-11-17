@@ -1,6 +1,6 @@
 # Octarine Engine Documentation
 
-Welcome to the C++ API documentation for **Octarine Engine** — a lightweight, C++20 2D game engine with a custom 16 KB SoA archetype ECS, integrated Lua 5.4 scripting (`sol2`), SDL3 backends, a declarative UI framework (`.oxml`/`.oss`), and chunked LDtk tilemaps.
+Welcome to the C++ API documentation for **Octarine Engine** — a lightweight, C++20 2D game engine with a custom 16 KB SoA archetype ECS, integrated Lua 5.5 scripting (`sol2`), SDL3 backends, a declarative UI framework (`.oxml`/`.oss`), and chunked LDtk tilemaps.
 
 For narrative guides and workflows, see the markdown documentation in the repository (`docs/`):
 

@@ -310,12 +310,15 @@ bool WriteFileEntry(std::ofstream& out, const std::string& sourcePath, uint64_t 
   const auto offset = static_cast<uint64_t>(out.tellp());
   std::vector<uint8_t> fileData((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 
-  // Scramble compiled Lua 5.4 bytecode if detected before packing
-  static constexpr uint8_t kLuaMagic[] = {0x1B, 'L', 'u', 'a', 0x54};
-  if (fileData.size() >= 34 && std::memcmp(fileData.data(), kLuaMagic, 5) == 0) {
+  // Scramble compiled Lua 5.5 bytecode if detected before packing
+  static constexpr uint8_t kLuaMagic[] = {0x1B, 'L', 'u', 'a', 0x55};
+  if (fileData.size() >= octarine::crypto::kLua55MinChunkSize && std::memcmp(fileData.data(), kLuaMagic, 5) == 0) {
     uint64_t seed = 0;
     std::memcpy(&seed, key.data(), sizeof(seed));
-    octarine::crypto::ScrambleLua54Bytecode(fileData.data(), fileData.size(), seed);
+    if (!octarine::crypto::ScrambleLua55Bytecode(fileData.data(), fileData.size(), seed)) {
+      Logger::Error("AssetPak::Pack: failed to scramble Lua 5.5 bytecode for " + sourcePath);
+      return false;
+    }
   }
 
   std::array<uint8_t, 12> nonce{};

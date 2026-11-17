@@ -29,6 +29,7 @@
 #include "Components/ScaleComponent.h"
 #include "Components/UIButtonComponent.h"
 #include "ECS/Registry.h"
+#include "Engine/EngineBootstrap.h"
 #include "Events/GamepadButtonEvent.h"
 #include "Events/KeyInputEvent.h"
 #include "Game/EngineContext.h"
@@ -395,6 +396,37 @@ void TestPerformanceTelemetryBindings(sol::state& lua, Registry* reg) {
   CheckEq(stats["entity_count"].get<std::size_t>(), static_cast<std::size_t>(42), "live_stats.entity_count matches");
   CheckEq(stats["memory_bytes"].get<std::uint64_t>(), dummyStats.memoryBytes, "live_stats.memory_bytes matches");
   CheckEq(stats["memory_mb"].get<double>(), 256.0, "live_stats.memory_mb matches");
+}
+
+void TestLua55RuntimeAndDeterminism() {
+  std::cout << "[lua 5.5 runtime, strict global, const loop var, and deterministic seed]\n";
+
+  const auto runStateProbe = []() -> std::pair<std::string, double> {
+    sol::state s;
+    engine_bootstrap::InstallLuaLibraries(s);
+    CheckEq(s["_VERSION"].get<std::string>(), std::string("Lua 5.5"), "_VERSION reports Lua 5.5");
+    Check(RunLua(s, "assert(type(table.create) == 'function')"), "table.create is exposed by InstallLuaLibraries");
+    Check(!s.load("local global = 1").valid(), "LUA_COMPAT_GLOBAL=0 rejects 'global' as a local identifier");
+    Check(RunLua(s, "global oct_lua55_test_global = 7"), "strict Lua 5.5 global declaration succeeds");
+    CheckEq(s["oct_lua55_test_global"].get<int>(), 7, "strict Lua 5.5 global value stored in _G");
+    Check(RunLua(s, "global *; global oct_lua55_test_global2 = 9; assert(oct_lua55_test_global2 == 9)"),
+          "global * permits reading pre-existing globals alongside explicit global declarations");
+    Check(!s.load("for i = 1, 2 do i = 5 end").valid(), "for-loop control variable is strictly read-only");
+    Check(RunLua(s, R"LUA(
+      local t = { alpha = 1, beta = 2, gamma = 3, delta = 4, epsilon = 5, zeta = 6 }
+      local parts = {}
+      for k in pairs(t) do parts[#parts + 1] = k end
+      order_key = table.concat(parts, ",")
+      rand_val = math.random()
+    )LUA"),
+          "pairs() iteration and math.random() succeed");
+    return {s["order_key"].get<std::string>(), s["rand_val"].get<double>()};
+  };
+
+  const auto [orderA, randA] = runStateProbe();
+  const auto [orderB, randB] = runStateProbe();
+  CheckEq(orderA, orderB, "pairs() iteration order is deterministic across fresh sol::state instances");
+  CheckEq(randA, randB, "initial math.random() output is deterministic across fresh sol::state instances");
 }
 }  // namespace
 
@@ -1128,6 +1160,7 @@ int main() {
   TestColliderBindings(lua, reg);
   TestUIButtonShapes(lua, reg);
   TestPerformanceTelemetryBindings(lua, reg);
+  TestLua55RuntimeAndDeterminism();
 
   return octarine::test::ReportSummary("Lua behavior test");
 }

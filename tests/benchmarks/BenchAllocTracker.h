@@ -40,7 +40,7 @@ class AllocScope {
   bool stopped_ = false;
 };
 
-// RAII scope to track Lua 5.4 VM allocations and GC heap growth.
+// RAII scope to track Lua 5.5 VM allocations and GC heap growth.
 class LuaMemoryScope {
  public:
   explicit LuaMemoryScope(lua_State* L);

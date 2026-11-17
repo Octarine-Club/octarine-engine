@@ -1,7 +1,7 @@
 name: Export vcpkg binary cache env
 description: |
   Caches vcpkg binary archives via actions/cache@v4 and pre-populates the
-  lua-5.4.7.tar.gz source archive with retries to avoid transient lua.org SSL
+  lua-5.5.1.tar.gz source archive with retries to avoid transient lua.org SSL
   and timeout failures.
 
   Used by workflows that run `cmake --preset` against the vcpkg toolchain
@@ -33,16 +33,16 @@ runs:
       with:
         path: |
           ${{ runner.temp }}/vcpkg-bincache
-          ${{ runner.temp }}/vcpkg-downloads/lua-5.4.9.tar.gz
+          ${{ runner.temp }}/vcpkg-downloads/lua-5.5.1.tar.gz
         key: vcpkg-${{ runner.os }}-${{ env.VCPKG_CACHE_ABI }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'cmake/gcc15-slp-workaround.cmake') }}
         restore-keys: |
           vcpkg-${{ runner.os }}-${{ env.VCPKG_CACHE_ABI }}-
-    - name: Pre-fetch and verify Lua 5.4.9 tarball
+    - name: Pre-fetch and verify Lua 5.5.1 tarball
       shell: bash
       run: |
         dl_dir="${RUNNER_TEMP}/vcpkg-downloads"
-        tarball="$dl_dir/lua-5.4.9.tar.gz"
-        expected_sha512="b112bd3f0d47043568ef52928853ef692554378a5e368d420b589babf606a82ce05fca781f5401c3565171800b39322141ee500e53e813d1a4ccc5d3a05879b1"
+        tarball="$dl_dir/lua-5.5.1.tar.gz"
+        expected_sha512="1c8cb3d7194732d7685f80a30e0804cb24dc6aee1f8d1383bb9fd5d0699b84c70b823e686555dfa8fd61a32f32c0c687a8419ff4aa285f39d4f3bf3d5cd635c0"
 
         verify_lua_tarball() {
           [ -f "$tarball" ] || return 1
@@ -53,7 +53,7 @@ runs:
         if ! verify_lua_tarball; then
           rm -f "$tarball"
           curl -fL --connect-timeout 15 --max-time 60 --retry 8 --retry-all-errors --retry-delay 5 \
-            "https://www.lua.org/ftp/lua-5.4.9.tar.gz" \
+            "https://www.lua.org/ftp/lua-5.5.1.tar.gz" \
             -o "$tarball"
           if ! verify_lua_tarball; then
             echo "::error::Failed to verify SHA512 of downloaded $tarball"

@@ -1,6 +1,6 @@
 # Lua Scripting Guide
 
-Octarine Engine is driven by Lua 5.4 scripts (`sol2`). This guide covers project layout, `config.ini`, the `script` component (inline and file-backed hot reload), component proxies, global helpers, `storage.*`, `settings.*`, `input.*`, ImGui/developer tooling, and C++ component-binding rules.
+Octarine Engine is driven by Lua 5.5 scripts (`sol2`). This guide covers project layout, `config.ini`, the `script` component (inline and file-backed hot reload), component proxies, global helpers, `storage.*`, `settings.*`, `input.*`, ImGui/developer tooling, C++ component-binding rules, and Lua 5.5 migration notes.
 
 For a complete runnable example, see [`Octarine-Engine-Example`](https://github.com/Octarine-Club/octarine-engine-example).
 
@@ -252,3 +252,25 @@ A component method may read and write **the component's own fields only**:
 Anything requiring cross-entity coordination or events belongs in a system. Bind read-only derived values with `sol::readonly` or `sol::property(&T::Accessor)`, and enforce field invariants inside setter properties.
 
 Reference implementations: [`LuaBinding.h`](../src/Lua/Bindings/LuaBinding.h), [`LifetimeComponentLuaBinding.h`](../src/Lua/Bindings/LifetimeComponentLuaBinding.h), and [`RegisterTransformCoreBindings.cpp`](../src/Lua/Bindings/RegisterTransformCoreBindings.cpp).
+
+---
+
+## 9. Lua 5.5 Runtime & Migration Notes (from 5.4)
+
+Octarine embeds [Lua 5.5](https://www.lua.org/manual/5.5/) with `LUA_COMPAT_GLOBAL = 0`, incremental major generational GC (`LUA_GCGEN`), and deterministic seeding (`luai_makeseed() = 0x0C7A21E5u`).
+
+### New Capabilities
+- **`table.create(nseq [, nrec])`:** Pre-allocate sequence and hash capacity for large tables without C++ helpers.
+- **Named Vararg Tables (`function f(...args)`):** Read varargs directly (`args.n`, `args[i]`) without per-call `table.pack(...)` heap churn.
+- **Explicit Global Declarations:** `global x = 1`, `global *`, and `global none` catch accidental global typos at compile time (note: adding a `global` declaration enables strict checking for the rest of that scope, so place `global *` alongside it if the file reads ambient engine globals).
+- **Lower Array Memory & Smoother GC:** Lua 5.5 separates array type tags (`sizeof(Value) + 1` bytes vs. 16 bytes) and executes major generational GC incrementally.
+
+### Breaking Changes from Lua 5.4
+- **`global` is a strict reserved keyword (`LUA_COMPAT_GLOBAL = 0`):** Identifiers like `local global = 1` or `t.global` fail to parse (rename identifiers, or write `t["global"]` only when a string key is required).
+- **Read-only `for`-loop variables:** Numeric and generic `for` control variables are implicitly `<const>`; reassigning them inside the loop fails to compile (shadow with `local idx = i` if mutation is needed).
+- **`collectgarbage` parameter tuning:** `collectgarbage("generational", ...)` / `"incremental"` no longer accept tuning multipliers; use `collectgarbage("param", name, val)`.
+- **`error(nil)`:** `error(nil)` now substitutes a default string error message instead of propagating `nil` to `pcall`.
+
+### Native C++ Module Notes (`octarine_game_module`)
+- **Clean Rebuild & Re-Bake:** Lua 5.5 is ABI-incompatible with Lua 5.4; clean-rebuild native game module build directories and re-bake shipped `asset_bundle.pak` archives.
+- **C API Changes:** Direct `lua_newstate` callers must pass the 3rd seed argument (`lua_newstate(f, ud, luaL_makeseed(nullptr))` preserves determinism); tune GC multipliers via `lua_gc(L, LUA_GCPARAM, LUA_GCP*, val)` (trailing args on `LUA_GCGEN` / `LUA_GCINC` and `sol::state_view::change_gc_mode_*` are ignored in Lua 5.5).
