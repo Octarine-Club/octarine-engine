@@ -67,6 +67,27 @@ class ArchetypeQuery {
     }
   }
 
+  // Process matching chunks directly via contiguous typed component arrays.
+  // Supports void(size_t count, const Entity* entities, PtrT... ptrs) or void(size_t count, PtrT... ptrs).
+  template <typename Func>
+  void ForEachChunk(Func&& func) const {
+    for (size_t a = 0; a < matching_archetypes_.size(); ++a) {
+      auto* arch = matching_archetypes_[a];
+      const auto& offsets = arch_component_offsets_[a];
+      for (size_t c = 0; c < arch->chunks_.size(); ++c) {
+        const size_t count = include_inactive_ ? arch->chunks_[c].GetEntityCount() : arch->chunks_[c].GetActiveCount();
+        if (count == 0) continue;
+        const auto arrays = ResolveChunkArrays(arch, offsets, c);
+        if constexpr (std::is_invocable_v<Func, size_t, const Entity*, Internal::resolve_pointer_t<TComponents>...>) {
+          const Entity* entities = arch->chunks_[c].GetEntityArray();
+          std::apply([&](auto*... ptrs) { func(count, entities, ptrs...); }, arrays);
+        } else {
+          std::apply([&](auto*... ptrs) { func(count, ptrs...); }, arrays);
+        }
+      }
+    }
+  }
+
   static constexpr size_t kDefaultSerialBelowEntities = 512;
   static constexpr size_t kMaxParallelBatches = 64;
 

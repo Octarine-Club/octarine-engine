@@ -574,29 +574,74 @@ class KDTreeCollisionSystem {
   }
 
   template <typename QueryT>
-  static void AppendBoxesSync(QueryT& q, std::vector<Box>& boxes) {
+  static void ScanMaskUnions(QueryT& q, uint32_t& entityUnion, uint32_t& collisionUnion) {
     if (q.GetCount() == 0) return;
-    q.ForEach([&](Entity entity, const GlobalTransformComponent& transform, const auto& collider,
-                  const EntityMaskComponent& entityMask) {
-      Box b = BuildBox(entity, transform, collider, entityMask);
-      if (IsFiniteFloat(b.minX) && IsFiniteFloat(b.minY) && IsFiniteFloat(b.maxX) && IsFiniteFloat(b.maxY) &&
-          IsFiniteFloat(b.cx) && IsFiniteFloat(b.cy)) {
-        boxes.push_back(b);
+    uint32_t localEntity = 0;
+    uint32_t localCollision = 0;
+    q.ForEachChunk([&](const size_t count, const GlobalTransformComponent* /*transforms*/, const auto* colliders,
+                       const EntityMaskComponent* masks) {
+      for (size_t i = 0; i < count; ++i) {
+        localEntity |= static_cast<uint32_t>(masks[i].mask.to_ulong());
+        localCollision |= static_cast<uint32_t>(colliders[i].collisionMask.to_ulong());
       }
     });
+    entityUnion |= localEntity;
+    collisionUnion |= localCollision;
+  }
+
+  void GatherMaskUnions(uint32_t& entityUnion, uint32_t& collisionUnion) {
+    ScanMaskUnions(*query_, entityUnion, collisionUnion);
+    ScanMaskUnions(*circleQuery_, entityUnion, collisionUnion);
+    ScanMaskUnions(*capsuleQuery_, entityUnion, collisionUnion);
+    ScanMaskUnions(*triangleQuery_, entityUnion, collisionUnion);
+    ScanMaskUnions(*lineQuery_, entityUnion, collisionUnion);
   }
 
   template <typename QueryT>
-  static void AppendBoxesAsync(QueryT& q, std::vector<Box>& boxes, std::atomic<size_t>& nextIndex) {
+  static void AppendBoxesSync(QueryT& q, const uint32_t filterEntity, const uint32_t filterCollision,
+                              std::vector<Box>& boxes, uint32_t& entityUnion, uint32_t& collisionUnion) {
+    if (q.GetCount() == 0) return;
+    uint32_t localEntity = 0;
+    uint32_t localCollision = 0;
+    q.ForEach([&](Entity entity, const GlobalTransformComponent& transform, const auto& collider,
+                  const EntityMaskComponent& entityMask) {
+      const auto eMask = static_cast<uint32_t>(entityMask.mask.to_ulong());
+      const auto cMask = static_cast<uint32_t>(collider.collisionMask.to_ulong());
+      if ((cMask & filterEntity) == 0U && (eMask & filterCollision) == 0U) {
+        return;
+      }
+      Box b = BuildBox(entity, transform, collider, entityMask);
+      if (IsFiniteFloat(b.minX) && IsFiniteFloat(b.minY) && IsFiniteFloat(b.maxX) && IsFiniteFloat(b.maxY) &&
+          IsFiniteFloat(b.cx) && IsFiniteFloat(b.cy)) {
+        localEntity |= eMask;
+        localCollision |= cMask;
+        boxes.push_back(b);
+      }
+    });
+    entityUnion |= localEntity;
+    collisionUnion |= localCollision;
+  }
+
+  template <typename QueryT>
+  static void AppendBoxesAsync(QueryT& q, const uint32_t filterEntity, const uint32_t filterCollision,
+                               std::vector<Box>& boxes, std::atomic<size_t>& nextIndex,
+                               std::atomic<uint32_t>& entityUnion, std::atomic<uint32_t>& collisionUnion) {
     if (q.GetCount() == 0) return;
     const size_t maxBoxes = boxes.size();
     q.ParallelForEach([&](Entity entity, const GlobalTransformComponent& transform, const auto& collider,
                           const EntityMaskComponent& entityMask) {
+      const auto eMask = static_cast<uint32_t>(entityMask.mask.to_ulong());
+      const auto cMask = static_cast<uint32_t>(collider.collisionMask.to_ulong());
+      if ((cMask & filterEntity) == 0U && (eMask & filterCollision) == 0U) {
+        return;
+      }
       Box b = BuildBox(entity, transform, collider, entityMask);
       if (!IsFiniteFloat(b.minX) || !IsFiniteFloat(b.minY) || !IsFiniteFloat(b.maxX) || !IsFiniteFloat(b.maxY) ||
           !IsFiniteFloat(b.cx) || !IsFiniteFloat(b.cy)) {
         return;
       }
+      entityUnion.fetch_or(eMask, std::memory_order_relaxed);
+      collisionUnion.fetch_or(cMask, std::memory_order_relaxed);
       const size_t idx = nextIndex.fetch_add(1, std::memory_order_relaxed);
       if (idx < maxBoxes) {
         boxes[idx] = b;
@@ -604,15 +649,42 @@ class KDTreeCollisionSystem {
     });
   }
 
+  static void PruneInactiveMaskBoxes(std::vector<Box>& boxes, const uint32_t entityUnion,
+                                     const uint32_t collisionUnion) {
+    if (collisionUnion == 0U) {
+      boxes.clear();
+      return;
+    }
+    std::erase_if(boxes, [entityUnion, collisionUnion](const Box& b) {
+      return (b.collisionMask & entityUnion) == 0U && (b.entityMask & collisionUnion) == 0U;
+    });
+  }
+
   void UpdateSynchronous(EventBus* eventBus) {
     std::vector<Box>& boxes = cachedBoxes_;
     boxes.clear();
+
+    uint32_t filterEntity = 0;
+    uint32_t filterCollision = 0;
+    GatherMaskUnions(filterEntity, filterCollision);
+    if (filterCollision == 0U) {
+      lastSubmittedBoxCount_ = 0;
+      PROFILE_COUNTER_SET("Collision: Box count", 0);
+      syncPairsScratch_.clear();
+      EmitCollisionEvents(eventBus, syncPairsScratch_);
+      return;
+    }
+
     boxes.reserve(TotalColliderCount());
-    AppendBoxesSync(*query_, boxes);
-    AppendBoxesSync(*circleQuery_, boxes);
-    AppendBoxesSync(*capsuleQuery_, boxes);
-    AppendBoxesSync(*triangleQuery_, boxes);
-    AppendBoxesSync(*lineQuery_, boxes);
+    uint32_t entityUnion = 0;
+    uint32_t collisionUnion = 0;
+    AppendBoxesSync(*query_, filterEntity, filterCollision, boxes, entityUnion, collisionUnion);
+    AppendBoxesSync(*circleQuery_, filterEntity, filterCollision, boxes, entityUnion, collisionUnion);
+    AppendBoxesSync(*capsuleQuery_, filterEntity, filterCollision, boxes, entityUnion, collisionUnion);
+    AppendBoxesSync(*triangleQuery_, filterEntity, filterCollision, boxes, entityUnion, collisionUnion);
+    AppendBoxesSync(*lineQuery_, filterEntity, filterCollision, boxes, entityUnion, collisionUnion);
+    PruneInactiveMaskBoxes(boxes, entityUnion, collisionUnion);
+    lastSubmittedBoxCount_ = boxes.size();
     std::sort(boxes.begin(), boxes.end(), [](const Box& a, const Box& b) {
       return a.entity.id != b.entity.id ? (a.entity.id < b.entity.id) : (a.shape < b.shape);
     });
@@ -652,18 +724,40 @@ class KDTreeCollisionSystem {
     }
 
     PROFILE_NAMED_SCOPE("Gather Boxes");
+    uint32_t filterEntity = 0;
+    uint32_t filterCollision = 0;
+    GatherMaskUnions(filterEntity, filterCollision);
+    if (filterCollision == 0U) {
+      cachedBoxes_.clear();
+      lastSubmittedBoxCount_ = 0;
+      PROFILE_COUNTER_SET("Collision: Box count", 0);
+      if (!prevPairs_.empty()) {
+        syncPairsScratch_.clear();
+        EmitCollisionEvents(eventBus, syncPairsScratch_);
+      }
+      return;
+    }
+
     const size_t totalColliders = TotalColliderCount();
     cachedBoxes_.resize(totalColliders);
     std::atomic<size_t> nextIndex{0};
+    std::atomic<uint32_t> entityUnion{0};
+    std::atomic<uint32_t> collisionUnion{0};
 
-    AppendBoxesAsync(*query_, cachedBoxes_, nextIndex);
-    AppendBoxesAsync(*circleQuery_, cachedBoxes_, nextIndex);
-    AppendBoxesAsync(*capsuleQuery_, cachedBoxes_, nextIndex);
-    AppendBoxesAsync(*triangleQuery_, cachedBoxes_, nextIndex);
-    AppendBoxesAsync(*lineQuery_, cachedBoxes_, nextIndex);
+    AppendBoxesAsync(*query_, filterEntity, filterCollision, cachedBoxes_, nextIndex, entityUnion, collisionUnion);
+    AppendBoxesAsync(*circleQuery_, filterEntity, filterCollision, cachedBoxes_, nextIndex, entityUnion,
+                     collisionUnion);
+    AppendBoxesAsync(*capsuleQuery_, filterEntity, filterCollision, cachedBoxes_, nextIndex, entityUnion,
+                     collisionUnion);
+    AppendBoxesAsync(*triangleQuery_, filterEntity, filterCollision, cachedBoxes_, nextIndex, entityUnion,
+                     collisionUnion);
+    AppendBoxesAsync(*lineQuery_, filterEntity, filterCollision, cachedBoxes_, nextIndex, entityUnion, collisionUnion);
 
     const size_t gathered = nextIndex.load(std::memory_order_relaxed);
     cachedBoxes_.resize(std::min(gathered, totalColliders));
+    PruneInactiveMaskBoxes(cachedBoxes_, entityUnion.load(std::memory_order_relaxed),
+                           collisionUnion.load(std::memory_order_relaxed));
+    lastSubmittedBoxCount_ = cachedBoxes_.size();
 
     PROFILE_COUNTER_SET("Collision: Box count", static_cast<long long>(cachedBoxes_.size()));
 
@@ -699,6 +793,9 @@ class KDTreeCollisionSystem {
     const auto key = a.id < b.id ? std::make_pair(a, b) : std::make_pair(b, a);
     return std::binary_search(prevPairs_.begin(), prevPairs_.end(), key, PairLess{});
   }
+
+  /// Box count remaining after active-mask pruning on the most recent gather pass.
+  [[nodiscard]] size_t LastSubmittedBoxCount() const noexcept { return lastSubmittedBoxCount_; }
 
  private:
   struct PairLess {
@@ -767,6 +864,7 @@ class KDTreeCollisionSystem {
   std::unique_ptr<ColliderQuery<TriangleColliderComponent>> triangleQuery_;
   std::unique_ptr<ColliderQuery<LineColliderComponent>> lineQuery_;
   bool synchronous_{false};
+  size_t lastSubmittedBoxCount_{0};
   std::unique_ptr<AsyncState> asyncState_;
 
   static void BruteForceHugeBoxes(const std::vector<Box>& boxes, const std::vector<Box>::iterator& hugeBoxesBegin,
