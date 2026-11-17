@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <atomic>
+#include <cmath>
 #include <memory>
 #include <optional>
 
@@ -77,13 +78,14 @@ class RenderSpriteSystem {
     const float y = sprite.isFixed ? transform.position.y : (transform.position.y - camera_.y) * zoom_;
     const float destW = sprite.isFixed ? sprite.width * transform.scale.x : sprite.width * transform.scale.x * zoom_;
     const float destH = sprite.isFixed ? sprite.height * transform.scale.y : sprite.height * transform.scale.y * zoom_;
+    const SDL_FRect destRect = SnapFixedUnrotated({x, y, destW, destH}, sprite.isFixed, transform.rotation);
 
     auto& cmd = renderQueue_->EmplaceSprite(static_cast<unsigned int>(sprite.layer), transform.position.y, texture,
                                             sprite.blendMode);
-    cmd.destX = x;
-    cmd.destY = y;
-    cmd.destW = destW;
-    cmd.destH = destH;
+    cmd.destX = destRect.x;
+    cmd.destY = destRect.y;
+    cmd.destW = destRect.w;
+    cmd.destH = destRect.h;
     // Atlas-aware src_rect compose: a loose texture leaves atlasOffset at zero (no-op add); an
     // atlas member adds the slice origin so the sprite's logical (sx, sy) selects inside the
     // packed atlas instead of the standalone source PNG.
@@ -103,6 +105,13 @@ class RenderSpriteSystem {
   }
 
  private:
+  static SDL_FRect SnapFixedUnrotated(const SDL_FRect rect, const bool isFixed, const float rotation) {
+    if (!isFixed || rotation != 0.0f) {
+      return rect;
+    }
+    return {std::floor(rect.x + 0.5f), std::floor(rect.y + 0.5f), std::floor(rect.w + 0.5f), std::floor(rect.h + 0.5f)};
+  }
+
   AssetManager* assetManager_ = nullptr;
   RenderQueue* renderQueue_ = nullptr;
   SpriteRenderCache* spriteCache_ = nullptr;

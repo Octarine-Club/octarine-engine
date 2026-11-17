@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <string>
+#include <vector>
 
 #include "AssetManager/AssetManager.h"
 #include "Game/EngineOptions.h"
@@ -40,8 +41,11 @@ class Renderer {
   [[nodiscard]] int GetLogicalWidth() const { return logical_width_; }
   [[nodiscard]] int GetLogicalHeight() const { return logical_height_; }
 
-  // Computes the logical scene size for the specified window backbuffer size under `mode`,
-  // expanding between [minAspect, maxAspect] when `mode == PresentationMode::Expand`.
+  // Computes the logical scene size for the specified window backbuffer size under `mode`.
+  // Under `PresentationMode::Expand`, picks the largest integer pixel scale factor k >= 1
+  // whose logical grid still holds at least `baseW` x `baseH` (inside any [minAspect, maxAspect]
+  // clamp) so targetPixels = logical * k exact, falling back to expanding `baseW`/`baseH`
+  // when the window is smaller than 1x base resolution.
   [[nodiscard]] static std::pair<int, int> ComputeLogicalSceneSize(int baseW, int baseH, int windowW, int windowH,
                                                                    PresentationMode mode, float minAspect = 0.0F,
                                                                    float maxAspect = 0.0F);
@@ -58,10 +62,9 @@ class Renderer {
   // resolution happens in the producer systems (cmd.texture is already a live handle).
   void DrawQueue(const RenderQueue& renderQueue, SDL_Renderer* sdlRenderer) const;
 
-  // Phase 3: unbind the scene texture (RT becomes the window backbuffer) and clear that
-  // backbuffer to black. Debug UI + final composite draw on top of the cleared
-  // backbuffer.
-  void EndScene(SDL_Renderer* sdlRenderer) const;
+  // Phase 3: unbind the scene texture (RT becomes the window backbuffer) and optionally clear that
+  // backbuffer to black (skipped when the subsequent CompositeSceneToWindow covers the full window).
+  void EndScene(SDL_Renderer* sdlRenderer, bool clearBackbuffer = true) const;
 
   // Composite: blit the full scene texture into the window backbuffer.
   void CompositeSceneToWindow(SDL_Renderer* sdlRenderer, const SDL_FRect* destRect = nullptr) const;
@@ -97,6 +100,8 @@ class Renderer {
 
  private:
   SDL_Texture* scene_texture_ = nullptr;
+  mutable std::vector<SDL_Vertex> batch_verts_;
+  mutable std::vector<int> batch_indices_;
   int logical_width_ = 0;
   int logical_height_ = 0;
   int target_width_ = 0;

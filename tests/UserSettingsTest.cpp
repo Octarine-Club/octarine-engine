@@ -436,9 +436,10 @@ void TestGameConfigAndCompositeRect() {
             std::abs(stretch.h - 1200.0F) < 0.01F,
         "ComputeCompositeRect Stretch fills entire window");
 
-  // Expand mode logical sizing across aspect ratios
+  // Integer-Grid Expand mode logical sizing across aspect ratios & HiDPI backing stores
   const auto s169 = Renderer::ComputeLogicalSceneSize(1280, 720, 1920, 1080, PresentationMode::Expand);
-  Check(s169.first == 1280 && s169.second == 720, "ComputeLogicalSceneSize Expand 16:9 keeps 1280x720");
+  Check(s169.first == 1920 && s169.second == 1080,
+        "ComputeLogicalSceneSize Expand 16:9 1080p uses k=1 native grid (1920x1080)");
 
   const auto s1610 = Renderer::ComputeLogicalSceneSize(1280, 720, 1280, 800, PresentationMode::Expand);
   Check(s1610.first == 1280 && s1610.second == 800, "ComputeLogicalSceneSize Expand 16:10 expands height to 800");
@@ -447,28 +448,57 @@ void TestGameConfigAndCompositeRect() {
   Check(s43.first == 1280 && s43.second == 960, "ComputeLogicalSceneSize Expand 4:3 expands height to 960");
 
   const auto s219 = Renderer::ComputeLogicalSceneSize(1280, 720, 2560, 1080, PresentationMode::Expand);
-  Check(s219.first == 1708 && s219.second == 720, "ComputeLogicalSceneSize Expand 21:9 expands width to 1708");
+  Check(s219.first == 2560 && s219.second == 1080,
+        "ComputeLogicalSceneSize Expand 21:9 UW-FHD uses k=1 native grid (2560x1080)");
+
+  const auto s1440p = Renderer::ComputeLogicalSceneSize(1280, 720, 2560, 1440, PresentationMode::Expand);
+  Check(s1440p.first == 1280 && s1440p.second == 720, "ComputeLogicalSceneSize Expand 1440p picks k=2 (1280x720)");
+
+  const auto sRetina1610 = Renderer::ComputeLogicalSceneSize(1280, 720, 2880, 1800, PresentationMode::Expand);
+  Check(sRetina1610.first == 1440 && sRetina1610.second == 900,
+        "ComputeLogicalSceneSize Expand 2880x1800 Retina picks k=2 (1440x900)");
+
+  const auto sMaxMac = Renderer::ComputeLogicalSceneSize(1280, 720, 3024, 1812, PresentationMode::Expand);
+  Check(sMaxMac.first == 1512 && sMaxMac.second == 906,
+        "ComputeLogicalSceneSize Expand 3024x1812 picks k=2 (1512x906)");
+
+  const auto sUwQhd = Renderer::ComputeLogicalSceneSize(1280, 720, 3440, 1440, PresentationMode::Expand);
+  Check(sUwQhd.first == 1720 && sUwQhd.second == 720,
+        "ComputeLogicalSceneSize Expand 3440x1440 UW-QHD picks k=2 (1720x720)");
+
+  const auto s4k = Renderer::ComputeLogicalSceneSize(1280, 720, 3840, 2160, PresentationMode::Expand);
+  Check(s4k.first == 1280 && s4k.second == 720, "ComputeLogicalSceneSize Expand 4K picks k=3 (1280x720)");
 
   const auto s329 = Renderer::ComputeLogicalSceneSize(1280, 720, 5120, 1440, PresentationMode::Expand, 1.3333F, 2.40F);
   Check(s329.first == 1728 && s329.second == 720,
         "ComputeLogicalSceneSize Expand 32:9 clamped to maxAspect=2.40 (1728x720)");
 
-  // Clamped 32:9 (1728x720) inside 5120x1440 window pillarboxes to 3456x1440 centered at x=832
+  // Clamped 32:9 (1728x720) inside 5120x1440 window pillarboxes to 3456x1440 centered at x=832 (2x integer)
   const SDL_FRect expClamped = Renderer::ComputeCompositeRect(1728, 720, 5120, 1440, PresentationMode::Expand);
   Check(std::abs(expClamped.x - 832.0F) < 0.01F && std::abs(expClamped.y - 0.0F) < 0.01F &&
             std::abs(expClamped.w - 3456.0F) < 0.01F && std::abs(expClamped.h - 1440.0F) < 0.01F,
-        "ComputeCompositeRect Expand pillarboxes clamped 32:9 aspect inside window");
+        "ComputeCompositeRect Expand pillarboxes clamped 32:9 aspect inside window at 2x integer scale");
 
-  // Unclamped Expand fills the exact window even when RoundToEven quantizes logical dimensions
-  const SDL_FRect exp219 = Renderer::ComputeCompositeRect(1708, 720, 2560, 1080, PresentationMode::Expand);
+  // Integer-grid Expand maps logical coordinates cleanly onto 1x / 2x / centered integer targets
+  const SDL_FRect exp219 = Renderer::ComputeCompositeRect(2560, 1080, 2560, 1080, PresentationMode::Expand);
   Check(std::abs(exp219.x) < 0.01F && std::abs(exp219.y) < 0.01F && std::abs(exp219.w - 2560.0F) < 0.01F &&
             std::abs(exp219.h - 1080.0F) < 0.01F,
-        "ComputeCompositeRect Expand 21:9 (1708x720 -> 2560x1080) fills exact full window");
+        "ComputeCompositeRect Expand 21:9 (2560x1080 -> 2560x1080) fills full window at 1x");
 
-  const SDL_FRect expDesktop1080 = Renderer::ComputeCompositeRect(1314, 720, 1920, 1052, PresentationMode::Expand);
+  const SDL_FRect expDesktop1080 = Renderer::ComputeCompositeRect(1920, 1052, 1920, 1052, PresentationMode::Expand);
   Check(std::abs(expDesktop1080.x) < 0.01F && std::abs(expDesktop1080.y) < 0.01F &&
             std::abs(expDesktop1080.w - 1920.0F) < 0.01F && std::abs(expDesktop1080.h - 1052.0F) < 0.01F,
-        "ComputeCompositeRect Expand maximized 1080p (1314x720 -> 1920x1052) fills exact full window");
+        "ComputeCompositeRect Expand maximized 1080p (1920x1052 -> 1920x1052) fills full window at 1x");
+
+  const SDL_FRect expRetina1610 = Renderer::ComputeCompositeRect(1440, 900, 2880, 1800, PresentationMode::Expand);
+  Check(std::abs(expRetina1610.x) < 0.01F && std::abs(expRetina1610.y) < 0.01F &&
+            std::abs(expRetina1610.w - 2880.0F) < 0.01F && std::abs(expRetina1610.h - 1800.0F) < 0.01F,
+        "ComputeCompositeRect Expand Retina 16:10 (1440x900 -> 2880x1800) fills full window at 2x");
+
+  const SDL_FRect expOdd = Renderer::ComputeCompositeRect(1440, 900, 2881, 1801, PresentationMode::Expand);
+  Check(std::abs(expOdd.x - 1.0F) < 0.01F && std::abs(expOdd.y - 1.0F) < 0.01F &&
+            std::abs(expOdd.w - 2880.0F) < 0.01F && std::abs(expOdd.h - 1800.0F) < 0.01F,
+        "ComputeCompositeRect Expand odd window (2881x1801) centers exact 2x target (2880x1800)");
 }
 
 void TestLuaDisplayApisAndReset() {
@@ -615,6 +645,11 @@ void TestGameConfigAspectAndLogicalBounds() {
       Renderer::ComputeLogicalSceneSize(1280, 720, 720, 1280, PresentationMode::Expand, 1.3333334F, 2.40F);
   Check(minClamped.first == 1280, "ComputeLogicalSceneSize portrait clamped to minAspect 4:3 width");
   Check(minClamped.second == 960, "ComputeLogicalSceneSize portrait clamped to minAspect 4:3 height");
+
+  const SDL_FRect expDownscale = Renderer::ComputeCompositeRect(1280, 960, 720, 1280, PresentationMode::Expand);
+  Check(std::abs(expDownscale.x - 0.0F) < 0.01F && std::abs(expDownscale.y - 370.0F) < 0.01F &&
+            std::abs(expDownscale.w - 720.0F) < 0.01F && std::abs(expDownscale.h - 540.0F) < 0.01F,
+        "ComputeCompositeRect Expand falls back to downscaled letterbox when window < 1x scene");
 }
 
 void TestSoftwareRendererSceneTarget() {
@@ -683,7 +718,7 @@ void TestLuaCameraAndExpandResize() {
 
     assert(set_presentation_mode("expand") == true)
     local lw, lh = get_logical_size()
-    assert(lw == 1280 and lh == 800)
+    assert(lw == 1600 and lh == 1000)
 
     assert(set_presentation_mode("letterbox") == true)
     local lw2, lh2 = get_logical_size()

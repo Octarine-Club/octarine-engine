@@ -27,6 +27,7 @@ class GameConfig {
   bool LoadConfigFromStream(struct SDL_IOStream* io, const std::string& assetPath);
 
   [[nodiscard]] bool HasLoadedConfig() const { return has_loaded_config_; }
+  [[nodiscard]] bool HasExplicitBaseResolution() const noexcept { return base_width_ > 0 && base_height_ > 0; }
 
   [[nodiscard]] const EngineOptions& GetEngineOptions() const;
   [[nodiscard]] EngineOptions& GetEngineOptions();
@@ -118,6 +119,7 @@ class GameConfig {
   void SetDefaultWindowMode(const std::string& windowMode);
   void SetDefaultFullscreen(bool fullscreen);
   void SetDefaultPresentationMode(const std::string& presentationMode);
+  void SetDefaultUiScale(float uiScale);
   void SetDefaultVSync(bool vsync);
   void SetWindowResizable(bool resizable);
   void SetFpsTarget(int fpsTarget);

@@ -143,6 +143,11 @@ class ComponentQuery final {
     }
   }
 
+  template <typename Func>
+  void ForEachChunk(Func&& func) {
+    archetype_query_.ForEachChunk(std::forward<Func>(func));
+  }
+
   static constexpr size_t kDefaultSerialBelowEntities = 512;
 
   // Parallel ForEach distributing chunks across thread pool.

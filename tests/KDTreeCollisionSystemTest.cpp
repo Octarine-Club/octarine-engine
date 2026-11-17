@@ -465,5 +465,72 @@ int main() {
   TestAsyncTeardownLifecycle();
   TestMultiShapeCollisions();
 
+  // --- Active-mask collider pruning: zero seekers -> 0 boxes; inert bystanders pruned before tree build.
+  {
+    Registry reg;
+    auto bus = std::make_unique<EventBus>();
+    EngineContext ctx;
+    ctx.eventBus = bus.get();
+    reg.Set<EngineContext>(ctx);
+
+    CollisionCapture cap;
+    cap.subscription = bus->SubscribeEvent<CollisionCapture, CollisionBatchEvent>(&cap, &CollisionCapture::OnBatch);
+
+    auto collision = reg.RegisterBulkSystem(KDTreeCollisionSystem(true));
+
+    // Bystanders with collisionMask=0 and entityMask=2 (nobody seeks layer 2 yet)
+    const Entity b1 = reg.CreateEntity();
+    reg.AddComponent(b1, GlobalTransformComponent{glm::vec2(0.0f, 0.0f), glm::vec2(1.0f, 1.0f), 0.0f});
+    reg.AddComponent(b1, BoxColliderComponent{32, 32, {}, false, EntityMask(0)});
+    reg.AddComponent(b1, EntityMaskComponent{EntityMask(2)});
+
+    const Entity b2 = reg.CreateEntity();
+    reg.AddComponent(b2, GlobalTransformComponent{glm::vec2(4.0f, 0.0f), glm::vec2(1.0f, 1.0f), 0.0f});
+    reg.AddComponent(b2, BoxColliderComponent{32, 32, {}, false, EntityMask(0)});
+    reg.AddComponent(b2, EntityMaskComponent{EntityMask(2)});
+
+    reg.Update(1.0f / 60.0f);
+    CheckEq(collision.Func().LastSubmittedBoxCount(), static_cast<size_t>(0),
+            "active-mask pruning: zero seekers prunes all boxes");
+    CheckEq(cap.TotalPairs(), 0, "active-mask pruning: zero seekers emits zero pairs");
+
+    // Add a seeker on layer 4 looking for layer 8, plus a target on layer 8 (b1/b2 remain inert on layer 2)
+    const Entity seeker = reg.CreateEntity();
+    reg.AddComponent(seeker, GlobalTransformComponent{glm::vec2(100.0f, 0.0f), glm::vec2(1.0f, 1.0f), 0.0f});
+    reg.AddComponent(seeker, BoxColliderComponent{32, 32, {}, false, EntityMask(8)});
+    reg.AddComponent(seeker, EntityMaskComponent{EntityMask(4)});
+
+    const Entity target = reg.CreateEntity();
+    reg.AddComponent(target, GlobalTransformComponent{glm::vec2(110.0f, 0.0f), glm::vec2(1.0f, 1.0f), 0.0f});
+    reg.AddComponent(target, BoxColliderComponent{32, 32, {}, false, EntityMask(0)});
+    reg.AddComponent(target, EntityMaskComponent{EntityMask(8)});
+
+    reg.Update(1.0f / 60.0f);
+    CheckEq(collision.Func().LastSubmittedBoxCount(), static_cast<size_t>(2),
+            "active-mask pruning: keeps only seeker+target and prunes inert layer-2 bystanders");
+    CheckEq(cap.TotalPairs(), 1, "active-mask pruning: seeker/target pair still detected");
+    Check(cap.Contains(seeker, target), "active-mask pruning: pair is (seeker, target)");
+  }
+
+  // --- Async active-mask pre-scan: zero seekers skips box gather cleanly.
+  {
+    Registry reg;
+    auto bus = std::make_unique<EventBus>();
+    EngineContext ctx;
+    ctx.eventBus = bus.get();
+    reg.Set<EngineContext>(ctx);
+
+    auto collision = reg.RegisterBulkSystem(KDTreeCollisionSystem(false));
+    for (int i = 0; i < 16; ++i) {
+      const Entity b = reg.CreateEntity();
+      reg.AddComponent(b, GlobalTransformComponent{glm::vec2(static_cast<float>(i), 0.0f), glm::vec2(1.0f), 0.0f});
+      reg.AddComponent(b, BoxColliderComponent{32, 32, {}, false, EntityMask(0)});
+      reg.AddComponent(b, EntityMaskComponent{EntityMask(2)});
+    }
+    reg.Update(1.0f / 60.0f);
+    CheckEq(collision.Func().LastSubmittedBoxCount(), static_cast<size_t>(0),
+            "async active-mask pre-scan: zero seekers yields zero submitted boxes");
+  }
+
   return octarine::test::Result();
 }

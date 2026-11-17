@@ -44,11 +44,13 @@ class RenderQueue {
   RenderQueue(RenderQueue&& other) noexcept
       : render_keys_(std::move(other.render_keys_)),
         count_(other.count_.load(std::memory_order_relaxed)),
-        clip_rects_(std::move(other.clip_rects_)) {}
+        clip_rects_(std::move(other.clip_rects_)),
+        clear_generation_(other.clear_generation_) {}
   RenderQueue& operator=(RenderQueue&& other) noexcept {
     render_keys_ = std::move(other.render_keys_);
     count_.store(other.count_.load(std::memory_order_relaxed), std::memory_order_relaxed);
     clip_rects_ = std::move(other.clip_rects_);
+    clear_generation_ = other.clear_generation_;
     return *this;
   }
 
@@ -154,7 +156,10 @@ class RenderQueue {
   void Clear() {
     count_.store(0, std::memory_order_relaxed);
     clip_rects_.clear();
+    ++clear_generation_;
   }
+
+  [[nodiscard]] std::uint64_t ClearGeneration() const noexcept { return clear_generation_; }
 
   void Sort() {
     const size_t n = std::min(count_.load(std::memory_order_relaxed), render_keys_.size());
@@ -302,4 +307,5 @@ class RenderQueue {
   std::vector<SortEntry> radix_scratch_{};
   std::vector<RenderKey> permute_scratch_{};  // Gather output buffer, kept alive to avoid re-alloc.
   std::vector<SDL_Rect> clip_rects_{};
+  std::uint64_t clear_generation_{0};
 };

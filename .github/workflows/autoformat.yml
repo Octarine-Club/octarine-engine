@@ -22,7 +22,7 @@ concurrency:
 jobs:
   autoformat:
     name: autoformat (clang-format)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Skip fork PRs: the token is read-only for forks and the push would fail. The lint gate still
     # blocks them, so a fork contributor formats locally instead.
     if: github.event.pull_request.head.repo.full_name == github.repository

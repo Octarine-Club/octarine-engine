@@ -8,7 +8,9 @@
 #include <cstdint>
 #include <cstdlib>
 #include <glm/glm.hpp>
+#include <list>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 
 #include "AssetManager/AssetManager.h"
@@ -33,6 +35,38 @@
 #include "Renderer/RenderQueue.h"
 
 namespace octarine::ui {
+
+inline constexpr float kMinUiScale = 0.25f;
+inline constexpr float kMaxUiScale = 4.0f;
+
+[[nodiscard]] inline float ClampUserUiScale(const float scale) noexcept {
+  if (!std::isfinite(scale) || scale <= 0.0f) return 1.0f;
+  return std::clamp(scale, kMinUiScale, kMaxUiScale);
+}
+
+[[nodiscard]] inline float ResolveAutoUiScale(const GameConfig& cfg) noexcept {
+  if ((!cfg.HasExplicitBaseResolution() && !cfg.HasLoadedConfig()) || cfg.windowWidth <= 0 || cfg.windowHeight <= 0) {
+    return 1.0f;
+  }
+  const int baseW = cfg.GetBaseWidth();
+  const int baseH = cfg.GetBaseHeight();
+  if (baseW <= 0 || baseH <= 0) return 1.0f;
+  const float sx = static_cast<float>(cfg.windowWidth) / static_cast<float>(baseW);
+  const float sy = static_cast<float>(cfg.windowHeight) / static_cast<float>(baseH);
+  const float raw = std::min(sx, sy);
+  return (std::isfinite(raw) && raw > 0.0f) ? std::clamp(raw, kMinUiScale, kMaxUiScale) : 1.0f;
+}
+
+[[nodiscard]] inline float ResolveUiScale(const GameConfig& cfg) noexcept {
+  return std::clamp(ResolveAutoUiScale(cfg) * ClampUserUiScale(cfg.GetEngineOptions().uiScale), kMinUiScale,
+                    kMaxUiScale);
+}
+
+[[nodiscard]] inline float ResolveUiScale(const Registry* registry) noexcept {
+  if (registry == nullptr) return 1.0f;
+  const auto* cfg = registry->TryGet<GameConfig>();
+  return cfg != nullptr ? ResolveUiScale(*cfg) : 1.0f;
+}
 
 inline float ParseFontPixelSize(const std::string& fontId) {
   static constexpr float kFallbackFontPixelSize = 16.0f;
@@ -102,72 +136,162 @@ inline glm::vec2 MeasureFromAtlas(const GlyphAtlas& atlas, const std::string& te
   return {std::ceil(totalW), static_cast<float>(std::max(1, atlas.LineSkip()))};
 }
 
-inline glm::vec2 MeasureTtfFontText(TTF_Font* font, const std::uint64_t fontGen, const TextLabelComponent& label,
+inline int QuantizeFontScaleKey(const float scale) {
+  constexpr int kMinScaleKey = 10;
+  constexpr int kMaxScaleKey = 800;
+  constexpr int kUnitScaleMin = 99;
+  constexpr int kUnitScaleMax = 101;
+  const int key = std::clamp(static_cast<int>(std::lround(scale * 100.0F)), kMinScaleKey, kMaxScaleKey);
+  return (key >= kUnitScaleMin && key <= kUnitScaleMax) ? 100 : key;
+}
+
+inline int ResolveIntegerAtlasScale(const float scale) {
+  const float rounded = std::round(scale);
+  if (rounded >= 1.0F && rounded <= 4.0F && std::abs(scale - rounded) <= 0.01F) {
+    return static_cast<int>(rounded);
+  }
+  return 0;
+}
+
+inline glm::vec2 MeasureTtfFontText(const AssetManager& assetMgr, const TextLabelComponent& label, const float effScale,
                                     const bool hasNewline, const int effWrapWidth) {
-  struct CacheKey {
-    TTF_Font* font = nullptr;
+  TTF_Font* baseFont = assetMgr.GetFont(label.fontId);
+  if (baseFont == nullptr) return {-1.0f, -1.0f};
+
+  struct CacheKeyView {
+    const void* baseFont = nullptr;
     std::uint64_t fontGen = 0;
+    int baseSizeKey = 0;
+    int scaleKey = 100;
     int wrapLen = 0;
     bool wrapped = false;
+    std::string_view fontId{};
+    std::string_view text{};
+  };
+  struct CacheKey {
+    const void* baseFont = nullptr;
+    std::uint64_t fontGen = 0;
+    int baseSizeKey = 0;
+    int scaleKey = 100;
+    int wrapLen = 0;
+    bool wrapped = false;
+    std::string fontId{};
     std::string text{};
-    bool operator==(const CacheKey& o) const {
-      return font == o.font && fontGen == o.fontGen && wrapLen == o.wrapLen && wrapped == o.wrapped && text == o.text;
+    operator CacheKeyView() const noexcept {
+      return {baseFont, fontGen, baseSizeKey, scaleKey, wrapLen, wrapped, fontId, text};
     }
   };
-  struct CacheKeyHash {
-    std::size_t operator()(const CacheKey& k) const {
-      std::size_t h = std::hash<const void*>{}(k.font);
+  struct CacheKeyPtrHash {
+    using is_transparent = void;
+    static std::size_t HashView(const CacheKeyView& k) noexcept {
+      std::size_t h = std::hash<const void*>{}(k.baseFont);
       h ^= std::hash<std::uint64_t>{}(k.fontGen) + 0x9e3779b9u + (h << 6) + (h >> 2);
+      h ^= std::hash<int>{}(k.baseSizeKey) + 0x9e3779b9u + (h << 6) + (h >> 2);
+      h ^= std::hash<int>{}(k.scaleKey) + 0x9e3779b9u + (h << 6) + (h >> 2);
       h ^= std::hash<int>{}(k.wrapLen) + 0x9e3779b9u + (h << 6) + (h >> 2);
       h ^= std::hash<bool>{}(k.wrapped) + 0x9e3779b9u + (h << 6) + (h >> 2);
-      h ^= std::hash<std::string>{}(k.text) + 0x9e3779b9u + (h << 6) + (h >> 2);
+      h ^= std::hash<std::string_view>{}(k.fontId) + 0x9e3779b9u + (h << 6) + (h >> 2);
+      h ^= std::hash<std::string_view>{}(k.text) + 0x9e3779b9u + (h << 6) + (h >> 2);
       return h;
     }
+    std::size_t operator()(const CacheKey* k) const noexcept { return HashView(*k); }
+    std::size_t operator()(const CacheKeyView& k) const noexcept { return HashView(k); }
   };
-  static constexpr std::size_t kMaxCacheEntries = 512;
-  static std::unordered_map<CacheKey, glm::vec2, CacheKeyHash> s_cache;
+  struct CacheKeyPtrEq {
+    using is_transparent = void;
+    static bool EqView(const CacheKeyView& a, const CacheKeyView& b) noexcept {
+      return a.baseFont == b.baseFont && a.fontGen == b.fontGen && a.baseSizeKey == b.baseSizeKey &&
+             a.scaleKey == b.scaleKey && a.wrapLen == b.wrapLen && a.wrapped == b.wrapped && a.fontId == b.fontId &&
+             a.text == b.text;
+    }
+    bool operator()(const CacheKey* a, const CacheKey* b) const noexcept { return EqView(*a, *b); }
+    bool operator()(const CacheKey* a, const CacheKeyView& b) const noexcept { return EqView(*a, b); }
+    bool operator()(const CacheKeyView& a, const CacheKey* b) const noexcept { return EqView(a, *b); }
+  };
+  struct CacheNode {
+    CacheKey key;
+    glm::vec2 size;
+  };
+  static constexpr std::size_t kMaxCacheEntries = 1024;
+  static std::list<CacheNode> s_lru;
+  static std::unordered_map<const CacheKey*, std::list<CacheNode>::iterator, CacheKeyPtrHash, CacheKeyPtrEq> s_map;
 
   const bool wrapped = effWrapWidth > 0 || hasNewline;
   const int wrapLen = effWrapWidth > 0 ? effWrapWidth : 0;
-  const CacheKey key{font, fontGen, wrapLen, wrapped, label.text};
-  if (const auto it = s_cache.find(key); it != s_cache.end()) {
-    return it->second;
+  const CacheKeyView view{baseFont,
+                          assetMgr.FontGeneration(),
+                          static_cast<int>(std::lround(TTF_GetFontSize(baseFont) * 100.0F)),
+                          QuantizeFontScaleKey(effScale),
+                          wrapLen,
+                          wrapped,
+                          label.fontId,
+                          label.text};
+  if (const auto it = s_map.find(view); it != s_map.end()) {
+    s_lru.splice(s_lru.begin(), s_lru, it->second);
+    return it->second->size;
   }
 
+  TTF_Font* scaledFont = assetMgr.GetFontScaled(label.fontId, effScale);
+  if (scaledFont == nullptr) return {-1.0f, -1.0f};
   int w = 0;
   int h = 0;
-  const bool ok = wrapped ? TTF_GetStringSizeWrapped(font, label.text.c_str(), 0, wrapLen, &w, &h)
-                          : TTF_GetStringSize(font, label.text.c_str(), 0, &w, &h);
+  const bool ok = wrapped ? TTF_GetStringSizeWrapped(scaledFont, label.text.c_str(), 0, wrapLen, &w, &h)
+                          : TTF_GetStringSize(scaledFont, label.text.c_str(), 0, &w, &h);
   if (!ok) return {-1.0f, -1.0f};
   const glm::vec2 result{static_cast<float>(w), static_cast<float>(h)};
-  if (s_cache.size() >= kMaxCacheEntries) {
-    s_cache.clear();
+  if (s_lru.size() >= kMaxCacheEntries) {
+    s_map.erase(&s_lru.back().key);
+    s_lru.pop_back();
   }
-  s_cache.emplace(key, result);
+  CacheKey ownedKey{view.baseFont, view.fontGen, view.baseSizeKey, view.scaleKey,
+                    view.wrapLen,  view.wrapped, label.fontId,     label.text};
+  s_lru.push_front(CacheNode{std::move(ownedKey), result});
+  s_map.emplace(&s_lru.front().key, s_lru.begin());
   return result;
 }
 
-inline glm::vec2 MeasureTextLabel(Registry* registry, const TextLabelComponent& label,
-                                  const int wrapWidthOverride = 0) {
+inline glm::vec2 TryMeasureGlyphAtlas(const AssetManager& assetMgr, const TextLabelComponent& label,
+                                      const float effScale, const int effWrap, const bool hasNewline) {
+  if (effWrap > 0 || hasNewline) {
+    return {-1.0f, -1.0f};
+  }
+  const int intScale = ResolveIntegerAtlasScale(effScale);
+  if (intScale == 0) {
+    return {-1.0f, -1.0f};
+  }
+  if (intScale > 1 && assetMgr.GetEffectiveScaleMode() == SDL_SCALEMODE_LINEAR) {
+    return {-1.0f, -1.0f};
+  }
+  const GlyphAtlas* atlas = assetMgr.GetGlyphAtlas(label.fontId);
+  if (atlas == nullptr || !atlas->IsLoaded()) {
+    return {-1.0f, -1.0f};
+  }
+  const glm::vec2 base = MeasureFromAtlas(*atlas, label.text);
+  if (base.x < 0.0f) {
+    return base;
+  }
+  return base * static_cast<float>(intScale);
+}
+
+inline glm::vec2 MeasureTextLabel(Registry* registry, const TextLabelComponent& label, const int wrapWidthOverride = 0,
+                                  const float uiScale = 1.0f) {
   if (label.text.empty()) return {0.0f, 0.0f};
-  const int effWrap = label.wrapWidth > 0 ? label.wrapWidth : wrapWidthOverride;
-  const auto* assetMgr = registry->TryGet<AssetManager>();
+  const float effScale = (std::isfinite(uiScale) && uiScale > 0.0f) ? uiScale : 1.0f;
+  const int effWrap = label.wrapWidth > 0
+                          ? std::max(1, static_cast<int>(std::lround(static_cast<float>(label.wrapWidth) * effScale)))
+                          : wrapWidthOverride;
+  const auto* assetMgr = registry != nullptr ? registry->TryGet<AssetManager>() : nullptr;
   if (assetMgr == nullptr) {
-    return MeasureFallbackText(label.text, ParseFontPixelSize(label.fontId), effWrap);
+    return MeasureFallbackText(label.text, ParseFontPixelSize(label.fontId) * effScale, effWrap);
   }
   const bool hasNewline = label.text.find('\n') != std::string::npos;
-  if (effWrap <= 0 && !hasNewline) {
-    const GlyphAtlas* atlas = assetMgr->GetGlyphAtlas(label.fontId);
-    if (atlas != nullptr && atlas->IsLoaded()) {
-      const glm::vec2 atlasSize = MeasureFromAtlas(*atlas, label.text);
-      if (atlasSize.x >= 0.0f) return atlasSize;
-    }
+  const glm::vec2 atlasSize = TryMeasureGlyphAtlas(*assetMgr, label, effScale, effWrap, hasNewline);
+  if (atlasSize.x >= 0.0f) {
+    return atlasSize;
   }
-  if (TTF_Font* font = assetMgr->GetFont(label.fontId)) {
-    const glm::vec2 ttfSize = MeasureTtfFontText(font, assetMgr->FontGeneration(), label, hasNewline, effWrap);
-    if (ttfSize.x >= 0.0f) return ttfSize;
-  }
-  return MeasureFallbackText(label.text, ParseFontPixelSize(label.fontId), effWrap);
+  const glm::vec2 ttfSize = MeasureTtfFontText(*assetMgr, label, effScale, hasNewline, effWrap);
+  if (ttfSize.x >= 0.0f) return ttfSize;
+  return MeasureFallbackText(label.text, ParseFontPixelSize(label.fontId) * effScale, effWrap);
 }
 
 inline SDL_Rect IntersectRects(const SDL_Rect& a, const SDL_Rect& b) {

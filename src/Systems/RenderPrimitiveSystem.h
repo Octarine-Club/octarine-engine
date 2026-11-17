@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cmath>
 
 #include "Components/CameraComponents.h"
 #include "Components/GlobalTransformComponent.h"
@@ -55,6 +56,18 @@ class RenderPrimitiveBase {
     return isFixed ? worldLen : worldLen * zoom_;
   }
 
+  [[nodiscard]] static SDL_FRect SnapFixedUnrotatedEdges(const SDL_FRect rect, const bool isFixed,
+                                                         const float rotation) {
+    if (!isFixed || rotation != 0.0f) {
+      return rect;
+    }
+    const float left = std::floor(rect.x + 0.5f);
+    const float top = std::floor(rect.y + 0.5f);
+    const float right = std::floor(rect.x + rect.w + 0.5f);
+    const float bottom = std::floor(rect.y + rect.h + 0.5f);
+    return {left, top, right - left, bottom - top};
+  }
+
   RenderQueue* renderQueue_ = nullptr;
   float windowWidth_ = 0;
   float windowHeight_ = 0;
@@ -88,7 +101,8 @@ class RenderPrimitiveSystem : public RenderPrimitiveBase {
 
     auto& cmd =
         renderQueue_->EmplaceSquare(static_cast<unsigned int>(square.layer), sortDepth, nullptr, square.blendMode);
-    cmd.destRect = {screenOrigin.x, screenOrigin.y, destW, destH};
+    cmd.destRect =
+        SnapFixedUnrotatedEdges({screenOrigin.x, screenOrigin.y, destW, destH}, square.isFixed, transform.rotation);
     cmd.color = SDL_Color{square.color.r, square.color.g, square.color.b, square.color.a};
     cmd.rotation = transform.rotation;
     // The quad's top-left is `origin`, but pivot is an offset from transform.position, so rebase

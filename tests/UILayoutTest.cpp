@@ -1,7 +1,13 @@
 #include <SDL3/SDL.h>
+#include <SDL3_ttf/SDL_ttf.h>
 
+#include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 
+#include "AssetManager/AssetManager.h"
+#include "Components/CameraComponents.h"
 #include "Components/SpriteComponent.h"
 #include "Components/SquarePrimitiveComponent.h"
 #include "Components/TextLabelComponent.h"
@@ -39,6 +45,7 @@
 #include "UI/OssParser.h"
 #include "UI/OxmlParser.h"
 #include "UI/UIRuntime.h"
+#include "stb/stb_image_write.h"
 
 using octarine::test::Check;
 using octarine::test::CheckEq;
@@ -1963,6 +1970,632 @@ void TestLuaFocusApiAnalogSliderAndScrollFallback() {
   registry.ValidateInvariants();
 }
 
+constexpr unsigned char kMinimalTestTtf[] = {
+    0x00, 0x01, 0x00, 0x00, 0x00, 0x0A, 0x00, 0x80, 0x00, 0x03, 0x00, 0x20, 0x4F, 0x53, 0x2F, 0x32, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0xAC, 0x00, 0x00, 0x00, 0x56, 0x63, 0x6D, 0x61, 0x70, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x01, 0x04, 0x00, 0x00, 0x00, 0x2C, 0x67, 0x6C, 0x79, 0x66, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x30, 0x00,
+    0x00, 0x00, 0x22, 0x68, 0x65, 0x61, 0x64, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x54, 0x00, 0x00, 0x00, 0x36,
+    0x68, 0x68, 0x65, 0x61, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x8C, 0x00, 0x00, 0x00, 0x24, 0x68, 0x6D, 0x74,
+    0x78, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xB0, 0x00, 0x00, 0x00, 0x06, 0x6C, 0x6F, 0x63, 0x61, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x01, 0xB8, 0x00, 0x00, 0x00, 0x06, 0x6D, 0x61, 0x78, 0x70, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x01, 0xC0, 0x00, 0x00, 0x00, 0x20, 0x6E, 0x61, 0x6D, 0x65, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xE0,
+    0x00, 0x00, 0x00, 0x06, 0x70, 0x6F, 0x73, 0x74, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xE8, 0x00, 0x00, 0x00,
+    0x20, 0x00, 0x01, 0x02, 0x58, 0x01, 0x90, 0x00, 0x05, 0x00, 0x00, 0x01, 0xF4, 0x01, 0xF4, 0x00, 0x00, 0x00, 0x64,
+    0x01, 0xF4, 0x01, 0xF4, 0x00, 0x00, 0x01, 0x2C, 0x00, 0x32, 0x00, 0xFA, 0x00, 0x64, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x54, 0x45, 0x53, 0x54, 0x00, 0x40, 0x00, 0x20, 0x00, 0x7E, 0x03, 0x20, 0xFF, 0x38, 0x00, 0x00, 0x03,
+    0x20, 0x00, 0xC8, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x03,
+    0x00, 0x01, 0x00, 0x00, 0x00, 0x0C, 0x00, 0x04, 0x00, 0x20, 0x00, 0x00, 0x00, 0x04, 0x00, 0x04, 0x00, 0x01, 0x00,
+    0x00, 0x00, 0x7E, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x20, 0xFF, 0xFF, 0xFF, 0xE1, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x01, 0x00, 0x32, 0x00, 0x00, 0x02, 0x26, 0x02, 0xBC, 0x00, 0x03, 0x00, 0x00, 0x01, 0x01, 0x01, 0x01, 0x00,
+    0x32, 0x01, 0xF4, 0x00, 0x00, 0xFE, 0x0C, 0x00, 0x00, 0x00, 0x00, 0x02, 0xBC, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x5F, 0x0F, 0x3C, 0xF5, 0x00, 0x0B, 0x03, 0xE8, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x32, 0x00, 0x00,
+    0x02, 0x26, 0x02, 0xBC, 0x00, 0x00, 0x00, 0x08, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00,
+    0x00, 0x03, 0x20, 0xFF, 0x38, 0x00, 0x00, 0x02, 0x58, 0x00, 0x32, 0x00, 0x00, 0x02, 0x26, 0x00, 0x01, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x58, 0x00, 0x32, 0x00,
+    0x32, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x11, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x04,
+    0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0xFF, 0xCE, 0x00, 0x32, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+
+void TestPixelSnappingNineSliceClampAndSharpText() {
+  std::cout << "[pixel-sharp] Pixel-snapped UI layout, 9-slice clamping, and nearest integer-scale text\n";
+
+  // 1. UILayoutSystem snaps odd-height flex centering and shared flex-row boundaries to integers
+  {
+    Registry registry;
+    registry.Set<GameConfig>(GameConfig{});
+    registry.Set<RenderQueue>(RenderQueue(64));
+    registry.RegisterBulkSystem(UILayoutSystem());
+
+    const Entity canvas = registry.CreateEntityWithBundle(UICanvasComponent(true, 1512.0f, 945.0f, 1));
+    UIFlexComponent canvasFlex(FlexDirection::Row, 0.0f, 0.0f, FlexAlign::Center, FlexAlign::Center);
+    registry.AddComponent(canvas, canvasFlex);
+
+    UILayoutBoxComponent modalBox;
+    modalBox.SetWidthPx(400.0f);
+    modalBox.SetHeightPx(600.0f);
+    const Entity modal = registry.CreateEntityWithBundle(modalBox, SquarePrimitiveComponent{});
+    registry.SetParent(modal, canvas);
+
+    registry.Update(0.016f);
+    const auto& modalRect = registry.GetComponent<UIRectComponent>(modal);
+    CheckEq(modalRect.top, 173.0f, "Odd canvas height 945 centers 600px child on integer top=173");
+    CheckEq(modalRect.bottom, 773.0f, "Odd canvas height 945 centers 600px child on integer bottom=773");
+    CheckEq(modalRect.Height(), 600.0f, "Snapped centered child preserves exact 600px height");
+
+    const Entity rowCanvas = registry.CreateEntityWithBundle(UICanvasComponent(true, 100.0f, 40.0f, 2));
+    registry.AddComponent(rowCanvas,
+                          UIFlexComponent(FlexDirection::Row, 0.0f, 0.0f, FlexAlign::Start, FlexAlign::Start));
+    Entity cols[3];
+    for (Entity& col : cols) {
+      UILayoutBoxComponent colBox;
+      colBox.SetWidthFr(1.0f);
+      colBox.SetHeightPx(20.0f);
+      col = registry.CreateEntityWithBundle(colBox, SquarePrimitiveComponent{});
+      registry.SetParent(col, rowCanvas);
+    }
+
+    registry.Update(0.016f);
+    const auto& r0 = registry.GetComponent<UIRectComponent>(cols[0]);
+    const auto& r1 = registry.GetComponent<UIRectComponent>(cols[1]);
+    const auto& r2 = registry.GetComponent<UIRectComponent>(cols[2]);
+    CheckEq(r0.left, 0.0f, "3-col flex split starts c0 at 0");
+    CheckEq(r0.right, 33.0f, "3-col flex split snaps c0.right to 33");
+    CheckEq(r1.left, 33.0f, "c1.left shares snapped edge 33 with c0.right (zero gap/overlap)");
+    CheckEq(r1.right, 67.0f, "3-col flex split snaps c1.right to 67");
+    CheckEq(r2.left, 67.0f, "c2.left shares snapped edge 67 with c1.right");
+    CheckEq(r2.right, 100.0f, "3-col flex split ends c2 at 100");
+  }
+
+  // 2. Integer 9-slice clamping on squeezed odd dest dimensions prevents half-texel UV splits
+  {
+    RenderQueue rq(32);
+    const UIRectComponent rect(10.0f, 20.0f, 25.0f, 41.0f, 4);  // 15x21 squeezed bounds
+    SpriteComponent sprite("panel_bg", 32, 32, 0);
+    const UINineSliceComponent nine(8.0f, 8.0f, 8.0f, 8.0f);
+    const SDL_FRect atlasOffset{0.0f, 0.0f, 32.0f, 32.0f};
+
+    RenderUISpriteSystem::EmitNineSlice(rq, rect, sprite, nine, nullptr, atlasOffset);
+    bool allCornersInteger = !rq.IsEmpty();
+    for (const RenderKey& key : rq) {
+      const auto& sp = key.payload.sprite;
+      if (std::floor(sp.destW) != sp.destW || std::floor(sp.destH) != sp.destH ||
+          std::floor(sp.srcRect.w) != sp.srcRect.w || std::floor(sp.srcRect.h) != sp.srcRect.h ||
+          std::floor(sp.srcRect.x) != sp.srcRect.x || std::floor(sp.srcRect.y) != sp.srcRect.y) {
+        allCornersInteger = false;
+      }
+    }
+    Check(allCornersInteger, "EmitNineSlice floors clamped slice bounds to integer pixels/texels");
+    CheckEq(rq.begin()->payload.sprite.destW, 7.0f, "15px squeezed width floors slice left/right from 7.5 to 7");
+    CheckEq(rq.begin()->payload.sprite.srcRect.w, 7.0f, "15px squeezed width floors slice srcW to 7");
+  }
+
+  // 3. RenderTextSystem uses integer raster scale + SDL_SCALEMODE_NEAREST when scale mode != Linear
+  {
+    SDL_Init(0);
+    TTF_Init();
+    SDL_Surface* surface = SDL_CreateSurface(128, 128, SDL_PIXELFORMAT_RGBA32);
+    SDL_Renderer* sdlRenderer = surface != nullptr ? SDL_CreateSoftwareRenderer(surface) : nullptr;
+    Check(sdlRenderer != nullptr, "software SDL_Renderer created for RenderTextSystem check");
+
+    if (sdlRenderer != nullptr) {
+      Registry registry;
+      registry.Set<GameConfig>(GameConfig{});
+      registry.Get<GameConfig>().windowWidth = 1280;
+      registry.Get<GameConfig>().windowHeight = 720;
+      CameraComponent cam;
+      cam.viewport = {0.0f, 0.0f, 1280.0f, 720.0f};
+      registry.Set<CameraComponent>(cam);
+      registry.Set<RenderQueue>(RenderQueue(32));
+
+      auto& am = registry.Set<AssetManager>(AssetManager{});
+      am.SetDefaultScaleMode("pixelart");
+      am.AddFontFromMemory("test-16", kMinimalTestTtf, sizeof(kMinimalTestTtf), 16.0f);
+      Check(am.GetFont("test-16") != nullptr, "synthetic TTF loads via AddFontFromMemory");
+
+      EngineContext ctx;
+      ctx.sdlRenderer = sdlRenderer;
+      ctx.sceneRenderScale = 2.25f;
+      registry.Set<EngineContext>(ctx);
+
+      registry.CreateEntityWithBundle(UIRectComponent{10.0f, 10.0f, 200.0f, 40.0f, 1},
+                                      TextLabelComponent{{0.0f, 0.0f}, 1, "AAA", "test-16"});
+
+      TextLabelComponent fixedText{{10.4f, 20.6f}, 1, "BBB", "test-16"};
+      fixedText.isFixed = true;
+      registry.CreateEntityWithBundle(fixedText);
+
+      registry.RegisterSystem<TextLabelComponent>(RenderTextSystem());
+      registry.Update(0.016f);
+
+      const auto& rq = registry.Get<RenderQueue>();
+      CheckEq(rq.Size(), static_cast<size_t>(2), "RenderTextSystem emits 2 TextCommands");
+      if (rq.Size() == 2) {
+        const auto& cmd = rq.begin()->payload.text;
+        const auto& fixedCmd = (rq.begin() + 1)->payload.text;
+        CheckEq(fixedCmd.destRect.x, 10.0f, "Fixed TextLabelComponent without UIRect snaps x to 10");
+        CheckEq(fixedCmd.destRect.y, 21.0f, "Fixed TextLabelComponent without UIRect snaps y to 21");
+        SDL_ScaleMode mode = SDL_SCALEMODE_INVALID;
+        SDL_GetTextureScaleMode(cmd.texture, &mode);
+        Check(mode == SDL_SCALEMODE_NEAREST, "PixelArt/Nearest scale mode uses SDL_SCALEMODE_NEAREST for text");
+        float texW = 0.0f;
+        float texH = 0.0f;
+        SDL_GetTextureSize(cmd.texture, &texW, &texH);
+        Check(std::abs(texW - cmd.destRect.w * 2.0f) < 0.05f,
+              "Pixel-sharp text quantizes 2.25x sceneRenderScale to 2.0x integer multiple");
+
+        // Switch default scale mode to Linear and verify re-rasterization uses SDL_SCALEMODE_LINEAR + 2.25x
+        am.SetDefaultScaleMode("linear");
+        registry.Get<RenderQueue>().Clear();
+        registry.Update(0.016f);
+        const auto& cmdLin = rq.begin()->payload.text;
+        SDL_ScaleMode linMode = SDL_SCALEMODE_INVALID;
+        SDL_GetTextureScaleMode(cmdLin.texture, &linMode);
+        Check(linMode == SDL_SCALEMODE_LINEAR, "Linear scale mode uses SDL_SCALEMODE_LINEAR for text");
+        float linTexW = 0.0f;
+        SDL_GetTextureSize(cmdLin.texture, &linTexW, nullptr);
+        Check(std::abs(linTexW - cmdLin.destRect.w * 2.25f) < 0.05f,
+              "Linear text keeps 0.25x fractional raster scale (2.25x)");
+      }
+    }
+
+    if (sdlRenderer != nullptr) SDL_DestroyRenderer(sdlRenderer);
+    if (surface != nullptr) SDL_DestroySurface(surface);
+    TTF_Quit();
+    SDL_Quit();
+  }
+}
+
+void TestUiScaleResolution() {
+  std::cout << "[ui-scale] ResolveAutoUiScale, ResolveUiScale, clamping, config, and Lua API\n";
+  GameConfig cfg;
+  Check(!cfg.HasExplicitBaseResolution(), "Default GameConfig has no explicit base resolution");
+  CheckEq(octarine::ui::ResolveAutoUiScale(cfg), 1.0f, "ResolveAutoUiScale defaults to 1.0 without config");
+  CheckEq(octarine::ui::ResolveUiScale(cfg), 1.0f, "ResolveUiScale defaults to 1.0 without config");
+
+  cfg.SetBaseWidth(640);
+  cfg.SetBaseHeight(360);
+  cfg.windowWidth = 960;
+  cfg.windowHeight = 540;
+  Check(cfg.HasExplicitBaseResolution(), "HasExplicitBaseResolution is true after setting base dimensions");
+  CheckEq(octarine::ui::ResolveAutoUiScale(cfg), 1.5f, "ResolveAutoUiScale returns 1.5 for 960x540 over 640x360");
+  CheckEq(octarine::ui::ResolveUiScale(cfg), 1.5f, "ResolveUiScale returns 1.5 at 1.0 user multiplier");
+
+  cfg.GetEngineOptions().uiScale = 2.0f;
+  CheckEq(octarine::ui::ResolveUiScale(cfg), 3.0f, "ResolveUiScale multiplies auto scale by user uiScale");
+  cfg.GetEngineOptions().uiScale = 10.0f;
+  CheckEq(octarine::ui::ClampUserUiScale(10.0f), 4.0f, "ClampUserUiScale caps upper bound at 4.0");
+  CheckEq(octarine::ui::ResolveUiScale(cfg), 4.0f, "ResolveUiScale caps combined scale at 4.0");
+  cfg.GetEngineOptions().uiScale = 0.05f;
+  CheckEq(octarine::ui::ClampUserUiScale(0.05f), 0.25f, "ClampUserUiScale floors lower bound at 0.25");
+  Check(std::abs(octarine::ui::ResolveUiScale(cfg) - 0.375f) < 0.001f, "ResolveUiScale computes 1.5 * 0.25 = 0.375");
+
+  cfg.GetEngineOptions().uiScale = 1.0f;
+  cfg.windowWidth = 1280;
+  cfg.windowHeight = 900;
+  CheckEq(octarine::ui::ResolveAutoUiScale(cfg), 2.0f, "ResolveAutoUiScale picks min axis ratio (2.0 < 2.5)");
+
+  GameConfig loaded;
+  Check(loaded.LoadConfig({{"Title", "ScaleTest"},
+                           {"StartupScript", "main.lua"},
+                           {"BaseResolutionWidth", "640"},
+                           {"BaseResolutionHeight", "360"},
+                           {"DefaultUIScale", "1.25"}}),
+        "LoadConfig parses DefaultUIScale setting");
+  Check(std::abs(loaded.GetEngineOptions().uiScale - 1.25f) < 0.001f, "DefaultUIScale stored in EngineOptions");
+  loaded.windowWidth = 1280;
+  loaded.windowHeight = 720;
+  Check(std::abs(octarine::ui::ResolveUiScale(loaded) - 2.5f) < 0.001f,
+        "Loaded DefaultUIScale multiplies auto UI scale");
+
+  Registry luaReg;
+  auto& luaCfg = luaReg.Set<GameConfig>(GameConfig{});
+  luaCfg.SetBaseWidth(640);
+  luaCfg.SetBaseHeight(360);
+  luaCfg.windowWidth = 960;
+  luaCfg.windowHeight = 540;
+  TestUiBindingContext bindCtx(&luaReg);
+  sol::state lua;
+  lua.open_libraries(sol::lib::base, sol::lib::math);
+  LuaModuleBinding<UIModule>::install(lua, bindCtx);
+  const auto res = lua.safe_script(R"(
+    assert(math.abs(ui.get_auto_scale() - 1.5) < 0.001, "ui.get_auto_scale matches 1.5")
+    assert(math.abs(ui.get_scale() - 1.5) < 0.001, "ui.get_scale matches 1.5")
+    local combined = ui.set_scale(1.25)
+    assert(math.abs(combined - 1.875) < 0.001, "ui.set_scale(1.25) returns 1.875")
+    assert(math.abs(ui.get_scale() - 1.875) < 0.001, "ui.get_scale reflects updated scale")
+  )");
+  Check(res.valid(), "Lua ui.get_scale / ui.get_auto_scale / ui.set_scale work cleanly");
+}
+
+void TestUiLayoutDynamicScalingAndReversibleResize() {
+  std::cout << "[ui-scale] Dynamic layout scaling and clean resize reversibility\n";
+  Registry registry;
+  auto& cfg = registry.Set<GameConfig>(GameConfig{});
+  cfg.SetBaseWidth(640);
+  cfg.SetBaseHeight(360);
+  cfg.windowWidth = 640;
+  cfg.windowHeight = 360;
+  registry.Set<RenderQueue>(RenderQueue(64));
+  registry.RegisterBulkSystem(UILayoutSystem());
+
+  UIFlexComponent colFlex(FlexDirection::Column, 10.0f, 0.0f, FlexAlign::Start, FlexAlign::Start);
+  colFlex.paddingLeft = 12.0f;
+  colFlex.paddingTop = 10.0f;
+  const Entity fsCanvas = registry.CreateEntityWithBundle(UICanvasComponent(true, 0.0f, 0.0f, 1), colFlex);
+
+  UILayoutBoxComponent b1;
+  b1.SetWidthPx(100.0f);
+  b1.SetHeightPx(40.0f);
+  const Entity c1 = registry.CreateEntityWithBundle(b1, SquarePrimitiveComponent{});
+  registry.SetParent(c1, fsCanvas);
+
+  UILayoutBoxComponent b2;
+  b2.SetWidthPx(100.0f);
+  b2.SetHeightPx(40.0f);
+  b2.marginTop = 8.0f;
+  const Entity c2 = registry.CreateEntityWithBundle(b2, SquarePrimitiveComponent{});
+  registry.SetParent(c2, fsCanvas);
+
+  const Entity expCanvas = registry.CreateEntityWithBundle(UICanvasComponent(true, 200.0f, 100.0f, 2));
+
+  registry.Update(0.016f);
+  const auto r1Base = registry.GetComponent<UIRectComponent>(c1);
+  const auto r2Base = registry.GetComponent<UIRectComponent>(c2);
+  const auto reBase = registry.GetComponent<UIRectComponent>(expCanvas);
+  CheckEq(r1Base.left, 12.0f, "1x c1 left is 12");
+  CheckEq(r1Base.top, 10.0f, "1x c1 top is 10");
+  CheckEq(r1Base.Width(), 100.0f, "1x c1 width is 100");
+  CheckEq(r2Base.top, 68.0f, "1x c2 top is 10 + 40 + 10(gap) + 8(margin) = 68");
+  CheckEq(reBase.Width(), 200.0f, "1x explicit canvas width is 200");
+
+  cfg.windowWidth = 1280;
+  cfg.windowHeight = 720;
+  registry.Update(0.016f);
+  const auto r1Scaled = registry.GetComponent<UIRectComponent>(c1);
+  const auto r2Scaled = registry.GetComponent<UIRectComponent>(c2);
+  const auto reScaled = registry.GetComponent<UIRectComponent>(expCanvas);
+  CheckEq(r1Scaled.left, 24.0f, "2x c1 left scales to 24");
+  CheckEq(r1Scaled.top, 20.0f, "2x c1 top scales to 20");
+  CheckEq(r1Scaled.Width(), 200.0f, "2x c1 width scales to 200");
+  CheckEq(r1Scaled.Height(), 80.0f, "2x c1 height scales to 80");
+  CheckEq(r2Scaled.top, 136.0f, "2x c2 top scales to 136");
+  CheckEq(reScaled.Width(), 400.0f, "2x explicit canvas width scales to 400");
+  CheckEq(reScaled.Height(), 200.0f, "2x explicit canvas height scales to 200");
+  CheckEq(registry.GetComponent<UILayoutBoxComponent>(c1).width, 100.0f, "Authored box width remains unmutated at 100");
+  CheckEq(registry.GetComponent<UIFlexComponent>(fsCanvas).gap, 10.0f, "Authored flex gap remains unmutated at 10");
+
+  cfg.windowWidth = 640;
+  cfg.windowHeight = 360;
+  registry.Update(0.016f);
+  const auto r1Reverted = registry.GetComponent<UIRectComponent>(c1);
+  const auto r2Reverted = registry.GetComponent<UIRectComponent>(c2);
+  const auto reReverted = registry.GetComponent<UIRectComponent>(expCanvas);
+  CheckEq(r1Reverted.Width(), 100.0f, "Resize back to 640x360 reverts c1 width to 100");
+  CheckEq(r2Reverted.top, 68.0f, "Resize back to 640x360 reverts c2 top to 68");
+  CheckEq(reReverted.Width(), 200.0f, "Resize back to 640x360 reverts explicit canvas width to 200");
+}
+
+void TestNineSliceUiScaleIntegerBorders() {
+  std::cout << "[ui-scale] 9-slice integer border scaling and UI primitive border thickness\n";
+  RenderQueue rq(32);
+  const UIRectComponent rect(0.0f, 0.0f, 120.0f, 60.0f, 1);
+  const SpriteComponent sprite("panel", 48.0f, 48.0f, 0);
+  const UINineSliceComponent nine(8.0f, 8.0f, 8.0f, 8.0f);
+  const SDL_FRect atlasOffset{0.0f, 0.0f, 48.0f, 48.0f};
+
+  RenderUISpriteSystem::EmitNineSlice(rq, rect, sprite, nine, nullptr, atlasOffset, {255, 255, 255, 255}, 1.5f);
+  CheckEq(rq.Size(), static_cast<size_t>(9), "EmitNineSlice at uiScale=1.5 emits 9 SpriteCommands");
+  if (!rq.IsEmpty()) {
+    const auto& tl = rq.begin()->payload.sprite;
+    CheckEq(tl.destW, 16.0f, "9-slice corner destW rounds 1.5 -> 2x border (8*2=16)");
+    CheckEq(tl.destH, 16.0f, "9-slice corner destH rounds 1.5 -> 2x border (8*2=16)");
+    CheckEq(tl.srcRect.w, 8.0f, "9-slice corner srcRect.w stays in unscaled texels (8)");
+    CheckEq(tl.srcRect.h, 8.0f, "9-slice corner srcRect.h stays in unscaled texels (8)");
+  }
+
+  CheckEq(octarine::ui::SnapUiThickness(1.0f, 1.5f), 2.0f, "SnapUiThickness rounds 1.0 * 1.5 to 2");
+  CheckEq(octarine::ui::SnapUiThickness(0.0f, 2.0f), 0.0f, "SnapUiThickness preserves 0 thickness");
+
+  Registry reg;
+  auto& cfg = reg.Set<GameConfig>(GameConfig{});
+  cfg.SetBaseWidth(640);
+  cfg.SetBaseHeight(360);
+  cfg.windowWidth = 1280;
+  cfg.windowHeight = 720;
+  reg.Set<RenderQueue>(RenderQueue(32));
+  SquarePrimitiveComponent sq;
+  sq.borderThickness = 2.0f;
+  sq.borderColor = {255, 255, 255, 255};
+  sq.color = {20, 20, 20, 255};
+  reg.CreateEntityWithBundle(UIRectComponent(0.0f, 0.0f, 100.0f, 40.0f, 1), sq);
+  reg.RegisterBulkSystem(RenderUIPrimitiveSystem());
+  reg.Update(0.016f);
+
+  const auto& prq = reg.Get<RenderQueue>();
+  CheckEq(prq.Size(), static_cast<size_t>(5), "SquarePrimitive with border emits fill + 4 edge rects");
+  if (prq.Size() == 5) {
+    CheckEq((prq.begin() + 1)->payload.square.destRect.h, 4.0f, "UI square border thickness scales 2 -> 4 at 2x");
+  }
+}
+
+const TextCommand* FindTextCommandInYRange(const RenderQueue& rq, const float minY, const float maxY) {
+  for (const RenderKey& key : rq) {
+    if (key.payload.text.destRect.y >= minY && key.payload.text.destRect.y <= maxY) {
+      return &key.payload.text;
+    }
+  }
+  return nullptr;
+}
+
+void TestRenderTextUiScaleNoDoubleWrapAndWorldUnscaled() {
+  std::cout << "[ui-scale] UI text scales dynamically without double-wrapping while world text stays unscaled\n";
+  SDL_Init(0);
+  TTF_Init();
+  SDL_Surface* surface = SDL_CreateSurface(128, 128, SDL_PIXELFORMAT_RGBA32);
+  SDL_Renderer* sdlRenderer = surface != nullptr ? SDL_CreateSoftwareRenderer(surface) : nullptr;
+  Check(sdlRenderer != nullptr, "software SDL_Renderer created for UI scale text check");
+  if (sdlRenderer != nullptr) {
+    Registry registry;
+    auto& cfg = registry.Set<GameConfig>(GameConfig{});
+    cfg.SetBaseWidth(640);
+    cfg.SetBaseHeight(360);
+    cfg.windowWidth = 960;
+    cfg.windowHeight = 540;
+    CameraComponent cam;
+    cam.viewport = {0.0f, 0.0f, 960.0f, 540.0f};
+    registry.Set<CameraComponent>(cam);
+    registry.Set<RenderQueue>(RenderQueue(32));
+
+    auto& am = registry.Set<AssetManager>(AssetManager{});
+    am.SetDefaultScaleMode("pixelart");
+    am.AddFontFromMemory("test-16", kMinimalTestTtf, sizeof(kMinimalTestTtf), 16.0f);
+
+    EngineContext ctx;
+    ctx.sdlRenderer = sdlRenderer;
+    ctx.sceneRenderScale = 1.0f;
+    registry.Set<EngineContext>(ctx);
+
+    TextLabelComponent uiLbl{{0.0f, 0.0f}, 1, "AAA AAA", "test-16"};
+    uiLbl.wrapWidth = 40;
+    registry.CreateEntityWithBundle(UIRectComponent{10.0f, 10.0f, 300.0f, 160.0f, 1}, uiLbl);
+
+    TextLabelComponent fixedLbl{{10.0f, 180.0f}, 1, "AAA AAA", "test-16"};
+    fixedLbl.isFixed = true;
+    registry.CreateEntityWithBundle(fixedLbl);
+
+    registry.RegisterSystem<TextLabelComponent>(RenderTextSystem());
+    registry.Update(0.016f);
+    const auto& rq = registry.Get<RenderQueue>();
+    const TextCommand* ui15 = FindTextCommandInYRange(rq, 5.0f, 60.0f);
+    const TextCommand* nonUi15 = FindTextCommandInYRange(rq, 170.0f, 210.0f);
+    Check(ui15 != nullptr && nonUi15 != nullptr, "1.5x emits both UI and non-UI TextCommands");
+    if (ui15 != nullptr && nonUi15 != nullptr) {
+      float texW = 0.0f;
+      SDL_GetTextureSize(ui15->texture, &texW, nullptr);
+      Check(std::abs(texW - ui15->destRect.w) < 0.05f, "1.5x UI text with 1x device scale matches logical texW");
+      Check(ui15->destRect.h >= nonUi15->destRect.h * 1.5f * 1.6f,
+            "1.5x UI wrapped text wraps onto 2+ lines (height scales >= 2.4x 1x height)");
+      Check(ui15->destRect.w <= 62.0f, "1.5x UI wrapped width stays bounded near wrapWidth*1.5 (60)");
+    }
+
+    const float baseNonUiW = nonUi15 != nullptr ? nonUi15->destRect.w : 0.0f;
+    const float baseNonUiH = nonUi15 != nullptr ? nonUi15->destRect.h : 0.0f;
+    cfg.windowWidth = 1280;
+    cfg.windowHeight = 720;
+    registry.Get<CameraComponent>().viewport = {0.0f, 0.0f, 1280.0f, 720.0f};
+    registry.Get<RenderQueue>().Clear();
+    registry.Update(0.016f);
+    const TextCommand* nonUi20At1xDev = FindTextCommandInYRange(rq, 170.0f, 210.0f);
+    Check(nonUi20At1xDev != nullptr && nonUi20At1xDev->destRect.w == baseNonUiW,
+          "Non-UI fixed text stays unscaled across UI window resize");
+
+    registry.Get<EngineContext>().sceneRenderScale = 2.0f;
+    registry.Get<RenderQueue>().Clear();
+    registry.Update(0.016f);
+    const TextCommand* ui20 = FindTextCommandInYRange(rq, 5.0f, 60.0f);
+    Check(ui20 != nullptr, "2.0x emits UI TextCommand at 2x device scale");
+    if (ui20 != nullptr) {
+      float texW20 = 0.0f;
+      SDL_GetTextureSize(ui20->texture, &texW20, nullptr);
+      Check(ui20->destRect.h >= baseNonUiH * 2.0f * 1.6f,
+            "2.0x UI text at 2x device scale stays wrapped (does not double-scale wrapWidth)");
+      Check(ui20->destRect.w <= 82.0f, "2.0x wrapped UI width stays bounded near wrapWidth*2 (80)");
+      Check(std::abs(texW20 - ui20->destRect.w * 2.0f) < 0.05f,
+            "2.0x UI text with 2x device scale rasterizes at 2x texture pixels per logical px");
+    }
+  }
+
+  if (sdlRenderer != nullptr) SDL_DestroyRenderer(sdlRenderer);
+  if (surface != nullptr) SDL_DestroySurface(surface);
+  TTF_Quit();
+  SDL_Quit();
+}
+
+void TestFontStoreAndMeasureCacheLru() {
+  std::cout << "[text-cache] FontStore::GetScaled & MeasureTextLabel bounded LRU without generation bump\n";
+  SDL_Init(0);
+  TTF_Init();
+  {
+    Registry registry;
+    auto& am = registry.Set<AssetManager>(AssetManager{});
+    am.AddFontFromMemory("lru-16", kMinimalTestTtf, sizeof(kMinimalTestTtf), 16.0f);
+    const std::uint64_t baseGen = am.FontGeneration();
+
+    TTF_Font* hot15 = am.GetFontScaled("lru-16", 1.50f);
+    Check(hot15 != nullptr, "GetFontScaled returns valid scaled font at 1.50x");
+
+    // Touch 270 distinct scaled copies (> 256 cap) while keeping 1.50x hot via re-access at 200.
+    for (int i = 0; i < 270; ++i) {
+      if (i == 200) {
+        Check(am.GetFontScaled("lru-16", 1.50f) == hot15, "GetFontScaled 1.50x stays cached at step 200");
+      }
+      const float scale = 1.10f + 0.02f * static_cast<float>(i);
+      Check(am.GetFontScaled("lru-16", scale) != nullptr, "GetFontScaled returns valid font during pressure sweep");
+    }
+
+    CheckEq(am.FontGeneration(), baseGen, "FontStore::GetScaled LRU eviction must not bump FontGeneration");
+    Check(am.GetFontScaled("lru-16", 1.50f) == hot15, "Hot scaled font entry remains cached across LRU eviction");
+
+    // Measure > 600 distinct strings through MeasureTextLabel, then verify font reload invalidates cleanly.
+    TextLabelComponent lbl{{0.0f, 0.0f}, 1, "hot-measure", "lru-16"};
+    const glm::vec2 baseMeasure = octarine::ui::MeasureTextLabel(&registry, lbl, 0, 1.50f);
+    Check(baseMeasure.x > 0.0f && baseMeasure.y > 0.0f, "MeasureTextLabel produces positive bounds");
+
+    for (int i = 0; i < 600; ++i) {
+      lbl.text = "unique_str_" + std::to_string(i);
+      const glm::vec2 m = octarine::ui::MeasureTextLabel(&registry, lbl, 0, 1.50f);
+      Check(m.x > 0.0f, "MeasureTextLabel handles >512 unique strings");
+    }
+
+    // Reload "lru-16" at 2x base size -> FontGeneration increments -> MeasureTextLabel must not return stale size.
+    am.AddFontFromMemory("lru-16", kMinimalTestTtf, sizeof(kMinimalTestTtf), 32.0f);
+    Check(am.FontGeneration() > baseGen, "Font reload increments FontGeneration");
+    lbl.text = "hot-measure";
+    const glm::vec2 reloadedMeasure = octarine::ui::MeasureTextLabel(&registry, lbl, 0, 1.50f);
+    Check(reloadedMeasure.x > baseMeasure.x * 1.5f, "MeasureTextLabel invalidates on font reload");
+  }
+  TTF_Quit();
+  SDL_Quit();
+}
+
+void TestGlyphAtlasIntegerScaleAndRenderTextTwoLevelCache() {
+  std::cout << "[text-cache] GlyphAtlas integer scaling & RenderTextSystem L1/L2 texture sharing + deferred retire\n";
+  SDL_Init(0);
+  TTF_Init();
+  SDL_Surface* surface = SDL_CreateSurface(128, 128, SDL_PIXELFORMAT_RGBA32);
+  SDL_Renderer* sdlRenderer = surface != nullptr ? SDL_CreateSoftwareRenderer(surface) : nullptr;
+  Check(sdlRenderer != nullptr, "software SDL_Renderer created for glyph atlas & L2 cache test");
+
+  const std::filesystem::path tmpDir = std::filesystem::temp_directory_path() / "octarine_text_cache_test";
+  std::error_code ec;
+  std::filesystem::remove_all(tmpDir, ec);
+  std::filesystem::create_directories(tmpDir / "assets" / "atlases", ec);
+
+  if (sdlRenderer != nullptr) {
+    {
+      std::ofstream ttfOut((tmpDir / "test.ttf").string(), std::ios::binary);
+      ttfOut.write(reinterpret_cast<const char*>(kMinimalTestTtf), sizeof(kMinimalTestTtf));
+    }
+    {
+      std::vector<unsigned char> pixels(8 * 8 * 4, 255);
+      Check(stbi_write_png((tmpDir / "assets" / "atlases" / "atlas-16.atlas.png").string().c_str(), 8, 8, 4,
+                           pixels.data(), 32) != 0,
+            "synthetic 8x8 atlas PNG written");
+    }
+    {
+      std::ofstream luaOut((tmpDir / "assets" / "atlases" / "atlas-16.atlas.lua").string());
+      luaOut << "return {\n"
+             << "  size = 16,\n  atlas_width = 8,\n  atlas_height = 8,\n  line_skip = 16,\n"
+             << "  glyphs = {\n";
+      for (int cp = 32; cp <= 126; ++cp) {
+        const float adv = (cp == 'B') ? 8.0f : 7.0f;
+        luaOut << "    [" << cp << "] = { x=0, y=0, w=6, h=8, advance=" << adv << ", minx=0, miny=0 },\n";
+      }
+      luaOut << "  },\n}\n";
+    }
+
+    {
+      std::ofstream iniOut((tmpDir / "config.ini").string());
+      iniOut << "Title=TextCacheTest\nStartupScript=main.lua\n";
+    }
+    Registry registry;
+    auto& cfg = registry.Set<GameConfig>(GameConfig{});
+    Check(cfg.LoadConfigFromFile(tmpDir.string()), "LoadConfigFromFile sets temp asset path");
+    cfg.SetBaseWidth(640);
+    cfg.SetBaseHeight(360);
+    cfg.windowWidth = 1280;  // 2.0x integer UI scale
+    cfg.windowHeight = 720;
+
+    CameraComponent cam;
+    cam.viewport = {0.0f, 0.0f, 1280.0f, 720.0f};
+    registry.Set<CameraComponent>(cam);
+    registry.Set<RenderQueue>(RenderQueue(2048));
+
+    auto& am = registry.Set<AssetManager>(AssetManager{});
+    am.LoadGameConfig(cfg);
+    am.SetDefaultScaleMode("pixelart");
+    am.AddFont("atlas-16", "test.ttf", 16.0f);
+    Check(am.GetGlyphAtlas("atlas-16") != nullptr, "GlyphAtlas sidecar loaded via AssetManager::AddFont");
+
+    EngineContext ctx;
+    ctx.sdlRenderer = sdlRenderer;
+    ctx.sceneRenderScale = 1.0f;
+    registry.Set<EngineContext>(ctx);
+
+    // 1x, 2x, 3x pixelart atlas measurement vs 1.5x fractional TTF fallback
+    TextLabelComponent lbl{{0.0f, 0.0f}, 1, "AB", "atlas-16"};
+    const glm::vec2 m1 = octarine::ui::MeasureTextLabel(&registry, lbl, 0, 1.0f);
+    const glm::vec2 m2 = octarine::ui::MeasureTextLabel(&registry, lbl, 0, 2.0f);
+    const glm::vec2 m3 = octarine::ui::MeasureTextLabel(&registry, lbl, 0, 3.0f);
+    CheckEq(m1.x, 15.0f, "1x GlyphAtlas MeasureTextLabel width is 7+8=15");
+    CheckEq(m1.y, 16.0f, "1x GlyphAtlas MeasureTextLabel height is line_skip=16");
+    CheckEq(m2.x, 30.0f, "2x pixelart GlyphAtlas MeasureTextLabel width scales cleanly to 30");
+    CheckEq(m2.y, 32.0f, "2x pixelart GlyphAtlas MeasureTextLabel height scales cleanly to 32");
+    CheckEq(m3.x, 45.0f, "3x pixelart GlyphAtlas MeasureTextLabel width scales cleanly to 45");
+
+    // Two distinct UI entities sharing identical text "AB" at 2.0x UI scale must share one SDL_Texture*
+    registry.CreateEntityWithBundle(UIRectComponent{10.0f, 10.0f, 100.0f, 40.0f, 1}, lbl);
+    registry.CreateEntityWithBundle(UIRectComponent{10.0f, 80.0f, 100.0f, 40.0f, 1}, lbl);
+
+    RenderTextSystem rts;
+    auto rtsHandle = registry.RegisterSystem<TextLabelComponent>(std::move(rts));
+    registry.Update(0.016f);
+
+    const auto& rq = registry.Get<RenderQueue>();
+    const TextCommand* cmd1 = FindTextCommandInYRange(rq, 5.0f, 60.0f);
+    const TextCommand* cmd2 = FindTextCommandInYRange(rq, 75.0f, 130.0f);
+    Check(cmd1 != nullptr && cmd2 != nullptr, "Both UI entities emit TextCommands");
+    if (cmd1 != nullptr && cmd2 != nullptr) {
+      Check(cmd1->texture == cmd2->texture, "Identical labels on separate entities share one L2 SDL_Texture*");
+      CheckEq(cmd1->destRect.w, 30.0f, "2x pixelart UI GlyphAtlas label logical width matches measurement (30)");
+      CheckEq(cmd1->destRect.h, 32.0f, "2x pixelart UI GlyphAtlas label logical height matches measurement (32)");
+      float texW = 0.0f;
+      float texH = 0.0f;
+      SDL_GetTextureSize(cmd1->texture, &texW, &texH);
+      CheckEq(texW, 15.0f, "2x pixelart UI GlyphAtlas composes 1x texture (texW=15) and upscales crisply on GPU");
+      CheckEq(texH, 16.0f, "2x pixelart UI GlyphAtlas composes 1x texture (texH=16)");
+    }
+
+    // Overflow L2 (> 512 unique strings) across multiple steps WITHOUT clearing RenderQueue in between:
+    // evicted textures defer destruction in retired_textures_ until RenderQueue::Clear() increments generation.
+    const Entity swapEnt =
+        registry.CreateEntityWithBundle(UIRectComponent{10.0f, 150.0f, 100.0f, 40.0f, 1},
+                                        TextLabelComponent{{0.0f, 0.0f}, 1, "KeepAlive0", "atlas-16"});
+    registry.Get<RenderQueue>().Clear();
+    registry.Update(0.016f);
+    CheckEq(rtsHandle.Func().RetiredTextureCount(), static_cast<std::size_t>(0),
+            "No retired textures before L2 cache capacity is reached");
+
+    auto& swapLbl = registry.GetComponent<TextLabelComponent>(swapEnt);
+    for (int i = 1; i <= 540; ++i) {
+      swapLbl.text = "Evict_" + std::to_string(i);
+      registry.Update(0.016f);
+      if (i % 100 == 0 && i < 500) {
+        registry.Get<RenderQueue>().Clear();
+      }
+    }
+    Check(rtsHandle.Func().RetiredTextureCount() > 0,
+          "Evicted L2 textures defer destruction until RenderQueue::ClearGeneration advances");
+    CheckEq(rtsHandle.Func().ContentCacheSize(), static_cast<std::size_t>(512),
+            "L2 content cache stays bounded at 512 entries");
+
+    registry.Get<RenderQueue>().Clear();
+    registry.Update(0.016f);
+    CheckEq(rtsHandle.Func().RetiredTextureCount(), static_cast<std::size_t>(0),
+            "Deferred retired textures flush cleanly after RenderQueue::Clear advances generation");
+  }
+
+  std::filesystem::remove_all(tmpDir, ec);
+  if (sdlRenderer != nullptr) SDL_DestroyRenderer(sdlRenderer);
+  if (surface != nullptr) SDL_DestroySurface(surface);
+  TTF_Quit();
+  SDL_Quit();
+}
+
 }  // namespace
 
 int main() {
@@ -1986,5 +2619,12 @@ int main() {
   TestGamepadAndFocusNavigationFixes();
   TestOxmlGamepadOnFocusBorderWidthAndHotplug();
   TestLuaFocusApiAnalogSliderAndScrollFallback();
+  TestPixelSnappingNineSliceClampAndSharpText();
+  TestUiScaleResolution();
+  TestUiLayoutDynamicScalingAndReversibleResize();
+  TestNineSliceUiScaleIntegerBorders();
+  TestRenderTextUiScaleNoDoubleWrapAndWorldUnscaled();
+  TestFontStoreAndMeasureCacheLru();
+  TestGlyphAtlasIntegerScaleAndRenderTextTwoLevelCache();
   return octarine::test::ReportSummary("UILayoutTest");
 }

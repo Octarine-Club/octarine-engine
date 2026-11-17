@@ -209,7 +209,6 @@ class TilemapSystem {
 
   std::unordered_map<int64_t, octarine::tilemap::ActiveChunk> active_chunks_{};
   std::unordered_map<int64_t, std::string> chunk_overrides_{};
-  mutable std::unordered_map<int64_t, const octarine::tilemap::ChunkTemplate*> resolved_templates_{};
   std::unordered_map<int64_t, octarine::tilemap::ConsumedPropMask> consumed_props_{};
   sol::protected_function prop_spawner_{};
   octarine::tilemap::VariantGeneratorFn variant_generator_{};

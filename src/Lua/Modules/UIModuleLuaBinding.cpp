@@ -14,6 +14,7 @@
 #include "Components/UIStyleStateComponent.h"
 #include "Components/UIZIndexComponent.h"
 #include "ECS/Registry.h"
+#include "Game/GameConfig.h"
 #include "General/Logger.h"
 #include "Lua/Bindings/UIClipComponentLuaBinding.h"
 #include "Lua/Bindings/UIFlexComponentLuaBinding.h"
@@ -24,6 +25,7 @@
 #include "Lua/Bindings/UIStyleStateComponentLuaBinding.h"
 #include "Lua/LuaBindingContext.h"
 #include "Systems/UIButtonSystem.h"
+#include "Systems/UILayoutMetrics.h"
 #include "UI/UIRuntime.h"
 
 namespace {
@@ -284,6 +286,19 @@ void LuaModuleBinding<UIModule>::install(sol::state& lua, LuaBindingContext& ctx
   ui.set_function("get_focused", [&ctx]() { return GetFocusedEntity(ctx.GetRegistry()); });
   ui.set_function("debug_draw",
                   [&ctx](const sol::optional<bool>& enabled) { return ApplyDebugDraw(ctx.GetRegistry(), enabled); });
+  ui.set_function("get_scale", [&ctx]() { return octarine::ui::ResolveUiScale(ctx.GetRegistry()); });
+  ui.set_function("get_auto_scale", [&ctx]() {
+    const Registry* r = ctx.GetRegistry();
+    const auto* cfg = r != nullptr ? r->TryGet<GameConfig>() : nullptr;
+    return cfg != nullptr ? octarine::ui::ResolveAutoUiScale(*cfg) : 1.0f;
+  });
+  ui.set_function("set_scale", [&ctx](const sol::optional<float>& scale) {
+    Registry* r = ctx.GetRegistry();
+    auto* cfg = r != nullptr ? r->TryGet<GameConfig>() : nullptr;
+    if (cfg == nullptr) return 1.0f;
+    cfg->GetEngineOptions().uiScale = octarine::ui::ClampUserUiScale(scale.value_or(1.0f));
+    return octarine::ui::ResolveUiScale(*cfg);
+  });
 
   if (Registry* r = ctx.GetRegistry(); r != nullptr) {
     auto& runtime = r->Set<UIRuntime>(UIRuntime(&lua, r, nullptr));

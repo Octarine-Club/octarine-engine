@@ -123,6 +123,7 @@ bool Renderer::EnsureSceneTargetSize(SDL_Renderer* sdlRenderer, const int target
     return scene_texture_ != nullptr;
   }
   SDL_SetTextureScaleMode(newTex, SDL_SCALEMODE_NEAREST);
+  SDL_SetTextureBlendMode(newTex, SDL_BLENDMODE_NONE);
   if (scene_texture_ != nullptr) {
     SDL_DestroyTexture(scene_texture_);
   }
@@ -164,7 +165,7 @@ void Renderer::BeginScene(SDL_Renderer* sdlRenderer) const {
   SDL_RenderClear(sdlRenderer);
 }
 
-void Renderer::EndScene(SDL_Renderer* sdlRenderer) const {
+void Renderer::EndScene(SDL_Renderer* sdlRenderer, const bool clearBackbuffer) const {
 #if defined(__APPLE__) && TARGET_OS_OSX
   SDL_FlushRenderer(sdlRenderer);
   ReclaimStaleMacMetalDrawables(sdlRenderer);
@@ -172,8 +173,10 @@ void Renderer::EndScene(SDL_Renderer* sdlRenderer) const {
   SDL_SetRenderScale(sdlRenderer, 1.0F, 1.0F);
   SDL_SetRenderTarget(sdlRenderer, nullptr);
   SDL_SetRenderScale(sdlRenderer, 1.0F, 1.0F);
-  SDL_SetRenderDrawColor(sdlRenderer, kWindowClearBlack, kWindowClearBlack, kWindowClearBlack, Constants::kUint8Max);
-  SDL_RenderClear(sdlRenderer);
+  if (clearBackbuffer) {
+    SDL_SetRenderDrawColor(sdlRenderer, kWindowClearBlack, kWindowClearBlack, kWindowClearBlack, Constants::kUint8Max);
+    SDL_RenderClear(sdlRenderer);
+  }
 }
 
 void Renderer::CompositeSceneToWindow(SDL_Renderer* sdlRenderer, const SDL_FRect* destRect) const {
@@ -181,14 +184,6 @@ void Renderer::CompositeSceneToWindow(SDL_Renderer* sdlRenderer, const SDL_FRect
     SDL_RenderTexture(sdlRenderer, scene_texture_, nullptr, destRect);
   }
 }
-
-namespace {
-bool IsUnclampedExpandSceneSize(const int sceneW, const int sceneH, const int windowW, const int windowH) noexcept {
-  const float idealW = static_cast<float>(sceneH) * static_cast<float>(windowW) / static_cast<float>(windowH);
-  const float idealH = static_cast<float>(sceneW) * static_cast<float>(windowH) / static_cast<float>(windowW);
-  return std::abs(static_cast<float>(sceneW) - idealW) <= 2.0F || std::abs(static_cast<float>(sceneH) - idealH) <= 2.0F;
-}
-}  // namespace
 
 SDL_FRect Renderer::ComputeCompositeRect(const int sceneW, const int sceneH, const int windowW, const int windowH,
                                          const PresentationMode mode) {
@@ -198,11 +193,9 @@ SDL_FRect Renderer::ComputeCompositeRect(const int sceneW, const int sceneH, con
   if (sceneW <= 0 || sceneH <= 0 || mode == PresentationMode::Stretch) {
     return {0.0F, 0.0F, static_cast<float>(windowW), static_cast<float>(windowH)};
   }
-  if (mode == PresentationMode::Expand && IsUnclampedExpandSceneSize(sceneW, sceneH, windowW, windowH)) {
-    return {0.0F, 0.0F, static_cast<float>(windowW), static_cast<float>(windowH)};
-  }
 
-  if (mode == PresentationMode::IntegerScale && windowW >= sceneW && windowH >= sceneH) {
+  if ((mode == PresentationMode::IntegerScale || mode == PresentationMode::Expand) && windowW >= sceneW &&
+      windowH >= sceneH) {
     const int scale = std::max(1, std::min(windowW / sceneW, windowH / sceneH));
     const auto w = static_cast<float>(sceneW * scale);
     const auto h = static_cast<float>(sceneH * scale);
@@ -239,17 +232,25 @@ std::pair<int, int> Renderer::ComputeLogicalSceneSize(const int baseW, const int
   }
 
   float targetAspect = static_cast<float>(windowW) / static_cast<float>(windowH);
+  int availW = windowW;
+  int availH = windowH;
   if (minAspect > 0.0F && targetAspect < minAspect) {
     targetAspect = minAspect;
+    availH = std::clamp(static_cast<int>(std::lround(static_cast<float>(windowW) / minAspect)), 1, windowH);
   }
   if (maxAspect > 0.0F && targetAspect > maxAspect) {
     targetAspect = maxAspect;
+    availW = std::clamp(static_cast<int>(std::lround(static_cast<float>(windowH) * maxAspect)), 1, windowW);
+  }
+
+  if (availW >= baseW && availH >= baseH) {
+    const int k = std::max(1, std::min(availW / baseW, availH / baseH));
+    return {std::max(1, availW / k), std::max(1, availH / k)};
   }
 
   const float baseAspect = static_cast<float>(baseW) / static_cast<float>(baseH);
   int logicalW = baseW;
   int logicalH = baseH;
-
   if (targetAspect >= baseAspect) {
     logicalH = baseH;
     logicalW = RoundToEven(static_cast<float>(baseH) * targetAspect);
@@ -257,7 +258,6 @@ std::pair<int, int> Renderer::ComputeLogicalSceneSize(const int baseW, const int
     logicalW = baseW;
     logicalH = RoundToEven(static_cast<float>(baseW) / targetAspect);
   }
-
   return {std::max(1, logicalW), std::max(1, logicalH)};
 }
 
@@ -301,6 +301,82 @@ bool Renderer::CaptureScene(SDL_Renderer* sdlRenderer, const std::string& path) 
 
 namespace {
 
+struct DrawStateCache {
+  struct TexEntry {
+    SDL_Texture* tex = nullptr;
+    Uint8 r = 255;
+    Uint8 g = 255;
+    Uint8 b = 255;
+    Uint8 a = 255;
+    SDL_BlendMode blend = SDL_BLENDMODE_INVALID;
+  };
+
+  static constexpr size_t kMaxTexCache = 8;
+  TexEntry texCache[kMaxTexCache]{};
+  size_t texCount = 0;
+  size_t texClock = 0;
+  SDL_BlendMode drawBlend = SDL_BLENDMODE_INVALID;
+  bool hasDrawColor = false;
+  SDL_Color drawColor{};
+
+  void ApplyTextureState(SDL_Renderer* /*renderer*/, SDL_Texture* tex, const SDL_Color& col,
+                         const SDL_BlendMode blend) {
+    TexEntry* slot = nullptr;
+    for (size_t i = 0; i < texCount; ++i) {
+      if (texCache[i].tex == tex) {
+        slot = &texCache[i];
+        break;
+      }
+    }
+    if (slot == nullptr) {
+      if (texCount < kMaxTexCache) {
+        slot = &texCache[texCount++];
+      } else {
+        slot = &texCache[(texClock++) % kMaxTexCache];
+      }
+      slot->tex = tex;
+      SDL_SetTextureColorMod(tex, col.r, col.g, col.b);
+      SDL_SetTextureAlphaMod(tex, col.a);
+      SDL_SetTextureBlendMode(tex, blend);
+      slot->r = col.r;
+      slot->g = col.g;
+      slot->b = col.b;
+      slot->a = col.a;
+      slot->blend = blend;
+      return;
+    }
+    if (slot->r != col.r || slot->g != col.g || slot->b != col.b) {
+      SDL_SetTextureColorMod(tex, col.r, col.g, col.b);
+      slot->r = col.r;
+      slot->g = col.g;
+      slot->b = col.b;
+    }
+    if (slot->a != col.a) {
+      SDL_SetTextureAlphaMod(tex, col.a);
+      slot->a = col.a;
+    }
+    if (slot->blend != blend) {
+      SDL_SetTextureBlendMode(tex, blend);
+      slot->blend = blend;
+    }
+  }
+
+  void ApplyDrawBlend(SDL_Renderer* renderer, const SDL_BlendMode blend) {
+    if (drawBlend != blend) {
+      SDL_SetRenderDrawBlendMode(renderer, blend);
+      drawBlend = blend;
+    }
+  }
+
+  void ApplyDrawColor(SDL_Renderer* renderer, const SDL_Color& col) {
+    if (!hasDrawColor || drawColor.r != col.r || drawColor.g != col.g || drawColor.b != col.b || drawColor.a != col.a) {
+      SDL_SetRenderDrawColor(renderer, col.r, col.g, col.b, col.a);
+      drawColor = col;
+      hasDrawColor = true;
+    }
+  }
+};
+
 inline SDL_FColor ToSdlFColor(const SDL_Color& c) {
   return {
       static_cast<float>(c.r) / 255.0f,
@@ -310,221 +386,33 @@ inline SDL_FColor ToSdlFColor(const SDL_Color& c) {
   };
 }
 
-void DrawSprite(SDL_Renderer* renderer, const SpriteCommand& cmd) {
+void DrawSprite(SDL_Renderer* renderer, DrawStateCache& state, const SpriteCommand& cmd) {
   const SDL_FRect destRect = {cmd.destX, cmd.destY, cmd.destW, cmd.destH};
   const SDL_FRect* srcRectPtr = (cmd.srcRect.w > 0.0f && cmd.srcRect.h > 0.0f) ? &cmd.srcRect : nullptr;
+  state.ApplyTextureState(renderer, cmd.texture, cmd.colorMod, cmd.blendMode);
+  if (cmd.rotation == 0.0F && cmd.flip == SDL_FLIP_NONE) {
+    SDL_RenderTexture(renderer, cmd.texture, srcRectPtr, &destRect);
+    return;
+  }
   const float deg = cmd.rotation * octarine::kRadiansToDegrees;
-  SDL_SetTextureColorMod(cmd.texture, cmd.colorMod.r, cmd.colorMod.g, cmd.colorMod.b);
-  SDL_SetTextureAlphaMod(cmd.texture, cmd.colorMod.a);
-  SDL_SetTextureBlendMode(cmd.texture, cmd.blendMode);
   SDL_RenderTextureRotated(renderer, cmd.texture, srcRectPtr, &destRect, deg, &cmd.pivot, cmd.flip);
 }
 
-void DrawSquare(SDL_Renderer* renderer, const SquareCommand& cmd) {
-  SDL_SetRenderDrawBlendMode(renderer, cmd.blendMode);
-  if (cmd.rotation == 0.0F) {
-    SDL_SetRenderDrawColor(renderer, cmd.color.r, cmd.color.g, cmd.color.b, cmd.color.a);
-    SDL_RenderFillRect(renderer, &cmd.destRect);
-    return;
-  }
-  const glm::vec2 centre = {cmd.destRect.x + cmd.pivot.x, cmd.destRect.y + cmd.pivot.y};
-  const glm::vec2 topLeft = {-cmd.pivot.x, -cmd.pivot.y};
-  const glm::vec2 bottomRight = {cmd.destRect.w - cmd.pivot.x, cmd.destRect.h - cmd.pivot.y};
-  const auto rot = octarine::Rotation2D::FromRadians(cmd.rotation);
-  const SDL_FColor fcol = ToSdlFColor(cmd.color);
-  const glm::vec2 offsets[4] = {topLeft, {bottomRight.x, topLeft.y}, bottomRight, {topLeft.x, bottomRight.y}};
-  SDL_Vertex verts[4];
-  for (int i = 0; i < 4; ++i) {
-    const glm::vec2 p = centre + octarine::Rotate(offsets[i], rot);
-    verts[i].position = {p.x, p.y};
-    verts[i].color = fcol;
-    verts[i].tex_coord = {0.0f, 0.0f};
-  }
-  constexpr int indices[6] = {0, 1, 2, 0, 2, 3};
-  SDL_RenderGeometry(renderer, nullptr, verts, 4, indices, 6);
-}
-
-void DrawText(SDL_Renderer* renderer, const TextCommand& cmd) {
-  SDL_SetTextureColorMod(cmd.texture, cmd.colorMod.r, cmd.colorMod.g, cmd.colorMod.b);
-  SDL_SetTextureAlphaMod(cmd.texture, cmd.colorMod.a);
+void DrawText(SDL_Renderer* renderer, DrawStateCache& state, const TextCommand& cmd) {
+  state.ApplyTextureState(renderer, cmd.texture, cmd.colorMod, SDL_BLENDMODE_BLEND);
   SDL_RenderTexture(renderer, cmd.texture, nullptr, &cmd.destRect);
 }
 
-void DrawLine(SDL_Renderer* renderer, const LineCommand& cmd, const float renderScale) {
-  SDL_SetRenderDrawBlendMode(renderer, cmd.blendMode);
-  SDL_SetRenderDrawColor(renderer, cmd.color.r, cmd.color.g, cmd.color.b, cmd.color.a);
-  const float effectiveThickness = std::max(cmd.thickness, 1.0F);
-  if (effectiveThickness * renderScale <= kHairlineScaleThreshold) {
-    SDL_RenderLine(renderer, cmd.start.x, cmd.start.y, cmd.end.x, cmd.end.y);
+void DrawTileChunk(SDL_Renderer* renderer, DrawStateCache& state, const TileChunkCommand& cmd) {
+  if (cmd.vertices == nullptr || cmd.vertexCount <= 0) {
     return;
   }
-  const glm::vec2 d{cmd.end.x - cmd.start.x, cmd.end.y - cmd.start.y};
-  const float len = glm::length(d);
-  if (len < 0.0001f) return;
-
-  const glm::vec2 n = glm::vec2{-d.y, d.x} * (effectiveThickness * 0.5f / len);
-  const SDL_FColor fcol = ToSdlFColor(cmd.color);
-  const glm::vec2 start{cmd.start.x, cmd.start.y};
-  const glm::vec2 end{cmd.end.x, cmd.end.y};
-  const SDL_Vertex verts[4] = {
-      {{start.x + n.x, start.y + n.y}, fcol, {0.0f, 0.0f}},
-      {{start.x - n.x, start.y - n.y}, fcol, {0.0f, 0.0f}},
-      {{end.x - n.x, end.y - n.y}, fcol, {0.0f, 0.0f}},
-      {{end.x + n.x, end.y + n.y}, fcol, {0.0f, 0.0f}},
-  };
-  constexpr int indices[6] = {0, 1, 2, 0, 2, 3};
-  SDL_RenderGeometry(renderer, nullptr, verts, 4, indices, 6);
-}
-
-template <int MaxVerts>
-void DrawRingStrip(SDL_Renderer* renderer, const SDL_FPoint* outerPts, const SDL_FPoint* innerPts, const int count,
-                   const SDL_Color& color) {
-  const SDL_FColor fcol = ToSdlFColor(color);
-  SDL_Vertex verts[MaxVerts * 2];
-  int indices[MaxVerts * 6];
-  for (int i = 0; i < count; ++i) {
-    verts[2 * i] = {outerPts[i], fcol, {0.0f, 0.0f}};
-    verts[2 * i + 1] = {innerPts[i], fcol, {0.0f, 0.0f}};
-    const int next = (i + 1 == count) ? 0 : (i + 1);
-    indices[6 * i + 0] = 2 * i;
-    indices[6 * i + 1] = 2 * i + 1;
-    indices[6 * i + 2] = 2 * next;
-    indices[6 * i + 3] = 2 * next;
-    indices[6 * i + 4] = 2 * i + 1;
-    indices[6 * i + 5] = 2 * next + 1;
-  }
-  SDL_RenderGeometry(renderer, nullptr, verts, count * 2, indices, count * 6);
-}
-
-void DrawFilledCircle(SDL_Renderer* renderer, const CircleCommand& cmd, const int segments,
-                      const octarine::Rotation2D stepRot, const bool rotateEllipse, const octarine::Rotation2D rot) {
-  constexpr int kMaxSegments = 64;
-  const SDL_FColor fcol = ToSdlFColor(cmd.color);
-  SDL_Vertex verts[kMaxSegments + 1];
-  verts[0] = {{cmd.center.x, cmd.center.y}, fcol, {0.0f, 0.0f}};
-  glm::vec2 unitDir{1.0f, 0.0f};
-  for (int i = 0; i < segments; ++i) {
-    glm::vec2 offset{cmd.radiusX * unitDir.x, cmd.radiusY * unitDir.y};
-    if (rotateEllipse) offset = octarine::Rotate(offset, rot);
-    verts[i + 1] = {{cmd.center.x + offset.x, cmd.center.y + offset.y}, fcol, {0.0f, 0.0f}};
-    unitDir = octarine::Rotate(unitDir, stepRot);
-  }
-  int indices[kMaxSegments * 3];
-  for (int i = 0; i < segments; ++i) {
-    indices[3 * i] = 0;
-    indices[3 * i + 1] = i + 1;
-    indices[3 * i + 2] = (i + 1 == segments) ? 1 : (i + 2);
-  }
-  SDL_RenderGeometry(renderer, nullptr, verts, segments + 1, indices, segments * 3);
-}
-
-void DrawOutlineCircle(SDL_Renderer* renderer, const CircleCommand& cmd, const int segments,
-                       const octarine::Rotation2D stepRot, const bool rotateEllipse, const octarine::Rotation2D rot,
-                       const float renderScale) {
-  constexpr int kMaxSegments = 64;
-  const float effectiveThickness = std::max(cmd.thickness, 1.0F);
-  if (effectiveThickness * renderScale <= kHairlineScaleThreshold) {
-    SDL_SetRenderDrawColor(renderer, cmd.color.r, cmd.color.g, cmd.color.b, cmd.color.a);
-    SDL_FPoint points[kMaxSegments + 1];
-    glm::vec2 unitDir{1.0f, 0.0f};
-    for (int i = 0; i < segments; ++i) {
-      glm::vec2 offset{cmd.radiusX * unitDir.x, cmd.radiusY * unitDir.y};
-      if (rotateEllipse) offset = octarine::Rotate(offset, rot);
-      points[i] = {cmd.center.x + offset.x, cmd.center.y + offset.y};
-      unitDir = octarine::Rotate(unitDir, stepRot);
-    }
-    points[segments] = points[0];
-    SDL_RenderLines(renderer, points, segments + 1);
-    return;
-  }
-  const float halfT = effectiveThickness * 0.5f;
-  const float outRx = cmd.radiusX + halfT;
-  const float outRy = cmd.radiusY + halfT;
-  const float inRx = std::max(0.0f, cmd.radiusX - halfT);
-  const float inRy = std::max(0.0f, cmd.radiusY - halfT);
-  SDL_FPoint outerPts[kMaxSegments];
-  SDL_FPoint innerPts[kMaxSegments];
-  glm::vec2 unitDir{1.0f, 0.0f};
-  for (int i = 0; i < segments; ++i) {
-    glm::vec2 outOff{outRx * unitDir.x, outRy * unitDir.y};
-    glm::vec2 inOff{inRx * unitDir.x, inRy * unitDir.y};
-    if (rotateEllipse) {
-      outOff = octarine::Rotate(outOff, rot);
-      inOff = octarine::Rotate(inOff, rot);
-    }
-    outerPts[i] = {cmd.center.x + outOff.x, cmd.center.y + outOff.y};
-    innerPts[i] = {cmd.center.x + inOff.x, cmd.center.y + inOff.y};
-    unitDir = octarine::Rotate(unitDir, stepRot);
-  }
-  DrawRingStrip<kMaxSegments>(renderer, outerPts, innerPts, segments, cmd.color);
-}
-
-void DrawCircle(SDL_Renderer* renderer, const CircleCommand& cmd, const float renderScale) {
-  if (cmd.radiusX <= 0.0f || cmd.radiusY <= 0.0f) return;
-  SDL_SetRenderDrawBlendMode(renderer, cmd.blendMode);
-
-  constexpr int kMaxSegments = 64;
-  constexpr int kMinSegments = 16;
-  const float maxR = std::max(cmd.radiusX, cmd.radiusY) * std::max(1.0F, renderScale);
-  const int segments = std::clamp(static_cast<int>(maxR * 0.75f), kMinSegments, kMaxSegments);
-  const float step = (2.0f * std::numbers::pi_v<float>) / static_cast<float>(segments);
-  const auto stepRot = octarine::Rotation2D::FromRadians(step);
-  // Isotropic circles are rotationally invariant, so only rotate vertices when radii differ.
-  const bool rotateEllipse = (cmd.rotation != 0.0f) && (cmd.radiusX != cmd.radiusY);
-  const auto rot = rotateEllipse ? octarine::Rotation2D::FromRadians(cmd.rotation) : octarine::Rotation2D{};
-
-  if (cmd.filled) {
-    DrawFilledCircle(renderer, cmd, segments, stepRot, rotateEllipse, rot);
+  if (cmd.texture != nullptr) {
+    state.ApplyTextureState(renderer, cmd.texture, SDL_Color{255, 255, 255, 255}, cmd.blendMode);
   } else {
-    DrawOutlineCircle(renderer, cmd, segments, stepRot, rotateEllipse, rot, renderScale);
+    state.ApplyDrawBlend(renderer, cmd.blendMode);
   }
-}
-
-void DrawTriangle(SDL_Renderer* renderer, const TriangleCommand& cmd, const float renderScale) {
-  SDL_SetRenderDrawBlendMode(renderer, cmd.blendMode);
-  if (cmd.filled) {
-    const SDL_FColor fcol = ToSdlFColor(cmd.color);
-    const SDL_Vertex verts[3] = {
-        {cmd.p1, fcol, {0.0f, 0.0f}},
-        {cmd.p2, fcol, {0.0f, 0.0f}},
-        {cmd.p3, fcol, {0.0f, 0.0f}},
-    };
-    constexpr int indices[3] = {0, 1, 2};
-    SDL_RenderGeometry(renderer, nullptr, verts, 3, indices, 3);
-    return;
-  }
-  const float effectiveThickness = std::max(cmd.thickness, 1.0F);
-  if (effectiveThickness * renderScale <= kHairlineScaleThreshold) {
-    SDL_SetRenderDrawColor(renderer, cmd.color.r, cmd.color.g, cmd.color.b, cmd.color.a);
-    const SDL_FPoint points[4] = {cmd.p1, cmd.p2, cmd.p3, cmd.p1};
-    SDL_RenderLines(renderer, points, 4);
-    return;
-  }
-  const glm::vec2 v[3] = {{cmd.p1.x, cmd.p1.y}, {cmd.p2.x, cmd.p2.y}, {cmd.p3.x, cmd.p3.y}};
-  const float twiceArea = (v[1].x - v[0].x) * (v[2].y - v[0].y) - (v[1].y - v[0].y) * (v[2].x - v[0].x);
-  if (std::abs(twiceArea) < 0.0001f) {
-    SDL_SetRenderDrawColor(renderer, cmd.color.r, cmd.color.g, cmd.color.b, cmd.color.a);
-    const SDL_FPoint points[4] = {cmd.p1, cmd.p2, cmd.p3, cmd.p1};
-    SDL_RenderLines(renderer, points, 4);
-    return;
-  }
-  const float sign = (twiceArea >= 0.0f) ? 1.0f : -1.0f;
-  glm::vec2 normals[3];
-  for (int i = 0; i < 3; ++i) {
-    const glm::vec2 edge = v[(i + 1) % 3] - v[i];
-    const float len = glm::length(edge);
-    normals[i] = (len > 0.0001f) ? (sign * glm::vec2{edge.y, -edge.x} / len) : glm::vec2{0.0f, 0.0f};
-  }
-  SDL_FPoint outerPts[3];
-  SDL_FPoint innerPts[3];
-  for (int i = 0; i < 3; ++i) {
-    const glm::vec2 b = normals[(i + 2) % 3] + normals[i];
-    // For unit edge normals, dot(b, n_i) == 0.5 * dot(b, b); clamping dot(b, b) >= 0.5 caps sharp miters.
-    const glm::vec2 miter = b * (effectiveThickness / std::max(0.5f, glm::dot(b, b)));
-    outerPts[i] = {v[i].x + miter.x, v[i].y + miter.y};
-    innerPts[i] = {v[i].x - miter.x, v[i].y - miter.y};
-  }
-  DrawRingStrip<3>(renderer, outerPts, innerPts, 3, cmd.color);
+  SDL_RenderGeometry(renderer, cmd.texture, cmd.vertices, cmd.vertexCount, cmd.indices, cmd.indexCount);
 }
 
 void BuildCapsuleContour(const glm::vec2 p1, const glm::vec2 p2, const glm::vec2 dir, const int arcSegs,
@@ -543,127 +431,440 @@ void BuildCapsuleContour(const glm::vec2 p1, const glm::vec2 p2, const glm::vec2
   }
 }
 
-void DrawCapsule(SDL_Renderer* renderer, const CapsuleCommand& cmd, const float renderScale) {
-  SDL_SetRenderDrawBlendMode(renderer, cmd.blendMode);
-  if (cmd.radius <= 0.0f) {
-    DrawLine(renderer, LineCommand{cmd.start, cmd.end, cmd.thickness, cmd.color, cmd.blendMode}, renderScale);
-    return;
-  }
-  const glm::vec2 p1{cmd.start.x, cmd.start.y};
-  const glm::vec2 p2{cmd.end.x, cmd.end.y};
-  const glm::vec2 d = p2 - p1;
-  const float len = glm::length(d);
-  if (len < 0.0001f) {
-    DrawCircle(
-        renderer,
-        CircleCommand{cmd.start, cmd.radius, cmd.radius, 0.0f, cmd.thickness, cmd.color, cmd.blendMode, cmd.filled},
-        renderScale);
-    return;
+class GeometryBatcher {
+ public:
+  GeometryBatcher(std::vector<SDL_Vertex>& verts, std::vector<int>& indices, DrawStateCache& state)
+      : verts_(verts), indices_(indices), state_(state) {
+    verts_.clear();
+    indices_.clear();
   }
 
-  constexpr int kArcSegs = 16;
-  constexpr int kTotalVerts = (kArcSegs + 1) * 2;
-  const auto stepRot = octarine::Rotation2D::FromRadians(std::numbers::pi_v<float> / static_cast<float>(kArcSegs));
-  glm::vec2 centers[kTotalVerts];
-  glm::vec2 normals[kTotalVerts];
-  BuildCapsuleContour(p1, p2, d / len, kArcSegs, stepRot, centers, normals);
+  void PushSprite(SDL_Renderer* renderer, const SpriteCommand& cmd) {
+    if (cmd.texture == nullptr) return;
+    if (kind_ != BatchKind::Sprite || batch_tex_ != cmd.texture || batch_blend_ != cmd.blendMode ||
+        verts_.size() + 4 > kMaxBatchVerts) {
+      Flush(renderer);
+      if (!ResolveTextureInvSize(cmd.texture)) {
+        DrawSprite(renderer, state_, cmd);
+        return;
+      }
+      kind_ = BatchKind::Sprite;
+      batch_tex_ = cmd.texture;
+      batch_blend_ = cmd.blendMode;
+    }
 
-  if (!cmd.filled) {
+    float u0 = 0.0f;
+    float v0 = 0.0f;
+    float u1 = 1.0f;
+    float v1 = 1.0f;
+    if (cmd.srcRect.w > 0.0f && cmd.srcRect.h > 0.0f) {
+      u0 = cmd.srcRect.x * inv_tex_w_;
+      v0 = cmd.srcRect.y * inv_tex_h_;
+      u1 = (cmd.srcRect.x + cmd.srcRect.w) * inv_tex_w_;
+      v1 = (cmd.srcRect.y + cmd.srcRect.h) * inv_tex_h_;
+    }
+    const auto flipBits = static_cast<unsigned int>(cmd.flip);
+    if ((flipBits & static_cast<unsigned int>(SDL_FLIP_HORIZONTAL)) != 0U) std::swap(u0, u1);
+    if ((flipBits & static_cast<unsigned int>(SDL_FLIP_VERTICAL)) != 0U) std::swap(v0, v1);
+
+    const SDL_FColor fcol = ToSdlFColor(cmd.colorMod);
+    AppendTransformedQuad(cmd.destX, cmd.destY, cmd.destW, cmd.destH, cmd.pivot, cmd.rotation, fcol, u0, v0, u1, v1);
+  }
+
+  void PushSquare(SDL_Renderer* renderer, const SquareCommand& cmd) {
+    EnsureUntextured(renderer, cmd.blendMode, 4);
+    const SDL_FColor fcol = ToSdlFColor(cmd.color);
+    AppendTransformedQuad(cmd.destRect.x, cmd.destRect.y, cmd.destRect.w, cmd.destRect.h, cmd.pivot, cmd.rotation, fcol,
+                          0.0f, 0.0f, 0.0f, 0.0f);
+  }
+
+  void PushLine(SDL_Renderer* renderer, const LineCommand& cmd, const float renderScale) {
     const float effectiveThickness = std::max(cmd.thickness, 1.0F);
     if (effectiveThickness * renderScale <= kHairlineScaleThreshold) {
-      SDL_SetRenderDrawColor(renderer, cmd.color.r, cmd.color.g, cmd.color.b, cmd.color.a);
-      SDL_FPoint points[kTotalVerts + 1];
-      for (int i = 0; i < kTotalVerts; ++i) {
-        points[i] = {centers[i].x + cmd.radius * normals[i].x, centers[i].y + cmd.radius * normals[i].y};
-      }
-      points[kTotalVerts] = points[0];
-      SDL_RenderLines(renderer, points, kTotalVerts + 1);
+      Flush(renderer);
+      state_.ApplyDrawBlend(renderer, cmd.blendMode);
+      state_.ApplyDrawColor(renderer, cmd.color);
+      SDL_RenderLine(renderer, cmd.start.x, cmd.start.y, cmd.end.x, cmd.end.y);
       return;
     }
+    const glm::vec2 d{cmd.end.x - cmd.start.x, cmd.end.y - cmd.start.y};
+    const float len = glm::length(d);
+    if (len < 0.0001f) return;
+
+    EnsureUntextured(renderer, cmd.blendMode, 4);
+    const glm::vec2 n = glm::vec2{-d.y, d.x} * (effectiveThickness * 0.5f / len);
+    const SDL_FColor fcol = ToSdlFColor(cmd.color);
+    AppendQuad({cmd.start.x + n.x, cmd.start.y + n.y}, {cmd.start.x - n.x, cmd.start.y - n.y},
+               {cmd.end.x - n.x, cmd.end.y - n.y}, {cmd.end.x + n.x, cmd.end.y + n.y}, fcol, 0.0f, 0.0f, 0.0f, 0.0f);
+  }
+
+  void PushCircle(SDL_Renderer* renderer, const CircleCommand& cmd, const float renderScale) {
+    if (cmd.radiusX <= 0.0f || cmd.radiusY <= 0.0f) return;
+
+    constexpr int kMinSegments = 16;
+    const float maxR = std::max(cmd.radiusX, cmd.radiusY) * std::max(1.0F, renderScale);
+    const int segments = std::clamp(static_cast<int>(maxR * 0.75f), kMinSegments, kMaxCircleSegments);
+    const float step = (2.0f * std::numbers::pi_v<float>) / static_cast<float>(segments);
+    const auto stepRot = octarine::Rotation2D::FromRadians(step);
+    const bool rotateEllipse = (cmd.rotation != 0.0f) && (cmd.radiusX != cmd.radiusY);
+    const auto rot = rotateEllipse ? octarine::Rotation2D::FromRadians(cmd.rotation) : octarine::Rotation2D{};
+
+    if (cmd.filled) {
+      PushFilledCircle(renderer, cmd, segments, stepRot, rotateEllipse, rot);
+    } else {
+      PushOutlineCircle(renderer, cmd, segments, stepRot, rotateEllipse, rot, renderScale);
+    }
+  }
+
+  void PushTriangle(SDL_Renderer* renderer, const TriangleCommand& cmd, const float renderScale) {
+    if (cmd.filled) {
+      EnsureUntextured(renderer, cmd.blendMode, 3);
+      const SDL_FColor fcol = ToSdlFColor(cmd.color);
+      const int base = static_cast<int>(verts_.size());
+      verts_.push_back({cmd.p1, fcol, {0.0f, 0.0f}});
+      verts_.push_back({cmd.p2, fcol, {0.0f, 0.0f}});
+      verts_.push_back({cmd.p3, fcol, {0.0f, 0.0f}});
+      indices_.push_back(base);
+      indices_.push_back(base + 1);
+      indices_.push_back(base + 2);
+      return;
+    }
+
+    const float effectiveThickness = std::max(cmd.thickness, 1.0F);
+    const glm::vec2 v[3] = {{cmd.p1.x, cmd.p1.y}, {cmd.p2.x, cmd.p2.y}, {cmd.p3.x, cmd.p3.y}};
+    const float twiceArea = (v[1].x - v[0].x) * (v[2].y - v[0].y) - (v[1].y - v[0].y) * (v[2].x - v[0].x);
+    if (effectiveThickness * renderScale <= kHairlineScaleThreshold || std::abs(twiceArea) < 0.0001f) {
+      Flush(renderer);
+      state_.ApplyDrawBlend(renderer, cmd.blendMode);
+      state_.ApplyDrawColor(renderer, cmd.color);
+      const SDL_FPoint points[4] = {cmd.p1, cmd.p2, cmd.p3, cmd.p1};
+      SDL_RenderLines(renderer, points, 4);
+      return;
+    }
+
+    const float sign = (twiceArea >= 0.0f) ? 1.0f : -1.0f;
+    glm::vec2 normals[3];
+    for (int i = 0; i < 3; ++i) {
+      const glm::vec2 edge = v[(i + 1) % 3] - v[i];
+      const float len = glm::length(edge);
+      normals[i] = (len > 0.0001f) ? (sign * glm::vec2{edge.y, -edge.x} / len) : glm::vec2{0.0f, 0.0f};
+    }
+    SDL_FPoint outerPts[3];
+    SDL_FPoint innerPts[3];
+    for (int i = 0; i < 3; ++i) {
+      const glm::vec2 b = normals[(i + 2) % 3] + normals[i];
+      // For unit edge normals, dot(b, n_i) == 0.5 * dot(b, b); clamping dot(b, b) >= 0.5 caps sharp miters.
+      const glm::vec2 miter = b * (effectiveThickness / std::max(0.5f, glm::dot(b, b)));
+      outerPts[i] = {v[i].x + miter.x, v[i].y + miter.y};
+      innerPts[i] = {v[i].x - miter.x, v[i].y - miter.y};
+    }
+    EnsureUntextured(renderer, cmd.blendMode, 6);
+    AppendRingStrip(ToSdlFColor(cmd.color), outerPts, innerPts, 3);
+  }
+
+  void PushCapsule(SDL_Renderer* renderer, const CapsuleCommand& cmd, const float renderScale) {
+    if (cmd.radius <= 0.0f) {
+      PushLine(renderer, LineCommand{cmd.start, cmd.end, cmd.thickness, cmd.color, cmd.blendMode}, renderScale);
+      return;
+    }
+    const glm::vec2 p1{cmd.start.x, cmd.start.y};
+    const glm::vec2 p2{cmd.end.x, cmd.end.y};
+    const glm::vec2 d = p2 - p1;
+    const float len = glm::length(d);
+    if (len < 0.0001f) {
+      PushCircle(
+          renderer,
+          CircleCommand{cmd.start, cmd.radius, cmd.radius, 0.0f, cmd.thickness, cmd.color, cmd.blendMode, cmd.filled},
+          renderScale);
+      return;
+    }
+
+    const auto stepRot =
+        octarine::Rotation2D::FromRadians(std::numbers::pi_v<float> / static_cast<float>(kCapsuleArcSegs));
+    glm::vec2 centers[kMaxCapsuleVerts];
+    glm::vec2 normals[kMaxCapsuleVerts];
+    BuildCapsuleContour(p1, p2, d / len, kCapsuleArcSegs, stepRot, centers, normals);
+
+    if (!cmd.filled) {
+      PushOutlineCapsule(renderer, cmd, centers, normals, kMaxCapsuleVerts, renderScale);
+      return;
+    }
+
+    SDL_FPoint ringPts[kMaxCapsuleVerts];
+    size_t idx = 0;
+    for (auto& rp : ringPts) {
+      const glm::vec2 pt = centers[idx] + cmd.radius * normals[idx];
+      rp = {pt.x, pt.y};
+      ++idx;
+    }
+    const glm::vec2 midpoint = (p1 + p2) * 0.5f;
+    EnsureUntextured(renderer, cmd.blendMode, static_cast<size_t>(kMaxCapsuleVerts) + 1u);
+    AppendFan(ToSdlFColor(cmd.color), {midpoint.x, midpoint.y}, ringPts, kMaxCapsuleVerts);
+  }
+
+  void Flush(SDL_Renderer* renderer) {
+    if (verts_.empty()) return;
+    if (kind_ == BatchKind::Sprite) {
+      state_.ApplyTextureState(renderer, batch_tex_, SDL_Color{255, 255, 255, 255}, batch_blend_);
+      SDL_RenderGeometry(renderer, batch_tex_, verts_.data(), static_cast<int>(verts_.size()), indices_.data(),
+                         static_cast<int>(indices_.size()));
+    } else if (kind_ == BatchKind::Untextured) {
+      state_.ApplyDrawBlend(renderer, batch_blend_);
+      SDL_RenderGeometry(renderer, nullptr, verts_.data(), static_cast<int>(verts_.size()), indices_.data(),
+                         static_cast<int>(indices_.size()));
+    }
+    verts_.clear();
+    indices_.clear();
+    kind_ = BatchKind::None;
+  }
+
+ private:
+  static constexpr size_t kMaxBatchVerts = 60000;
+  static constexpr int kMaxCircleSegments = 64;
+  static constexpr int kCapsuleArcSegs = 16;
+  static constexpr int kMaxCapsuleVerts = (kCapsuleArcSegs + 1) * 2;
+  enum class BatchKind : uint8_t { None, Sprite, Untextured };
+
+  void AppendTransformedQuad(const float destX, const float destY, const float destW, const float destH,
+                             const SDL_FPoint& pivot, const float rotation, const SDL_FColor& fcol, const float u0,
+                             const float v0, const float u1, const float v1) {
+    if (rotation == 0.0F) {
+      const float x1 = destX + destW;
+      const float y1 = destY + destH;
+      AppendQuad({destX, destY}, {x1, destY}, {x1, y1}, {destX, y1}, fcol, u0, v0, u1, v1);
+      return;
+    }
+
+    const glm::vec2 centre = {destX + pivot.x, destY + pivot.y};
+    const auto rot = octarine::Rotation2D::FromRadians(rotation);
+    const float lx0 = -pivot.x;
+    const float ly0 = -pivot.y;
+    const float lx1 = destW - pivot.x;
+    const float ly1 = destH - pivot.y;
+    const glm::vec2 p0 = centre + octarine::Rotate(glm::vec2{lx0, ly0}, rot);
+    const glm::vec2 p1 = centre + octarine::Rotate(glm::vec2{lx1, ly0}, rot);
+    const glm::vec2 p2 = centre + octarine::Rotate(glm::vec2{lx1, ly1}, rot);
+    const glm::vec2 p3 = centre + octarine::Rotate(glm::vec2{lx0, ly1}, rot);
+    AppendQuad({p0.x, p0.y}, {p1.x, p1.y}, {p2.x, p2.y}, {p3.x, p3.y}, fcol, u0, v0, u1, v1);
+  }
+
+  void EnsureUntextured(SDL_Renderer* renderer, const SDL_BlendMode blend, const size_t neededVerts) {
+    if (kind_ != BatchKind::Untextured || batch_blend_ != blend || verts_.size() + neededVerts > kMaxBatchVerts) {
+      Flush(renderer);
+      kind_ = BatchKind::Untextured;
+      batch_blend_ = blend;
+    }
+  }
+
+  void PushFilledCircle(SDL_Renderer* renderer, const CircleCommand& cmd, const int segments,
+                        const octarine::Rotation2D stepRot, const bool rotateEllipse, const octarine::Rotation2D rot) {
+    SDL_FPoint ringPts[kMaxCircleSegments];
+    glm::vec2 unitDir{1.0f, 0.0f};
+    for (int i = 0; i < segments; ++i) {
+      glm::vec2 offset{cmd.radiusX * unitDir.x, cmd.radiusY * unitDir.y};
+      if (rotateEllipse) offset = octarine::Rotate(offset, rot);
+      ringPts[i] = {cmd.center.x + offset.x, cmd.center.y + offset.y};
+      unitDir = octarine::Rotate(unitDir, stepRot);
+    }
+    EnsureUntextured(renderer, cmd.blendMode, static_cast<size_t>(segments) + 1u);
+    AppendFan(ToSdlFColor(cmd.color), cmd.center, ringPts, segments);
+  }
+
+  void PushOutlineCircle(SDL_Renderer* renderer, const CircleCommand& cmd, const int segments,
+                         const octarine::Rotation2D stepRot, const bool rotateEllipse, const octarine::Rotation2D rot,
+                         const float renderScale) {
+    const float effectiveThickness = std::max(cmd.thickness, 1.0F);
+    if (effectiveThickness * renderScale <= kHairlineScaleThreshold) {
+      Flush(renderer);
+      state_.ApplyDrawBlend(renderer, cmd.blendMode);
+      state_.ApplyDrawColor(renderer, cmd.color);
+      SDL_FPoint points[kMaxCircleSegments + 1];
+      glm::vec2 unitDir{1.0f, 0.0f};
+      for (int i = 0; i < segments; ++i) {
+        glm::vec2 offset{cmd.radiusX * unitDir.x, cmd.radiusY * unitDir.y};
+        if (rotateEllipse) offset = octarine::Rotate(offset, rot);
+        points[i] = {cmd.center.x + offset.x, cmd.center.y + offset.y};
+        unitDir = octarine::Rotate(unitDir, stepRot);
+      }
+      points[segments] = points[0];
+      SDL_RenderLines(renderer, points, segments + 1);
+      return;
+    }
+
+    const float halfT = effectiveThickness * 0.5f;
+    const float outRx = cmd.radiusX + halfT;
+    const float outRy = cmd.radiusY + halfT;
+    const float inRx = std::max(0.0f, cmd.radiusX - halfT);
+    const float inRy = std::max(0.0f, cmd.radiusY - halfT);
+    SDL_FPoint outerPts[kMaxCircleSegments];
+    SDL_FPoint innerPts[kMaxCircleSegments];
+    glm::vec2 unitDir{1.0f, 0.0f};
+    for (int i = 0; i < segments; ++i) {
+      glm::vec2 outOff{outRx * unitDir.x, outRy * unitDir.y};
+      glm::vec2 inOff{inRx * unitDir.x, inRy * unitDir.y};
+      if (rotateEllipse) {
+        outOff = octarine::Rotate(outOff, rot);
+        inOff = octarine::Rotate(inOff, rot);
+      }
+      outerPts[i] = {cmd.center.x + outOff.x, cmd.center.y + outOff.y};
+      innerPts[i] = {cmd.center.x + inOff.x, cmd.center.y + inOff.y};
+      unitDir = octarine::Rotate(unitDir, stepRot);
+    }
+    EnsureUntextured(renderer, cmd.blendMode, static_cast<size_t>(segments) * 2u);
+    AppendRingStrip(ToSdlFColor(cmd.color), outerPts, innerPts, segments);
+  }
+
+  void PushOutlineCapsule(SDL_Renderer* renderer, const CapsuleCommand& cmd, const glm::vec2* centers,
+                          const glm::vec2* normals, const int totalVerts, const float renderScale) {
+    const float effectiveThickness = std::max(cmd.thickness, 1.0F);
+    if (effectiveThickness * renderScale <= kHairlineScaleThreshold) {
+      Flush(renderer);
+      state_.ApplyDrawBlend(renderer, cmd.blendMode);
+      state_.ApplyDrawColor(renderer, cmd.color);
+      SDL_FPoint points[kMaxCapsuleVerts + 1];
+      for (int i = 0; i < totalVerts; ++i) {
+        points[i] = {centers[i].x + cmd.radius * normals[i].x, centers[i].y + cmd.radius * normals[i].y};
+      }
+      points[totalVerts] = points[0];
+      SDL_RenderLines(renderer, points, totalVerts + 1);
+      return;
+    }
+
     const float halfT = effectiveThickness * 0.5f;
     const float outR = cmd.radius + halfT;
     const float inR = std::max(0.0f, cmd.radius - halfT);
-    SDL_FPoint outerPts[kTotalVerts];
-    SDL_FPoint innerPts[kTotalVerts];
-    for (int i = 0; i < kTotalVerts; ++i) {
+    SDL_FPoint outerPts[kMaxCapsuleVerts];
+    SDL_FPoint innerPts[kMaxCapsuleVerts];
+    for (int i = 0; i < totalVerts; ++i) {
       outerPts[i] = {centers[i].x + outR * normals[i].x, centers[i].y + outR * normals[i].y};
       innerPts[i] = {centers[i].x + inR * normals[i].x, centers[i].y + inR * normals[i].y};
     }
-    DrawRingStrip<kTotalVerts>(renderer, outerPts, innerPts, kTotalVerts, cmd.color);
-    return;
+    EnsureUntextured(renderer, cmd.blendMode, static_cast<size_t>(totalVerts) * 2u);
+    AppendRingStrip(ToSdlFColor(cmd.color), outerPts, innerPts, totalVerts);
   }
 
-  const SDL_FColor fcol = ToSdlFColor(cmd.color);
-  const glm::vec2 midpoint = (p1 + p2) * 0.5f;
-  SDL_Vertex verts[kTotalVerts + 1];
-  verts[0] = {{midpoint.x, midpoint.y}, fcol, {0.0f, 0.0f}};
-  for (int i = 0; i < kTotalVerts; ++i) {
-    const glm::vec2 pt = centers[i] + cmd.radius * normals[i];
-    verts[i + 1] = {{pt.x, pt.y}, fcol, {0.0f, 0.0f}};
+  bool ResolveTextureInvSize(SDL_Texture* tex) {
+    if (tex == cached_size_tex_) {
+      inv_tex_w_ = cached_inv_w_;
+      inv_tex_h_ = cached_inv_h_;
+      return cached_inv_w_ > 0.0f && cached_inv_h_ > 0.0f;
+    }
+    float w = 0.0f;
+    float h = 0.0f;
+    if (!SDL_GetTextureSize(tex, &w, &h) || w <= 0.0f || h <= 0.0f) {
+      return false;
+    }
+    cached_size_tex_ = tex;
+    cached_inv_w_ = 1.0f / w;
+    cached_inv_h_ = 1.0f / h;
+    inv_tex_w_ = cached_inv_w_;
+    inv_tex_h_ = cached_inv_h_;
+    return true;
   }
-  int indices[kTotalVerts * 3];
-  for (int i = 0; i < kTotalVerts; ++i) {
-    indices[3 * i] = 0;
-    indices[3 * i + 1] = i + 1;
-    indices[3 * i + 2] = (i + 1 == kTotalVerts) ? 1 : (i + 2);
-  }
-  SDL_RenderGeometry(renderer, nullptr, verts, kTotalVerts + 1, indices, kTotalVerts * 3);
-}
 
-void DrawTileChunk(SDL_Renderer* renderer, const TileChunkCommand& cmd) {
-  if (cmd.vertices == nullptr || cmd.vertexCount <= 0) {
-    return;
+  void AppendQuad(const SDL_FPoint p0, const SDL_FPoint p1, const SDL_FPoint p2, const SDL_FPoint p3,
+                  const SDL_FColor& col, const float u0, const float v0, const float u1, const float v1) {
+    const int base = static_cast<int>(verts_.size());
+    verts_.push_back({p0, col, {u0, v0}});
+    verts_.push_back({p1, col, {u1, v0}});
+    verts_.push_back({p2, col, {u1, v1}});
+    verts_.push_back({p3, col, {u0, v1}});
+    indices_.push_back(base);
+    indices_.push_back(base + 1);
+    indices_.push_back(base + 2);
+    indices_.push_back(base);
+    indices_.push_back(base + 2);
+    indices_.push_back(base + 3);
   }
-  if (cmd.texture != nullptr) {
-    SDL_SetTextureColorMod(cmd.texture, Constants::kUint8Max, Constants::kUint8Max, Constants::kUint8Max);
-    SDL_SetTextureAlphaMod(cmd.texture, Constants::kUint8Max);
-    SDL_SetTextureBlendMode(cmd.texture, cmd.blendMode);
-  } else {
-    SDL_SetRenderDrawBlendMode(renderer, cmd.blendMode);
+
+  void AppendFan(const SDL_FColor& col, const SDL_FPoint center, const SDL_FPoint* ringPts, const int count) {
+    const int base = static_cast<int>(verts_.size());
+    verts_.push_back({center, col, {0.0f, 0.0f}});
+    for (int i = 0; i < count; ++i) {
+      verts_.push_back({ringPts[i], col, {0.0f, 0.0f}});
+    }
+    for (int i = 0; i < count; ++i) {
+      indices_.push_back(base);
+      indices_.push_back(base + i + 1);
+      indices_.push_back(base + ((i + 1 == count) ? 1 : (i + 2)));
+    }
   }
-  SDL_RenderGeometry(renderer, cmd.texture, cmd.vertices, cmd.vertexCount, cmd.indices, cmd.indexCount);
-}
+
+  void AppendRingStrip(const SDL_FColor& col, const SDL_FPoint* outerPts, const SDL_FPoint* innerPts, const int count) {
+    const int base = static_cast<int>(verts_.size());
+    for (int i = 0; i < count; ++i) {
+      verts_.push_back({outerPts[i], col, {0.0f, 0.0f}});
+      verts_.push_back({innerPts[i], col, {0.0f, 0.0f}});
+      const int next = (i + 1 == count) ? 0 : (i + 1);
+      indices_.push_back(base + 2 * i);
+      indices_.push_back(base + 2 * i + 1);
+      indices_.push_back(base + 2 * next);
+      indices_.push_back(base + 2 * next);
+      indices_.push_back(base + 2 * i + 1);
+      indices_.push_back(base + 2 * next + 1);
+    }
+  }
+
+  std::vector<SDL_Vertex>& verts_;
+  std::vector<int>& indices_;
+  DrawStateCache& state_;
+  BatchKind kind_ = BatchKind::None;
+  SDL_Texture* batch_tex_ = nullptr;
+  SDL_BlendMode batch_blend_ = SDL_BLENDMODE_NONE;
+  float inv_tex_w_ = 0.0f;
+  float inv_tex_h_ = 0.0f;
+  SDL_Texture* cached_size_tex_ = nullptr;
+  float cached_inv_w_ = 0.0f;
+  float cached_inv_h_ = 0.0f;
+};
 
 }  // namespace
 
 void Renderer::DrawQueue(const RenderQueue& renderQueue, SDL_Renderer* renderer) const {
   const float renderScale = std::max(render_scale_x_, render_scale_y_);
+  DrawStateCache state{};
+  GeometryBatcher batcher(batch_verts_, batch_indices_, state);
   std::uint8_t activeClipId = 0;
   for (const RenderKey& key : renderQueue) {
     if (key.clipId != activeClipId) {
+      batcher.Flush(renderer);
       activeClipId = key.clipId;
       SDL_SetRenderClipRect(renderer, renderQueue.GetClipRect(activeClipId));
     }
     switch (key.type) {
       case SPRITE:
-        DrawSprite(renderer, key.payload.sprite);
+        batcher.PushSprite(renderer, key.payload.sprite);
         break;
       case SQUARE_PRIMITIVE:
-        DrawSquare(renderer, key.payload.square);
+        batcher.PushSquare(renderer, key.payload.square);
         break;
       case TEXT:
-        DrawText(renderer, key.payload.text);
+        batcher.Flush(renderer);
+        DrawText(renderer, state, key.payload.text);
         break;
       case CIRCLE_PRIMITIVE:
-        DrawCircle(renderer, key.payload.circle, renderScale);
+        batcher.PushCircle(renderer, key.payload.circle, renderScale);
         break;
       case LINE_PRIMITIVE:
-        DrawLine(renderer, key.payload.line, renderScale);
+        batcher.PushLine(renderer, key.payload.line, renderScale);
         break;
       case TRIANGLE_PRIMITIVE:
-        DrawTriangle(renderer, key.payload.triangle, renderScale);
+        batcher.PushTriangle(renderer, key.payload.triangle, renderScale);
         break;
       case CAPSULE_PRIMITIVE:
-        DrawCapsule(renderer, key.payload.capsule, renderScale);
+        batcher.PushCapsule(renderer, key.payload.capsule, renderScale);
         break;
       case TILE_CHUNK:
-        DrawTileChunk(renderer, key.payload.tileChunk);
+        batcher.Flush(renderer);
+        DrawTileChunk(renderer, state, key.payload.tileChunk);
         break;
       default:
+        batcher.Flush(renderer);
         Logger::Error("Unknown renderable type");
         break;
     }
   }
+  batcher.Flush(renderer);
   if (activeClipId != 0) {
     SDL_SetRenderClipRect(renderer, nullptr);
   }

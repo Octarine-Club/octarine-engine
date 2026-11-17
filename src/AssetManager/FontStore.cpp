@@ -1,5 +1,6 @@
 #include "AssetManager/FontStore.h"
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <memory>
@@ -100,16 +101,23 @@ TTF_Font* FontStore::Get(const std::string& id) const {
 
 TTF_Font* FontStore::GetScaled(const std::string& id, const float scale) const {
   TTF_Font* baseFont = Get(id);
-  if (baseFont == nullptr || scale <= 1.01F) {
+  if (baseFont == nullptr || !std::isfinite(scale) || scale <= 0.05F) {
     return baseFont;
   }
-  const int scaleKey = static_cast<int>(std::lround(scale * 100.0F));
-  if (scaleKey <= 101) {
+  constexpr int kMinScaleKey = 10;
+  constexpr int kMaxScaleKey = 800;
+  constexpr int kUnitScaleMin = 99;
+  constexpr int kUnitScaleMax = 101;
+  constexpr std::size_t kMaxScaledCacheEntries = 256;
+
+  const int scaleKey = std::clamp(static_cast<int>(std::lround(scale * 100.0F)), kMinScaleKey, kMaxScaleKey);
+  if (scaleKey >= kUnitScaleMin && scaleKey <= kUnitScaleMax) {
     return baseFont;
   }
   const auto key = std::make_pair(id, scaleKey);
   if (const auto it = scaled_fonts_.find(key); it != scaled_fonts_.end()) {
-    return it->second;
+    scaled_lru_.splice(scaled_lru_.begin(), scaled_lru_, it->second.lruIt);
+    return it->second.font;
   }
   float baseSize = GetBaseSize(id);
   if (baseSize <= 0.0F) {
@@ -118,12 +126,16 @@ TTF_Font* FontStore::GetScaled(const std::string& id, const float scale) const {
   if (baseSize <= 0.0F) {
     return baseFont;
   }
+  if (scaled_fonts_.size() >= kMaxScaledCacheEntries) {
+    EvictOldestScaledFont();
+  }
   TTF_Font* copy = TTF_CopyFont(baseFont);
   if (copy == nullptr) {
     return baseFont;
   }
   TTF_SetFontSize(copy, baseSize * (static_cast<float>(scaleKey) / 100.0F));
-  scaled_fonts_.emplace(key, copy);
+  scaled_lru_.push_front(key);
+  scaled_fonts_.emplace(key, ScaledFontEntry{copy, scaled_lru_.begin()});
   return copy;
 }
 
@@ -150,10 +162,11 @@ bool FontStore::Remove(const std::string& id) {
 }
 
 void FontStore::Clear() {
-  for (const auto& [key, font] : scaled_fonts_) {
-    TTF_CloseFont(font);
+  for (const auto& [key, entry] : scaled_fonts_) {
+    TTF_CloseFont(entry.font);
   }
   scaled_fonts_.clear();
+  scaled_lru_.clear();
   for (const auto& [id, font] : fonts_) {
     TTF_CloseFont(font);
   }
@@ -165,10 +178,21 @@ void FontStore::Clear() {
 void FontStore::EraseScaledCopies(const std::string& id) {
   for (auto it = scaled_fonts_.begin(); it != scaled_fonts_.end();) {
     if (it->first.first == id) {
-      TTF_CloseFont(it->second);
+      scaled_lru_.erase(it->second.lruIt);
+      TTF_CloseFont(it->second.font);
       it = scaled_fonts_.erase(it);
     } else {
       ++it;
     }
+  }
+}
+
+void FontStore::EvictOldestScaledFont() const {
+  if (scaled_lru_.empty()) return;
+  const ScaledKey evictKey = scaled_lru_.back();
+  scaled_lru_.pop_back();
+  if (const auto it = scaled_fonts_.find(evictKey); it != scaled_fonts_.end()) {
+    TTF_CloseFont(it->second.font);
+    scaled_fonts_.erase(it);
   }
 }

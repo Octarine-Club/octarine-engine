@@ -9,12 +9,14 @@
 #include <string>
 #include <vector>
 
+#include "AssetManager/AssetManager.h"
 #include "Components/CameraComponents.h"
 #include "Components/CapsulePrimitiveComponent.h"
 #include "Components/CirclePrimitiveComponent.h"
 #include "Components/ColorGridComponent.h"
 #include "Components/GlobalTransformComponent.h"
 #include "Components/LinePrimitiveComponent.h"
+#include "Components/SpriteComponent.h"
 #include "Components/SquarePrimitiveComponent.h"
 #include "Components/TrianglePrimitiveComponent.h"
 #include "ECS/Registry.h"
@@ -23,11 +25,14 @@
 #include "General/Constants.h"
 #include "Renderer/RenderKey.h"
 #include "Renderer/RenderQueue.h"
+#include "Renderer/Renderer.h"
+#include "Renderer/SpriteRenderCache.h"
 #include "Systems/RenderCapsulePrimitiveSystem.h"
 #include "Systems/RenderCirclePrimitiveSystem.h"
 #include "Systems/RenderColorGridSystem.h"
 #include "Systems/RenderLinePrimitiveSystem.h"
 #include "Systems/RenderPrimitiveSystem.h"
+#include "Systems/RenderSpriteSystem.h"
 #include "Systems/RenderTrianglePrimitiveSystem.h"
 #include "Systems/RenderUIPrimitiveSystem.h"
 #include "TestHarness.h"
@@ -88,6 +93,313 @@ void TestUIPrimitiveRendering() {
   CheckEq(it->payload.line.start.x, 10.0f, "UI line horizontal divider start.x = left");
   CheckEq(it->payload.line.end.x, 110.0f, "UI line horizontal divider end.x = right");
   CheckEq(it->payload.line.start.y, 40.0f, "UI line horizontal divider y = center.y");
+}
+
+void TestSoftwareRendererGeometryBatching() {
+  std::cout << "[renderer_batch] GeometryBatcher & DrawStateCache via software SDL_Renderer\n";
+  SDL_Surface* surface = SDL_CreateSurface(320, 240, SDL_PIXELFORMAT_RGBA32);
+  SDL_Renderer* sdlRenderer = surface != nullptr ? SDL_CreateSoftwareRenderer(surface) : nullptr;
+  Check(sdlRenderer != nullptr, "software SDL_Renderer created for GeometryBatcher test");
+  if (sdlRenderer == nullptr) {
+    SDL_DestroySurface(surface);
+    return;
+  }
+
+  Renderer renderer;
+  Check(renderer.CreateScene(sdlRenderer, 320, 240), "Renderer::CreateScene succeeds for batch test");
+
+  // Create enough textures to exercise DrawStateCache hit, mutation, and clock eviction (> 8).
+  constexpr size_t kTexCount = 10;
+  std::vector<SDL_Texture*> textures;
+  textures.reserve(kTexCount);
+  for (size_t i = 0; i < kTexCount; ++i) {
+    SDL_Texture* tex = SDL_CreateTexture(sdlRenderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, 16, 16);
+    Check(tex != nullptr, "software SDL_Texture created");
+    if (tex != nullptr) {
+      textures.push_back(tex);
+    }
+  }
+
+  if (textures.size() == kTexCount) {
+    RenderQueue rq(128);
+    const std::uint8_t clipId = rq.RegisterClipRect(SDL_Rect{0, 0, 320, 240});
+
+    // Unrotated + rotated/flipped/tinted sprites on tex[0] (same batch), then switch texture & blend.
+    {
+      auto& s1 = rq.EmplaceSprite(0, 1.0f, textures[0], octarine::BlendMode::Blend);
+      s1.texture = textures[0];
+      s1.destX = 10.0f;
+      s1.destY = 10.0f;
+      s1.destW = 16.0f;
+      s1.destH = 16.0f;
+      s1.colorMod = {255, 255, 255, 255};
+      s1.blendMode = SDL_BLENDMODE_BLEND;
+
+      auto& s2 = rq.EmplaceSprite(0, 2.0f, textures[0], octarine::BlendMode::Blend);
+      s2.texture = textures[0];
+      s2.destX = 30.0f;
+      s2.destY = 10.0f;
+      s2.destW = 16.0f;
+      s2.destH = 16.0f;
+      s2.srcRect = {2.0f, 2.0f, 8.0f, 8.0f};
+      s2.rotation = 0.5f;
+      s2.pivot = {8.0f, 8.0f};
+      s2.flip = static_cast<SDL_FlipMode>(SDL_FLIP_HORIZONTAL | SDL_FLIP_VERTICAL);
+      s2.colorMod = {200, 150, 100, 180};
+      s2.blendMode = SDL_BLENDMODE_BLEND;
+    }
+
+    // Exercise DrawStateCache eviction + color/alpha/blend updates across 10 textures.
+    for (size_t i = 0; i < kTexCount; ++i) {
+      auto& s = rq.EmplaceSprite(0, 3.0f + static_cast<float>(i), textures[i], octarine::BlendMode::Blend);
+      s.texture = textures[i];
+      s.destX = static_cast<float>(i * 20);
+      s.destY = 40.0f;
+      s.destW = 12.0f;
+      s.destH = 12.0f;
+      s.colorMod = {255, 255, 255, 255};
+      s.blendMode = (i % 2 == 0) ? SDL_BLENDMODE_BLEND : SDL_BLENDMODE_ADD;
+    }
+
+    // Squares: unrotated + rotated
+    {
+      auto& sq1 = rq.EmplaceSquare(1, 0.0f);
+      sq1.destRect = {10.0f, 70.0f, 20.0f, 20.0f};
+      sq1.color = {255, 0, 0, 255};
+      sq1.blendMode = SDL_BLENDMODE_BLEND;
+
+      auto& sq2 = rq.EmplaceSquare(1, 1.0f);
+      sq2.destRect = {40.0f, 70.0f, 20.0f, 20.0f};
+      sq2.rotation = 0.25f;
+      sq2.pivot = {10.0f, 10.0f};
+      sq2.color = {0, 255, 0, 200};
+      sq2.blendMode = SDL_BLENDMODE_BLEND;
+    }
+
+    // Lines: hairline (thickness 1.0) and thick (thickness 4.0)
+    {
+      auto& l1 = rq.EmplaceLine(1, 2.0f);
+      l1.start = {10.0f, 100.0f};
+      l1.end = {60.0f, 100.0f};
+      l1.thickness = 1.0f;
+      l1.color = {255, 255, 255, 255};
+      l1.blendMode = SDL_BLENDMODE_BLEND;
+
+      auto& l2 = rq.EmplaceLine(1, 3.0f);
+      l2.start = {10.0f, 110.0f};
+      l2.end = {60.0f, 120.0f};
+      l2.thickness = 4.0f;
+      l2.color = {100, 200, 255, 255};
+      l2.blendMode = SDL_BLENDMODE_BLEND;
+    }
+
+    // Circles: filled ellipse rotated, outline hairline, outline thick
+    {
+      auto& c1 = rq.EmplaceCircle(1, 4.0f);
+      c1.center = {100.0f, 100.0f};
+      c1.radiusX = 16.0f;
+      c1.radiusY = 10.0f;
+      c1.rotation = 0.3f;
+      c1.filled = true;
+      c1.color = {255, 200, 0, 255};
+      c1.blendMode = SDL_BLENDMODE_BLEND;
+
+      auto& c2 = rq.EmplaceCircle(1, 5.0f);
+      c2.center = {140.0f, 100.0f};
+      c2.radiusX = 14.0f;
+      c2.radiusY = 14.0f;
+      c2.filled = false;
+      c2.thickness = 1.0f;
+      c2.color = {0, 255, 255, 255};
+      c2.blendMode = SDL_BLENDMODE_BLEND;
+
+      auto& c3 = rq.EmplaceCircle(1, 6.0f);
+      c3.center = {180.0f, 100.0f};
+      c3.radiusX = 14.0f;
+      c3.radiusY = 9.0f;
+      c3.rotation = 0.4f;
+      c3.filled = false;
+      c3.thickness = 4.0f;
+      c3.color = {255, 0, 255, 255};
+      c3.blendMode = SDL_BLENDMODE_BLEND;
+    }
+
+    // Triangles: filled, outline hairline, outline thick
+    {
+      auto& t1 = rq.EmplaceTriangle(1, 7.0f);
+      t1.p1 = {20.0f, 140.0f};
+      t1.p2 = {10.0f, 170.0f};
+      t1.p3 = {30.0f, 170.0f};
+      t1.filled = true;
+      t1.color = {255, 100, 100, 255};
+      t1.blendMode = SDL_BLENDMODE_BLEND;
+
+      auto& t2 = rq.EmplaceTriangle(1, 8.0f);
+      t2.p1 = {50.0f, 140.0f};
+      t2.p2 = {40.0f, 170.0f};
+      t2.p3 = {60.0f, 170.0f};
+      t2.filled = false;
+      t2.thickness = 1.0f;
+      t2.color = {100, 255, 100, 255};
+      t2.blendMode = SDL_BLENDMODE_BLEND;
+
+      auto& t3 = rq.EmplaceTriangle(1, 9.0f);
+      t3.p1 = {80.0f, 140.0f};
+      t3.p2 = {70.0f, 170.0f};
+      t3.p3 = {90.0f, 170.0f};
+      t3.filled = false;
+      t3.thickness = 4.0f;
+      t3.color = {100, 100, 255, 255};
+      t3.blendMode = SDL_BLENDMODE_BLEND;
+    }
+
+    // Capsules: zero-radius, zero-length, filled, outline hairline, outline thick
+    {
+      auto& cap0 = rq.EmplaceCapsule(1, 10.0f);
+      cap0.start = {110.0f, 150.0f};
+      cap0.end = {130.0f, 150.0f};
+      cap0.radius = 0.0f;
+      cap0.thickness = 3.0f;
+      cap0.color = {255, 255, 255, 255};
+      cap0.blendMode = SDL_BLENDMODE_BLEND;
+
+      auto& cap1 = rq.EmplaceCapsule(1, 11.0f);
+      cap1.start = {145.0f, 150.0f};
+      cap1.end = {145.0f, 150.0f};
+      cap1.radius = 8.0f;
+      cap1.filled = true;
+      cap1.color = {255, 255, 0, 255};
+      cap1.blendMode = SDL_BLENDMODE_BLEND;
+
+      auto& cap2 = rq.EmplaceCapsule(1, 12.0f);
+      cap2.start = {170.0f, 150.0f};
+      cap2.end = {200.0f, 150.0f};
+      cap2.radius = 8.0f;
+      cap2.filled = true;
+      cap2.color = {0, 255, 128, 255};
+      cap2.blendMode = SDL_BLENDMODE_BLEND;
+
+      auto& cap3 = rq.EmplaceCapsule(1, 13.0f);
+      cap3.start = {220.0f, 150.0f};
+      cap3.end = {250.0f, 150.0f};
+      cap3.radius = 8.0f;
+      cap3.filled = false;
+      cap3.thickness = 1.0f;
+      cap3.color = {255, 128, 0, 255};
+      cap3.blendMode = SDL_BLENDMODE_BLEND;
+
+      auto& cap4 = rq.EmplaceCapsule(1, 14.0f);
+      cap4.start = {270.0f, 150.0f};
+      cap4.end = {300.0f, 150.0f};
+      cap4.radius = 8.0f;
+      cap4.filled = false;
+      cap4.thickness = 4.0f;
+      cap4.color = {128, 128, 255, 255};
+      cap4.blendMode = SDL_BLENDMODE_BLEND;
+    }
+
+    // Text and TileChunk (with and without texture) under a clip rect
+    {
+      auto& txt = rq.EmplaceText(2, 0.0f, textures[0], clipId);
+      txt.texture = textures[0];
+      txt.destRect = {10.0f, 190.0f, 40.0f, 16.0f};
+      txt.colorMod = {255, 255, 255, 255};
+
+      static constexpr SDL_Vertex kChunkVerts[3] = {
+          {{60.0f, 190.0f}, {1.0f, 1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},
+          {{80.0f, 190.0f}, {1.0f, 1.0f, 1.0f, 1.0f}, {1.0f, 0.0f}},
+          {{70.0f, 210.0f}, {1.0f, 1.0f, 1.0f, 1.0f}, {0.5f, 1.0f}},
+      };
+      static constexpr int kChunkIndices[3] = {0, 1, 2};
+      auto& tc1 = rq.EmplaceTileChunk(2, 1.0f, textures[0], octarine::BlendMode::Blend);
+      tc1.texture = textures[0];
+      tc1.vertices = kChunkVerts;
+      tc1.vertexCount = 3;
+      tc1.indices = kChunkIndices;
+      tc1.indexCount = 3;
+      tc1.blendMode = SDL_BLENDMODE_BLEND;
+
+      auto& tc2 = rq.EmplaceTileChunk(2, 2.0f, nullptr, octarine::BlendMode::Blend);
+      tc2.texture = nullptr;
+      tc2.vertices = kChunkVerts;
+      tc2.vertexCount = 3;
+      tc2.indices = kChunkIndices;
+      tc2.indexCount = 3;
+      tc2.blendMode = SDL_BLENDMODE_BLEND;
+    }
+
+    // Also mutate tex[0] color/alpha/blend on a second pass to hit DrawStateCache delta branches.
+    {
+      auto& s = rq.EmplaceSprite(2, 3.0f, textures[0], octarine::BlendMode::Blend);
+      s.texture = textures[0];
+      s.destX = 100.0f;
+      s.destY = 190.0f;
+      s.destW = 16.0f;
+      s.destH = 16.0f;
+      s.colorMod = {10, 20, 30, 40};
+      s.blendMode = SDL_BLENDMODE_MUL;
+    }
+
+    rq.Sort();
+    renderer.BeginScene(sdlRenderer);
+    renderer.DrawQueue(rq, sdlRenderer);
+    renderer.EndScene(sdlRenderer, true);
+    renderer.EndScene(sdlRenderer, false);
+    Check(true, "GeometryBatcher & DrawStateCache DrawQueue completed without error");
+  }
+
+  for (SDL_Texture* tex : textures) {
+    SDL_DestroyTexture(tex);
+  }
+  renderer.DestroyScene();
+  SDL_DestroyRenderer(sdlRenderer);
+  SDL_DestroySurface(surface);
+}
+
+void TestRenderSpriteSystem() {
+  std::cout << "[sprite_system] RenderSpriteSystem snaps fixed unrotated sprites and scales world sprites\n";
+  Registry registry;
+  registry.Set<GameConfig>(GameConfig{});
+  registry.Get<GameConfig>().windowWidth = 640;
+  registry.Get<GameConfig>().windowHeight = 360;
+  registry.Set<CameraComponent>(CameraComponent{});
+  registry.Get<CameraComponent>().viewport = octarine::Rect{0.0f, 0.0f, 640.0f, 360.0f};
+  registry.Get<CameraComponent>().zoom = 2.0f;
+  registry.Set<AssetManager>(AssetManager{});
+  registry.Set<SpriteRenderCache>(SpriteRenderCache{});
+  registry.Set<RenderQueue>(RenderQueue(32));
+  registry.RegisterSystem<GlobalTransformComponent, SpriteComponent>(RenderSpriteSystem());
+
+  SpriteComponent fixedSprite;
+  fixedSprite.isFixed = true;
+  fixedSprite.width = 16.4f;
+  fixedSprite.height = 16.6f;
+  GlobalTransformComponent fixedXf;
+  fixedXf.position = {10.4f, 20.6f};
+  fixedXf.rotation = 0.0f;
+  registry.CreateEntityWithBundle(fixedXf, fixedSprite);
+
+  SpriteComponent worldSprite;
+  worldSprite.isFixed = false;
+  worldSprite.width = 10.0f;
+  worldSprite.height = 12.0f;
+  GlobalTransformComponent worldXf;
+  worldXf.position = {50.0f, 60.0f};
+  worldXf.rotation = 0.5f;
+  registry.CreateEntityWithBundle(worldXf, worldSprite);
+
+  registry.Update(0.016f);
+
+  const auto& rq = registry.Get<RenderQueue>();
+  CheckEq(rq.Size(), static_cast<size_t>(2), "RenderSpriteSystem emplaced 2 sprites");
+  auto it = rq.begin();
+  CheckEq(it->payload.sprite.destX, 10.0f, "fixed unrotated sprite x snapped");
+  CheckEq(it->payload.sprite.destY, 21.0f, "fixed unrotated sprite y snapped");
+  CheckEq(it->payload.sprite.destW, 16.0f, "fixed unrotated sprite width snapped");
+  CheckEq(it->payload.sprite.destH, 17.0f, "fixed unrotated sprite height snapped");
+  ++it;
+  CheckEq(it->payload.sprite.destW, 20.0f, "world sprite width scaled by zoom");
+  CheckEq(it->payload.sprite.destH, 24.0f, "world sprite height scaled by zoom");
 }
 
 }  // namespace
@@ -467,6 +779,20 @@ int main() {
   }
 
   TestUIPrimitiveRendering();
+  TestSoftwareRendererGeometryBatching();
+  TestRenderSpriteSystem();
+
+  std::cout << "[render_queue] ClearGeneration increments on Clear and survives move\n";
+  {
+    RenderQueue rq(8);
+    CheckEq(rq.ClearGeneration(), static_cast<std::uint64_t>(0), "ClearGeneration starts at 0");
+    rq.Clear();
+    CheckEq(rq.ClearGeneration(), static_cast<std::uint64_t>(1), "ClearGeneration increments on Clear");
+    RenderQueue moved(std::move(rq));
+    CheckEq(moved.ClearGeneration(), static_cast<std::uint64_t>(1), "ClearGeneration preserved across move ctor");
+    moved.Clear();
+    CheckEq(moved.ClearGeneration(), static_cast<std::uint64_t>(2), "ClearGeneration increments after move");
+  }
 
   return octarine::test::ReportSummary("RenderQueueTest");
 }
