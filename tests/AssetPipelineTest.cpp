@@ -498,7 +498,7 @@ int main() {
 
     // Legacy Lua 5.4 atlas metadata chunk is rejected by GlyphAtlas::Load
     {
-      const std::filesystem::path badLuaPath = tmpDir / "legacy_atlas.lua";
+      const std::string badLuaPath = (tmpDir / "legacy_atlas.lua").string();
       {
         std::ofstream badLua(badLuaPath, std::ios::binary);
         badLua.write("\x1BOCT\x54\x00\x19\x93\r\n\x1A\n123456789012345678901234567890", 42);
