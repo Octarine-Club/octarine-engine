@@ -5,9 +5,11 @@
 
 #include <cstdint>
 #include <functional>
+#include <list>
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
 
 class GlyphAtlas;
 
@@ -51,14 +53,22 @@ class FontStore {
   [[nodiscard]] const std::map<std::string, TTF_Font*>& All() const { return fonts_; }
 
  private:
+  using ScaledKey = std::pair<std::string, int>;
+  struct ScaledFontEntry {
+    TTF_Font* font = nullptr;
+    std::list<ScaledKey>::iterator lruIt{};
+  };
+
   void EraseScaledCopies(const std::string& id);
+  void EvictOldestScaledFont() const;
 
   std::map<std::string, TTF_Font*> fonts_;
   std::map<std::string, float> base_sizes_{};
-  mutable std::map<std::pair<std::string, int>, TTF_Font*> scaled_fonts_{};
+  mutable std::list<ScaledKey> scaled_lru_{};
+  mutable std::map<ScaledKey, ScaledFontEntry> scaled_fonts_{};
   // Per-font glyph atlases keyed by font catalog id (e.g. "main-16"). unique_ptr keeps each
   // GlyphAtlas pinned across the map's rehashes (its surface wraps a vector<uint8_t> that must not
   // move underneath SDL).
   std::map<std::string, std::unique_ptr<GlyphAtlas>> glyph_atlases_;
-  std::uint64_t generation_{0};
+  mutable std::uint64_t generation_{0};
 };

@@ -2227,7 +2227,11 @@ function ui.flex(...) end
 
 function ui.focus(...) end
 
+function ui.get_auto_scale(...) end
+
 function ui.get_focused(...) end
+
+function ui.get_scale(...) end
 
 function ui.mount(...) end
 
@@ -2238,6 +2242,8 @@ function ui.observable(...) end
 function ui.register_widget(...) end
 
 function ui.scroll(...) end
+
+function ui.set_scale(...) end
 
 function ui.z_index(...) end
 

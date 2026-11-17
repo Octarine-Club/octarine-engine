@@ -105,8 +105,9 @@ class UIButtonSystem {
     if (bestEntity.GetId() != static_cast<std::uint32_t>(-1) && registry_->IsAlive(bestEntity)) {
       auto& scroll = registry_->GetComponent<UIScrollComponent>(bestEntity);
       const auto& rect = registry_->GetComponent<UIRectComponent>(bestEntity);
-      if (scroll.scrollVertical) scroll.scrollY -= event.dy * scroll.wheelStep;
-      if (scroll.scrollHorizontal) scroll.scrollX -= event.dx * scroll.wheelStep;
+      const float step = scroll.wheelStep * octarine::ui::ResolveUiScale(registry_);
+      if (scroll.scrollVertical) scroll.scrollY -= event.dy * step;
+      if (scroll.scrollHorizontal) scroll.scrollX -= event.dx * step;
       scroll.ClampToViewport(rect.Width(), rect.Height());
     }
   }
@@ -541,8 +542,9 @@ class UIButtonSystem {
     auto& scroll = registry_->GetComponent<UIScrollComponent>(bestEntity);
     const auto& rect = registry_->GetComponent<UIRectComponent>(bestEntity);
     constexpr float kStickScrollSpeed = 480.0f;
-    if (scroll.scrollVertical) scroll.scrollY += stick.y * kStickScrollSpeed * dt;
-    if (scroll.scrollHorizontal) scroll.scrollX += stick.x * kStickScrollSpeed * dt;
+    const float stickSpeed = kStickScrollSpeed * octarine::ui::ResolveUiScale(registry_);
+    if (scroll.scrollVertical) scroll.scrollY += stick.y * stickSpeed * dt;
+    if (scroll.scrollHorizontal) scroll.scrollX += stick.x * stickSpeed * dt;
     scroll.ClampToViewport(rect.Width(), rect.Height());
   }
 
@@ -711,14 +713,14 @@ class UIButtonSystem {
   }
 
   [[nodiscard]] static bool HitTestUIRectBoxCollider(const UIRectComponent& rect, const BoxColliderComponent& box,
-                                                     const glm::vec2 mouse) {
+                                                     const glm::vec2 mouse, const float uiScale = 1.0f) {
     if (box.width <= 0 && box.height <= 0) {
       return ContainsPointInRect(rect, mouse);
     }
-    const float x = rect.left + box.offset.x;
-    const float y = rect.top + box.offset.y;
-    return mouse.x >= x && mouse.x <= x + static_cast<float>(box.width) && mouse.y >= y &&
-           mouse.y <= y + static_cast<float>(box.height);
+    const float x = rect.left + box.offset.x * uiScale;
+    const float y = rect.top + box.offset.y * uiScale;
+    return mouse.x >= x && mouse.x <= x + static_cast<float>(box.width) * uiScale && mouse.y >= y &&
+           mouse.y <= y + static_cast<float>(box.height) * uiScale;
   }
 
   [[nodiscard]] bool HasAnyCollider(const Entity entity, const BoxColliderComponent* boxCollider) const {
@@ -728,21 +730,24 @@ class UIButtonSystem {
   }
 
   [[nodiscard]] bool HitTestUIRectCollider(const Entity entity, const UIRectComponent& rect,
-                                           const BoxColliderComponent* boxCollider, const glm::vec2 mouse) const {
-    if (boxCollider && HitTestUIRectBoxCollider(rect, *boxCollider, mouse)) {
+                                           const BoxColliderComponent* boxCollider, const glm::vec2 mouse,
+                                           const float uiScale = 1.0f) const {
+    if (boxCollider && HitTestUIRectBoxCollider(rect, *boxCollider, mouse, uiScale)) {
       return true;
     }
     if (registry_->HasComponent<CircleColliderComponent>(entity)) {
       const auto& c = registry_->GetComponent<CircleColliderComponent>(entity);
-      if (ContainsPointInCircle(octarine::ui::ResolveCircle(rect, c.offset, c.radius), mouse)) return true;
+      if (ContainsPointInCircle(octarine::ui::ResolveCircle(rect, c.offset, c.radius, uiScale), mouse)) return true;
     }
     if (registry_->HasComponent<CapsuleColliderComponent>(entity)) {
       const auto& c = registry_->GetComponent<CapsuleColliderComponent>(entity);
-      if (ContainsPointInCapsule(octarine::ui::ResolveCapsule(rect, c.start, c.end, c.radius), mouse)) return true;
+      if (ContainsPointInCapsule(octarine::ui::ResolveCapsule(rect, c.start, c.end, c.radius, uiScale), mouse)) {
+        return true;
+      }
     }
     if (registry_->HasComponent<TriangleColliderComponent>(entity)) {
       const auto& c = registry_->GetComponent<TriangleColliderComponent>(entity);
-      if (ContainsPointInTriangle(octarine::ui::ResolveTriangle(rect, c.p1, c.p2, c.p3), mouse)) return true;
+      if (ContainsPointInTriangle(octarine::ui::ResolveTriangle(rect, c.p1, c.p2, c.p3, uiScale), mouse)) return true;
     }
     return false;
   }
@@ -752,20 +757,21 @@ class UIButtonSystem {
     if (!rect.visible || !IsInsideActiveClip(rect, mouse)) {
       return false;
     }
+    const float uiScale = octarine::ui::ResolveUiScale(registry_);
     if (HasAnyCollider(entity, boxCollider)) {
-      return HitTestUIRectCollider(entity, rect, boxCollider, mouse);
+      return HitTestUIRectCollider(entity, rect, boxCollider, mouse, uiScale);
     }
     if (registry_->HasComponent<CirclePrimitiveComponent>(entity)) {
       const auto& c = registry_->GetComponent<CirclePrimitiveComponent>(entity);
-      return ContainsPointInCircle(octarine::ui::ResolveCircle(rect, c.position, c.radius), mouse);
+      return ContainsPointInCircle(octarine::ui::ResolveCircle(rect, c.position, c.radius, uiScale), mouse);
     }
     if (registry_->HasComponent<CapsulePrimitiveComponent>(entity)) {
       const auto& c = registry_->GetComponent<CapsulePrimitiveComponent>(entity);
-      return ContainsPointInCapsule(octarine::ui::ResolveCapsule(rect, c.start, c.end, c.radius), mouse);
+      return ContainsPointInCapsule(octarine::ui::ResolveCapsule(rect, c.start, c.end, c.radius, uiScale), mouse);
     }
     if (registry_->HasComponent<TrianglePrimitiveComponent>(entity)) {
       const auto& c = registry_->GetComponent<TrianglePrimitiveComponent>(entity);
-      return ContainsPointInTriangle(octarine::ui::ResolveTriangle(rect, c.p1, c.p2, c.p3), mouse);
+      return ContainsPointInTriangle(octarine::ui::ResolveTriangle(rect, c.p1, c.p2, c.p3, uiScale), mouse);
     }
     return ContainsPointInRect(rect, mouse);
   }

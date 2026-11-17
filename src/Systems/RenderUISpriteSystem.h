@@ -42,8 +42,9 @@ class RenderUISpriteSystem {
     const SDL_FRect atlasOffset = entry->atlasOffset;
     const octarine::Color activeColor =
         octarine::ui::ResolveVisualState(registry, entity, sprite.colorMod, sprite.colorMod, sprite.colorMod).bg;
+    const float uiScale = octarine::ui::ResolveUiScale(registry);
 
-    if (TryEmitNineSlice(registry, *render_queue_, entity, rect, sprite, texture, atlasOffset, activeColor)) {
+    if (TryEmitNineSlice(registry, *render_queue_, entity, rect, sprite, texture, atlasOffset, activeColor, uiScale)) {
       return;
     }
 
@@ -54,7 +55,7 @@ class RenderUISpriteSystem {
 
   static void EmitNineSlice(RenderQueue& renderQueue, const UIRectComponent& rect, const SpriteComponent& sprite,
                             const UINineSliceComponent& nine, SDL_Texture* texture, const SDL_FRect& atlasOffset,
-                            const octarine::Color& activeColor = {255, 255, 255, 255}) {
+                            const octarine::Color& activeColor = {255, 255, 255, 255}, const float uiScale = 1.0f) {
     const float dstW = rect.Width();
     const float dstH = rect.Height();
     const glm::vec2 srcDim = ResolveSourceDimensions(texture, sprite, atlasOffset, dstW, dstH);
@@ -62,22 +63,33 @@ class RenderUISpriteSystem {
     const float srcH = srcDim.y;
     if (dstW <= 0.0f || dstH <= 0.0f || srcW <= 0.0f || srcH <= 0.0f) return;
 
+    const float sliceScale = (uiScale < 1.0f) ? std::max(0.25f, uiScale) : std::max(1.0f, std::round(uiScale));
     const float srcX = sprite.srcRect.x + atlasOffset.x;
     const float srcY = sprite.srcRect.y + atlasOffset.y;
-    const float sl = std::floor(std::clamp(nine.left, 0.0f, std::min(srcW * 0.5f, dstW * 0.5f)));
-    const float sr = std::floor(std::clamp(nine.right, 0.0f, std::min(srcW - sl, dstW - sl)));
-    const float st = std::floor(std::clamp(nine.top, 0.0f, std::min(srcH * 0.5f, dstH * 0.5f)));
-    const float sb = std::floor(std::clamp(nine.bottom, 0.0f, std::min(srcH - st, dstH - st)));
+    const float rawSl = std::floor(std::clamp(nine.left, 0.0f, srcW * 0.5f));
+    const float rawSr = std::floor(std::clamp(nine.right, 0.0f, srcW - rawSl));
+    const float rawSt = std::floor(std::clamp(nine.top, 0.0f, srcH * 0.5f));
+    const float rawSb = std::floor(std::clamp(nine.bottom, 0.0f, srcH - rawSt));
+
+    const float dl = std::floor(std::min(rawSl * sliceScale, dstW * 0.5f));
+    const float dr = std::floor(std::min(rawSr * sliceScale, dstW - dl));
+    const float dt = std::floor(std::min(rawSt * sliceScale, dstH * 0.5f));
+    const float db = std::floor(std::min(rawSb * sliceScale, dstH - dt));
+
+    const float sl = (sliceScale >= 1.0f) ? std::min(rawSl, std::floor(dl / sliceScale)) : rawSl;
+    const float sr = (sliceScale >= 1.0f) ? std::min(rawSr, std::floor(dr / sliceScale)) : rawSr;
+    const float st = (sliceScale >= 1.0f) ? std::min(rawSt, std::floor(dt / sliceScale)) : rawSt;
+    const float sb = (sliceScale >= 1.0f) ? std::min(rawSb, std::floor(db / sliceScale)) : rawSb;
 
     const float sx[3] = {srcX, srcX + sl, srcX + srcW - sr};
     const float sw[3] = {sl, std::max(0.0f, srcW - sl - sr), sr};
     const float sy[3] = {srcY, srcY + st, srcY + srcH - sb};
     const float sh[3] = {st, std::max(0.0f, srcH - st - sb), sb};
 
-    const float dx[3] = {rect.left, rect.left + sl, rect.right - sr};
-    const float dw[3] = {sl, std::max(0.0f, dstW - sl - sr), sr};
-    const float dy[3] = {rect.top, rect.top + st, rect.bottom - sb};
-    const float dh[3] = {st, std::max(0.0f, dstH - st - sb), sb};
+    const float dx[3] = {rect.left, rect.left + dl, rect.right - dr};
+    const float dw[3] = {dl, std::max(0.0f, dstW - dl - dr), dr};
+    const float dy[3] = {rect.top, rect.top + dt, rect.bottom - db};
+    const float dh[3] = {dt, std::max(0.0f, dstH - dt - db), db};
 
     for (int idx = 0; idx < 9; ++idx) {
       const int row = idx / 3;
@@ -105,11 +117,12 @@ class RenderUISpriteSystem {
 
   static bool TryEmitNineSlice(Registry* registry, RenderQueue& renderQueue, const Entity entity,
                                const UIRectComponent& rect, const SpriteComponent& sprite, SDL_Texture* texture,
-                               const SDL_FRect& atlasOffset, const octarine::Color& activeColor) {
+                               const SDL_FRect& atlasOffset, const octarine::Color& activeColor,
+                               const float uiScale = 1.0f) {
     if (!registry->HasComponent<UINineSliceComponent>(entity)) return false;
     const auto& nine = registry->GetComponent<UINineSliceComponent>(entity);
     if (!nine.HasSlices()) return false;
-    EmitNineSlice(renderQueue, rect, sprite, nine, texture, atlasOffset, activeColor);
+    EmitNineSlice(renderQueue, rect, sprite, nine, texture, atlasOffset, activeColor, uiScale);
     return true;
   }
 

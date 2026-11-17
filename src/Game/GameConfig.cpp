@@ -5,6 +5,9 @@
 #include <SDL3/SDL_storage.h>
 #include <SDL3/SDL_timer.h>
 
+#include <algorithm>
+#include <cassert>
+#include <cmath>
 #include <sstream>
 #include <unordered_map>
 
@@ -126,6 +129,7 @@ bool GameConfig::LoadConfig(const std::unordered_map<std::string, std::string>& 
   success &= SetValue(settings, "DefaultFullscreen", &GameConfig::SetDefaultFullscreen, false);
   success &= SetValue(settings, "DefaultWindowMode", &GameConfig::SetDefaultWindowMode, false);
   success &= SetValue(settings, "DefaultPresentationMode", &GameConfig::SetDefaultPresentationMode, false);
+  success &= SetValue(settings, "DefaultUIScale", &GameConfig::SetDefaultUiScale, false);
   success &= SetValue(settings, "VSync", &GameConfig::SetDefaultVSync, false);
   success &= SetValue(settings, "DefaultVSync", &GameConfig::SetDefaultVSync, false);
   success &= SetValue(settings, "Resizable", &GameConfig::SetWindowResizable, false);
@@ -263,8 +267,19 @@ void GameConfig::SetDefaultPresentationMode(const std::string& presentationMode)
     Logger::Info("Default presentation mode set to: " + std::string(PresentationModeToString(*parsed)));
   } else {
     Logger::Warn("Unknown DefaultPresentationMode '" + presentationMode +
-                 "' (expected letterbox|integer_scale|stretch); keeping current.");
+                 "' (expected letterbox|integer_scale|stretch|expand); keeping current.");
   }
+}
+
+void GameConfig::SetDefaultUiScale(const float uiScale) {
+  if (!std::isfinite(uiScale) || uiScale <= 0.0F) {
+    Logger::Warn("DefaultUIScale must be finite and > 0; keeping current value.");
+    return;
+  }
+  constexpr float kMinUiScale = 0.25F;
+  constexpr float kMaxUiScale = 4.0F;
+  engine_options_.uiScale = std::clamp(uiScale, kMinUiScale, kMaxUiScale);
+  Logger::Info("Default UI scale set to: " + std::to_string(engine_options_.uiScale));
 }
 
 void GameConfig::SetDefaultVSync(const bool vsync) {

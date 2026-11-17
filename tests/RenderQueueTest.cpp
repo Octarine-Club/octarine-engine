@@ -468,5 +468,17 @@ int main() {
 
   TestUIPrimitiveRendering();
 
+  std::cout << "[render_queue] ClearGeneration increments on Clear and survives move\n";
+  {
+    RenderQueue rq(8);
+    CheckEq(rq.ClearGeneration(), static_cast<std::uint64_t>(0), "ClearGeneration starts at 0");
+    rq.Clear();
+    CheckEq(rq.ClearGeneration(), static_cast<std::uint64_t>(1), "ClearGeneration increments on Clear");
+    RenderQueue moved(std::move(rq));
+    CheckEq(moved.ClearGeneration(), static_cast<std::uint64_t>(1), "ClearGeneration preserved across move ctor");
+    moved.Clear();
+    CheckEq(moved.ClearGeneration(), static_cast<std::uint64_t>(2), "ClearGeneration increments after move");
+  }
+
   return octarine::test::ReportSummary("RenderQueueTest");
 }

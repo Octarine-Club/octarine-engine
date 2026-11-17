@@ -8,8 +8,13 @@
 #include <cmath>
 #include <cstdint>
 #include <glm/glm.hpp>
+#include <list>
+#include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 #include "AssetManager/AssetManager.h"
 #include "AssetManager/GlyphAtlas.h"
@@ -35,16 +40,37 @@ class RenderTextSystem {
 
   RenderTextSystem(const RenderTextSystem&) = delete;
   RenderTextSystem& operator=(const RenderTextSystem&) = delete;
-  RenderTextSystem(RenderTextSystem&&) = default;
-  RenderTextSystem& operator=(RenderTextSystem&&) = default;
+  RenderTextSystem(RenderTextSystem&&) noexcept = default;
+  RenderTextSystem& operator=(RenderTextSystem&& other) noexcept {
+    if (this != &other) {
+      text_cache_.clear();
+      content_cache_.clear();
+      content_lru_.clear();
+      DestroyRetiredTextures();
+      text_cache_ = std::move(other.text_cache_);
+      content_lru_ = std::move(other.content_lru_);
+      content_cache_ = std::move(other.content_cache_);
+      retired_textures_ = std::move(other.retired_textures_);
+      last_clear_gen_ = other.last_clear_gen_;
+      sweep_counter_ = other.sweep_counter_;
+      asset_manager_ = other.asset_manager_;
+      engine_ctx_ = other.engine_ctx_;
+      render_queue_ = other.render_queue_;
+      camera_comp_ = other.camera_comp_;
+      game_config_ = other.game_config_;
+    }
+    return *this;
+  }
 
   ~RenderTextSystem() {
-    for (auto& [key, entry] : text_cache_) {
-      if (entry.texture) {
-        SDL_DestroyTexture(entry.texture);
-      }
-    }
+    text_cache_.clear();
+    content_cache_.clear();
+    content_lru_.clear();
+    DestroyRetiredTextures();
   }
+
+  [[nodiscard]] std::size_t RetiredTextureCount() const noexcept { return retired_textures_.size(); }
+  [[nodiscard]] std::size_t ContentCacheSize() const noexcept { return content_lru_.size(); }
 
   void Prepare(Registry* registry) const {
     asset_manager_ = &registry->Get<AssetManager>();
@@ -52,6 +78,7 @@ class RenderTextSystem {
     render_queue_ = &registry->Get<RenderQueue>();
     camera_comp_ = &registry->Get<CameraComponent>();
     game_config_ = &registry->Get<GameConfig>();
+    FlushRetiredIfRenderQueueCleared();
     SweepDeadCacheEntries(registry);
   }
 
@@ -70,32 +97,23 @@ class RenderTextSystem {
     const octarine::Rect camera = cameraComp.viewport;
     const float zoom = cameraComp.zoom > 0.001f ? cameraComp.zoom : 1.0f;
 
-    TTF_Font* font = assetManager.GetFont(text.fontId);
-    if (!font) return;
-
     const Entity entity = ctx.GetEntity();
-    const int effectiveWrapWidth = ResolveWrapWidth(registry, entity, text);
+    const bool hasUiRect = registry->HasComponent<UIRectComponent>(entity);
+    const float labelScale = hasUiRect ? octarine::ui::ResolveUiScale(*game_config_) : 1.0F;
+    const int effectiveWrapWidth = ResolveWrapWidth(registry, entity, text, hasUiRect, labelScale);
     const bool pixelSharp = assetManager.GetEffectiveScaleMode() != SDL_SCALEMODE_LINEAR;
-    const float rasterScale = ResolveRasterScale(engineCtx.sceneRenderScale, pixelSharp);
+    const float deviceScale = ResolveRasterScale(engineCtx.sceneRenderScale, pixelSharp);
+    const float rasterScale = std::clamp(labelScale * deviceScale, 0.25F, 8.0F);
     const std::uint64_t fontGen = assetManager.FontGeneration();
 
-    auto it = text_cache_.find(entity.id);
-    const bool needsRaster = it == text_cache_.end() || it->second.fontId != text.fontId ||
-                             it->second.fontGen != fontGen || it->second.text != text.text ||
-                             it->second.wrapWidth != effectiveWrapWidth || it->second.pixelSharp != pixelSharp ||
-                             std::abs(it->second.rasterScale - rasterScale) > 0.01F;
-    if (needsRaster) {
-      float w = 0.0F;
-      float h = 0.0F;
-      SDL_Texture* texture =
-          RasterizeLabel(assetManager, sdlRenderer, font, text, effectiveWrapWidth, rasterScale, pixelSharp, w, h);
-      if (texture == nullptr) return;
-      it = StoreEntry(it, entity, text, fontGen, effectiveWrapWidth, rasterScale, pixelSharp, texture, w, h);
-    }
+    auto it = ResolveOrRasterize(entity, text, assetManager, sdlRenderer, fontGen, effectiveWrapWidth, rasterScale,
+                                 labelScale, deviceScale, pixelSharp);
+    if (it == text_cache_.end() || !it->second.shared || it->second.shared->ptr == nullptr) return;
+    SDL_Texture* cachedTex = it->second.shared->ptr;
 
     // UIRectComponent (written by UILayoutSystem) takes priority over GlobalTransform for position.
     // text.position acts as a local pixel offset within the rect (e.g., padding).
-    const auto placement = ResolvePlacement(registry, entity, text, it->second.width, it->second.height);
+    const auto placement = ResolvePlacement(registry, entity, text, it->second.width, it->second.height, labelScale);
     if (!placement.visible) return;
     const auto& origin = placement.origin;
     const bool effectivelyFixed = placement.effectivelyFixed;
@@ -128,27 +146,27 @@ class RenderTextSystem {
     const octarine::Color activeTextColor =
         octarine::ui::ResolveVisualState(registry, entity, text.color, text.color, text.color).text;
 
-    EmitShadowIfAny(renderQueue, text, activeTextColor, it->second.texture, renderLayer, sortY, x, y, w, h, scale,
-                    clipId);
-    EmitOutlineIfAny(renderQueue, text, activeTextColor, it->second.texture, renderLayer, sortY, x, y, w, h, scale,
-                     clipId);
+    EmitLabelDecorations(renderQueue, text, activeTextColor, cachedTex, renderLayer, sortY, x, y, w, h, scale,
+                         labelScale, hasUiRect, pixelSharp && effectivelyFixed, clipId);
 
-    auto& cmd = renderQueue.EmplaceText(static_cast<unsigned int>(renderLayer), sortY, it->second.texture, clipId);
+    auto& cmd = renderQueue.EmplaceText(static_cast<unsigned int>(renderLayer), sortY, cachedTex, clipId);
     cmd.destRect = {x, y, w, h};
-    cmd.texture = it->second.texture;
+    cmd.texture = cachedTex;
     cmd.colorMod = SDL_Color{activeTextColor.r, activeTextColor.g, activeTextColor.b, activeTextColor.a};
   }
 
   static void EmitShadowIfAny(RenderQueue& renderQueue, const TextLabelComponent& text,
                               const octarine::Color& activeTextColor, SDL_Texture* texture, const int renderLayer,
                               const float sortY, const float x, const float y, const float w, const float h,
-                              const float scale, const std::uint8_t clipId) {
+                              const float scale, const std::uint8_t clipId, const bool snapOffset = false) {
     if ((text.shadowOffset.x == 0.0f && text.shadowOffset.y == 0.0f) || text.shadowColor.a == 0 ||
         activeTextColor.a == 0) {
       return;
     }
-    const float sx = text.shadowOffset.x * scale;
-    const float sy = text.shadowOffset.y * scale;
+    const float rawSx = text.shadowOffset.x * scale;
+    const float rawSy = text.shadowOffset.y * scale;
+    const float sx = snapOffset ? std::round(rawSx) : rawSx;
+    const float sy = snapOffset ? std::round(rawSy) : rawSy;
     const auto shadowAlpha = static_cast<Uint8>((static_cast<int>(text.shadowColor.a) * activeTextColor.a) / 255);
     auto& shadowCmd = renderQueue.EmplaceText(static_cast<unsigned int>(renderLayer), sortY, texture, clipId);
     shadowCmd.destRect = {x + sx, y + sy, w, h};
@@ -160,7 +178,36 @@ class RenderTextSystem {
                                const octarine::Color& activeTextColor, SDL_Texture* texture, const int renderLayer,
                                const float sortY, const float x, const float y, const float w, const float h,
                                const float scale, const std::uint8_t clipId) {
-    if (text.outlineWidth <= 0.0f || text.outlineColor.a == 0 || activeTextColor.a == 0) {
+    static constexpr float kMaxOutlineWidth = 4.0f;
+    EmitOutlineRings(renderQueue, text, activeTextColor, texture, renderLayer, sortY, x, y, w, h, text.outlineWidth,
+                     kMaxOutlineWidth, scale, clipId);
+  }
+
+ private:
+  static void EmitLabelDecorations(RenderQueue& renderQueue, const TextLabelComponent& text,
+                                   const octarine::Color& activeTextColor, SDL_Texture* texture, const int renderLayer,
+                                   const float sortY, const float x, const float y, const float w, const float h,
+                                   const float scale, const float labelScale, const bool hasUiRect,
+                                   const bool snapShadow, const std::uint8_t clipId) {
+    const float shadowScale = hasUiRect ? labelScale : scale;
+    EmitShadowIfAny(renderQueue, text, activeTextColor, texture, renderLayer, sortY, x, y, w, h, shadowScale, clipId,
+                    snapShadow);
+    if (hasUiRect) {
+      const float uiOutlineW =
+          text.outlineWidth > 0.0f ? std::max(1.0f, std::round(text.outlineWidth * labelScale)) : 0.0f;
+      EmitOutlineRings(renderQueue, text, activeTextColor, texture, renderLayer, sortY, x, y, w, h, uiOutlineW, 8.0f,
+                       1.0f, clipId);
+    } else {
+      EmitOutlineIfAny(renderQueue, text, activeTextColor, texture, renderLayer, sortY, x, y, w, h, scale, clipId);
+    }
+  }
+
+  static void EmitOutlineRings(RenderQueue& renderQueue, const TextLabelComponent& text,
+                               const octarine::Color& activeTextColor, SDL_Texture* texture, const int renderLayer,
+                               const float sortY, const float x, const float y, const float w, const float h,
+                               const float outlineWidth, const float maxOutlineWidth, const float scale,
+                               const std::uint8_t clipId) {
+    if (outlineWidth <= 0.0f || text.outlineColor.a == 0 || activeTextColor.a == 0) {
       return;
     }
     const auto outlineAlpha = static_cast<Uint8>((static_cast<int>(text.outlineColor.a) * activeTextColor.a) / 255);
@@ -174,9 +221,8 @@ class RenderTextSystem {
         {-1.0f, -1.0f}, {0.0f, -1.0f}, {1.0f, -1.0f}, {-1.0f, 0.0f},
         {1.0f, 0.0f},   {-1.0f, 1.0f}, {0.0f, 1.0f},  {1.0f, 1.0f},
     };
-    static constexpr float kMaxOutlineWidth = 4.0f;
-    const float clampedWidth = std::min(text.outlineWidth, kMaxOutlineWidth);
-    const int maxRing = std::clamp(static_cast<int>(std::ceil(clampedWidth)), 1, 4);
+    const float clampedWidth = std::min(outlineWidth, maxOutlineWidth);
+    const int maxRing = std::clamp(static_cast<int>(std::ceil(clampedWidth)), 1, 8);
     for (int ring = 1; ring <= maxRing; ++ring) {
       const float radius = (ring == maxRing ? clampedWidth : static_cast<float>(ring)) * scale;
       for (const auto& dir : kDirs) {
@@ -188,10 +234,14 @@ class RenderTextSystem {
     }
   }
 
- private:
-  static int ResolveWrapWidth(Registry* registry, const Entity entity, const TextLabelComponent& text) {
-    if (text.wrapWidth > 0 || !text.wrapToRect || !registry->HasComponent<UIRectComponent>(entity)) {
-      return text.wrapWidth;
+  static int ResolveWrapWidth(Registry* registry, const Entity entity, const TextLabelComponent& text,
+                              const bool hasUiRect, const float labelScale) {
+    if (text.wrapWidth > 0) {
+      return hasUiRect ? std::max(1, static_cast<int>(std::lround(static_cast<float>(text.wrapWidth) * labelScale)))
+                       : text.wrapWidth;
+    }
+    if (!text.wrapToRect || !hasUiRect) {
+      return 0;
     }
     return std::max(0, static_cast<int>(registry->GetComponent<UIRectComponent>(entity).Width()));
   }
@@ -205,7 +255,7 @@ class RenderTextSystem {
   };
 
   static TextPlacement ResolvePlacement(Registry* registry, const Entity entity, const TextLabelComponent& text,
-                                        const float textWidth, const float textHeight) {
+                                        const float textWidth, const float textHeight, const float labelScale) {
     glm::vec2 origin = text.position;
     float sortY = origin.y;
     bool effectivelyFixed = text.isFixed;
@@ -225,7 +275,7 @@ class RenderTextSystem {
         return 0.0f;
       };
       origin = glm::vec2(rect.left + offsetFor(text.hAlign, slackX), rect.top + offsetFor(text.vAlign, slackY)) +
-               text.position;
+               text.position * labelScale;
       sortY = rect.top;
       effectivelyFixed = true;
       renderLayer = rect.layer;
@@ -239,25 +289,138 @@ class RenderTextSystem {
     return {origin, sortY, effectivelyFixed, visible, renderLayer, clipId};
   }
 
+  struct SharedTextTexture {
+    SDL_Texture* ptr = nullptr;
+    float texW = 0.0F;
+    float texH = 0.0F;
+    bool fromAtlas = false;
+
+    SharedTextTexture() = default;
+    SharedTextTexture(const SharedTextTexture&) = delete;
+    SharedTextTexture& operator=(const SharedTextTexture&) = delete;
+    ~SharedTextTexture() {
+      if (ptr != nullptr) {
+        SDL_DestroyTexture(ptr);
+      }
+    }
+  };
+
   struct TextCacheEntry {
     std::string fontId{};
     std::string text{};
     std::uint64_t fontGen = 0;
     int wrapWidth = 0;
     float rasterScale = 1.0F;
+    float labelScale = 1.0F;
     bool pixelSharp = true;
-    SDL_Texture* texture = nullptr;
+    std::shared_ptr<SharedTextTexture> shared{};
     float width = 0.0F;
     float height = 0.0F;
   };
 
+  struct ContentKeyView {
+    std::string_view fontId{};
+    std::uint64_t fontGen = 0;
+    int wrapWidth = 0;
+    int rasterScaleKey = 100;
+    int deviceScaleKey = 100;
+    bool pixelSharp = true;
+    std::string_view text{};
+  };
+
+  struct ContentKey {
+    std::string fontId{};
+    std::uint64_t fontGen = 0;
+    int wrapWidth = 0;
+    int rasterScaleKey = 100;
+    int deviceScaleKey = 100;
+    bool pixelSharp = true;
+    std::string text{};
+    operator ContentKeyView() const noexcept {
+      return {fontId, fontGen, wrapWidth, rasterScaleKey, deviceScaleKey, pixelSharp, text};
+    }
+  };
+
+  struct ContentKeyPtrHash {
+    using is_transparent = void;
+    static std::size_t HashView(const ContentKeyView& k) noexcept {
+      std::size_t h = std::hash<std::string_view>{}(k.fontId);
+      h ^= std::hash<std::uint64_t>{}(k.fontGen) + 0x9e3779b9u + (h << 6) + (h >> 2);
+      h ^= std::hash<int>{}(k.wrapWidth) + 0x9e3779b9u + (h << 6) + (h >> 2);
+      h ^= std::hash<int>{}(k.rasterScaleKey) + 0x9e3779b9u + (h << 6) + (h >> 2);
+      h ^= std::hash<int>{}(k.deviceScaleKey) + 0x9e3779b9u + (h << 6) + (h >> 2);
+      h ^= std::hash<bool>{}(k.pixelSharp) + 0x9e3779b9u + (h << 6) + (h >> 2);
+      h ^= std::hash<std::string_view>{}(k.text) + 0x9e3779b9u + (h << 6) + (h >> 2);
+      return h;
+    }
+    std::size_t operator()(const ContentKey* k) const noexcept { return HashView(*k); }
+    std::size_t operator()(const ContentKeyView& k) const noexcept { return HashView(k); }
+  };
+
+  struct ContentKeyPtrEq {
+    using is_transparent = void;
+    static bool EqView(const ContentKeyView& a, const ContentKeyView& b) noexcept {
+      return a.fontId == b.fontId && a.fontGen == b.fontGen && a.wrapWidth == b.wrapWidth &&
+             a.rasterScaleKey == b.rasterScaleKey && a.deviceScaleKey == b.deviceScaleKey &&
+             a.pixelSharp == b.pixelSharp && a.text == b.text;
+    }
+    bool operator()(const ContentKey* a, const ContentKey* b) const noexcept { return EqView(*a, *b); }
+    bool operator()(const ContentKey* a, const ContentKeyView& b) const noexcept { return EqView(*a, b); }
+    bool operator()(const ContentKeyView& a, const ContentKey* b) const noexcept { return EqView(a, *b); }
+  };
+
+  struct ContentNode {
+    ContentKey key;
+    std::shared_ptr<SharedTextTexture> tex;
+  };
+
+  static constexpr std::size_t kMaxContentCacheEntries = 512;
+
   mutable std::unordered_map<std::uint64_t, TextCacheEntry> text_cache_;
+  mutable std::list<ContentNode> content_lru_;
+  mutable std::unordered_map<const ContentKey*, std::list<ContentNode>::iterator, ContentKeyPtrHash, ContentKeyPtrEq>
+      content_cache_;
+  mutable std::vector<SDL_Texture*> retired_textures_;
+  mutable std::uint64_t last_clear_gen_ = 0;
   mutable std::uint32_t sweep_counter_ = 0;
   mutable const AssetManager* asset_manager_ = nullptr;
   mutable const EngineContext* engine_ctx_ = nullptr;
   mutable RenderQueue* render_queue_ = nullptr;
   mutable const CameraComponent* camera_comp_ = nullptr;
   mutable const GameConfig* game_config_ = nullptr;
+
+  void DestroyRetiredTextures() const {
+    for (SDL_Texture* tex : retired_textures_) {
+      if (tex != nullptr) {
+        SDL_DestroyTexture(tex);
+      }
+    }
+    retired_textures_.clear();
+  }
+
+  void FlushRetiredIfRenderQueueCleared() const {
+    if (render_queue_ == nullptr) return;
+    const std::uint64_t gen = render_queue_->ClearGeneration();
+    if (gen == last_clear_gen_) return;
+    last_clear_gen_ = gen;
+    DestroyRetiredTextures();
+  }
+
+  void RetireIfLast(std::shared_ptr<SharedTextTexture>& sp) const {
+    if (sp && sp.use_count() == 1 && sp->ptr != nullptr) {
+      retired_textures_.push_back(sp->ptr);
+      sp->ptr = nullptr;
+    }
+    sp.reset();
+  }
+
+  void EvictOldestContent() const {
+    if (content_lru_.empty()) return;
+    auto& oldest = content_lru_.back();
+    content_cache_.erase(&oldest.key);
+    RetireIfLast(oldest.tex);
+    content_lru_.pop_back();
+  }
 
   void SweepDeadCacheEntries(Registry* registry) const {
     static constexpr std::uint32_t kSweepInterval = 64;
@@ -266,9 +429,7 @@ class RenderTextSystem {
     for (auto it = text_cache_.begin(); it != text_cache_.end();) {
       const Entity cachedEnt(it->first);
       if (!registry->IsAlive(cachedEnt) || !registry->HasComponent<TextLabelComponent>(cachedEnt)) {
-        if (it->second.texture != nullptr) {
-          SDL_DestroyTexture(it->second.texture);
-        }
+        RetireIfLast(it->second.shared);
         it = text_cache_.erase(it);
       } else {
         ++it;
@@ -292,50 +453,107 @@ class RenderTextSystem {
     return std::clamp(quantized, 1.0F, 4.0F);
   }
 
+  std::unordered_map<std::uint64_t, TextCacheEntry>::iterator ResolveOrRasterize(
+      Entity entity, const TextLabelComponent& text, const AssetManager& assetManager, SDL_Renderer* sdlRenderer,
+      std::uint64_t fontGen, int effectiveWrapWidth, float rasterScale, float labelScale, float deviceScale,
+      bool pixelSharp) const {
+    auto it = text_cache_.find(entity.id);
+    const bool needsRaster = it == text_cache_.end() || it->second.fontId != text.fontId ||
+                             it->second.fontGen != fontGen || it->second.text != text.text ||
+                             it->second.wrapWidth != effectiveWrapWidth || it->second.pixelSharp != pixelSharp ||
+                             std::abs(it->second.rasterScale - rasterScale) > 0.005F ||
+                             std::abs(it->second.labelScale - labelScale) > 0.005F;
+    if (!needsRaster) {
+      return it;
+    }
+
+    const ContentKeyView view{text.fontId,
+                              fontGen,
+                              effectiveWrapWidth,
+                              octarine::ui::QuantizeFontScaleKey(rasterScale),
+                              octarine::ui::QuantizeFontScaleKey(deviceScale),
+                              pixelSharp,
+                              text.text};
+    std::shared_ptr<SharedTextTexture> shared;
+    if (const auto l2It = content_cache_.find(view); l2It != content_cache_.end()) {
+      content_lru_.splice(content_lru_.begin(), content_lru_, l2It->second);
+      shared = l2It->second->tex;
+    } else {
+      TTF_Font* font = assetManager.GetFont(text.fontId);
+      if (font == nullptr) {
+        return text_cache_.end();
+      }
+      shared = RasterizeLabel(assetManager, sdlRenderer, font, text, effectiveWrapWidth, rasterScale, labelScale,
+                              deviceScale, pixelSharp);
+      if (!shared) {
+        return text_cache_.end();
+      }
+      if (content_lru_.size() >= kMaxContentCacheEntries) {
+        EvictOldestContent();
+      }
+      ContentKey key{text.fontId,         fontGen,    effectiveWrapWidth, view.rasterScaleKey,
+                     view.deviceScaleKey, pixelSharp, text.text};
+      content_lru_.push_front(ContentNode{std::move(key), shared});
+      content_cache_.emplace(&content_lru_.front().key, content_lru_.begin());
+    }
+
+    const float scaleFactor = shared->fromAtlas ? labelScale : (deviceScale > 0.0F ? (1.0F / deviceScale) : 1.0F);
+    const float logicalW = shared->texW * scaleFactor;
+    const float logicalH = shared->texH * scaleFactor;
+    return StoreEntry(it, entity, text, fontGen, effectiveWrapWidth, rasterScale, labelScale, pixelSharp,
+                      std::move(shared), logicalW, logicalH);
+  }
+
   std::unordered_map<std::uint64_t, TextCacheEntry>::iterator StoreEntry(
       std::unordered_map<std::uint64_t, TextCacheEntry>::iterator it, Entity entity, const TextLabelComponent& text,
-      std::uint64_t fontGen, int wrapWidth, float rasterScale, bool pixelSharp, SDL_Texture* texture, float width,
-      float height) const {
+      std::uint64_t fontGen, int wrapWidth, float rasterScale, float labelScale, bool pixelSharp,
+      std::shared_ptr<SharedTextTexture> shared, float width, float height) const {
     if (it != text_cache_.end()) {
-      if (it->second.texture != nullptr) SDL_DestroyTexture(it->second.texture);
-      it->second = {text.fontId, text.text, fontGen, wrapWidth, rasterScale, pixelSharp, texture, width, height};
+      RetireIfLast(it->second.shared);
+      it->second = {text.fontId, text.text,  fontGen,           wrapWidth, rasterScale,
+                    labelScale,  pixelSharp, std::move(shared), width,     height};
       return it;
     }
     return text_cache_
-        .emplace(entity.id, TextCacheEntry{text.fontId, text.text, fontGen, wrapWidth, rasterScale, pixelSharp, texture,
-                                           width, height})
+        .emplace(entity.id, TextCacheEntry{text.fontId, text.text, fontGen, wrapWidth, rasterScale, labelScale,
+                                           pixelSharp, std::move(shared), width, height})
         .first;
   }
 
   static SDL_Surface* RenderTtfSurface(TTF_Font* font, const std::string& str, const int wrapWidth,
-                                       const float rasterScale) {
+                                       const float texelPerLogical) {
     const SDL_Color white{255, 255, 255, 255};
     const bool hasNewline = str.find('\n') != std::string::npos;
     const int scaledWrap =
-        wrapWidth > 0 ? std::max(1, static_cast<int>(std::lround(static_cast<float>(wrapWidth) * rasterScale))) : 0;
+        wrapWidth > 0 ? std::max(1, static_cast<int>(std::lround(static_cast<float>(wrapWidth) * texelPerLogical))) : 0;
     return (wrapWidth > 0 || hasNewline) ? TTF_RenderText_Blended_Wrapped(font, str.c_str(), 0, white, scaledWrap)
                                          : TTF_RenderText_Blended(font, str.c_str(), 0, white);
   }
 
-  // Rasterize `text` in white (255,255,255,255) to a freshly created SDL_Texture, writing its logical size
-  // into outW/outH. Per-draw colorMod in TextCommand tints the texture (and its optional shadow pass)
-  // without re-rasterizing when color or alpha changes.
-  static SDL_Texture* RasterizeLabel(const AssetManager& assetManager, SDL_Renderer* sdlRenderer, TTF_Font* font,
-                                     const TextLabelComponent& text, const int wrapWidth, const float rasterScale,
-                                     const bool pixelSharp, float& outW, float& outH) {
+  // Rasterize `text` in white (255,255,255,255) to a freshly created SharedTextTexture. Per-draw colorMod
+  // in TextCommand tints the texture (and its optional shadow pass) without re-rasterizing on color changes.
+  static std::shared_ptr<SharedTextTexture> RasterizeLabel(const AssetManager& assetManager, SDL_Renderer* sdlRenderer,
+                                                           TTF_Font* font, const TextLabelComponent& text,
+                                                           const int wrapWidth, const float rasterScale,
+                                                           const float labelScale, const float texelPerLogical,
+                                                           const bool pixelSharp) {
     const SDL_Color white{255, 255, 255, 255};
     SDL_Surface* surface = nullptr;
     const GlyphAtlas* atlas = assetManager.GetGlyphAtlas(text.fontId);
     const bool hasNewline = text.text.find('\n') != std::string::npos;
-    if (rasterScale <= 1.01F && wrapWidth <= 0 && !hasNewline && atlas != nullptr && atlas->IsLoaded()) {
+    const int intLabelScale = octarine::ui::ResolveIntegerAtlasScale(labelScale);
+    const bool allowAtlas = (std::abs(rasterScale - 1.0F) <= 0.01F) || (pixelSharp && intLabelScale > 0);
+    bool fromAtlas = false;
+    if (allowAtlas && wrapWidth <= 0 && !hasNewline && atlas != nullptr && atlas->IsLoaded()) {
       surface = ComposeFromAtlas(*atlas, text.text, white);
+      fromAtlas = (surface != nullptr);
     }
     if (surface == nullptr) {
       TTF_Font* renderFont = assetManager.GetFontScaled(text.fontId, rasterScale);
       if (renderFont == nullptr) {
         renderFont = font;
       }
-      surface = RenderTtfSurface(renderFont, text.text, wrapWidth, rasterScale);
+      surface = RenderTtfSurface(renderFont, text.text, wrapWidth, texelPerLogical);
     }
     if (surface == nullptr) {
       Logger::Error("RenderText: surface compose failed: " + std::string(SDL_GetError()));
@@ -348,13 +566,11 @@ class RenderTextSystem {
       return nullptr;
     }
     SDL_SetTextureScaleMode(texture, pixelSharp ? SDL_SCALEMODE_NEAREST : SDL_SCALEMODE_LINEAR);
-    float texW = 0.0F;
-    float texH = 0.0F;
-    SDL_GetTextureSize(texture, &texW, &texH);
-    const float invScale = rasterScale > 0.0F ? (1.0F / rasterScale) : 1.0F;
-    outW = texW * invScale;
-    outH = texH * invScale;
-    return texture;
+    auto result = std::make_shared<SharedTextTexture>();
+    result->ptr = texture;
+    result->fromAtlas = fromAtlas;
+    SDL_GetTextureSize(texture, &result->texW, &result->texH);
+    return result;
   }
 
   // Atlas compose: build an RGBA destination surface, blit each codepoint's rect from the atlas

@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <memory>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -16,11 +18,18 @@ class UILayoutSystem {
     canvasQuery_->Update();
 
     const auto& gameConfig = registry->Get<GameConfig>();
+    ui_scale_ = octarine::ui::ResolveUiScale(gameConfig);
+    static constexpr std::size_t kMaxResolvedCacheEntries = 4096;
+    if (resolved_frame_.size() > kMaxResolvedCacheEntries) {
+      resolved_frame_.clear();
+    }
+    ++frame_gen_;
 
     canvases_scratch_.clear();
     canvasQuery_->ForEach([&](const Entity canvasEntity, const UICanvasComponent& canvas) {
-      const float cw = (canvas.width > 0.f) ? canvas.width : static_cast<float>(gameConfig.windowWidth);
-      const float ch = (canvas.height > 0.f) ? canvas.height : static_cast<float>(gameConfig.windowHeight);
+      const float cw = (canvas.width > 0.f) ? (canvas.width * ui_scale_) : static_cast<float>(gameConfig.windowWidth);
+      const float ch =
+          (canvas.height > 0.f) ? (canvas.height * ui_scale_) : static_cast<float>(gameConfig.windowHeight);
       UIRectComponent canvasRect{0.f, 0.f, cw, ch, canvas.baseLayer};
       canvasRect.visible = IsEntityVisible(registry, canvasEntity);
       canvases_scratch_.emplace_back(canvasEntity, SnapRect(canvasRect));
@@ -40,6 +49,41 @@ class UILayoutSystem {
   void EnsureInitialized(Registry* registry) {
     if (canvasQuery_) return;
     canvasQuery_ = registry->CreateQuery<UICanvasComponent>();
+  }
+
+  static UILayoutBoxComponent ScaledBox(UILayoutBoxComponent box, const float uiScale) {
+    if (uiScale == 1.0f) return box;
+    if (box.widthUnit == UIUnit::Px) box.width *= uiScale;
+    if (box.heightUnit == UIUnit::Px) box.height *= uiScale;
+    if (box.minWidthUnit == UIUnit::Px) box.minWidth *= uiScale;
+    if (box.minHeightUnit == UIUnit::Px) box.minHeight *= uiScale;
+    if (box.maxWidthUnit == UIUnit::Px) box.maxWidth *= uiScale;
+    if (box.maxHeightUnit == UIUnit::Px) box.maxHeight *= uiScale;
+    box.marginLeft *= uiScale;
+    box.marginTop *= uiScale;
+    box.marginRight *= uiScale;
+    box.marginBottom *= uiScale;
+    return box;
+  }
+
+  static UIFlexComponent ScaledFlex(UIFlexComponent flex, const float uiScale) {
+    if (uiScale == 1.0f) return flex;
+    flex.gap *= uiScale;
+    if (flex.crossGap >= 0.0f) flex.crossGap *= uiScale;
+    flex.paddingLeft *= uiScale;
+    flex.paddingTop *= uiScale;
+    flex.paddingRight *= uiScale;
+    flex.paddingBottom *= uiScale;
+    return flex;
+  }
+
+  static UIAnchorComponent ScaledAnchor(UIAnchorComponent anchor, const float uiScale) {
+    if (uiScale == 1.0f) return anchor;
+    anchor.offsetLeft *= uiScale;
+    anchor.offsetTop *= uiScale;
+    anchor.offsetRight *= uiScale;
+    anchor.offsetBottom *= uiScale;
+    return anchor;
   }
 
   static bool IsUILayoutParticipant(Registry* registry, const Entity entity) {
@@ -69,8 +113,16 @@ class UILayoutSystem {
     return rect;
   }
 
-  static void WriteRect(Registry* registry, const Entity entity, const UIRectComponent& rect) {
+  [[nodiscard]] bool IsResolvedThisFrame(const Entity entity) const {
+    const auto it = resolved_frame_.find(entity.id);
+    return it != resolved_frame_.end() && it->second == frame_gen_;
+  }
+
+  void WriteRect(Registry* registry, const Entity entity, const UIRectComponent& rect) const {
     const UIRectComponent snapped = SnapRect(rect);
+    if (snapped.visible) {
+      resolved_frame_[entity.id] = frame_gen_;
+    }
     if (registry->HasComponent<UIRectComponent>(entity)) {
       auto& dst = registry->GetComponent<UIRectComponent>(entity);
       const bool keepBlocksPointer = dst.blocksPointer;
@@ -107,29 +159,29 @@ class UILayoutSystem {
     return out;
   }
 
-  static float ClampBoxAxis(Registry* registry, const Entity entity, const bool isHorizontal, const float size,
-                            const float avail) {
+  float ClampBoxAxis(Registry* registry, const Entity entity, const bool isHorizontal, const float size,
+                     const float avail) const {
     if (!registry->HasComponent<UILayoutBoxComponent>(entity)) return size;
-    const auto& box = registry->GetComponent<UILayoutBoxComponent>(entity);
+    const auto box = ScaledBox(registry->GetComponent<UILayoutBoxComponent>(entity), ui_scale_);
     return isHorizontal ? ApplyMinMax(size, box.minWidth, box.minWidthUnit, box.maxWidth, box.maxWidthUnit, avail)
                         : ApplyMinMax(size, box.minHeight, box.minHeightUnit, box.maxHeight, box.maxHeightUnit, avail);
   }
 
-  static float MarginMain(Registry* registry, const Entity entity, const bool isRow) {
+  float MarginMain(Registry* registry, const Entity entity, const bool isRow) const {
     if (!registry->HasComponent<UILayoutBoxComponent>(entity)) return 0.0f;
-    const auto& b = registry->GetComponent<UILayoutBoxComponent>(entity);
+    const auto b = ScaledBox(registry->GetComponent<UILayoutBoxComponent>(entity), ui_scale_);
     return isRow ? (b.marginLeft + b.marginRight) : (b.marginTop + b.marginBottom);
   }
 
-  static float MarginCross(Registry* registry, const Entity entity, const bool isRow) {
+  float MarginCross(Registry* registry, const Entity entity, const bool isRow) const {
     if (!registry->HasComponent<UILayoutBoxComponent>(entity)) return 0.0f;
-    const auto& b = registry->GetComponent<UILayoutBoxComponent>(entity);
+    const auto b = ScaledBox(registry->GetComponent<UILayoutBoxComponent>(entity), ui_scale_);
     return isRow ? (b.marginTop + b.marginBottom) : (b.marginLeft + b.marginRight);
   }
 
-  static float ExplicitBoxWidthPx(Registry* registry, const Entity entity) {
+  float ExplicitBoxWidthPx(Registry* registry, const Entity entity) const {
     if (!registry->HasComponent<UILayoutBoxComponent>(entity)) return 0.0f;
-    const auto& box = registry->GetComponent<UILayoutBoxComponent>(entity);
+    const auto box = ScaledBox(registry->GetComponent<UILayoutBoxComponent>(entity), ui_scale_);
     if (box.widthUnit == UIUnit::Px && box.width > 0.0f) {
       return ClampBoxAxis(registry, entity, true, box.width, box.width);
     }
@@ -139,26 +191,29 @@ class UILayoutSystem {
     return 0.0f;
   }
 
-  static float KnownElementWidthPx(Registry* registry, const Entity entity) {
-    if (registry->HasComponent<UIRectComponent>(entity)) {
+  float KnownElementWidthPx(Registry* registry, const Entity entity) const {
+    if (IsResolvedThisFrame(entity) && registry->HasComponent<UIRectComponent>(entity)) {
       const float rw = registry->GetComponent<UIRectComponent>(entity).Width();
       if (rw > 0.0f) return rw;
     }
     return ExplicitBoxWidthPx(registry, entity);
   }
 
-  static int ResolveLabelWrapWidth(Registry* registry, const Entity entity, const TextLabelComponent& lbl) {
-    if (lbl.wrapWidth > 0) return lbl.wrapWidth;
+  int ResolveLabelWrapWidth(Registry* registry, const Entity entity, const TextLabelComponent& lbl) const {
+    if (lbl.wrapWidth > 0) {
+      return std::max(1, static_cast<int>(std::lround(static_cast<float>(lbl.wrapWidth) * ui_scale_)));
+    }
     if (!lbl.wrapToRect) return 0;
 
-    const float ownW = KnownElementWidthPx(registry, entity);
+    // Do not read UIRectComponent on `entity` itself: it may hold last frame's pre-resize width.
+    const float ownW = ExplicitBoxWidthPx(registry, entity);
     if (ownW > 0.0f) return static_cast<int>(ownW);
 
     float horizInset = MarginMain(registry, entity, true);
     std::optional<Entity> cur = registry->GetParent(entity);
     while (cur.has_value() && registry->IsAlive(*cur)) {
       if (registry->HasComponent<UIFlexComponent>(*cur)) {
-        const auto& fl = registry->GetComponent<UIFlexComponent>(*cur);
+        const auto fl = ScaledFlex(registry->GetComponent<UIFlexComponent>(*cur), ui_scale_);
         horizInset += fl.paddingLeft + fl.paddingRight;
       }
       const float ancW = KnownElementWidthPx(registry, *cur);
@@ -169,36 +224,36 @@ class UILayoutSystem {
     return 0;
   }
 
-  static float MeasureLeafIntrinsicAxis(Registry* registry, const Entity entity, const bool isHorizontal) {
+  float MeasureLeafIntrinsicAxis(Registry* registry, const Entity entity, const bool isHorizontal) const {
     if (registry->HasComponent<TextLabelComponent>(entity)) {
       const auto& lbl = registry->GetComponent<TextLabelComponent>(entity);
       const int wrapW = ResolveLabelWrapWidth(registry, entity, lbl);
-      const glm::vec2 textSz = octarine::ui::MeasureTextLabel(registry, lbl, wrapW);
+      const glm::vec2 textSz = octarine::ui::MeasureTextLabel(registry, lbl, wrapW, ui_scale_);
       return isHorizontal ? textSz.x : textSz.y;
     }
     if (registry->HasComponent<SpriteComponent>(entity)) {
       const auto& sp = registry->GetComponent<SpriteComponent>(entity);
       const float dim = isHorizontal ? sp.width : sp.height;
-      if (dim > 0.0f) return dim;
+      if (dim > 0.0f) return dim * ui_scale_;
     }
     if (registry->HasComponent<SquarePrimitiveComponent>(entity)) {
       const auto& sq = registry->GetComponent<SquarePrimitiveComponent>(entity);
       const float dim = isHorizontal ? sq.width : sq.height;
-      if (dim > 0.0f) return dim;
+      if (dim > 0.0f) return dim * ui_scale_;
     }
     return 0.0f;
   }
 
-  static float ResolveWrapContainerMain(Registry* registry, const Entity entity, const UIFlexComponent& flex,
-                                        const bool isRow) {
+  float ResolveWrapContainerMain(Registry* registry, const Entity entity, const UIFlexComponent& flex,
+                                 const bool isRow) const {
     const float pad = isRow ? (flex.paddingLeft + flex.paddingRight) : (flex.paddingTop + flex.paddingBottom);
-    if (registry->HasComponent<UIRectComponent>(entity)) {
+    if (IsResolvedThisFrame(entity) && registry->HasComponent<UIRectComponent>(entity)) {
       const float rSpan = isRow ? registry->GetComponent<UIRectComponent>(entity).Width()
                                 : registry->GetComponent<UIRectComponent>(entity).Height();
       if (rSpan > pad) return rSpan - pad;
     }
     if (registry->HasComponent<UILayoutBoxComponent>(entity)) {
-      const auto& box = registry->GetComponent<UILayoutBoxComponent>(entity);
+      const auto box = ScaledBox(registry->GetComponent<UILayoutBoxComponent>(entity), ui_scale_);
       const UIUnit unit = isRow ? box.widthUnit : box.heightUnit;
       const float val = isRow ? box.width : box.height;
       if (unit == UIUnit::Px && val > pad) return val - pad;
@@ -208,8 +263,8 @@ class UILayoutSystem {
 
   // Recursive measurement of fixed-column grid cross axis during intrinsic auto-sizing.
   // NOLINTNEXTLINE(misc-no-recursion)
-  static float MeasureGridColumnsCross(Registry* registry, const Entity entity, const UIFlexComponent& flex,
-                                       const bool isRow, size_t& outVisCount) {
+  float MeasureGridColumnsCross(Registry* registry, const Entity entity, const UIFlexComponent& flex, const bool isRow,
+                                size_t& outVisCount) const {
     const auto cols = static_cast<size_t>(std::max<std::uint16_t>(1, flex.columns));
     float totalCross = 0.0f;
     float lineMax = 0.0f;
@@ -239,8 +294,8 @@ class UILayoutSystem {
 
   // Recursive traversal over shallow UI element trees during intrinsic auto-sizing.
   // NOLINTNEXTLINE(misc-no-recursion)
-  static float MeasureWrappedCrossIntrinsic(Registry* registry, const Entity entity, const UIFlexComponent& flex,
-                                            const bool isRow, size_t& outVisCount) {
+  float MeasureWrappedCrossIntrinsic(Registry* registry, const Entity entity, const UIFlexComponent& flex,
+                                     const bool isRow, size_t& outVisCount) const {
     if (flex.columns > 0) {
       return MeasureGridColumnsCross(registry, entity, flex, isRow, outVisCount);
     }
@@ -279,8 +334,8 @@ class UILayoutSystem {
 
   // Recursive measurement of flex container children along either the main or cross axis.
   // NOLINTNEXTLINE(misc-no-recursion)
-  static float MeasureFlexChildrenIntrinsic(Registry* registry, const Entity entity, const UIFlexComponent& flex,
-                                            const bool isHorizontal, size_t& outVisCount) {
+  float MeasureFlexChildrenIntrinsic(Registry* registry, const Entity entity, const UIFlexComponent& flex,
+                                     const bool isHorizontal, size_t& outVisCount) const {
     const bool isRow = (flex.direction == FlexDirection::Row);
     const bool sameAxis = (isRow == isHorizontal);
     if (!sameAxis && (flex.wrap || flex.columns > 0)) {
@@ -303,10 +358,10 @@ class UILayoutSystem {
 
   // Recursive intrinsic content measurement for auto-sized UI nodes.
   // NOLINTNEXTLINE(misc-no-recursion)
-  static float MeasureIntrinsicAxis(Registry* registry, const Entity entity, const bool isHorizontal) {
+  float MeasureIntrinsicAxis(Registry* registry, const Entity entity, const bool isHorizontal) const {
     float pad = 0.0f;
     if (registry->HasComponent<UIFlexComponent>(entity)) {
-      const auto& flex = registry->GetComponent<UIFlexComponent>(entity);
+      const auto flex = ScaledFlex(registry->GetComponent<UIFlexComponent>(entity), ui_scale_);
       pad = isHorizontal ? (flex.paddingLeft + flex.paddingRight) : (flex.paddingTop + flex.paddingBottom);
       size_t visCount = 0;
       const float childrenSize = MeasureFlexChildrenIntrinsic(registry, entity, flex, isHorizontal, visCount);
@@ -315,9 +370,9 @@ class UILayoutSystem {
     return MeasureLeafIntrinsicAxis(registry, entity, isHorizontal) + pad;
   }
 
-  static float LegacyFixedAxisSize(Registry* registry, const Entity entity, const bool isHorizontal) {
+  float LegacyFixedAxisSize(Registry* registry, const Entity entity, const bool isHorizontal) const {
     if (registry->HasComponent<UIAnchorComponent>(entity)) {
-      const auto& a = registry->GetComponent<UIAnchorComponent>(entity);
+      const auto a = ScaledAnchor(registry->GetComponent<UIAnchorComponent>(entity), ui_scale_);
       const float frac = isHorizontal ? (a.anchorRight - a.anchorLeft) : (a.anchorBottom - a.anchorTop);
       const float span = isHorizontal ? (a.offsetRight - a.offsetLeft) : (a.offsetBottom - a.offsetTop);
       if (frac == 0.0f && span > 0.0f) return span;
@@ -325,16 +380,16 @@ class UILayoutSystem {
     if (registry->HasComponent<SquarePrimitiveComponent>(entity)) {
       const auto& s = registry->GetComponent<SquarePrimitiveComponent>(entity);
       const float dim = isHorizontal ? s.width : s.height;
-      if (dim > 0.0f) return dim;
+      if (dim > 0.0f) return dim * ui_scale_;
     }
     return 0.0f;
   }
 
   // Recursive natural size resolution falling back to MeasureIntrinsicAxis when no explicit size is set.
   // NOLINTNEXTLINE(misc-no-recursion)
-  static float MeasureNodeNaturalAxis(Registry* registry, const Entity entity, const bool isHorizontal) {
+  float MeasureNodeNaturalAxis(Registry* registry, const Entity entity, const bool isHorizontal) const {
     if (registry->HasComponent<UILayoutBoxComponent>(entity)) {
-      const auto& box = registry->GetComponent<UILayoutBoxComponent>(entity);
+      const auto box = ScaledBox(registry->GetComponent<UILayoutBoxComponent>(entity), ui_scale_);
       const UIUnit unit = isHorizontal ? box.widthUnit : box.heightUnit;
       const float val = isHorizontal ? box.width : box.height;
       if (unit == UIUnit::Px && val > 0.0f) return val;
@@ -344,7 +399,7 @@ class UILayoutSystem {
     return MeasureIntrinsicAxis(registry, entity, isHorizontal);
   }
 
-  static float ResolveChildFlexWeight(Registry* registry, const Entity child, const bool isRow) {
+  float ResolveChildFlexWeight(Registry* registry, const Entity child, const bool isRow) const {
     if (registry->HasComponent<UILayoutBoxComponent>(child)) {
       const auto& box = registry->GetComponent<UILayoutBoxComponent>(child);
       const UIUnit unit = isRow ? box.widthUnit : box.heightUnit;
@@ -355,10 +410,10 @@ class UILayoutSystem {
     return (DesiredMainSize(registry, child, isRow, 0.0f) <= 0.0f) ? 1.0f : 0.0f;
   }
 
-  static float ResolveBoxAxisSize(Registry* registry, const Entity child, const bool isHorizontal, const float avail,
-                                  const float autoFallback) {
+  float ResolveBoxAxisSize(Registry* registry, const Entity child, const bool isHorizontal, const float avail,
+                           const float autoFallback) const {
     static constexpr float kPercentScale = 0.01f;
-    const auto& box = registry->GetComponent<UILayoutBoxComponent>(child);
+    const auto box = ScaledBox(registry->GetComponent<UILayoutBoxComponent>(child), ui_scale_);
     const UIUnit unit = isHorizontal ? box.widthUnit : box.heightUnit;
     const float val = isHorizontal ? box.width : box.height;
     float resolved = autoFallback;
@@ -373,7 +428,7 @@ class UILayoutSystem {
     return ClampBoxAxis(registry, child, isHorizontal, resolved, avail);
   }
 
-  static float DesiredCrossSize(Registry* registry, const Entity child, const bool isRow, const float availCross) {
+  float DesiredCrossSize(Registry* registry, const Entity child, const bool isRow, const float availCross) const {
     const bool isHorizontal = !isRow;
     if (registry->HasComponent<UILayoutBoxComponent>(child)) {
       return ResolveBoxAxisSize(registry, child, isHorizontal, availCross, availCross);
@@ -382,7 +437,7 @@ class UILayoutSystem {
     return (legacy > 0.0f) ? legacy : availCross;
   }
 
-  static float DesiredMainSize(Registry* registry, const Entity child, const bool isRow, const float availMain) {
+  float DesiredMainSize(Registry* registry, const Entity child, const bool isRow, const float availMain) const {
     if (registry->HasComponent<UILayoutBoxComponent>(child)) {
       const auto& box = registry->GetComponent<UILayoutBoxComponent>(child);
       const UIUnit unit = isRow ? box.widthUnit : box.heightUnit;
@@ -450,16 +505,16 @@ class UILayoutSystem {
     return unit == UIUnit::Px || unit == UIUnit::Percent;
   }
 
-  static UIRectComponent BuildFlexChildRect(Registry* registry, const Entity child, const UIRectComponent& parentRect,
-                                            const UIFlexComponent& flex, const bool isRow, const float cursor,
-                                            const float mainSpan, const float crossOrigin, const float availCross) {
+  UIRectComponent BuildFlexChildRect(Registry* registry, const Entity child, const UIRectComponent& parentRect,
+                                     const UIFlexComponent& flex, const bool isRow, const float cursor,
+                                     const float mainSpan, const float crossOrigin, const float availCross) const {
     static constexpr float kHalf = 0.5f;
     float mLeft = 0.0f;
     float mTop = 0.0f;
     float mRight = 0.0f;
     float mBottom = 0.0f;
     if (registry->HasComponent<UILayoutBoxComponent>(child)) {
-      const auto& b = registry->GetComponent<UILayoutBoxComponent>(child);
+      const auto b = ScaledBox(registry->GetComponent<UILayoutBoxComponent>(child), ui_scale_);
       mLeft = b.marginLeft;
       mTop = b.marginTop;
       mRight = b.marginRight;
@@ -501,9 +556,9 @@ class UILayoutSystem {
     return childRect;
   }
 
-  static void ComputeFlexMainSizes(Registry* registry, const std::vector<Entity>& children, const bool isRow,
-                                   const float availMain, const float totalGaps, std::vector<float>& mainSizes,
-                                   std::vector<float>& weightsScratch, float& outUsedMain, bool& outHasFlex) {
+  void ComputeFlexMainSizes(Registry* registry, const std::vector<Entity>& children, const bool isRow,
+                            const float availMain, const float totalGaps, std::vector<float>& mainSizes,
+                            std::vector<float>& weightsScratch, float& outUsedMain, bool& outHasFlex) const {
     const size_t n = children.size();
     float fixedSum = 0.0f;
     float totalWeight = 0.0f;
@@ -552,16 +607,16 @@ class UILayoutSystem {
     float lineCrossSpan = 0.0f;
   };
 
-  static float ResolveWrappedChildCrossSpan(Registry* registry, const Entity child, const bool isRow,
-                                            const float availCross) {
+  float ResolveWrappedChildCrossSpan(Registry* registry, const Entity child, const bool isRow,
+                                     const float availCross) const {
     const float natural = MeasureNodeNaturalAxis(registry, child, !isRow);
     if (natural > 0.0f) return natural;
     return DesiredCrossSize(registry, child, isRow, availCross);
   }
 
-  static void BuildGridPlacements(Registry* registry, const std::vector<Entity>& children, const UIFlexComponent& flex,
-                                  const bool isRow, const float availMain, const float availCross,
-                                  std::vector<WrappedChildPlacement>& outPlacements, float& outTotalCross) {
+  void BuildGridPlacements(Registry* registry, const std::vector<Entity>& children, const UIFlexComponent& flex,
+                           const bool isRow, const float availMain, const float availCross,
+                           std::vector<WrappedChildPlacement>& outPlacements, float& outTotalCross) const {
     const auto cols = static_cast<size_t>(std::max<std::uint16_t>(1, flex.columns));
     const float totalMainGaps = (cols > 1) ? flex.gap * static_cast<float>(cols - 1) : 0.0f;
     const float cellMain = std::max(0.0f, (availMain - totalMainGaps) / static_cast<float>(cols));
@@ -591,10 +646,9 @@ class UILayoutSystem {
     outTotalCross = crossCursor;
   }
 
-  static void BuildFlexWrapPlacements(Registry* registry, const std::vector<Entity>& children,
-                                      const UIFlexComponent& flex, const bool isRow, const float availMain,
-                                      const float availCross, std::vector<WrappedChildPlacement>& outPlacements,
-                                      float& outTotalCross) {
+  void BuildFlexWrapPlacements(Registry* registry, const std::vector<Entity>& children, const UIFlexComponent& flex,
+                               const bool isRow, const float availMain, const float availCross,
+                               std::vector<WrappedChildPlacement>& outPlacements, float& outTotalCross) const {
     const float crossGap = flex.EffectiveCrossGap();
     float crossCursor = 0.0f;
     size_t idx = 0;
@@ -682,10 +736,14 @@ class UILayoutSystem {
 
     wrapped_placements_scratch_.clear();
     wrapped_placements_scratch_.reserve(children.size());
-    const auto buildFn =
-        (flex.columns > 0) ? &UILayoutSystem::BuildGridPlacements : &UILayoutSystem::BuildFlexWrapPlacements;
     float totalCross = 0.0f;
-    buildFn(registry, children, flex, isRow, vp.availMain, vp.availCross, wrapped_placements_scratch_, totalCross);
+    if (flex.columns > 0) {
+      BuildGridPlacements(registry, children, flex, isRow, vp.availMain, vp.availCross, wrapped_placements_scratch_,
+                          totalCross);
+    } else {
+      BuildFlexWrapPlacements(registry, children, flex, isRow, vp.availMain, vp.availCross, wrapped_placements_scratch_,
+                              totalCross);
+    }
 
     float scrollOffsetX = 0.0f;
     float scrollOffsetY = 0.0f;
@@ -757,21 +815,21 @@ class UILayoutSystem {
     childRect.bottom -= sy;
   }
 
-  static UIRectComponent ResolveNonFlexChildRect(Registry* registry, const Entity parent, const Entity child,
-                                                 const UIRectComponent& parentRect) {
+  UIRectComponent ResolveNonFlexChildRect(Registry* registry, const Entity parent, const Entity child,
+                                          const UIRectComponent& parentRect) const {
     UIRectComponent childRect = parentRect;
     const float pw = parentRect.Width();
     const float ph = parentRect.Height();
 
     if (registry->HasComponent<UIAnchorComponent>(child)) {
-      const auto& anchor = registry->GetComponent<UIAnchorComponent>(child);
+      const auto anchor = ScaledAnchor(registry->GetComponent<UIAnchorComponent>(child), ui_scale_);
       childRect.left = parentRect.left + pw * anchor.anchorLeft + anchor.offsetLeft;
       childRect.top = parentRect.top + ph * anchor.anchorTop + anchor.offsetTop;
       childRect.right = parentRect.left + pw * anchor.anchorRight + anchor.offsetRight;
       childRect.bottom = parentRect.top + ph * anchor.anchorBottom + anchor.offsetBottom;
     }
     if (registry->HasComponent<UILayoutBoxComponent>(child)) {
-      const auto& box = registry->GetComponent<UILayoutBoxComponent>(child);
+      const auto box = ScaledBox(registry->GetComponent<UILayoutBoxComponent>(child), ui_scale_);
       if (box.widthUnit != UIUnit::Auto || box.marginLeft != 0.0f) {
         const float w = DesiredMainSize(registry, child, true, pw);
         childRect.left = parentRect.left + box.marginLeft;
@@ -796,8 +854,8 @@ class UILayoutSystem {
       auto [parent, parentRect] = pending_scratch_.back();
       pending_scratch_.pop_back();
       if (registry->HasComponent<UIFlexComponent>(parent)) {
-        ResolveFlexChildren(registry, parent, parentRect, registry->GetComponent<UIFlexComponent>(parent),
-                            pending_scratch_);
+        const auto flex = ScaledFlex(registry->GetComponent<UIFlexComponent>(parent), ui_scale_);
+        ResolveFlexChildren(registry, parent, parentRect, flex, pending_scratch_);
         continue;
       }
       registry->ForEachChild(parent, [&](const Entity child) {
@@ -813,6 +871,9 @@ class UILayoutSystem {
   }
 
   std::unique_ptr<CanvasQuery> canvasQuery_{};
+  mutable float ui_scale_ = 1.0f;
+  mutable std::uint64_t frame_gen_ = 0;
+  mutable std::unordered_map<std::uint64_t, std::uint64_t> resolved_frame_{};
   mutable std::vector<std::pair<Entity, UIRectComponent>> canvases_scratch_{};
   mutable std::vector<std::pair<Entity, UIRectComponent>> pending_scratch_{};
   mutable std::vector<Entity> hidden_stack_scratch_{};

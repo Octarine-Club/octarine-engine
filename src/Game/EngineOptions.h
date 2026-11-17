@@ -142,4 +142,7 @@ struct EngineOptions {
   octarine::AngleUnit angleUnit = octarine::AngleUnit::Degrees;
   // Pre-allocated RenderQueue slot capacity. config.ini: RenderQueueCapacity=<1024..1048576>.
   size_t renderQueueCapacity = Constants::kInitialRenderQueueCapacity;
+  // User/project UI scale multiplier applied on top of reference-resolution auto UI scale.
+  // config.ini: DefaultUIScale=<0.25..4.0>
+  float uiScale = 1.0F;
 };
