@@ -496,6 +496,17 @@ int main() {
           "GlyphAtlas::Load accepts SDL_IOStream pairs (asset_bundle.pak compatibility)");
     Check(atlasFromStream.IsLoaded() && atlasFromStream.Size() == 1, "stream-loaded atlas is loaded with 1 glyph");
 
+    // Legacy Lua 5.4 atlas metadata chunk is rejected by GlyphAtlas::Load
+    {
+      const std::filesystem::path badLuaPath = tmpDir / "legacy_atlas.lua";
+      {
+        std::ofstream badLua(badLuaPath, std::ios::binary);
+        badLua.write("\x1BOCT\x54\x00\x19\x93\r\n\x1A\n123456789012345678901234567890", 42);
+      }
+      GlyphAtlas badAtlas;
+      Check(!badAtlas.Load(pngPath, badLuaPath), "GlyphAtlas::Load rejects legacy \\x1bOCT\\x54 metadata");
+    }
+
     // AtlasBaker's DefaultAsciiPrintable helper is independent of TTF availability.
     const auto cps = AtlasBaker::DefaultAsciiPrintable();
     Check(cps.size() == 95, "DefaultAsciiPrintable returns 95 codepoints (0x20..0x7E)");

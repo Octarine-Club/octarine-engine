@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <lua.hpp>
+#include <sol/sol.hpp>
 #include <string_view>
 
 #include "AssetManager/AssetCatalog.h"
@@ -125,6 +126,142 @@ void TestLua55EdgeCasesAndLegacyRejection() {
       42);
   Check(!DecryptLuaBytes(legacyRawLua), "DecryptLuaBytes rejects raw legacy \\x1bLua\\x54 chunk");
   Check(legacyRawLua.empty(), "DecryptLuaBytes clears raw legacy \\x1bLua\\x54 buffer");
+
+  // 4. Synthetic Lua 5.5 scrambler edge cases & malformed chunk error paths.
+  auto makeBaseChunk = []() {
+    std::vector<uint8_t> c = {
+        0x1B, 'L',  'u',  'a', 0x55, 0x00, 0x19, 0x93, '\r', '\n', 0x1A, '\n', 4, 0, 0, 0, 0,  // intSize = 4
+        4,    0,    0,    0,   0,                                                              // instSize = 4
+        8,    0,    0,    0,   0,    0,    0,    0,    0,                                      // luaIntSize = 8
+        8,    0,    0,    0,   0,    0,    0,    0,    0,                                      // luaNumSize = 8
+        0x00,                                                                                  // sizeupvalues = 0
+        0x00, 0x00,        // linedefined, lastlinedefined
+        0x00, 0x00, 0x00,  // numparams, flag, maxstacksize
+    };
+    return c;
+  };
+  auto appendZeroDebugAndTail = [](std::vector<uint8_t>& c) {
+    // upvalCount=0, protoCount=0, source=0 (NULL string), lineinfo=0, abslineinfo=0, locvars=0, upnames=0
+    c.insert(c.end(), {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
+  };
+
+  // Valid nil/false/true constants (LUA_VNIL=0, LUA_VFALSE=1, LUA_VTRUE=17)
+  {
+    auto c = makeBaseChunk();
+    c.push_back(0x00);  // codeCount = 0
+    while (c.size() % 4 != 0) c.push_back(0x00);
+    // Align(4) after codeCount=0 lands on 4-byte boundary; re-verify with exact cursor:
+    // Actually baseChunk is 46 bytes; codeCount=0 at 46 -> pos=47 -> Align(4) skips 1 byte to 48!
+    c.clear();
+    c = makeBaseChunk();
+    c.push_back(0x00);  // codeCount = 0 (pos 47)
+    c.push_back(0x00);  // align pad to pos 48
+    c.push_back(0x03);  // kCount = 3
+    c.push_back(0);     // LUA_VNIL
+    c.push_back(1);     // LUA_VFALSE
+    c.push_back(17);    // LUA_VTRUE
+    appendZeroDebugAndTail(c);
+    Check(octarine::crypto::ScrambleLua55Bytecode(c.data(), c.size(), 12345ULL),
+          "ScrambleLua55Bytecode handles nil/false/true constants");
+    Check(octarine::crypto::DescrambleLua55Bytecode(c.data(), c.size(), 12345ULL),
+          "DescrambleLua55Bytecode handles nil/false/true constants");
+  }
+
+  // Invalid NumInfoSize (0 and 17)
+  {
+    auto c = makeBaseChunk();
+    c[12] = 0;
+    Check(!octarine::crypto::ScrambleLua55Bytecode(c.data(), c.size(), 1ULL), "rejects NumInfoSize == 0");
+    c[12] = 17;
+    Check(!octarine::crypto::ScrambleLua55Bytecode(c.data(), c.size(), 1ULL), "rejects NumInfoSize > 16");
+  }
+
+  // Bad header prefix & bad instSize
+  {
+    auto c = makeBaseChunk();
+    c[5] = 0xFF;
+    Check(!octarine::crypto::ScrambleLua55Bytecode(c.data(), c.size(), 1ULL), "rejects bad header prefix");
+    c = makeBaseChunk();
+    c[17] = 8;  // instSize = 8 (!= 4)
+    Check(!octarine::crypto::ScrambleLua55Bytecode(c.data(), c.size(), 1ULL), "rejects instSize != 4");
+  }
+
+  // Varint overflow (in linedefined and in codeCount to also exercise Align(!ok_))
+  {
+    auto c = makeBaseChunk();
+    c.insert(c.end(), 12, 0xFF);
+    c[41] = 0xFF;
+    Check(!octarine::crypto::ScrambleLua55Bytecode(c.data(), c.size(), 1ULL), "rejects varint overflow");
+
+    c = makeBaseChunk();
+    c.insert(c.end(), 12, 0xFF);  // codeCount varint overflow
+    Check(!octarine::crypto::ScrambleLua55Bytecode(c.data(), c.size(), 1ULL), "rejects codeCount varint overflow");
+  }
+
+  // Invalid opcode >= kLua55NumOpcodes
+  {
+    auto c = makeBaseChunk();
+    c.push_back(0x01);  // codeCount = 1 (pos 47)
+    c.push_back(0x00);  // align pad to pos 48
+    c.push_back(0x7F);  // opcode 127 >= 85
+    c.push_back(0x00);
+    c.push_back(0x00);
+    c.push_back(0x00);
+    appendZeroDebugAndTail(c);
+    Check(!octarine::crypto::ScrambleLua55Bytecode(c.data(), c.size(), 1ULL), "rejects invalid opcode >= 85");
+  }
+
+  // Invalid constant tag
+  {
+    auto c = makeBaseChunk();
+    c.push_back(0x00);  // codeCount = 0 (pos 47)
+    c.push_back(0x00);  // align pad to pos 48
+    c.push_back(0x01);  // kCount = 1
+    c.push_back(99);    // invalid tag
+    appendZeroDebugAndTail(c);
+    Check(!octarine::crypto::ScrambleLua55Bytecode(c.data(), c.size(), 1ULL), "rejects invalid constant tag");
+  }
+
+  // Truncated upvalCount, protoCount, lineinfo, abslineinfo
+  {
+    auto c = makeBaseChunk();
+    c.push_back(0x00);  // codeCount = 0
+    c.push_back(0x00);  // align pad
+    c.push_back(0x00);  // kCount = 0
+    c.push_back(0x7F);  // upvalCount = 127 (truncated)
+    Check(!octarine::crypto::ScrambleLua55Bytecode(c.data(), c.size(), 1ULL), "rejects truncated upvalCount");
+
+    c = makeBaseChunk();
+    c.push_back(0x00);  // codeCount = 0
+    c.push_back(0x00);  // align pad
+    c.push_back(0x00);  // kCount = 0
+    c.push_back(0x00);  // upvalCount = 0
+    c.push_back(0x7F);  // protoCount = 127 (truncated)
+    Check(!octarine::crypto::ScrambleLua55Bytecode(c.data(), c.size(), 1ULL), "rejects truncated protoCount");
+
+    c = makeBaseChunk();
+    c.push_back(0x00);  // codeCount = 0
+    c.push_back(0x00);  // align pad
+    c.push_back(0x00);  // kCount = 0
+    c.push_back(0x00);  // upvalCount = 0
+    c.push_back(0x00);  // protoCount = 0
+    c.push_back(0x00);  // source = 0
+    c.push_back(0x00);  // source idx = 0
+    c.push_back(0x7F);  // lineinfo = 127 (truncated)
+    Check(!octarine::crypto::ScrambleLua55Bytecode(c.data(), c.size(), 1ULL), "rejects truncated lineinfo");
+
+    c = makeBaseChunk();
+    c.push_back(0x00);  // codeCount = 0
+    c.push_back(0x00);  // align pad
+    c.push_back(0x00);  // kCount = 0
+    c.push_back(0x00);  // upvalCount = 0
+    c.push_back(0x00);  // protoCount = 0
+    c.push_back(0x00);  // source = 0
+    c.push_back(0x00);  // source idx = 0
+    c.push_back(0x00);  // lineinfo = 0
+    c.push_back(0x7F);  // abslineinfo = 127 (truncated)
+    Check(!octarine::crypto::ScrambleLua55Bytecode(c.data(), c.size(), 1ULL), "rejects truncated abslineinfo");
+  }
 }
 }  // namespace
 
@@ -369,6 +506,37 @@ int main() {
         pakOut.write(tampered.data(), static_cast<std::streamsize>(tampered.size()));
       }
       Check(!tamperedPak.Open(tamperedHeaderFile.string()), "AssetPak::Open rejects pak with 1-bit tampered header");
+    }
+
+    // Malformed Lua 5.5 bytecode causes AssetPak::Pack to fail cleanly
+    {
+      const std::filesystem::path badScript = tempDir / "malformed.lua";
+      std::vector<uint8_t> badBytes(48, 0);
+      badBytes[0] = 0x1B;
+      badBytes[1] = 'L';
+      badBytes[2] = 'u';
+      badBytes[3] = 'a';
+      badBytes[4] = 0x55;
+      {
+        std::ofstream badOut(badScript, std::ios::binary);
+        badOut.write(reinterpret_cast<const char*>(badBytes.data()), static_cast<std::streamsize>(badBytes.size()));
+      }
+      const std::filesystem::path badPak = tempDir / "bad_bytecode.pak";
+      Check(!AssetPak::Pack(catalog, badPak.string(), tempDir.string(), {badScript.string()}, {}),
+            "AssetPak::Pack rejects malformed Lua 5.5 bytecode");
+    }
+
+    // Legacy Lua 5.4 manifest chunk is rejected by AssetCatalog::LoadManifestFromStream
+    {
+      const std::string legacyManifest(
+          "\x1BOCT\x54\x00\x19\x93\r\n\x1A\n"
+          "123456789012345678901234567890",
+          42);
+      SDL_IOStream* badManifestIo = SDL_IOFromConstMem(legacyManifest.data(), legacyManifest.size());
+      sol::state lua;
+      AssetCatalog badCatalog;
+      Check(!badCatalog.LoadManifestFromStream(badManifestIo, lua, tempDir.string(), "@legacy_manifest.lua"),
+            "AssetCatalog::LoadManifestFromStream rejects legacy \\x1bOCT\\x54 manifest");
     }
 
     std::filesystem::remove_all(tempDir, ec);
