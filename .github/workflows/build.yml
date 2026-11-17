@@ -50,7 +50,7 @@ concurrency:
 jobs:
   plan:
     name: Plan build matrix
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
     steps:
@@ -69,7 +69,7 @@ jobs:
           preset_filter = os.environ.get('INPUT_PRESET', 'all')
 
           all_platforms = [
-              {'os': 'ubuntu-latest', 'platform': 'linux'},
+              {'os': 'ubuntu-24.04', 'platform': 'linux'},
               {'os': 'windows-latest', 'platform': 'windows'},
               {'os': 'macos-latest', 'platform': 'macos'},
           ]
@@ -301,7 +301,7 @@ jobs:
   # the two sanitizers cannot be combined in one binary.
   sanitize:
     name: linux (asan+ubsan, player-debug)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -339,8 +339,15 @@ jobs:
   # and enforces >= 80% coverage on modified lines under src/ (excluding non-headless GUI panels).
   coverage:
     name: diff-coverage (clang, >=80%)
+    # Uses ubuntu-latest (Clang 21+) rather than ubuntu-24.04 (Clang 18), because Clang 18
+    # rejects sol2 3.5.0's upvalue_this_member_variable::call dependent noexcept address.
+    # Coverage does not publish binaries (so glibc 2.39 floor does not apply) and uses Clang,
+    # and vcpkg-cache-env isolates its cache by ImageOS + compiler ABI.
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      CC: clang
+      CXX: clang++
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -348,13 +355,13 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Export GitHub Actions cache env (vcpkg binary cache)
-        uses: ./.github/actions/vcpkg-cache-env
-
       - name: Install Linux build deps (SDL3 / X11 / Wayland)
         uses: ./.github/actions/linux-build-deps
         with:
           extras: clang llvm
+
+      - name: Export GitHub Actions cache env (vcpkg binary cache)
+        uses: ./.github/actions/vcpkg-cache-env
 
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1
@@ -363,9 +370,6 @@ jobs:
           max-size: 500M
 
       - name: Configure CMake
-        env:
-          CC: clang
-          CXX: clang++
         run: cmake --preset player-debug -DOCTARINE_ENABLE_COVERAGE=ON -DOCTARINE_ENABLE_TESTS=ON
 
       - name: Build
@@ -384,7 +388,7 @@ jobs:
   # has the compile_commands.json it needs. This job also drift-gates the static system/event catalogs.
   lint:
     name: lint (clang-format)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       # Pinned for reproducibility. clang-format output differs between major versions, so a floating
       # `apt install clang-format` (Ubuntu runner default) drifts from contributors' local versions and
