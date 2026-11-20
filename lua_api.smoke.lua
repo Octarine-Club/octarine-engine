@@ -1585,11 +1585,19 @@ function dev.audit_ui_json(...) end
 
 function dev.clear(...) end
 
+function dev.export_ui_mock_lua(...) end
+
 function dev.get_selected_entity(...) end
+
+function dev.inspect_ui_contract(...) end
+
+function dev.inspect_ui_contract_json(...) end
 
 function dev.is_panel_open(...) end
 
 function dev.list_ui_views(...) end
+
+function dev.load_ui_mock(...) end
 
 function dev.preview_inline_ui(...) end
 
@@ -1603,9 +1611,19 @@ function dev.register_toggle(...) end
 
 function dev.reload_preview_ui(...) end
 
+function dev.resize_ui_mock_array(...) end
+
+function dev.save_ui_mock(...) end
+
+function dev.seed_ui_mock(...) end
+
 function dev.select_entity(...) end
 
 function dev.set_panel_open(...) end
+
+function dev.set_ui_mock_field(...) end
+
+function dev.set_ui_param(...) end
 
 function dev.unmount_preview_ui(...) end
 

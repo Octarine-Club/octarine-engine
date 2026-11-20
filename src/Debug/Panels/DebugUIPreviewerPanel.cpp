@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <string>
@@ -20,6 +21,7 @@
 #include "UI/UIPreviewer.h"
 #include "UI/UIRuntime.h"
 #include "imgui.h"
+#include "imgui_stdlib.h"
 
 namespace octarine::debug {
 namespace {
@@ -130,6 +132,20 @@ void DrawPrimaryToolbar(Registry& registry, UIPreviewer& previewer, DebugMenuReg
   DrawToolbarOverlayAndScaleRow(registry, previewer, debugReg, cfg, opts);
 }
 
+const char* MockSourceBadgeLabel(const MockSourceMode mode) {
+  switch (mode) {
+    case MockSourceMode::None:
+      return "None";
+    case MockSourceMode::ExplicitLua:
+      return "Explicit Mock";
+    case MockSourceMode::SidecarPreview:
+      return "Sidecar";
+    case MockSourceMode::AutoSeeded:
+      return "Auto-Seeded";
+  }
+  return "None";
+}
+
 void DrawDiagnosticsBanner(const UIPreviewer& previewer, const UIRuntime* uiRuntime,
                            const std::vector<UILayoutIssue>& issues) {
   if (uiRuntime != nullptr && !uiRuntime->GetDiagnostics().lastParseOk) {
@@ -145,17 +161,31 @@ void DrawDiagnosticsBanner(const UIPreviewer& previewer, const UIRuntime* uiRunt
     return;
   }
 
+  if (!previewer.LastMockError().empty()) {
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.42f, 0.16f, 0.10f, 0.90f));
+    if (ImGui::BeginChild("##mock_err_banner", ImVec2(0.0f, 44.0f), ImGuiChildFlags_Borders)) {
+      ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.40f, 1.0f), "Mock Script Error (preserving last valid tree)");
+      ImGui::TextWrapped("%s", previewer.LastMockError().c_str());
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+  }
+
   if (previewer.IsActive()) {
     const std::uint64_t reloads = uiRuntime != nullptr ? uiRuntime->GetDiagnostics().reloadCount : 0;
     ImGui::TextColored(ImVec4(0.35f, 0.90f, 0.55f, 1.0f), "Valid");
     ImGui::SameLine();
-    ImGui::Text("| Source: %s | Reloads: %llu |", previewer.ActiveSource().c_str(),
-                static_cast<unsigned long long>(reloads));
+    ImGui::Text("| Source: %s | Reloads: %llu | Mock: %s", previewer.ActiveSource().c_str(),
+                static_cast<unsigned long long>(reloads), MockSourceBadgeLabel(previewer.GetMockSourceMode()));
+    if (previewer.IsMockModified()) {
+      ImGui::SameLine();
+      ImGui::TextColored(ImVec4(1.0f, 0.78f, 0.25f, 1.0f), "[Modified]");
+    }
     ImGui::SameLine();
     if (issues.empty()) {
-      ImGui::TextColored(ImVec4(0.35f, 0.90f, 0.55f, 1.0f), "0 Layout Warnings");
+      ImGui::TextColored(ImVec4(0.35f, 0.90f, 0.55f, 1.0f), "| 0 Warnings");
     } else {
-      ImGui::TextColored(ImVec4(1.0f, 0.78f, 0.25f, 1.0f), "%zu Layout Warning(s)", issues.size());
+      ImGui::TextColored(ImVec4(1.0f, 0.78f, 0.25f, 1.0f), "| %zu Warning(s)", issues.size());
     }
   } else {
     ImGui::TextDisabled("No view mounted. Select an .oxml view from the left catalog or use Quick Scratchpad.");
@@ -256,19 +286,321 @@ void DrawWatchedFilesTab(const UIRuntime* uiRuntime) {
   }
 }
 
+bool TryParseHexColorRgba(std::string_view sv, float rgba[4]) {
+  if (sv.size() < 7 || sv.front() != '#') return false;
+  auto parseByte = [](const char hi, const char lo, float& out) -> bool {
+    auto hexVal = [](const char c) -> int {
+      if (c >= '0' && c <= '9') return c - '0';
+      if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
+      if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
+      return -1;
+    };
+    const int a = hexVal(hi);
+    const int b = hexVal(lo);
+    if (a < 0 || b < 0) return false;
+    out = static_cast<float>((a << 4) | b) / 255.0f;
+    return true;
+  };
+  if (!parseByte(sv[1], sv[2], rgba[0]) || !parseByte(sv[3], sv[4], rgba[1]) || !parseByte(sv[5], sv[6], rgba[2])) {
+    return false;
+  }
+  rgba[3] = 1.0f;
+  if (sv.size() >= 9) {
+    static_cast<void>(parseByte(sv[7], sv[8], rgba[3]));
+  }
+  return true;
+}
+
+std::string FormatHexColorRgba(const float rgba[4]) {
+  auto toByte = [](const float f) -> unsigned int {
+    return static_cast<unsigned int>(std::clamp(f, 0.0f, 1.0f) * 255.0f + 0.5f);
+  };
+  char buf[16];
+  if (toByte(rgba[3]) < 255U) {
+    std::snprintf(buf, sizeof(buf), "#%02X%02X%02X%02X", toByte(rgba[0]), toByte(rgba[1]), toByte(rgba[2]),
+                  toByte(rgba[3]));
+  } else {
+    std::snprintf(buf, sizeof(buf), "#%02X%02X%02X", toByte(rgba[0]), toByte(rgba[1]), toByte(rgba[2]));
+  }
+  return buf;
+}
+
+void DrawMockStringControl(UIPreviewer& previewer, const MockFieldEntry& entry) {
+  if (!entry.radioOptions.empty()) {
+    ImGui::SetNextItemWidth(160.0f);
+    if (ImGui::BeginCombo("##radio_combo", entry.stringValue.c_str())) {
+      for (const auto& opt : entry.radioOptions) {
+        const bool selected = (opt == entry.stringValue);
+        if (ImGui::Selectable(opt.c_str(), selected)) {
+          previewer.SetMockFieldString(entry.path, opt);
+        }
+      }
+      ImGui::EndCombo();
+    }
+    return;
+  }
+  if (entry.sampleHint == "color") {
+    float rgba[4] = {0.29f, 0.33f, 0.41f, 1.0f};
+    static_cast<void>(TryParseHexColorRgba(entry.stringValue, rgba));
+    if (ImGui::ColorEdit4("##color", rgba, ImGuiColorEditFlags_NoInputs)) {
+      previewer.SetMockFieldString(entry.path, FormatHexColorRgba(rgba));
+    }
+    ImGui::SameLine();
+  }
+  std::string buf = entry.stringValue;
+  ImGui::SetNextItemWidth(-1.0f);
+  const bool submitted = ImGui::InputText("##str", &buf, ImGuiInputTextFlags_EnterReturnsTrue);
+  if (submitted || ImGui::IsItemDeactivatedAfterEdit()) {
+    previewer.SetMockFieldString(entry.path, buf);
+  }
+}
+
+std::string JoinCommaList(const std::vector<std::string>& items) {
+  std::string out;
+  for (std::size_t i = 0; i < items.size(); ++i) {
+    if (i > 0) out += ", ";
+    out += items[i];
+  }
+  return out;
+}
+
+void DrawMockNumberControl(UIPreviewer& previewer, const MockFieldEntry& entry) {
+  double d = entry.numberValue;
+  if (entry.hasSliderRange && entry.sliderMax > entry.sliderMin) {
+    const double dMin = static_cast<double>(entry.sliderMin);
+    const double dMax = static_cast<double>(entry.sliderMax);
+    ImGui::SetNextItemWidth(100.0f);
+    if (ImGui::SliderScalar("##sld", ImGuiDataType_Double, &d, &dMin, &dMax, "%.3g")) {
+      previewer.SetMockFieldNumber(entry.path, d);
+    }
+  } else {
+    ImGui::SetNextItemWidth(85.0f);
+    if (ImGui::DragScalar("##drag", ImGuiDataType_Double, &d, 0.25f, nullptr, nullptr, "%.4g")) {
+      previewer.SetMockFieldNumber(entry.path, d);
+    }
+  }
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(-1.0f);
+  const bool submitted = ImGui::InputDouble("##num", &d, 0.0, 0.0, "%.6g", ImGuiInputTextFlags_EnterReturnsTrue);
+  if (submitted || ImGui::IsItemDeactivatedAfterEdit()) {
+    previewer.SetMockFieldNumber(entry.path, d);
+  }
+}
+
+void DrawMockArrayControl(UIPreviewer& previewer, const MockFieldEntry& entry) {
+  ImGui::Text("[%d item(s)]", entry.arrayLength);
+  ImGui::SameLine();
+  ImGui::BeginDisabled(entry.arrayLength <= 0);
+  if (ImGui::SmallButton("-")) {
+    previewer.ResizeMockArray(entry.path, entry.arrayLength - 1);
+  }
+  ImGui::EndDisabled();
+  ImGui::SameLine();
+  if (ImGui::SmallButton("+")) {
+    previewer.ResizeMockArray(entry.path, entry.arrayLength + 1);
+  }
+}
+
+void DrawMockScalarControl(UIPreviewer& previewer, const MockFieldEntry& entry) {
+  if (entry.isUnset) {
+    ImGui::TextDisabled("(unset)%s", entry.isConditionalOnly ? " [optional]" : "");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Seed")) previewer.SeedSingleContractField(entry.path);
+    return;
+  }
+  if (entry.kind == MockFieldKind::Boolean) {
+    bool b = entry.boolValue;
+    if (ImGui::Checkbox("##bool", &b)) previewer.SetMockFieldBool(entry.path, b);
+    return;
+  }
+  if (entry.kind == MockFieldKind::Number) {
+    DrawMockNumberControl(previewer, entry);
+    return;
+  }
+  if (entry.kind == MockFieldKind::Array) {
+    DrawMockArrayControl(previewer, entry);
+    return;
+  }
+  if (entry.kind == MockFieldKind::Table) {
+    ImGui::TextDisabled("{table}");
+    return;
+  }
+  DrawMockStringControl(previewer, entry);
+}
+
+void DrawMockFieldsTable(UIPreviewer& previewer, const std::vector<MockFieldEntry>& fields) {
+  if (fields.empty()) {
+    ImGui::TextDisabled("No context variables bound in this view.");
+    return;
+  }
+  if (!ImGui::BeginTable("##mock_fields_tbl", 2,
+                         ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
+    return;
+  }
+  ImGui::TableSetupColumn("Binding Path", ImGuiTableColumnFlags_WidthFixed, 170.0f);
+  ImGui::TableSetupColumn("Mock Value", ImGuiTableColumnFlags_WidthStretch);
+  ImGui::TableHeadersRow();
+
+  for (const auto& entry : fields) {
+    ImGui::TableNextRow();
+    ImGui::TableSetColumnIndex(0);
+    const bool isArrayElem = (entry.path.find('[') != std::string::npos);
+    if (isArrayElem) ImGui::Indent(12.0f);
+    if (entry.isUnset) {
+      ImGui::TextColored(ImVec4(1.0f, 0.78f, 0.25f, 1.0f), "%s", entry.path.c_str());
+    } else {
+      ImGui::TextUnformatted(entry.path.c_str());
+    }
+    if (isArrayElem) ImGui::Unindent(12.0f);
+
+    ImGui::TableSetColumnIndex(1);
+    ImGui::PushID(entry.path.c_str());
+    DrawMockScalarControl(previewer, entry);
+    ImGui::PopID();
+  }
+  ImGui::EndTable();
+}
+
+void DrawMockParamsSection(UIPreviewer& previewer, const std::vector<MockParamEntry>& params) {
+  if (params.empty()) return;
+  ImGui::SeparatorText("<Param> Values");
+  for (const auto& p : params) {
+    ImGui::PushID(p.name.c_str());
+    ImGui::AlignTextToFramePadding();
+    ImGui::Text("%s%s:", p.name.c_str(), p.isOverridden ? " *" : "");
+    ImGui::SameLine(160.0f);
+    std::string buf = p.currentValue;
+    ImGui::SetNextItemWidth(-1.0f);
+    const bool submitted = ImGui::InputText("##param_val", &buf, ImGuiInputTextFlags_EnterReturnsTrue);
+    if (submitted || ImGui::IsItemDeactivatedAfterEdit()) {
+      previewer.SetMockParam(p.name, buf);
+    }
+    if (ImGui::IsItemHovered() && !p.defaultValue.empty()) {
+      ImGui::SetTooltip("Default: %s", p.defaultValue.c_str());
+    }
+    ImGui::PopID();
+  }
+}
+
+void DrawMockCallbacksAndMetaSection(UIPreviewer& previewer, const std::vector<MockCallbackEntry>& callbacks) {
+  const auto& contract = previewer.ActiveContract();
+  if (!callbacks.empty()) {
+    ImGui::SeparatorText("Controller Callbacks");
+    for (const auto& cb : callbacks) {
+      ImGui::PushID(cb.name.c_str());
+      ImGui::TextColored(
+          cb.hasControllerHandler ? ImVec4(0.45f, 0.90f, 0.55f, 1.0f) : ImVec4(0.70f, 0.70f, 0.75f, 1.0f),
+          cb.hasControllerHandler ? "[Bound]" : "[Stub]");
+      ImGui::SameLine();
+      ImGui::Text("%s (%s)", cb.name.c_str(), cb.sourceAttr.c_str());
+      ImGui::SameLine();
+      if (ImGui::SmallButton("Trigger")) {
+        previewer.TriggerMockCallback(cb.name);
+      }
+      ImGui::PopID();
+    }
+  }
+  if (!contract.refs.empty() || !contract.slots.empty()) {
+    ImGui::SeparatorText("Contract Refs & Slots");
+    if (!contract.refs.empty()) {
+      const std::string joined = JoinCommaList(contract.refs);
+      ImGui::TextDisabled("Refs (%zu): %s", contract.refs.size(), joined.c_str());
+    }
+    if (!contract.slots.empty()) {
+      const std::string joined = JoinCommaList(contract.slots);
+      ImGui::TextDisabled("Slots (%zu): %s", contract.slots.size(), joined.c_str());
+    }
+  }
+}
+
+void DrawMockHeaderBar(UIPreviewer& previewer, const bool hasAnyUnset) {
+  static char loadPathBuf[256] = "";
+  const bool canSave =
+      !previewer.IsInline() && (!previewer.TargetSidecarPath().empty() || !previewer.ActiveMockPath().empty());
+
+  ImGui::Text("[%s]", MockSourceBadgeLabel(previewer.GetMockSourceMode()));
+  if (previewer.IsMockModified()) {
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(1.0f, 0.78f, 0.25f, 1.0f), "Modified");
+  }
+  ImGui::SameLine();
+  ImGui::BeginDisabled(!canSave);
+  if (ImGui::Button("Save .preview.lua")) previewer.SaveMockSidecar();
+  ImGui::EndDisabled();
+  ImGui::SameLine();
+  if (ImGui::Button("Copy Mock Lua")) {
+    const std::string luaText = previewer.ExportMockLuaScript();
+    if (!luaText.empty()) ImGui::SetClipboardText(luaText.c_str());
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Use Auto-Seeded")) previewer.ResetToAutoSeeded();
+  if (!previewer.ActiveMockPath().empty()) {
+    ImGui::SameLine();
+    if (ImGui::Button("Reload Mock")) previewer.LoadMockScript(previewer.ActiveMockPath());
+  }
+  if (hasAnyUnset) {
+    ImGui::SameLine();
+    if (ImGui::Button("Seed Missing")) previewer.SeedMissingContractFields();
+  }
+
+  ImGui::SetNextItemWidth(220.0f);
+  ImGui::InputTextWithHint("##load_mock_path", "Load mock .lua script...", loadPathBuf, sizeof(loadPathBuf));
+  ImGui::SameLine();
+  if (ImGui::Button("Load Mock") && loadPathBuf[0] != '\0') {
+    previewer.LoadMockScript(loadPathBuf);
+  }
+}
+
+void DrawMockDataTab(UIPreviewer& previewer) {
+  if (!previewer.IsActive()) {
+    ImGui::TextDisabled("Mount an .oxml view to inspect and edit its mock contract.");
+    return;
+  }
+
+  const auto fields = previewer.CollectMockFields();
+  const auto params = previewer.CollectMockParams();
+  const auto callbacks = previewer.CollectMockCallbacks();
+  const bool hasAnyUnset = std::ranges::any_of(fields, [](const MockFieldEntry& f) { return f.isUnset; });
+
+  DrawMockHeaderBar(previewer, hasAnyUnset);
+
+  ImGui::Separator();
+  if (ImGui::BeginChild("##mock_data_scroll", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None)) {
+    DrawMockFieldsTable(previewer, fields);
+    DrawMockParamsSection(previewer, params);
+    DrawMockCallbacksAndMetaSection(previewer, callbacks);
+  }
+  ImGui::EndChild();
+}
+
 void DrawCallbackEventsTab(UIPreviewer& previewer) {
+  static bool autoScroll = true;
+  static std::size_t lastSeenCount = 0;
+
   if (ImGui::SmallButton("Clear Log")) {
     previewer.ClearCallbackEvents();
+    lastSeenCount = 0;
   }
+  ImGui::SameLine();
+  ImGui::Checkbox("Auto-scroll", &autoScroll);
   ImGui::Separator();
+
   const auto& events = previewer.RecentCallbackEvents();
   if (events.empty()) {
     ImGui::TextDisabled("No controller callbacks fired yet (click buttons or focus widgets to test).");
+    lastSeenCount = 0;
     return;
   }
-  for (auto it = events.rbegin(); it != events.rend(); ++it) {
-    ImGui::BulletText("%s", it->c_str());
+  if (ImGui::BeginChild("##event_log_scroll", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None)) {
+    for (const auto& ev : events) {
+      ImGui::BulletText("%s", ev.c_str());
+    }
+    if (autoScroll && events.size() != lastSeenCount) {
+      ImGui::SetScrollHereY(1.0f);
+    }
+    lastSeenCount = events.size();
   }
+  ImGui::EndChild();
 }
 
 void DrawScratchpadTab(UIPreviewer& previewer) {
@@ -299,6 +631,10 @@ void DrawInspectorPane(UIPreviewer& previewer, const UIRuntime* uiRuntime, Debug
   if (!ImGui::BeginTabBar("##previewer_right_tabs")) return;
   if (ImGui::BeginTabItem("Layout Audit")) {
     DrawAuditTab(issues, debugReg);
+    ImGui::EndTabItem();
+  }
+  if (ImGui::BeginTabItem("Mock Data")) {
+    DrawMockDataTab(previewer);
     ImGui::EndTabItem();
   }
   if (ImGui::BeginTabItem("Watched Files")) {

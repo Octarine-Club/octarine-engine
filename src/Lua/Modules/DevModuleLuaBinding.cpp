@@ -1,6 +1,7 @@
 #include "Lua/Modules/DevModuleLuaBinding.h"
 
 #include <sol/sol.hpp>
+#include <sstream>
 #include <string>
 
 #include "Debug/DebugMenuRegistry.h"
@@ -9,6 +10,7 @@
 #include "Lua/LuaBindingContext.h"
 #ifndef OCTARINE_SHIPPED
 #include "UI/UIPreviewer.h"
+#include "UI/UIRuntime.h"
 #endif
 
 namespace {
@@ -266,9 +268,165 @@ void BindUIPreviewAuditFunctions(sol::table& dev, sol::state& lua, LuaBindingCon
   });
 }
 
+void AppendContractParamsToLua(sol::state& lua, sol::table& out, const std::vector<MockParamEntry>& params) {
+  sol::table tbl = lua.create_table();
+  for (std::size_t i = 0; i < params.size(); ++i) {
+    sol::table row = lua.create_table();
+    row.set("name", params[i].name);
+    row.set("default", params[i].defaultValue);
+    row.set("current", params[i].currentValue);
+    row.set("overridden", params[i].isOverridden);
+    tbl.set(i + 1, row);
+  }
+  out.set("params", tbl);
+}
+
+void AppendContractVarsToLua(sol::state& lua, sol::table& out, const OxmlContract& contract,
+                             const std::vector<MockFieldEntry>& fields, const bool staticUnmounted = false) {
+  sol::table tbl = lua.create_table();
+  for (std::size_t i = 0; i < contract.fields.size(); ++i) {
+    const auto& f = contract.fields[i];
+    const bool isUnset = staticUnmounted ? true : UIPreviewer::IsContractFieldUnset(f, fields);
+    sol::table row = lua.create_table();
+    row.set("path", f.path);
+    row.set("type", ContractFieldTypeName(f.inferredType));
+    row.set("conditional_only", f.conditionalOnly);
+    row.set("two_way", f.isTwoWay);
+    row.set("unset", isUnset);
+    tbl.set(i + 1, row);
+  }
+  out.set("vars", tbl);
+}
+
+void AppendContractCallbacksToLua(sol::state& lua, sol::table& out, const std::vector<MockCallbackEntry>& cbs) {
+  sol::table tbl = lua.create_table();
+  for (std::size_t i = 0; i < cbs.size(); ++i) {
+    sol::table row = lua.create_table();
+    row.set("name", cbs[i].name);
+    row.set("attr", cbs[i].sourceAttr);
+    row.set("raw", cbs[i].rawExpr);
+    row.set("bound", cbs[i].hasControllerHandler);
+    tbl.set(i + 1, row);
+  }
+  out.set("callbacks", tbl);
+}
+
+sol::table InspectStaticOxmlContractToLua(sol::state& lua, UIRuntime* uiRuntime, const std::string& pathOrId) {
+  sol::table out = lua.create_table();
+  if (uiRuntime == nullptr) return out;
+  const auto text = (!pathOrId.empty() && pathOrId.front() == '<') ? std::optional<std::string>(pathOrId)
+                                                                   : uiRuntime->ReadTextAsset(pathOrId);
+  if (!text.has_value()) return out;
+  const OxmlParseResult parsed = OxmlParser::Parse(*text);
+  if (!parsed.ok) return out;
+
+  auto resolveUse = [uiRuntime](const std::string& src) -> std::optional<OxmlDocument> {
+    const auto uTxt =
+        (!src.empty() && src.front() == '<') ? std::optional<std::string>(src) : uiRuntime->ReadTextAsset(src);
+    if (!uTxt.has_value()) return std::nullopt;
+    const OxmlParseResult uParsed = OxmlParser::Parse(*uTxt);
+    return uParsed.ok ? std::optional<OxmlDocument>(uParsed.document) : std::nullopt;
+  };
+  const OxmlContract contract = InspectOxmlContract(parsed.document, {}, resolveUse);
+  std::vector<MockParamEntry> params;
+  for (const auto& p : contract.params) {
+    params.push_back({p.name, p.defaultValue, p.defaultValue, false});
+  }
+  std::vector<MockCallbackEntry> cbs;
+  for (const auto& cb : contract.callbacks) {
+    cbs.push_back({cb.name, cb.sourceAttr, cb.rawExpr, false});
+  }
+  out.set("active", false);
+  out.set("source", pathOrId);
+  AppendContractParamsToLua(lua, out, params);
+  AppendContractVarsToLua(lua, out, contract, {}, /*staticUnmounted=*/true);
+  AppendContractCallbacksToLua(lua, out, cbs);
+  out.set("refs", contract.refs);
+  out.set("slots", contract.slots);
+  return out;
+}
+
+void BindUIPreviewMockFunctions(sol::table& dev, sol::state& lua, LuaBindingContext& ctx) {
+  dev.set_function("inspect_ui_contract", [&lua, &ctx](const sol::optional<std::string>& pathOrId) -> sol::table {
+    auto* reg = ctx.GetRegistry();
+    if (pathOrId.has_value() && !pathOrId->empty()) {
+      auto* uiRuntime = reg != nullptr ? reg->TryGet<UIRuntime>() : nullptr;
+      return InspectStaticOxmlContractToLua(lua, uiRuntime, *pathOrId);
+    }
+    sol::table out = lua.create_table();
+    auto* previewer = GetOrCreateUIPreviewer(ctx);
+    if (previewer == nullptr) return out;
+    out.set("active", previewer->IsActive());
+    out.set("mock_path", previewer->ActiveMockPath());
+    out.set("mock_modified", previewer->IsMockModified());
+    out.set("last_mock_error", previewer->LastMockError());
+    AppendContractParamsToLua(lua, out, previewer->CollectMockParams());
+    AppendContractVarsToLua(lua, out, previewer->ActiveContract(), previewer->CollectMockFields());
+    AppendContractCallbacksToLua(lua, out, previewer->CollectMockCallbacks());
+    out.set("refs", previewer->ActiveContract().refs);
+    out.set("slots", previewer->ActiveContract().slots);
+    return out;
+  });
+
+  dev.set_function("set_ui_mock_field", [&ctx](const std::string& path, const sol::object& value) -> bool {
+    auto* previewer = GetOrCreateUIPreviewer(ctx);
+    return previewer != nullptr && previewer->SetMockFieldObject(path, value);
+  });
+
+  dev.set_function("resize_ui_mock_array", [&ctx](const std::string& path, const int newLen) -> bool {
+    auto* previewer = GetOrCreateUIPreviewer(ctx);
+    return previewer != nullptr && previewer->ResizeMockArray(path, newLen);
+  });
+
+  dev.set_function("set_ui_param", [&ctx](const std::string& name, const sol::object& value) -> bool {
+    auto* previewer = GetOrCreateUIPreviewer(ctx);
+    if (previewer == nullptr) return false;
+    std::string strVal;
+    if (value.is<std::string>()) {
+      strVal = value.as<std::string>();
+    } else if (value.is<bool>()) {
+      strVal = value.as<bool>() ? "true" : "false";
+    } else if (value.is<double>()) {
+      std::ostringstream oss;
+      oss << value.as<double>();
+      strVal = oss.str();
+    } else {
+      return false;
+    }
+    return previewer->SetMockParam(name, strVal);
+  });
+
+  dev.set_function("load_ui_mock", [&ctx](const std::string& path) -> bool {
+    auto* previewer = GetOrCreateUIPreviewer(ctx);
+    return previewer != nullptr && previewer->LoadMockScript(path);
+  });
+
+  dev.set_function("save_ui_mock", [&ctx](const sol::optional<std::string>& path) -> bool {
+    auto* previewer = GetOrCreateUIPreviewer(ctx);
+    return previewer != nullptr && previewer->SaveMockSidecar(path.value_or(""));
+  });
+
+  dev.set_function("export_ui_mock_lua", [&ctx]() -> std::string {
+    auto* previewer = GetOrCreateUIPreviewer(ctx);
+    return previewer != nullptr ? previewer->ExportMockLuaScript() : "";
+  });
+
+  dev.set_function("seed_ui_mock", [&ctx](const sol::optional<std::string>& path) -> bool {
+    auto* previewer = GetOrCreateUIPreviewer(ctx);
+    if (previewer == nullptr) return false;
+    return path.has_value() ? previewer->SeedSingleContractField(*path) : previewer->SeedMissingContractFields();
+  });
+
+  dev.set_function("inspect_ui_contract_json", [&ctx](const sol::optional<std::string>& pathOrId) -> std::string {
+    auto* previewer = GetOrCreateUIPreviewer(ctx);
+    return previewer != nullptr ? previewer->InspectContractJson(pathOrId.value_or("")) : "{}";
+  });
+}
+
 void BindUIPreviewFunctions(sol::table& dev, sol::state& lua, LuaBindingContext& ctx) {
   BindUIPreviewMountFunctions(dev, ctx);
   BindUIPreviewAuditFunctions(dev, lua, ctx);
+  BindUIPreviewMockFunctions(dev, lua, ctx);
 }
 #endif
 

@@ -33,6 +33,7 @@ constexpr const char* kAtlasLuaSuffix = ".atlas.lua";
 constexpr const char* kNormalizedDirName = "normalized";
 constexpr const char* kScriptsDirName = "scripts";
 constexpr const char* kLuaExtension = ".lua";
+constexpr const char* kPreviewLuaSuffix = ".preview.lua";
 
 inline void LoadGameForBake(sol::state& lua, const AssetManager& assetManager, const GameConfig& gameConfig) {
   const auto filePath = assetManager.GetFullPath(gameConfig.GetStartupScript());
@@ -230,14 +231,16 @@ bool Game::RunBakeValidation(const std::string& assetPath, const std::string& sc
     // Collect Lua scripts: root *.lua (including asset_manifest.lua) and scripts/**/*.lua.
     std::error_code ec;
     for (const auto& entry : std::filesystem::directory_iterator(assetPath, ec)) {
-      if (entry.is_regular_file(ec) && entry.path().extension() == kLuaExtension) {
+      if (entry.is_regular_file(ec) && entry.path().extension() == kLuaExtension &&
+          !entry.path().filename().string().ends_with(kPreviewLuaSuffix)) {
         extraFiles.push_back(entry.path().lexically_normal().string());
       }
     }
     const std::filesystem::path scriptsDir = std::filesystem::path(assetPath) / kScriptsDirName;
     if (std::filesystem::is_directory(scriptsDir, ec)) {
       for (const auto& entry : std::filesystem::recursive_directory_iterator(scriptsDir, ec)) {
-        if (entry.is_regular_file(ec) && entry.path().extension() == kLuaExtension) {
+        if (entry.is_regular_file(ec) && entry.path().extension() == kLuaExtension &&
+            !entry.path().filename().string().ends_with(kPreviewLuaSuffix)) {
           extraFiles.push_back(entry.path().lexically_normal().string());
         }
       }

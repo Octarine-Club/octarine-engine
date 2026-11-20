@@ -28,6 +28,10 @@ struct UIDiagnostics {
   std::vector<std::string> watchedFiles{};
 };
 
+#ifndef OCTARINE_SHIPPED
+struct OxmlContract;
+#endif
+
 class UIRuntime {
  public:
   UIRuntime(sol::state* lua, Registry* registry, AssetManager* assetManager);
@@ -69,6 +73,12 @@ class UIRuntime {
   void RecordDiagnosticsSuccess(std::vector<std::string> watchedFiles, bool isReload);
 
   bool ReloadMountedView(uint64_t id);
+#ifndef OCTARINE_SHIPPED
+  [[nodiscard]] bool InspectMountedViewContract(uint64_t id, OxmlContract& outContract) const;
+  bool SetMountedViewParam(uint64_t id, const std::string& name, const std::string& value);
+  [[nodiscard]] sol::object GetMountedViewParams(uint64_t id) const;
+  bool InvokeMountedViewController(uint64_t id, const std::string& methodName);
+#endif
   void ReloadAllMountedViews();
 
  private:
@@ -89,6 +99,12 @@ class UIRuntime {
     std::function<void(bool)> setInertFn{};
     std::function<void()> unmountFn{};
     std::function<bool(const std::shared_ptr<MountedViewRecord>&)> reloadFn{};
+#ifndef OCTARINE_SHIPPED
+    std::function<bool(OxmlContract&)> inspectContractFn{};
+    std::function<bool(const std::string&, const std::string&)> setParamFn{};
+    std::function<sol::object()> getParamsFn{};
+    std::function<bool(const std::string&)> invokeControllerFn{};
+#endif
   };
   uint64_t RegisterMountedViewWatch(const std::string& sourceStr, std::vector<std::string> watchedPaths,
                                     const std::shared_ptr<void>& viewErased, const std::optional<Entity>& parentEntity);

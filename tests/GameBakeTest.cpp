@@ -186,6 +186,30 @@ int main() {
 
     CleanBakeOutputs();
   }
+
+  std::cout << "[bake: excludes *.preview.lua sidecars from asset_bundle.pak]\n";
+  {
+    const std::filesystem::path fixtureDir = BAKE_FIXTURE_DIR;
+    const std::filesystem::path tempProj =
+        std::filesystem::temp_directory_path() / "octarine_bake_preview_sidecar_test";
+    std::error_code ec;
+    std::filesystem::remove_all(tempProj, ec);
+    std::filesystem::copy(fixtureDir, tempProj, std::filesystem::copy_options::recursive, ec);
+    std::filesystem::create_directories(tempProj / "assets" / "scripts", ec);
+    {
+      std::ofstream f1((tempProj / "assets" / "root_ignored.preview.lua").string());
+      f1 << "return { context = { ok = true } }\n";
+      std::ofstream f2((tempProj / "assets" / "scripts" / "hud.preview.lua").string());
+      f2 << "return { context = { ok = true } }\n";
+    }
+    Check(Game::Bake(tempProj.string()), "Game::Bake succeeds with *.preview.lua files present");
+    AssetPak pak;
+    Check(pak.Open((tempProj / "asset_bundle.pak").string()), "opens temp baked pak");
+    Check(pak.Contains("main.lua"), "temp pak contains main.lua");
+    Check(!pak.Contains("root_ignored.preview.lua"), "asset_bundle.pak excludes root *.preview.lua");
+    Check(!pak.Contains("scripts/hud.preview.lua"), "asset_bundle.pak excludes scripts/**/*.preview.lua");
+    std::filesystem::remove_all(tempProj, ec);
+  }
 #else
   std::cerr << "  WARN BAKE_FIXTURE_DIR not defined; skipping Game::Bake check\n";
 #endif

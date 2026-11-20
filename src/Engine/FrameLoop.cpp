@@ -464,6 +464,9 @@ void FrameLoop::PollHotReload([[maybe_unused]] const EngineOptions& options, [[m
     if (auto* uiRuntime = registry_->TryGet<UIRuntime>()) {
       uiRuntime->PollHotReload(deltaTime, options.hotReloadPollSeconds);
     }
+    if (auto* uiPreviewer = registry_->TryGet<UIPreviewer>()) {
+      uiPreviewer->PollMockHotReload(deltaTime, options.hotReloadPollSeconds);
+    }
     if (auto* tilemap = registry_->TryGet<TilemapSystem>()) {
       tilemap->PollHotReload(*registry_, deltaTime, options.hotReloadPollSeconds);
     }

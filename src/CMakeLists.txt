@@ -182,7 +182,10 @@ set(OCTARINE_LUA_SOURCES
         UI/UIRuntime.cpp
 )
 if (NOT OCTARINE_SHIPPED)
-    list(APPEND OCTARINE_LUA_SOURCES UI/UIPreviewer.cpp)
+    list(APPEND OCTARINE_LUA_SOURCES
+            UI/OxmlContract.cpp
+            UI/UIPreviewer.cpp
+    )
 endif ()
 octarine_library(octarine_lua ${OCTARINE_LUA_SOURCES})
 target_link_libraries(octarine_lua PUBLIC

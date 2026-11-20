@@ -35,6 +35,9 @@
 #include "Lua/Bindings/TextLabelComponentLuaBinding.h"
 #include "Renderer/SpriteRenderCache.h"
 #include "Systems/UIButtonSystem.h"
+#ifndef OCTARINE_SHIPPED
+#include "UI/OxmlContract.h"
+#endif
 
 namespace {
 
@@ -96,7 +99,13 @@ void SetPathValue(sol::table& root, std::string_view path, const sol::object& va
     const std::string segment(path.substr(start, dot - start));
     sol::object nextObj = current.get<sol::object>(segment);
     if (!nextObj.is<sol::table>()) {
-      return;
+      sol::state_view luaView(root.lua_state());
+      sol::table created = luaView.create_table();
+      current[segment] = created;
+      nextObj = current.get<sol::object>(segment);
+      if (!nextObj.is<sol::table>()) {
+        return;
+      }
     }
     current = nextObj.as<sol::table>();
     start = dot + 1;
@@ -507,6 +516,9 @@ struct UIViewInstance : std::enable_shared_from_this<UIViewInstance> {
   OssStylesheet stylesheet{};
   std::vector<std::string> extraStyleSources{};
   std::unordered_map<std::string, OxmlDocument> importedUses{};
+#ifndef OCTARINE_SHIPPED
+  OxmlDocument document{};
+#endif
   std::vector<std::function<void()>> refreshFns{};
   std::vector<std::function<void()>>* activeRefreshSink{nullptr};
   std::vector<std::function<void()>> unmountFns{};
@@ -2606,6 +2618,9 @@ bool ReloadMountedView(UIRuntime* runtime, const std::shared_ptr<UIViewInstance>
   v->inertSubtreeRoots.clear();
   v->stylesheet = std::move(resources.stylesheet);
   v->importedUses = std::move(resources.uses);
+#ifndef OCTARINE_SHIPPED
+  v->document = reParsed.document;
+#endif
   v->acquiredAssetIds = std::move(newlyAcquired);
   if (AssetManager* am = runtime->GetAssetManager(); am != nullptr && !prevAcquired.empty()) {
     am->ReleaseAll(prevAcquired);
@@ -2705,6 +2720,14 @@ void UIRuntime::RegisterWidget(const std::string& name, const sol::table& descri
 
 namespace {
 void NotifyObservableListeners(const sol::table& listeners, const std::string& key) {
+  static thread_local std::unordered_set<const void*> activeNotifies;
+  const void* ptr = listeners.pointer();
+  if (ptr == nullptr || !activeNotifies.insert(ptr).second) return;
+  struct Guard {
+    const void* p;
+    ~Guard() { activeNotifies.erase(p); }
+  } guard{ptr};
+
   const std::size_t n = listeners.size();
   for (std::size_t i = 1; i <= n; ++i) {
     sol::object fnObj = listeners.get<sol::object>(i);
@@ -2714,57 +2737,104 @@ void NotifyObservableListeners(const sol::table& listeners, const std::string& k
   }
 }
 
+void ForwardChildObservable(sol::table& childObs, const sol::table& listeners) {
+  const sol::object childListeners = childObs.raw_get<sol::object>("__listeners");
+  if (childListeners.is<sol::table>() && childListeners.as<sol::table>().pointer() == listeners.pointer()) {
+    return;
+  }
+  sol::object sinksObj = childObs.raw_get<sol::object>("__forward_sinks");
+  sol::table sinks;
+  if (sinksObj.is<sol::table>()) {
+    sinks = sinksObj.as<sol::table>();
+  } else {
+    sol::state_view luaView(childObs.lua_state());
+    sinks = luaView.create_table();
+    sol::table weakMeta = luaView.create_table_with("__mode", "k");
+    sinks[sol::metatable_key] = weakMeta;
+    childObs.raw_set("__forward_sinks", sinks);
+  }
+  const sol::object already = sinks.get<sol::object>(listeners);
+  if (already.valid() && already != sol::lua_nil) return;
+  sinks.set(listeners, true);
+  SubscribeObservableTable(childObs,
+                           [listeners](const std::string& subKey) { NotifyObservableListeners(listeners, subKey); });
+}
+
+sol::table CreateObservableWithVisited(UIRuntime* runtime, const sol::table& rawTable,
+                                       std::unordered_set<const void*>& visited);
+
 // Wraps nested child tables recursively in observables so deep mutations propagate to parent listeners.
 // NOLINTNEXTLINE(misc-no-recursion)
 void AssignObservableBackingField(UIRuntime* runtime, sol::table& backing, const sol::object& key,
-                                  const sol::object& val, const sol::table& listeners) {
-  if (val.is<sol::table>() && !IsTableObservable(val.as<sol::table>())) {
-    sol::table childObs = runtime->CreateObservable(val.as<sol::table>());
-    SubscribeObservableTable(childObs,
-                             [listeners](const std::string& subKey) { NotifyObservableListeners(listeners, subKey); });
-    backing[key] = childObs;
+                                  const sol::object& val, const sol::table& listeners,
+                                  std::unordered_set<const void*>& visited) {
+  if (val.is<sol::table>()) {
+    sol::table tbl = val.as<sol::table>();
+    if (IsTableObservable(tbl)) {
+      ForwardChildObservable(tbl, listeners);
+      backing[key] = tbl;
+    } else if (visited.contains(tbl.pointer())) {
+      backing[key] = tbl;
+    } else {
+      sol::table childObs = CreateObservableWithVisited(runtime, tbl, visited);
+      ForwardChildObservable(childObs, listeners);
+      backing[key] = childObs;
+    }
   } else {
     backing[key] = val;
   }
 }
-}  // namespace
 
-// Observable tables wrap nested child tables recursively so deep mutations propagate to parent listeners.
 // NOLINTNEXTLINE(misc-no-recursion)
-sol::table UIRuntime::CreateObservable(const sol::table& rawTable) {
-  if (IsTableObservable(rawTable)) {
+sol::table CreateObservableWithVisited(UIRuntime* runtime, const sol::table& rawTable,
+                                       std::unordered_set<const void*>& visited) {
+  if (IsTableObservable(rawTable) || !visited.insert(rawTable.pointer()).second) {
     return rawTable;
   }
 
-  sol::table listeners = lua_->create_table();
-  sol::table backing = lua_->create_table();
+  sol::state* luaPtr = runtime->GetLua();
+  sol::table listeners = luaPtr->create_table();
+  sol::table backing = luaPtr->create_table();
 
   for (const auto& [k, v] : rawTable) {
-    AssignObservableBackingField(this, backing, k, v, listeners);
+    AssignObservableBackingField(runtime, backing, k, v, listeners, visited);
   }
+  visited.erase(rawTable.pointer());
 
-  sol::table proxy = lua_->create_table();
+  sol::table proxy = luaPtr->create_table();
   proxy.set("__is_observable", true);
   proxy.set("__raw", backing);
   proxy.set("__listeners", listeners);
+  sol::table sinks = luaPtr->create_table();
+  sinks[sol::metatable_key] = luaPtr->create_table_with("__mode", "k");
+  proxy.set("__forward_sinks", sinks);
   proxy.set_function("__subscribe", [listeners](const sol::table&, const sol::protected_function& fn) mutable {
     listeners[listeners.size() + 1] = fn;
   });
 
-  sol::table meta = lua_->create_table();
+  sol::table meta = luaPtr->create_table();
   meta.set_function("__index", [backing](const sol::table&, const sol::object& key) -> sol::object {
     return backing.get<sol::object>(key);
   });
-  meta.set_function("__newindex", [this, backing, listeners](const sol::table&, const sol::object& key,
-                                                             const sol::object& val) mutable {
+  meta.set_function("__newindex", [runtime, backing, listeners](const sol::table&, const sol::object& key,
+                                                                const sol::object& val) mutable {
     if (backing[key] == val && !val.is<sol::table>()) return;
-    AssignObservableBackingField(this, backing, key, val, listeners);
+    std::unordered_set<const void*> localVisited;
+    AssignObservableBackingField(runtime, backing, key, val, listeners, localVisited);
     NotifyObservableListeners(listeners, key.is<std::string>() ? key.as<std::string>() : "");
   });
   meta.set_function("__len", [backing](const sol::table&) -> std::size_t { return backing.size(); });
 
   proxy[sol::metatable_key] = meta;
   return proxy;
+}
+}  // namespace
+
+// Observable tables wrap nested child tables recursively so deep mutations propagate to parent listeners.
+// NOLINTNEXTLINE(misc-no-recursion)
+sol::table UIRuntime::CreateObservable(const sol::table& rawTable) {
+  std::unordered_set<const void*> visited;
+  return CreateObservableWithVisited(this, rawTable, visited);
 }
 
 sol::object UIRuntime::Mount(const sol::object& sourceObj, const sol::optional<sol::table>& opts) {
@@ -2815,6 +2885,9 @@ sol::object UIRuntime::Mount(const sol::object& sourceObj, const sol::optional<s
   SeedParamsFromDocument(view, parsed.document, *lua_);
   view->stylesheet = std::move(resources.stylesheet);
   view->importedUses = std::move(resources.uses);
+#ifndef OCTARINE_SHIPPED
+  view->document = parsed.document;
+#endif
   view->acquiredAssetIds = AcquireViewCatalogAssets(this, parsed.document, view->stylesheet, view->importedUses);
 
   const sol::table rootScope = view->MakeScope();
@@ -2870,6 +2943,45 @@ uint64_t UIRuntime::RegisterMountedViewWatch(const std::string& sourceStr, std::
     return ::ReloadMountedView(this, weakView.lock(), sourceStr, parentEntity, record ? &record->watchedFiles : nullptr,
                                record ? &record->lastWriteTimes : nullptr);
   };
+#ifndef OCTARINE_SHIPPED
+  rec->inspectContractFn = [this, weakView](OxmlContract& outContract) -> bool {
+    const auto v = weakView.lock();
+    if (!v || !v->IsCurrentlyMounted()) return false;
+    auto resolveUse = [this](const std::string& src) -> std::optional<OxmlDocument> {
+      const auto loaded = (!src.empty() && src.front() == '<') ? std::optional<std::string>(src) : ReadTextAsset(src);
+      if (!loaded.has_value()) return std::nullopt;
+      const OxmlParseResult parsed = OxmlParser::Parse(*loaded);
+      return parsed.ok ? std::optional<OxmlDocument>(parsed.document) : std::nullopt;
+    };
+    outContract = InspectOxmlContract(v->document, v->importedUses, resolveUse);
+    return true;
+  };
+  rec->setParamFn = [this, weakView](const std::string& name, const std::string& value) -> bool {
+    const auto v = weakView.lock();
+    if (!v || !v->IsCurrentlyMounted() || lua_ == nullptr) return false;
+    if (!v->paramOverrides.valid()) {
+      v->paramOverrides = lua_->create_table();
+    }
+    v->paramOverrides.set(name, value);
+    if (!v->params.valid()) {
+      v->params = lua_->create_table();
+    }
+    v->params.set(name, value);
+    v->Refresh();
+    return true;
+  };
+  rec->getParamsFn = [weakView]() -> sol::object {
+    const auto v = weakView.lock();
+    if (!v || !v->IsCurrentlyMounted() || !v->params.valid()) return sol::lua_nil;
+    return v->params;
+  };
+  rec->invokeControllerFn = [weakView](const std::string& methodName) -> bool {
+    const auto v = weakView.lock();
+    if (!v || !v->IsCurrentlyMounted() || methodName.empty()) return false;
+    v->InvokeController(methodName);
+    return true;
+  };
+#endif
   const uint64_t id = rec->id;
   mounted_views_.push_back(std::move(rec));
   return id;
@@ -3027,6 +3139,48 @@ void UIRuntime::ReloadAllMountedViews() {
     }
   }
 }
+
+#ifndef OCTARINE_SHIPPED
+bool UIRuntime::InspectMountedViewContract(const uint64_t id, OxmlContract& outContract) const {
+  if (id == 0) return false;
+  for (const auto& rec : mounted_views_) {
+    if (rec && rec->id == id && rec->inspectContractFn) {
+      return rec->inspectContractFn(outContract);
+    }
+  }
+  return false;
+}
+
+bool UIRuntime::SetMountedViewParam(const uint64_t id, const std::string& name, const std::string& value) {
+  if (id == 0 || name.empty()) return false;
+  for (const auto& rec : mounted_views_) {
+    if (rec && rec->id == id && rec->setParamFn) {
+      return rec->setParamFn(name, value);
+    }
+  }
+  return false;
+}
+
+sol::object UIRuntime::GetMountedViewParams(const uint64_t id) const {
+  if (id == 0) return sol::lua_nil;
+  for (const auto& rec : mounted_views_) {
+    if (rec && rec->id == id && rec->getParamsFn) {
+      return rec->getParamsFn();
+    }
+  }
+  return sol::lua_nil;
+}
+
+bool UIRuntime::InvokeMountedViewController(const uint64_t id, const std::string& methodName) {
+  if (id == 0 || methodName.empty()) return false;
+  for (const auto& rec : mounted_views_) {
+    if (rec && rec->id == id && rec->invokeControllerFn) {
+      return rec->invokeControllerFn(methodName);
+    }
+  }
+  return false;
+}
+#endif
 
 namespace {
 bool IsUiRefResolvable(const AssetManager& assetManager, const std::string& refPathOrId) {

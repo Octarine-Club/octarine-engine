@@ -2864,6 +2864,53 @@ void TestUiRuntimeAutoAssetAcquireAndRelease() {
   SDL_Quit();
 }
 
+void TestStage12NestedObservableAndSetPathValue() {
+  std::cout << "[Stage 1.2: Nested observable propagation & missing SetPathValue intermediates]\n";
+  Registry reg;
+  sol::state lua;
+  lua.open_libraries(sol::lib::base, sol::lib::table, sol::lib::string);
+  GameConfig cfg{};
+  cfg.windowWidth = 640;
+  cfg.windowHeight = 480;
+  reg.Set<GameConfig>(cfg);
+  UIRuntime uiRuntime(&lua, &reg, nullptr);
+  sol::table uiTbl = lua.create_table();
+  uiRuntime.InstallLuaFunctions(uiTbl);
+  lua["ui"] = uiTbl;
+
+  const auto res = lua.safe_script(R"(
+    _G.child_obs = ui.observable({ label = "Initial" })
+    _G.parent_obs = ui.observable({ nested = _G.child_obs })
+    _G.parent_obs.nested = _G.child_obs
+    assert(#(_G.child_obs.__listeners) == 1, "zero duplicate forwarding subscriptions on re-assign")
+    _G.view = ui.mount([[
+      <Canvas width="400" height="200">
+        <Label ref="lbl" text="{nested.label}" />
+        <Toggle ref="tog" bind-value="deep.audio.muted" width="80" height="28" />
+      </Canvas>
+    ]], { context = _G.parent_obs })
+    _G.child_obs.label = "Updated"
+    assert(_G.view.refs.lbl:get_text() == "Updated", "already-observable child mutation propagated to view")
+    -- Mutual observable cycle must not overflow C stack
+    local cyc_a = ui.observable({ x = 1 })
+    local cyc_b = ui.observable({ y = 2 })
+    cyc_a.other = cyc_b
+    cyc_b.other = cyc_a
+    cyc_a.x = 3
+  )",
+                                   sol::script_pass_on_error);
+  Check(res.valid(), "nested already-observable child propagates to parent view");
+  const Entity togEnt = lua["view"]["refs"]["tog"]["entity"].get<Entity>();
+  Check(reg.HasComponent<UIButtonComponent>(togEnt), "Toggle mounted cleanly");
+  reg.GetComponent<UIButtonComponent>(togEnt).clickFunction();
+  const auto checkRes = lua.safe_script(R"(
+    assert(type(_G.parent_obs.deep) == "table" and _G.parent_obs.deep.audio.muted == true,
+           "SetPathValue created missing intermediate sub-tables")
+  )",
+                                        sol::script_pass_on_error);
+  Check(checkRes.valid(), "SetPathValue creates missing intermediate sub-tables cleanly");
+}
+
 #ifndef OCTARINE_SHIPPED
 void TestUiPreviewerCatalogIsolationAndDevLua() {
   std::cout << "[UIPreviewer & dev.* Lua API: discovery, isolation, callback log, inline mount]\n";
@@ -3184,6 +3231,503 @@ void TestUiPreviewCliFlagParsing() {
         "--ui-audit-json parsed");
   Check(opts.HasAnyTrigger(), "HasAnyTrigger true when file/capture/audit set");
 }
+
+void TestStage12OxmlContractInspection() {
+  std::cout << "[Stage 1.2: OxmlContract AST, scope chain, <Use>/<Slot>, ops, & unsupported attrs]\n";
+  const std::string mainXml = R"oxml(
+    <OXML>
+      <Param name="heading" default="Overview" />
+      <Param name="toggle_flag" default="false" />
+      <Use name="Card" src="card.oxml" />
+      <Use name="CycleA" src="cycle_a.oxml" />
+      <Canvas width="800" height="600">
+        <Panel ref="main_panel" if="{!is_hidden && score >= 10 || #tags > 0}">
+          <Label text="{heading}: {player_tag}" style="color: {accent_hex}" />
+          <Image sprite="{badge_tex}" width="32" height="32" />
+          <ProgressBar value="{cur_val / max_val}" width="180" height="16" />
+          <ProgressBar value="{standalone_pct}" width="180" height="16" />
+          <Slider min="10" max="50" step="5" bind-value="speed_val" width="180" height="24" />
+          <Toggle bind-value="toggle_flag" on-change="on_flag_changed" width="120" height="28" />
+          <RadioGroup bind-value="mode_opt">
+            <RadioButton value="solo" text="Solo" width="80" height="28" />
+            <RadioButton value="coop" text="Coop" width="80" height="28" />
+          </RadioGroup>
+          <Row each="entry, idx in rows" text="{entry.title}" visible="{!entry.locked && idx > 0}">
+            <Label each="cell in entry.cells" text="{cell.label}" />
+            <Button on-click="pick_entry(entry)" on-blur="bad_blur" onclick="bad_case" text="Go" />
+          </Row>
+          <Card title="{card_heading}" disabled="{card_disabled}">
+            <Label slot="body" text="{slot_body_text}" />
+          </Card>
+          <CycleA />
+        </Panel>
+      </Canvas>
+    </OXML>
+  )oxml";
+
+  const std::string cardXml = R"(
+    <OXML>
+      <Param name="title" default="Card" />
+      <Column>
+        <Label text="{title} - {shared_ctx_val}" />
+        <Label if="{disabled}" text="Off" />
+        <Slot name="body"><Label text="{unused_fallback}" /></Slot>
+        <Slot name="footer"><Label text="{used_fallback}" /></Slot>
+      </Column>
+    </OXML>
+  )";
+  const std::string cycleAXml = R"(<OXML><Use name="CycleB" src="cycle_b.oxml" /><Column><CycleB /></Column></OXML>)";
+  const std::string cycleBXml = R"(<OXML><Use name="CycleA" src="cycle_a.oxml" /><Column><CycleA /></Column></OXML>)";
+
+  const auto parsed = OxmlParser::Parse(mainXml);
+  Check(parsed.ok, "Stage 1.2 contract test XML parsed");
+  auto resolveUse = [&](const std::string& src) -> std::optional<OxmlDocument> {
+    if (src == "card.oxml") return OxmlParser::Parse(cardXml).document;
+    if (src == "cycle_a.oxml") return OxmlParser::Parse(cycleAXml).document;
+    if (src == "cycle_b.oxml") return OxmlParser::Parse(cycleBXml).document;
+    return std::nullopt;
+  };
+  const OxmlContract contract = InspectOxmlContract(parsed.document, {}, resolveUse);
+
+  auto findField = [&](const std::string& p) -> const ContractField* {
+    for (const auto& f : contract.fields) {
+      if (f.path == p) return &f;
+    }
+    return nullptr;
+  };
+
+  CheckEq(contract.params.size(), std::size_t{2}, "root contract captures 2 <Param> declarations");
+  Check(findField("heading") == nullptr, "root <Param> heading excluded from context fields");
+  const auto* tf = findField("toggle_flag");
+  Check(tf != nullptr && tf->isTwoWay && tf->inferredType == ContractFieldType::Boolean,
+        "bind-value override promotes <Param> name into two-way context Boolean field");
+
+  const auto* hiddenF = findField("is_hidden");
+  Check(hiddenF != nullptr && hiddenF->conditionalOnly && hiddenF->inferredType == ContractFieldType::Boolean,
+        "C-style !is_hidden inferred as conditionalOnly Boolean");
+  const auto* scoreF = findField("score");
+  Check(scoreF != nullptr && scoreF->inferredType == ContractFieldType::Number, "score >= 10 inferred as Number");
+  const auto* tagsF = findField("tags");
+  Check(tagsF != nullptr && tagsF->inferredType == ContractFieldType::Array, "#tags inferred as Array");
+
+  const auto* curF = findField("cur_val");
+  const auto* maxF = findField("max_val");
+  const auto* pctF = findField("standalone_pct");
+  Check(curF != nullptr && curF->sampleHint == "divided_num", "numerator gets divided_num hint");
+  Check(maxF != nullptr && maxF->sampleHint == "divided_den", "denominator gets divided_den hint");
+  Check(pctF != nullptr && pctF->sampleHint == "progress", "ProgressBar value gets progress hint");
+
+  const auto* sldF = findField("speed_val");
+  Check(sldF != nullptr && sldF->hasSliderRange && sldF->minVal == 10.0f && sldF->maxVal == 50.0f && sldF->step == 5.0f,
+        "Slider extracts min/max/step range");
+  const auto* modeF = findField("mode_opt");
+  Check(modeF != nullptr && modeF->radioOptions.size() == 2 && modeF->radioOptions[0] == "solo" &&
+            modeF->radioOptions[1] == "coop",
+        "RadioGroup collects nested RadioButton option values");
+  const auto* colF = findField("accent_hex");
+  const auto* sprF = findField("badge_tex");
+  Check(colF != nullptr && colF->sampleHint == "color", "inline style color binding gets color hint");
+  Check(sprF != nullptr && sprF->sampleHint == "sprite", "sprite attr gets sprite hint");
+
+  Check(findField("rows") != nullptr && findField("rows")->inferredType == ContractFieldType::Array,
+        "repeater list rows inferred as Array");
+  Check(findField("rows[].title") != nullptr, "same-node attr extracts rows[].title");
+  Check(findField("rows[].locked") != nullptr && findField("rows[].locked")->conditionalOnly,
+        "same-node visible extracts conditionalOnly rows[].locked");
+  Check(findField("rows[].cells[].label") != nullptr, "nested repeater extracts rows[].cells[].label");
+  Check(findField("entry") == nullptr && findField("idx") == nullptr, "repeater locals do not leak to context");
+
+  Check(findField("card_heading") != nullptr, "<Card> call-site attr extracted in caller scope");
+  Check(findField("card_disabled") != nullptr && findField("card_disabled")->conditionalOnly,
+        "<Card> call-site disabled attr extracted in caller scope");
+  Check(findField("disabled") != nullptr, "<Use> template context field 'disabled' not masked by call-site attr");
+  Check(findField("title") == nullptr, "<Use> <Param name='title'> does not leak into root context");
+  Check(findField("shared_ctx_val") != nullptr, "<Use> template non-param context variable extracted");
+  Check(findField("slot_body_text") != nullptr, "caller <Slot name='body'> projected binding extracted");
+  Check(findField("unused_fallback") == nullptr, "overridden <Slot> fallback is not extracted");
+  Check(findField("used_fallback") != nullptr, "unmatched <Slot> fallback binding extracted");
+  CheckEq(contract.slots.size(), std::size_t{2}, "2 slots extracted from <Use>");
+  CheckEq(contract.refs.size(), std::size_t{1}, "ref extracted");
+
+  CheckEq(contract.callbacks.size(), std::size_t{2}, "on_flag_changed and pick_entry callbacks extracted");
+  Check(contract.callbacks[1].name == "pick_entry", "callback argument parens stripped");
+  CheckEq(contract.unsupportedAttrs.size(), std::size_t{2}, "on-blur and onclick flagged in unsupportedAttrs");
+}
+
+void TestStage12AutoSeedingAndLiveEdits() {
+  std::cout << "[Stage 1.2: AutoSeeded defaults, live mutation, array resize, & sidecar auto-discovery]\n";
+  TempDirGuard tmp("oct_ui_s12_auto");
+  WriteTinyPngTexture(tmp.dir / "assets/images/ui_badge.png", 40, 180, 220, 255);
+  WriteTempTextFile(tmp.dir / "assets/ui/status_card.oxml", R"(
+    <OXML>
+      <Param name="hdr" default="Overview" />
+      <Canvas width="640" height="480">
+        <Column width="400" padding="12" gap="6">
+          <Label ref="hdr_lbl" text="{hdr}" height="24" />
+          <Label ref="ratio_lbl" text="{cur_pts / max_pts}" height="24" />
+          <Image ref="ico_img" sprite="{icon_id}" width="24" height="24" />
+          <ProgressBar ref="pbar" value="{pct}" color="{bar_hex}" width="200" height="16" />
+          <Slider ref="sld" min="10" max="30" step="5" bind-value="spd" width="200" height="20" />
+          <RadioGroup bind-value="diff">
+            <RadioButton value="easy" text="Easy" width="80" height="24" />
+            <RadioButton value="hard" text="Hard" width="80" height="24" />
+          </RadioGroup>
+          <Column ref="list_col" width="220" height="auto">
+            <Label each="r in rows" text="{r.name}" height="20" />
+          </Column>
+        </Column>
+      </Canvas>
+    </OXML>
+  )");
+
+  Registry reg;
+  TestUiBindingContext bindCtx(&reg);
+  sol::state lua;
+  SetupUiTestRegistry(reg, lua, bindCtx, tmp.dir);
+  auto& previewer = reg.Get<UIPreviewer>();
+
+  Check(previewer.MountPreview("status_card.oxml"), "mounts status_card.oxml with zero explicit mock");
+  Check(previewer.GetMockSourceMode() == MockSourceMode::AutoSeeded, "defaults to AutoSeeded mode");
+  Check(!previewer.IsMockModified(), "fresh AutoSeeded preview starts unmodified");
+
+  const auto seededFields = previewer.CollectMockFields();
+  auto findMockField = [&](const std::string& path) -> const MockFieldEntry* {
+    const auto it = std::ranges::find_if(seededFields, [&](const MockFieldEntry& f) { return f.path == path; });
+    return it != seededFields.end() ? &(*it) : nullptr;
+  };
+  Check(findMockField("cur_pts") != nullptr && findMockField("cur_pts")->numberValue == 75.0,
+        "AutoSeeded divided numerator defaults to 75");
+  Check(findMockField("max_pts") != nullptr && findMockField("max_pts")->numberValue == 100.0,
+        "AutoSeeded divided denominator defaults to 100");
+  Check(findMockField("pct") != nullptr && std::abs(findMockField("pct")->numberValue - 0.65) < 1e-4,
+        "AutoSeeded standalone ProgressBar value defaults to 0.65");
+  Check(findMockField("spd") != nullptr && findMockField("spd")->numberValue == 20.0,
+        "AutoSeeded Slider value defaults to (min + max) * 0.5 = 20");
+  Check(findMockField("diff") != nullptr && findMockField("diff")->stringValue == "easy",
+        "AutoSeeded RadioGroup defaults to first RadioButton value");
+  Check(findMockField("bar_hex") != nullptr && findMockField("bar_hex")->stringValue == "#4A5568",
+        "AutoSeeded color hint defaults to #4A5568");
+  Check(findMockField("icon_id") != nullptr && findMockField("icon_id")->stringValue == "ui_badge",
+        "AutoSeeded sprite hint defaults to first catalog texture");
+
+  const sol::table pinned = lua.registry()["__octarine_preview_pin"];
+  Check(pinned.valid(), "mounted view table pinned");
+  CheckEq(pinned["refs"]["hdr_lbl"]["get_text"](pinned["refs"]["hdr_lbl"]).get<std::string>(), std::string("Overview"),
+          "<Param> hdr initialized to default");
+  const Entity listCol = pinned["refs"]["list_col"]["entity"].get<Entity>();
+  CheckEq(reg.GetChildren(listCol).size(), std::size_t{3}, "AutoSeeded repeater defaults to 3 items");
+
+  Check(previewer.SetMockParam("hdr", "LiveHeader"), "SetMockParam succeeds");
+  CheckEq(pinned["refs"]["hdr_lbl"]["get_text"](pinned["refs"]["hdr_lbl"]).get<std::string>(),
+          std::string("LiveHeader"), "SetMockParam updates rendered label");
+  Check(previewer.SetMockFieldNumber("pct", 0.25), "SetMockFieldNumber succeeds");
+  Check(previewer.IsMockModified(), "live edit sets IsMockModified");
+  Check(previewer.ResizeMockArray("rows", 5), "ResizeMockArray expands repeater to 5 items");
+  CheckEq(reg.GetChildren(listCol).size(), std::size_t{5}, "repeater updated to 5 children cleanly");
+  Check(previewer.ResizeMockArray("rows", 2), "ResizeMockArray shrinks repeater to 2 items");
+  CheckEq(reg.GetChildren(listCol).size(), std::size_t{2}, "repeater shrunk to 2 children cleanly");
+
+  Check(previewer.SaveMockSidecar(), "SaveMockSidecar writes status_card.preview.lua");
+  Check(!previewer.IsMockModified(), "SaveMockSidecar clears Modified state");
+  Check(std::filesystem::exists(tmp.dir / "assets/ui/status_card.preview.lua"),
+        "status_card.preview.lua written beside .oxml");
+
+  previewer.UnmountPreview(true);
+  Check(previewer.MountPreview("status_card.oxml"), "remounts status_card.oxml cleanly");
+  Check(previewer.GetMockSourceMode() == MockSourceMode::SidecarPreview, "auto-discovers status_card.preview.lua");
+  Check(previewer.ResetToAutoSeeded(), "ResetToAutoSeeded switches back to AutoSeeded mode");
+  Check(previewer.GetMockSourceMode() == MockSourceMode::AutoSeeded, "ResetToAutoSeeded active");
+  previewer.UnmountPreview(true);
+}
+
+void TestStage12HotReloadPresetsAndErrorRecovery() {
+  std::cout << "[Stage 1.2: Hot-reload tweak preservation, presets schema, sandbox, & error recovery]\n";
+  TempDirGuard tmp("oct_ui_s12_reload");
+  const auto viewPath = tmp.dir / "assets/ui/card_reload.oxml";
+  const auto sidecarPath = tmp.dir / "assets/ui/card_reload.preview.lua";
+  WriteTempTextFile(viewPath, R"(
+    <OXML>
+      <Param name="hdr" default="Overview" />
+      <Canvas width="640" height="480">
+        <Column width="400" padding="12">
+          <Label ref="hdr_lbl" text="{hdr}" height="24" />
+          <ProgressBar ref="pbar" value="{pct}" width="200" height="16" />
+        </Column>
+      </Canvas>
+    </OXML>
+  )");
+
+  Registry reg;
+  TestUiBindingContext bindCtx(&reg);
+  sol::state lua;
+  SetupUiTestRegistry(reg, lua, bindCtx, tmp.dir);
+  auto& previewer = reg.Get<UIPreviewer>();
+  auto& uiRuntime = reg.Get<UIRuntime>();
+
+  Check(previewer.MountPreview("card_reload.oxml"), "mounts clean in AutoSeeded mode");
+  Check(previewer.SetMockParam("hdr", "TweakedBeforeReload"), "tweak param before OXML reload");
+  Check(previewer.SetMockFieldNumber("pct", 0.9), "tweak pct before OXML reload");
+  WriteTempTextFile(viewPath, R"(
+    <OXML>
+      <Param name="hdr" default="Overview" />
+      <Canvas width="640" height="480">
+        <Column width="400" padding="12">
+          <Label ref="hdr_lbl" text="{hdr}" height="24" />
+          <Label ref="added_lbl" text="{added_field}" height="24" />
+          <ProgressBar ref="pbar" value="{pct}" width="200" height="16" />
+        </Column>
+      </Canvas>
+    </OXML>
+  )");
+  BumpFileMtimeSeconds(viewPath, 2);
+  uiRuntime.PollHotReload(1.0f, 0.0f);
+  previewer.PollMockHotReload(1.0f, 0.0f);
+  const sol::table reloadedPin = lua.registry()["__octarine_preview_pin"];
+  CheckEq(reloadedPin["refs"]["hdr_lbl"]["get_text"](reloadedPin["refs"]["hdr_lbl"]).get<std::string>(),
+          std::string("TweakedBeforeReload"), "OXML hot-reload preserved tweaked param");
+  CheckEq(reloadedPin["refs"]["added_lbl"]["get_text"](reloadedPin["refs"]["added_lbl"]).get<std::string>(),
+          std::string("Added Field"), "OXML hot-reload auto-seeded newly added field");
+
+  WriteTempTextFile(sidecarPath, R"(
+    return {
+      default_preset = "wide",
+      controller = { on_root_action = function(self, view) view:get_context().added_field = "RootCtrlUpdated" end },
+      presets = {
+        default = { context = { added_field = "DefaultVal", pct = 0.2 } },
+        wide = { params = { hdr = "WideHdr" }, context = { added_field = "WideVal", pct = 0.8 } },
+      },
+    }
+  )");
+  Check(previewer.LoadMockScript(sidecarPath.string()), "LoadMockScript loads multi-preset .preview.lua");
+  CheckEq(lua.registry()["__octarine_preview_pin"]["refs"]["added_lbl"]["get_text"](
+                 lua.registry()["__octarine_preview_pin"]["refs"]["added_lbl"])
+              .get<std::string>(),
+          std::string("WideVal"), "Stage 1.3 default_preset='wide' selected");
+  Check(previewer.TriggerMockCallback("on_root_action"), "Stage 1.3 root-level controller invoked");
+  CheckEq(lua.registry()["__octarine_preview_pin"]["refs"]["added_lbl"]["get_text"](
+                 lua.registry()["__octarine_preview_pin"]["refs"]["added_lbl"])
+              .get<std::string>(),
+          std::string("RootCtrlUpdated"), "Stage 1.3 root-level controller updated mounted view");
+  Check(previewer.SetMockFieldString("added_field", "WideSaved"), "edit field inside active preset");
+  Check(previewer.SaveMockSidecar(), "SaveMockSidecar saves while preserving sibling presets");
+  {
+    const auto savedTbl = lua.script_file(sidecarPath.string()).get<sol::table>();
+    CheckEq(savedTbl["presets"]["default"]["context"]["added_field"].get<std::string>(), std::string("DefaultVal"),
+            "SaveMockSidecar preserved sibling 'default' preset");
+    CheckEq(savedTbl["presets"]["wide"]["context"]["added_field"].get<std::string>(), std::string("WideSaved"),
+            "SaveMockSidecar updated active 'wide' preset");
+  }
+
+  WriteTempTextFile(sidecarPath, R"(return 123)");
+  BumpFileMtimeSeconds(sidecarPath, 4);
+  const Entity preservedRoot = previewer.ActiveRootEntity();
+  previewer.PollMockHotReload(1.0f, 0.0f);
+  Check(!previewer.LastMockError().empty(), "non-table mock hot-reload sets LastMockError");
+  Check(previewer.IsActive() && previewer.ActiveRootEntity().id == preservedRoot.id,
+        "broken mock script preserves mounted UI entity tree");
+
+  WriteTempTextFile(sidecarPath,
+                    R"(sandbox_escape = 999; return { context = { added_field = "Recovered", pct = 0.5 } })");
+  BumpFileMtimeSeconds(sidecarPath, 6);
+  previewer.PollMockHotReload(1.0f, 0.0f);
+  Check(previewer.LastMockError().empty(), "fixed mock hot-reload clears LastMockError");
+  Check(lua["sandbox_escape"] == sol::lua_nil, "mock script sandbox prevents polluting _G");
+  CheckEq(lua.registry()["__octarine_preview_pin"]["refs"]["added_lbl"]["get_text"](
+                 lua.registry()["__octarine_preview_pin"]["refs"]["added_lbl"])
+              .get<std::string>(),
+          std::string("Recovered"), "recovered mock script updates rendered label");
+  previewer.UnmountPreview(true);
+}
+
+void TestStage12NestedRepeatersDisabledAndIconHints() {
+  std::cout << "[Stage 1.2: Nested repeaters, disabled=false seed, icon hint, & static contract JSON]\n";
+  TempDirGuard tmp("oct_ui_s12_nested");
+  WriteTinyPngTexture(tmp.dir / "assets/images/coin.png", 250, 200, 40, 255);
+  WriteTempTextFile(tmp.dir / "assets/ui/grid_view.oxml", R"(
+    <OXML>
+      <Canvas width="640" height="480">
+        <Column width="400" padding="10">
+          <Button ref="act_btn" disabled="{is_locked}" text="Act" width="100" height="30" />
+          <Image ref="ico" icon="{icon_tex}" width="24" height="24" />
+          <Column ref="rows_box" each="r in rows" width="300" height="auto">
+            <Label each="c in r.cells" text="{c.label}" height="20" />
+          </Column>
+        </Column>
+      </Canvas>
+    </OXML>
+  )");
+
+  Registry reg;
+  TestUiBindingContext bindCtx(&reg);
+  sol::state lua;
+  SetupUiTestRegistry(reg, lua, bindCtx, tmp.dir);
+  auto& previewer = reg.Get<UIPreviewer>();
+
+  // Verify static unmounted contract inspection works without mounting.
+  const auto staticRes = lua.safe_script(R"(
+    local c = dev.inspect_ui_contract("grid_view.oxml")
+    assert(c.active == false and #c.vars > 0, "static inspect_ui_contract returns unmounted contract")
+    local j = dev.inspect_ui_contract_json("grid_view.oxml")
+    assert(j:find('"rows%[%].cells%[%].label"') ~= nil, "inspect_ui_contract_json includes nested repeater path")
+  )",
+                                         sol::script_pass_on_error);
+  Check(staticRes.valid(), "static dev.inspect_ui_contract[_json] works without mounting");
+
+  Check(previewer.MountPreview("grid_view.oxml"), "mounts nested repeater view in AutoSeeded mode");
+  const sol::table pin = lua.registry()["__octarine_preview_pin"];
+  const Entity actBtn = pin["refs"]["act_btn"]["entity"].get<Entity>();
+  Check(!reg.GetComponent<UIFocusComponent>(actBtn).isDisabled,
+        "disabled='{is_locked}' auto-seeds false so button stays active");
+
+  const auto fields = previewer.CollectMockFields();
+  bool hasNestedCell = false;
+  bool hasCoinIcon = false;
+  for (const auto& f : fields) {
+    if (f.path == "rows[1].cells[1].label" && !f.isUnset) hasNestedCell = true;
+    if (f.path == "icon_tex" && f.stringValue == "coin") hasCoinIcon = true;
+  }
+  Check(hasNestedCell, "AutoSeeded populates nested repeater rows[1].cells[1].label cleanly");
+  Check(hasCoinIcon, "icon='{icon_tex}' auto-seeds first catalog texture");
+
+  // Full nested repeater explicit mock must produce ZERO false unresolved_contract warnings.
+  const auto noWarnRes = lua.safe_script(R"(
+    assert(dev.preview_ui("grid_view.oxml", {
+      context = {
+        icon_tex = "coin",
+        rows = { { cells = { { label = "A1" }, { label = "A2" } } } }
+      }
+    }) == true)
+    assert(dev.set_ui_param("nonexistent", nil) == false, "set_ui_param rejects nil values")
+  )",
+                                         sol::script_pass_on_error);
+  Check(noWarnRes.valid(), "nested repeater explicit mock mounted and nil param rejected");
+  const auto issuesClean = previewer.AuditLayout();
+  const bool anyFalseUnresolved =
+      std::ranges::any_of(issuesClean, [](const UILayoutIssue& it) { return it.code == "unresolved_contract"; });
+  Check(!anyFalseUnresolved, "populated nested repeater triggers zero false unresolved_contract warnings");
+
+  // Missing nested cell label MUST warn and report unset = true in contract vars JSON!
+  Check(previewer.SetMockFieldObject("rows[1].cells[1].label", sol::lua_nil), "clears nested cell label");
+  const auto issuesMiss = previewer.AuditLayout();
+  const bool caughtNested = std::ranges::any_of(issuesMiss, [](const UILayoutIssue& it) {
+    return it.code == "unresolved_contract" && it.label == "rows[1].cells[1].label";
+  });
+  Check(caughtNested, "missing nested cell label emits unresolved_contract");
+  const std::string json = previewer.AuditLayoutJson();
+  Check(json.find(R"({"path": "rows[].cells[].label")") != std::string::npos &&
+            json.find(R"("unset": true)") != std::string::npos,
+        "audit_ui_json reports array subfield unset=true accurately");
+  previewer.UnmountPreview(true);
+}
+
+void TestStage12PartialMocksContractLintAndDevLua() {
+  std::cout << "[Stage 1.2: Partial mocks, (unset) rows, unresolved_contract, callback logging, & dev.* Lua API]\n";
+  TempDirGuard tmp("oct_ui_s12_lint");
+  const auto viewPath = tmp.dir / "assets/ui/lint_view.oxml";
+  WriteTempTextFile(viewPath, R"oxml(
+    <OXML>
+      <Param name="mode_title" default="Panel" />
+      <Use name="MiniSlotCard" src="mini_card.oxml" />
+      <Canvas width="640" height="480">
+        <Column width="400" padding="10">
+          <Label ref="ttl" text="{mode_title}: {title}" height="24" />
+          <Label ref="sub" text="{subtitle}" height="24" />
+          <Label if="{opt_banner}" text="Optional Banner" height="20" />
+          <Button ref="save_btn" text="Save" on-click="on_save" on-blur="bad_blur" width="100" height="32" />
+          <Button ref="miss_btn" text="Other" on-click="on_missing_handler" width="100" height="32" />
+          <MiniSlotCard><Slot name="x" /></MiniSlotCard>
+        </Column>
+      </Canvas>
+    </OXML>
+  )oxml");
+  WriteTempTextFile(tmp.dir / "assets/ui/mini_card.oxml", R"(
+    <OXML><Column width="100" height="30"><Slot name="body"><Label text="CardBody" height="20" /></Slot></Column></OXML>
+  )");
+
+  Registry reg;
+  TestUiBindingContext bindCtx(&reg);
+  sol::state lua;
+  SetupUiTestRegistry(reg, lua, bindCtx, tmp.dir);
+  auto& previewer = reg.Get<UIPreviewer>();
+
+  // Partial mock: provides title & on_save only; omits subtitle (non-conditional), opt_banner (conditional), and
+  // on_missing_handler.
+  const auto mountRes = lua.safe_script(R"(
+    _G.save_invoked = false
+    _G.save_has_view = false
+    assert(dev.preview_ui("lint_view.oxml", {
+      context = { title = "Main" },
+      controller = {
+        on_save = function(self, view)
+          _G.save_invoked = true
+          _G.save_has_view = (type(view) == "table" and view.refs ~= nil)
+        end
+      }
+    }) == true)
+  )",
+                                        sol::script_pass_on_error);
+  Check(mountRes.valid(), "partial explicit mock mounted cleanly via dev.preview_ui");
+
+  const auto issues = previewer.AuditLayout();
+  auto hasIssue = [&](const std::string& code, const std::string& labelSub) {
+    return std::ranges::any_of(issues, [&](const UILayoutIssue& it) {
+      return it.code == code &&
+             (it.label.find(labelSub) != std::string::npos || it.message.find(labelSub) != std::string::npos);
+    });
+  };
+  Check(hasIssue("unsupported_attribute", "on-blur"), "AuditLayout emits unsupported_attribute for on-blur");
+  Check(hasIssue("unresolved_contract", "subtitle"),
+        "AuditLayout emits unresolved_contract for non-conditional subtitle");
+  Check(!hasIssue("unresolved_contract", "opt_banner"),
+        "AuditLayout does NOT warn unresolved_contract on conditional-only opt_banner");
+  Check(hasIssue("unresolved_contract", "on_missing_handler"),
+        "AuditLayout warns unresolved_contract on missing explicit controller handler");
+  Check(!hasIssue("unresolved_contract", "on_save"), "AuditLayout does NOT warn on implemented on_save handler");
+
+  // Trigger real user callback via OXML on-click & verify view arg forwarding + chronological Event Log!
+  lua_getfield(lua.lua_state(), LUA_REGISTRYINDEX, "__octarine_preview_pin");
+  const sol::object pinObj(lua.lua_state(), -1);
+  lua_pop(lua.lua_state(), 1);
+  Check(pinObj.is<sol::table>(), "preview view pinned in Lua registry");
+  const Entity saveBtnEnt = pinObj.as<sol::table>()["refs"]["save_btn"]["entity"].get<Entity>();
+  Check(reg.HasComponent<UIButtonComponent>(saveBtnEnt), "save_btn has UIButtonComponent");
+  reg.GetComponent<UIButtonComponent>(saveBtnEnt).clickFunction();
+  Check(lua["save_has_view"].get<bool>(), "wrapped preview controller forwards view arg from OXML on-click");
+  Check(previewer.TriggerMockCallback("on_save"), "TriggerMockCallback invokes real controller handler");
+  Check(lua["save_invoked"].get<bool>(), "real controller handler on_save executed");
+  Check(!previewer.RecentCallbackEvents().empty() &&
+            previewer.RecentCallbackEvents().back().find("on_save") != std::string::npos,
+        "real controller handler invocation logged chronologically to Event Log");
+
+  // Exercise dev.* mock inspection, seeding, mutating, exporting, and audit_ui_json!
+  const auto luaVerify = lua.safe_script(R"(
+    local c = dev.inspect_ui_contract()
+    assert(c.active == true and #c.params == 1 and c.params[1].name == "mode_title", "inspect_ui_contract params ok")
+    local saw_unset = false
+    for _, v in ipairs(c.vars) do
+      if v.path == "subtitle" and v.unset == true then saw_unset = true end
+    end
+    assert(saw_unset, "inspect_ui_contract reports subtitle as unset without backfilling")
+    assert(dev.seed_ui_mock("subtitle") == true, "dev.seed_ui_mock seeds missing field")
+    assert(dev.set_ui_mock_field("subtitle", "Ready") == true, "dev.set_ui_mock_field updates subtitle")
+    assert(dev.set_ui_param("mode_title", "Live") == true, "dev.set_ui_param updates mode_title")
+    local exported = dev.export_ui_mock_lua()
+    assert(exported:find("Ready") ~= nil and exported:find("Live") ~= nil, "dev.export_ui_mock_lua serializes live edits")
+    local j = dev.audit_ui_json()
+    assert(j:find('"contract"') ~= nil and j:find('"mock_source"') ~= nil and j:find('"mock_modified"') ~= nil,
+           "audit_ui_json embeds Stage 1.2 contract & mock metadata")
+  )",
+                                         sol::script_pass_on_error);
+  Check(luaVerify.valid(), "dev.* Stage 1.2 Lua inspection, seeding, mutation, export, and audit_ui_json passed");
+
+  // After seeding subtitle, unresolved_contract for subtitle should disappear!
+  const auto postSeedIssues = previewer.AuditLayout();
+  const bool stillUnsetSubtitle = std::ranges::any_of(postSeedIssues, [](const UILayoutIssue& it) {
+    return it.code == "unresolved_contract" && it.label == "subtitle";
+  });
+  Check(!stillUnsetSubtitle, "seeding subtitle clears its unresolved_contract warning");
+  previewer.UnmountPreview(true);
+}
 #endif  // !OCTARINE_SHIPPED
 
 }  // namespace
@@ -3218,11 +3762,17 @@ int main() {
   TestGlyphAtlasIntegerScaleAndRenderTextTwoLevelCache();
   TestUiHotReloadImportsParamsAndDiagnostics();
   TestUiRuntimeAutoAssetAcquireAndRelease();
+  TestStage12NestedObservableAndSetPathValue();
 #ifndef OCTARINE_SHIPPED
   TestUiPreviewerCatalogIsolationAndDevLua();
   TestUiPreviewerAuditRulesAndBackdrops();
   TestUiPreviewerHeadlessGameCliCaptureAndDispatch();
   TestUiPreviewCliFlagParsing();
+  TestStage12OxmlContractInspection();
+  TestStage12AutoSeedingAndLiveEdits();
+  TestStage12HotReloadPresetsAndErrorRecovery();
+  TestStage12NestedRepeatersDisabledAndIconHints();
+  TestStage12PartialMocksContractLintAndDevLua();
 #endif
   return octarine::test::ReportSummary("UILayoutTest");
 }

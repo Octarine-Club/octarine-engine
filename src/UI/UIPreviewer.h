@@ -14,6 +14,10 @@
 
 class Registry;
 
+#include <filesystem>
+
+#include "UI/OxmlContract.h"
+
 enum class PreviewBackdropMode : std::uint8_t {
   SceneOverlay = 0,
   DarkSlate = 1,
@@ -38,6 +42,55 @@ struct UILayoutIssue {
 
 // Non-shipped UI previewer, canvas isolation, and deterministic layout audit service.
 // Registered as a Registry singleton in Game::Setup() and stripped completely under OCTARINE_SHIPPED.
+enum class MockSourceMode : std::uint8_t {
+  None = 0,
+  ExplicitLua = 1,
+  SidecarPreview = 2,
+  AutoSeeded = 3,
+};
+
+enum class MockFieldKind : std::uint8_t {
+  String = 0,
+  Number = 1,
+  Boolean = 2,
+  Array = 3,
+  Table = 4,
+};
+
+struct MockFieldEntry {
+  std::string path{};
+  MockFieldKind kind{MockFieldKind::String};
+  std::string stringValue{};
+  double numberValue{0.0};
+  bool boolValue{false};
+  int arrayLength{0};
+  bool isUnset{false};
+  bool isAutoSeeded{false};
+  bool isConditionalOnly{false};
+  bool isTwoWay{false};
+  std::string sampleHint{};
+  float sliderMin{0.0f};
+  float sliderMax{1.0f};
+  float sliderStep{0.0f};
+  bool hasSliderRange{false};
+  std::vector<std::string> radioOptions{};
+  std::string arrayItemTemplate{};
+};
+
+struct MockParamEntry {
+  std::string name{};
+  std::string defaultValue{};
+  std::string currentValue{};
+  bool isOverridden{false};
+};
+
+struct MockCallbackEntry {
+  std::string name{};
+  std::string sourceAttr{};
+  std::string rawExpr{};
+  bool hasControllerHandler{false};
+};
+
 class UIPreviewer {
  public:
   explicit UIPreviewer(Registry* registry = nullptr);
@@ -95,6 +148,36 @@ class UIPreviewer {
   void SetLastCaptureStatus(std::string status) { last_capture_status_ = std::move(status); }
   [[nodiscard]] const std::string& LastCaptureStatus() const noexcept { return last_capture_status_; }
 
+  [[nodiscard]] const OxmlContract& ActiveContract() const noexcept { return active_contract_; }
+  [[nodiscard]] MockSourceMode GetMockSourceMode() const noexcept { return mock_source_mode_; }
+  [[nodiscard]] const std::string& TargetSidecarPath() const noexcept { return target_sidecar_path_; }
+  [[nodiscard]] bool IsMockModified() const noexcept { return mock_modified_; }
+  [[nodiscard]] const std::string& LastMockError() const noexcept { return last_mock_error_; }
+  void ClearLastMockError() noexcept { last_mock_error_.clear(); }
+
+  [[nodiscard]] std::vector<MockFieldEntry> CollectMockFields() const;
+  [[nodiscard]] std::vector<MockParamEntry> CollectMockParams() const;
+  [[nodiscard]] std::vector<MockCallbackEntry> CollectMockCallbacks() const;
+
+  bool SetMockFieldString(const std::string& path, const std::string& value);
+  bool SetMockFieldNumber(const std::string& path, double value);
+  bool SetMockFieldBool(const std::string& path, bool value);
+  bool SetMockFieldObject(const std::string& path, const sol::object& value);
+  bool ResizeMockArray(const std::string& path, int newLength);
+  bool SeedSingleContractField(const std::string& path);
+  bool SeedMissingContractFields();
+  bool SetMockParam(const std::string& name, const std::string& value);
+  bool TriggerMockCallback(const std::string& name);
+
+  bool LoadMockScript(const std::string& mockPath);
+  bool ResetToAutoSeeded();
+  bool SaveMockSidecar(const std::string& path = "");
+  [[nodiscard]] std::string ExportMockLuaScript() const;
+  [[nodiscard]] std::string InspectContractJson(const std::string& pathOrId = "") const;
+  void PollMockHotReload(float deltaTime, float pollIntervalSeconds = 0.25f);
+  void RefreshContractState();
+  [[nodiscard]] static bool IsContractFieldUnset(const ContractField& f, const std::vector<MockFieldEntry>& liveFields);
+
  private:
   struct PausedRenderSystems;
 
@@ -107,6 +190,7 @@ class UIPreviewer {
 
   Registry* registry_{nullptr};
   std::unique_ptr<PausedRenderSystems> paused_systems_;
+  std::shared_ptr<UIPreviewer*> self_handle_{};
 
   std::vector<PreviewCatalogEntry> catalog_views_{};
   std::vector<PreviewCatalogEntry> catalog_styles_{};
@@ -131,6 +215,22 @@ class UIPreviewer {
   std::vector<std::string> callback_events_{};
   std::string pending_capture_path_{};
   std::string last_capture_status_{};
+  MockSourceMode mock_source_mode_{MockSourceMode::None};
+  std::string target_sidecar_path_{};
+  std::string last_mock_error_{};
+  bool mock_modified_{false};
+  std::filesystem::file_time_type last_mock_write_time_{};
+  bool has_mock_write_time_{false};
+  float mock_hot_reload_accum_{0.0f};
+  std::uint64_t last_seen_reload_count_{0};
+  std::uint64_t callback_seq_{0};
+  OxmlContract active_contract_{};
+
+  bool MountResolvedPreview(const std::string& sourceCopy, const sol::optional<sol::table>& opts,
+                            const std::string& inlineOss, bool isInline, MockSourceMode mockMode,
+                            const std::string& mockPath, const std::string& sidecarPath,
+                            const sol::optional<sol::table>& rawMockRoot);
+  void ApplyAuditIssuesForContract(std::vector<UILayoutIssue>& out) const;
 };
 
 #endif  // !OCTARINE_SHIPPED
