@@ -498,6 +498,12 @@ struct RepeaterRecord {
   std::vector<std::function<void()>> itemRefreshFns{};
 };
 
+struct ChildOrderSlot {
+  bool isRepeater{false};
+  Entity staticChild{};
+  std::weak_ptr<RepeaterRecord> repeater{};
+};
+
 sol::object LookupKeyInTable(const sol::table& tbl, const std::string& key) {
   if (!tbl.valid()) return sol::lua_nil;
   sol::object v = tbl.get<sol::object>(key);
@@ -524,6 +530,7 @@ struct UIViewInstance : std::enable_shared_from_this<UIViewInstance> {
   std::vector<std::function<void()>> unmountFns{};
   std::unordered_map<uint32_t, std::shared_ptr<SliderState>> sliders{};
   std::unordered_map<uint32_t, std::vector<sol::protected_function>> changeCallbacks{};
+  std::unordered_map<EntityID, std::vector<ChildOrderSlot>> parentChildSlots{};
   std::vector<Entity> inertSubtreeRoots{};
   std::vector<std::string> acquiredAssetIds{};
   bool isMounted = true;
@@ -631,6 +638,7 @@ struct UIViewInstance : std::enable_shared_from_this<UIViewInstance> {
     refreshFns.clear();
     sliders.clear();
     changeCallbacks.clear();
+    parentChildSlots.clear();
     if (runtime != nullptr && !acquiredAssetIds.empty()) {
       if (AssetManager* am = runtime->GetAssetManager()) {
         am->ReleaseAll(acquiredAssetIds);
@@ -1843,9 +1851,22 @@ Entity InstantiateNode(const std::shared_ptr<UIViewInstance>& view, const OxmlNo
                        const sol::table& scope, const SlotProjection* slotProjection,
                        const std::shared_ptr<RadioGroupState>& activeRadioGroup);
 
+void EraseSubtreeChildOrderSlots(Registry* r, UIViewInstance& v, const Entity root) {
+  std::vector<Entity> stack{root};
+  while (!stack.empty()) {
+    const Entity cur = stack.back();
+    stack.pop_back();
+    v.parentChildSlots.erase(cur.id);
+    if (r->IsAlive(cur)) {
+      r->ForEachChild(cur, [&stack](const Entity child) { stack.push_back(child); });
+    }
+  }
+}
+
 void ClearRepeaterSpawnedItems(const std::shared_ptr<UIViewInstance>& v, const std::shared_ptr<RepeaterRecord>& rec) {
   Registry* r = v->runtime->GetRegistry();
   for (const Entity e : rec->spawnedEntities) {
+    EraseSubtreeChildOrderSlots(r, *v, e);
     if (r->IsAlive(e)) {
       r->BlamEntity(e);
     }
@@ -1854,6 +1875,24 @@ void ClearRepeaterSpawnedItems(const std::shared_ptr<UIViewInstance>& v, const s
   rec->itemRefreshFns.clear();
   std::erase_if(v->sliders, [r](const auto& kv) { return !r->IsAlive(kv.second->entity); });
   std::erase_if(v->changeCallbacks, [r](const auto& kv) { return !r->IsAlive(Entity(kv.first)); });
+}
+
+void SyncParentChildOrder(Registry* r, const UIViewInstance& v, const Entity parentEntity) {
+  const auto it = v.parentChildSlots.find(parentEntity.id);
+  if (it == v.parentChildSlots.end()) return;
+  std::vector<Entity> desiredOrder;
+  for (const auto& slot : it->second) {
+    if (!slot.isRepeater) {
+      if (r->IsAlive(slot.staticChild)) desiredOrder.push_back(slot.staticChild);
+      continue;
+    }
+    const auto locked = slot.repeater.lock();
+    if (!locked) continue;
+    for (const Entity spawned : locked->spawnedEntities) {
+      if (r->IsAlive(spawned)) desiredOrder.push_back(spawned);
+    }
+  }
+  r->ReorderChildren(parentEntity, desiredOrder);
 }
 
 std::optional<std::size_t> FindFocusedRepeaterIndex(Registry* r, const std::vector<Entity>& spawned) {
@@ -1917,6 +1956,7 @@ void RebuildRepeaterItems(const std::shared_ptr<UIViewInstance>& v, const std::s
   }
   v->activeRefreshSink = prevSink;
   FinalizeRepeaterItems(r, v, rec, prevFocusedIdx);
+  SyncParentChildOrder(r, *v, rec->parentEntity);
 }
 
 // Repeater mounting delegates to RebuildRepeaterItems which recursively instantiates child nodes.
@@ -1938,6 +1978,7 @@ void MountRepeaterNode(const std::shared_ptr<UIViewInstance>& view, const OxmlNo
   rec->parentEntity = parentEntity;
   rec->itemTemplate = std::move(cleanTemplate);
   rec->clause = clause;
+  view->parentChildSlots[parentEntity.id].push_back(ChildOrderSlot{.isRepeater = true, .repeater = rec});
 
   std::weak_ptr<UIViewInstance> weakView = view;
   const std::vector<OxmlNode> savedSlots = (slotProjection != nullptr && slotProjection->nodes != nullptr)
@@ -2213,8 +2254,11 @@ void InstantiateSingleOrRepeater(const std::shared_ptr<UIViewInstance>& view, co
                                  const std::shared_ptr<RadioGroupState>& currentRadioGroup) {
   if (child.HasAttr("each")) {
     MountRepeaterNode(view, child, parentEntity, scope, slotProjection, currentRadioGroup);
-  } else {
-    InstantiateNode(view, child, parentEntity, scope, slotProjection, currentRadioGroup);
+    return;
+  }
+  const Entity spawned = InstantiateNode(view, child, parentEntity, scope, slotProjection, currentRadioGroup);
+  if (view->runtime->GetRegistry()->IsAlive(spawned)) {
+    view->parentChildSlots[parentEntity.id].push_back(ChildOrderSlot{.staticChild = spawned});
   }
 }
 

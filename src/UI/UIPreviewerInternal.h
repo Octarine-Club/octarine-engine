@@ -56,9 +56,18 @@ void SeedFieldsIntoTableWithVariant(sol::state& lua, const Registry* reg, sol::t
 [[nodiscard]] sol::table BuildLiveDocSnapshot(sol::state& lua, const UIPreviewer& previewer, const sol::table& ctx);
 void ApplyMockTableFields(UIRuntime& uiRuntime, const sol::table& tbl, sol::table& outOpts, sol::table& outRawCtrl,
                           const sol::table& rootFallback = sol::table{});
+bool LoadSandboxedMockScriptText(UIRuntime& uiRuntime, const std::string& scriptText, const std::string& chunkLabel,
+                                 const std::string& requestedPreset, sol::table& outOpts, sol::table& outRawCtrl,
+                                 sol::table& outRawRoot, std::string& outPresetKey, bool& outHasController,
+                                 std::string& outError);
 bool LoadSandboxedMockScript(UIRuntime& uiRuntime, const std::string& resolvedPath, const std::string& requestedPreset,
                              sol::table& outOpts, sol::table& outRawCtrl, sol::table& outRawRoot,
                              std::string& outPresetKey, bool& outHasController, std::string& outError);
+bool BuildSafeMockScriptForSave(UIRuntime& uiRuntime, const std::string& serializedBody, bool hasPresets,
+                                const OxmlContract& contract, const std::string& sourcePath,
+                                const std::string& requestedPreset, bool hasLiveController, bool force,
+                                std::string& outScriptText, std::string& outError);
+[[nodiscard]] bool CanPreserveControllerFromSource(UIRuntime* uiRuntime, const std::string& sourcePath);
 
 bool TryWriteTextFile(const std::string& path, const std::string& contents, std::string& outError);
 void RecordMockMtime(const std::string& mockPath, std::filesystem::file_time_type& outTime, bool& outHasTime);

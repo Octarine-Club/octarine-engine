@@ -639,11 +639,11 @@ void DrawMockControllerOverwritePopup(UIPreviewer& previewer, MockSaveModalState
       "when saving. Overwrite file on disk?");
   if (ImGui::Button("Overwrite Anyway")) {
     if (modalState.kind == PendingCtrlSaveKind::Sidecar) {
-      previewer.SaveMockSidecar();
+      previewer.SaveMockSidecar("", /*force=*/true);
     } else if (modalState.kind == PendingCtrlSaveKind::Preset) {
-      previewer.SaveMockPreset(modalState.presetName, modalState.setAsDefault);
+      previewer.SaveMockPreset(modalState.presetName, modalState.setAsDefault, /*force=*/true);
     } else if (modalState.kind == PendingCtrlSaveKind::DeletePreset) {
-      previewer.DeleteMockPreset(modalState.presetName);
+      previewer.DeleteMockPreset(modalState.presetName, /*force=*/true);
     }
     modalState.kind = PendingCtrlSaveKind::None;
     ImGui::CloseCurrentPopup();
@@ -657,7 +657,7 @@ void DrawMockControllerOverwritePopup(UIPreviewer& previewer, MockSaveModalState
 }
 
 void RequestSaveSidecarWithGuard(UIPreviewer& previewer, MockSaveModalState& modalState) {
-  if (previewer.HasLiveControllerScript()) {
+  if (previewer.HasLiveControllerScript() && !previewer.CanPreserveLiveControllerOnSave()) {
     modalState.kind = PendingCtrlSaveKind::Sidecar;
     ImGui::OpenPopup("##confirm_ctrl_overwrite");
   } else {
@@ -668,7 +668,7 @@ void RequestSaveSidecarWithGuard(UIPreviewer& previewer, MockSaveModalState& mod
 void RequestSavePresetWithGuard(UIPreviewer& previewer, MockSaveModalState& modalState, const std::string& name,
                                 const bool setDef) {
   if (name.empty()) return;
-  if (previewer.HasLiveControllerScript()) {
+  if (previewer.HasLiveControllerScript() && !previewer.CanPreserveLiveControllerOnSave()) {
     modalState.kind = PendingCtrlSaveKind::Preset;
     modalState.presetName = name;
     modalState.setAsDefault = setDef;
@@ -680,7 +680,7 @@ void RequestSavePresetWithGuard(UIPreviewer& previewer, MockSaveModalState& moda
 
 void RequestDeletePresetWithGuard(UIPreviewer& previewer, MockSaveModalState& modalState, const std::string& name) {
   if (name.empty()) return;
-  if (previewer.HasLiveControllerScript()) {
+  if (previewer.HasLiveControllerScript() && !previewer.CanPreserveLiveControllerOnSave()) {
     modalState.kind = PendingCtrlSaveKind::DeletePreset;
     modalState.presetName = name;
     ImGui::OpenPopup("##confirm_ctrl_overwrite");

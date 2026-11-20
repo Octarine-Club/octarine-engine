@@ -143,10 +143,11 @@ int main(const int argc, char* argv[]) {
   (void)devListenPort;
 #endif
 
-  if (game.Initialize(gamePath)) {
+  const bool initOk = game.Initialize(gamePath);
+  if (initOk) {
     game.Run();
   }
   game.Destroy();
 
-  return 0;
+  return initOk ? 0 : 1;
 }

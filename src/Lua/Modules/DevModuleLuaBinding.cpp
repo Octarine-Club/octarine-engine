@@ -404,10 +404,11 @@ void BindUIPreviewMockFunctions(sol::table& dev, sol::state& lua, LuaBindingCont
     return previewer != nullptr && previewer->LoadMockScript(path);
   });
 
-  dev.set_function("save_ui_mock", [&ctx](const sol::optional<std::string>& path) -> bool {
-    auto* previewer = GetOrCreateUIPreviewer(ctx);
-    return previewer != nullptr && previewer->SaveMockSidecar(path.value_or(""));
-  });
+  dev.set_function(
+      "save_ui_mock", [&ctx](const sol::optional<std::string>& path, const sol::optional<bool>& force) -> bool {
+        auto* previewer = GetOrCreateUIPreviewer(ctx);
+        return previewer != nullptr && previewer->SaveMockSidecar(path.value_or(""), force.value_or(false));
+      });
 
   dev.set_function("export_ui_mock_lua", [&ctx]() -> std::string {
     auto* previewer = GetOrCreateUIPreviewer(ctx);
@@ -465,14 +466,17 @@ void BindUIPreviewPresetFunctions(sol::table& dev, LuaBindingContext& ctx) {
     return previewer != nullptr && previewer->SelectMockPreset(name);
   });
 
-  dev.set_function("save_ui_preset", [&ctx](const std::string& name, const sol::optional<bool>& setDefault) -> bool {
-    auto* previewer = GetOrCreateUIPreviewer(ctx);
-    return previewer != nullptr && previewer->SaveMockPreset(name, setDefault.value_or(false));
-  });
+  dev.set_function(
+      "save_ui_preset",
+      [&ctx](const std::string& name, const sol::optional<bool>& setDefault, const sol::optional<bool>& force) -> bool {
+        auto* previewer = GetOrCreateUIPreviewer(ctx);
+        return previewer != nullptr &&
+               previewer->SaveMockPreset(name, setDefault.value_or(false), force.value_or(false));
+      });
 
-  dev.set_function("delete_ui_preset", [&ctx](const std::string& name) -> bool {
+  dev.set_function("delete_ui_preset", [&ctx](const std::string& name, const sol::optional<bool>& force) -> bool {
     auto* previewer = GetOrCreateUIPreviewer(ctx);
-    return previewer != nullptr && previewer->DeleteMockPreset(name);
+    return previewer != nullptr && previewer->DeleteMockPreset(name, force.value_or(false));
   });
 
   dev.set_function("apply_ui_stress_preset", [&ctx](const std::string& kind) -> bool {

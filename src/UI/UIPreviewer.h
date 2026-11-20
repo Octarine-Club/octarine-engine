@@ -212,7 +212,7 @@ class UIPreviewer {
 
   bool LoadMockScript(const std::string& mockPath);
   bool ResetToAutoSeeded();
-  bool SaveMockSidecar(const std::string& path = "");
+  bool SaveMockSidecar(const std::string& path = "", bool force = false);
   [[nodiscard]] std::string ExportMockLuaScript() const;
   [[nodiscard]] std::string InspectContractJson(const std::string& pathOrId = "") const;
   void PollMockHotReload(float deltaTime, float pollIntervalSeconds = 0.25f);
@@ -223,9 +223,10 @@ class UIPreviewer {
   [[nodiscard]] const std::string& ActiveMockPreset() const noexcept { return active_mock_preset_; }
   [[nodiscard]] std::string DefaultMockPreset() const;
   [[nodiscard]] bool HasLiveControllerScript() const noexcept { return has_live_mock_controller_; }
+  [[nodiscard]] bool CanPreserveLiveControllerOnSave(const std::string& destPath = "") const;
   bool SelectMockPreset(const std::string& presetName);
-  bool SaveMockPreset(const std::string& presetName, bool setAsDefault = false);
-  bool DeleteMockPreset(const std::string& presetName);
+  bool SaveMockPreset(const std::string& presetName, bool setAsDefault = false, bool force = false);
+  bool DeleteMockPreset(const std::string& presetName, bool force = false);
   bool ApplyStressPreset(const std::string& kind);
   [[nodiscard]] std::string ListPresetsJson() const;
 
@@ -302,7 +303,8 @@ class UIPreviewer {
   void RestoreSimulatedViewportIfOwned();
   [[nodiscard]] std::string ExportMockLuaScriptForDoc(const sol::table& docTbl, const std::string& targetPresetKey,
                                                       const std::string& defaultPresetOverride,
-                                                      bool promoteFlatIfNeeded, bool* outHasPresets = nullptr) const;
+                                                      bool promoteFlatIfNeeded, bool* outHasPresets = nullptr,
+                                                      std::string* outSerializedBody = nullptr) const;
 };
 
 #endif  // !OCTARINE_SHIPPED

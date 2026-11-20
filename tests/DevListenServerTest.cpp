@@ -202,6 +202,35 @@ int main() {
     Check(reply.substr(1) == "PING-CMD", "EvalLua reply carries the handler-transformed body");
   }
 
+  {
+    const std::thread::id pumpThreadId = std::this_thread::get_id();
+    std::atomic<bool> captureRan{false};
+    server.SetCommandHandler(
+        [&](OpCode op, const std::vector<char>& body, std::uint32_t& replyOp, std::string& replyBody) {
+          captureRan.store(true);
+          Check(op == OpCode::Capture, "handler receives the Capture op");
+          Check(std::this_thread::get_id() == pumpThreadId, "Capture handler runs on the Pump (main) thread");
+          replyOp = static_cast<std::uint32_t>(op);
+          replyBody = std::string(1, '\1') + std::string(body.begin(), body.end());
+        });
+
+    std::string reply;
+    std::atomic<bool> done{false};
+    std::thread client([&]() {
+      reply = RoundTrip(port, static_cast<std::uint32_t>(OpCode::Capture), "/tmp/frame.png");
+      done.store(true);
+    });
+    for (int i = 0; i < 400 && !done.load(); ++i) {
+      server.Pump();
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    client.join();
+
+    Check(captureRan.load(), "Capture handler executed via Pump()");
+    Check(!reply.empty() && reply[0] == '\1', "Capture reply signals ok");
+    Check(reply.size() > 1 && reply.substr(1) == "/tmp/frame.png", "Capture reply echoes output path");
+  }
+
   server.Stop();
   Check(!server.IsRunning(), "IsRunning() false after Stop");
 

@@ -1109,9 +1109,10 @@ void ApplyMockTableFields(UIRuntime& uiRuntime, const sol::table& tbl, sol::tabl
   if (stylesField.is<sol::table>()) outOpts.set("styles", stylesField);
 }
 
-bool LoadSandboxedMockScript(UIRuntime& uiRuntime, const std::string& resolvedPath, const std::string& requestedPreset,
-                             sol::table& outOpts, sol::table& outRawCtrl, sol::table& outRawRoot,
-                             std::string& outPresetKey, bool& outHasController, std::string& outError) {
+bool LoadSandboxedMockScriptText(UIRuntime& uiRuntime, const std::string& scriptText, const std::string& chunkLabel,
+                                 const std::string& requestedPreset, sol::table& outOpts, sol::table& outRawCtrl,
+                                 sol::table& outRawRoot, std::string& outPresetKey, bool& outHasController,
+                                 std::string& outError) {
   sol::state* luaPtr = uiRuntime.GetLua();
   if (luaPtr == nullptr) {
     outError = "Lua state unavailable";
@@ -1119,12 +1120,7 @@ bool LoadSandboxedMockScript(UIRuntime& uiRuntime, const std::string& resolvedPa
   }
   sol::state& lua = *luaPtr;
 
-  const std::string scriptText = ReadFileOrAssetText(&uiRuntime, resolvedPath, outError);
-  if (scriptText.empty() && !outError.empty()) {
-    return false;
-  }
-
-  sol::load_result chunk = lua.load(scriptText, "@" + resolvedPath);
+  sol::load_result chunk = lua.load(scriptText, "@" + chunkLabel);
   if (!chunk.valid()) {
     const sol::error err = chunk;
     outError = err.what();
@@ -1141,7 +1137,7 @@ bool LoadSandboxedMockScript(UIRuntime& uiRuntime, const std::string& resolvedPa
     return false;
   }
   if (res.return_count() == 0 || !res[0].is<sol::table>()) {
-    outError = "Mock script '" + resolvedPath + "' must return a table";
+    outError = "Mock script '" + chunkLabel + "' must return a table";
     return false;
   }
 
@@ -1151,6 +1147,17 @@ bool LoadSandboxedMockScript(UIRuntime& uiRuntime, const std::string& resolvedPa
   ApplyMockTableFields(uiRuntime, effective, outOpts, outRawCtrl, outRawRoot);
   outHasController = HasAnyControllerFunction(outRawRoot, outRawCtrl);
   return true;
+}
+
+bool LoadSandboxedMockScript(UIRuntime& uiRuntime, const std::string& resolvedPath, const std::string& requestedPreset,
+                             sol::table& outOpts, sol::table& outRawCtrl, sol::table& outRawRoot,
+                             std::string& outPresetKey, bool& outHasController, std::string& outError) {
+  const std::string scriptText = ReadFileOrAssetText(&uiRuntime, resolvedPath, outError);
+  if (scriptText.empty() && !outError.empty()) {
+    return false;
+  }
+  return LoadSandboxedMockScriptText(uiRuntime, scriptText, resolvedPath, requestedPreset, outOpts, outRawCtrl,
+                                     outRawRoot, outPresetKey, outHasController, outError);
 }
 
 }  // namespace octarine::ui_preview_detail
@@ -2709,18 +2716,49 @@ std::string UIPreviewer::ExportMockLuaScript() const {
   return ExportMockLuaScriptForDoc(docTbl, "", "", /*promoteFlatIfNeeded=*/false);
 }
 
-bool UIPreviewer::SaveMockSidecar(const std::string& path) {
-  if (!IsActive()) return false;
+bool UIPreviewer::CanPreserveLiveControllerOnSave(const std::string& destPath) const {
+  if (!has_live_mock_controller_) return true;
+  auto* uiRuntime = registry_ != nullptr ? registry_->TryGet<UIRuntime>() : nullptr;
+  const std::string& sourcePath =
+      !active_mock_path_.empty() ? active_mock_path_ : (!destPath.empty() ? destPath : target_sidecar_path_);
+  return octarine::ui_preview_detail::CanPreserveControllerFromSource(uiRuntime, sourcePath);
+}
+
+bool UIPreviewer::SaveMockSidecar(const std::string& path, const bool force) {
+  if (!IsActive() || registry_ == nullptr) return false;
   const std::string dest =
       !path.empty() ? path : (!target_sidecar_path_.empty() ? target_sidecar_path_ : active_mock_path_);
   if (dest.empty()) {
     last_mock_error_ = "No disk path available for .preview.lua sidecar";
     return false;
   }
-
-  const std::string scriptText = ExportMockLuaScript();
-  if (scriptText.empty()) {
+  auto* uiRuntime = registry_->TryGet<UIRuntime>();
+  sol::state* luaPtr = nullptr;
+  sol::table viewTbl;
+  sol::table ctx;
+  if (uiRuntime == nullptr || !TryGetActiveViewContext(registry_, luaPtr, viewTbl, ctx)) {
     last_mock_error_ = "Failed to serialize mock state to Lua";
+    return false;
+  }
+
+  bool hasPresets = false;
+  std::string serializedBody;
+  const sol::table docTbl = octarine::ui_preview_detail::BuildLiveDocSnapshot(*luaPtr, *this, ctx);
+  if (ExportMockLuaScriptForDoc(docTbl, "", "", /*promoteFlatIfNeeded=*/false, &hasPresets, &serializedBody).empty()) {
+    last_mock_error_ = "Failed to serialize mock state to Lua";
+    return false;
+  }
+
+  const std::string& sourcePath = !active_mock_path_.empty() ? active_mock_path_ : dest;
+  const std::string reqPreset = (!active_mock_preset_.empty() && active_mock_preset_.front() == '@')
+                                    ? active_mock_preset_.substr(1)
+                                    : active_mock_preset_;
+  std::string scriptText;
+  std::string safeErr;
+  if (!octarine::ui_preview_detail::BuildSafeMockScriptForSave(*uiRuntime, serializedBody, hasPresets, active_contract_,
+                                                               sourcePath, reqPreset, has_live_mock_controller_, force,
+                                                               scriptText, safeErr)) {
+    last_mock_error_ = safeErr;
     return false;
   }
 

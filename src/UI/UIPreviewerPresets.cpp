@@ -21,6 +21,7 @@
 #include "Renderer/RenderQueue.h"
 #include "Systems/UILayoutMetrics.h"
 #include "UI/UIPreviewerInternal.h"
+#include "UI/UIPreviewerMockSource.h"
 #include "UI/UIRuntime.h"
 
 namespace {
@@ -84,6 +85,60 @@ sol::table BuildLiveDocSnapshot(sol::state& lua, const UIPreviewer& previewer, c
   const sol::object ctxClean = ctx.valid() ? UnwrapObservableDataDeep(lua, ctx) : sol::object(sol::lua_nil);
   docTbl.set("context", ctxClean.is<sol::table>() ? ctxClean.as<sol::table>() : lua.create_table());
   return docTbl;
+}
+
+bool CanPreserveControllerFromSource(UIRuntime* uiRuntime, const std::string& sourcePath) {
+  if (uiRuntime == nullptr || sourcePath.empty()) return false;
+  std::string err;
+  const std::string srcText = ReadFileOrAssetText(uiRuntime, sourcePath, err);
+  if (srcText.empty()) return false;
+  MockControllerSnippets snippets;
+  return ExtractMockControllerSnippets(srcText, snippets) && snippets.HasAnyController();
+}
+
+bool BuildSafeMockScriptForSave(UIRuntime& uiRuntime, const std::string& serializedBody, const bool hasPresets,
+                                const OxmlContract& contract, const std::string& sourcePath,
+                                const std::string& requestedPreset, const bool hasLiveController, const bool force,
+                                std::string& outScriptText, std::string& outError) {
+  outScriptText.clear();
+  outError.clear();
+
+  if (hasLiveController && !sourcePath.empty()) {
+    std::string readErr;
+    const std::string srcText = ReadFileOrAssetText(&uiRuntime, sourcePath, readErr);
+    MockControllerSnippets snippets;
+    if (!srcText.empty() && ExtractMockControllerSnippets(srcText, snippets) && snippets.HasAnyController()) {
+      const std::string candidate = InjectMockControllerSnippets(serializedBody, snippets);
+      if (uiRuntime.GetLua() != nullptr) {
+        sol::state& lua = *uiRuntime.GetLua();
+        sol::table opts = lua.create_table();
+        sol::table ctrl;
+        sol::table root;
+        std::string key;
+        bool hasCtrl = false;
+        std::string valErr;
+        if (LoadSandboxedMockScriptText(uiRuntime, candidate, sourcePath, requestedPreset, opts, ctrl, root, key,
+                                        hasCtrl, valErr) &&
+            hasCtrl) {
+          outScriptText = candidate;
+          return true;
+        }
+      }
+    }
+  }
+
+  if (hasLiveController && !force) {
+    outError =
+        "Mock script contains Lua controller functions that cannot be preserved automatically; pass force=true to "
+        "overwrite.";
+    return false;
+  }
+
+  std::ostringstream ss;
+  if (!hasPresets) AppendCallbackCommentHeader(ss, contract);
+  ss << "return " << serializedBody << "\n";
+  outScriptText = ss.str();
+  return true;
 }
 }  // namespace octarine::ui_preview_detail
 
@@ -625,7 +680,8 @@ PreviewMatrixCellResult RunSingleMatrixCell(UIPreviewer& previewer, Registry* re
 
 std::string UIPreviewer::ExportMockLuaScriptForDoc(const sol::table& docTbl, const std::string& targetPresetKey,
                                                    const std::string& defaultPresetOverride,
-                                                   const bool promoteFlatIfNeeded, bool* outHasPresets) const {
+                                                   const bool promoteFlatIfNeeded, bool* outHasPresets,
+                                                   std::string* outSerializedBody) const {
   if (registry_ == nullptr) return "";
   auto* uiRuntime = registry_->TryGet<UIRuntime>();
   if (uiRuntime == nullptr || uiRuntime->GetLua() == nullptr) return "";
@@ -643,13 +699,14 @@ std::string UIPreviewer::ExportMockLuaScriptForDoc(const sol::table& docTbl, con
     Logger::Error("[ui-preview] ExportMockLuaScript serialize error: " + err);
     return "";
   }
+  if (outSerializedBody != nullptr) *outSerializedBody = body;
   std::ostringstream ss;
   if (!hasPresets) detail::AppendCallbackCommentHeader(ss, active_contract_);
   ss << "return " << body << "\n";
   return ss.str();
 }
 
-bool UIPreviewer::SaveMockPreset(const std::string& presetName, const bool setAsDefault) {
+bool UIPreviewer::SaveMockPreset(const std::string& presetName, const bool setAsDefault, const bool force) {
   if (!IsActive() || is_inline_ || registry_ == nullptr) return false;
   const std::string key = NormalizePresetLookupKey(presetName);
   if (key.empty()) return false;
@@ -660,16 +717,28 @@ bool UIPreviewer::SaveMockPreset(const std::string& presetName, const bool setAs
     return false;
   }
 
+  auto* uiRuntime = registry_->TryGet<UIRuntime>();
   sol::state* luaPtr = nullptr;
   sol::table viewTbl;
   sol::table ctx;
-  if (!detail::TryGetActiveViewContext(registry_, luaPtr, viewTbl, ctx)) return false;
+  if (uiRuntime == nullptr || !detail::TryGetActiveViewContext(registry_, luaPtr, viewTbl, ctx)) return false;
 
+  bool hasPresets = false;
+  std::string serializedBody;
   const sol::table docTbl = detail::BuildLiveDocSnapshot(*luaPtr, *this, ctx);
-  const std::string scriptText =
-      ExportMockLuaScriptForDoc(docTbl, key, setAsDefault ? key : "", /*promoteFlatIfNeeded=*/true);
-  if (scriptText.empty()) {
+  if (ExportMockLuaScriptForDoc(docTbl, key, setAsDefault ? key : "", /*promoteFlatIfNeeded=*/true, &hasPresets,
+                                &serializedBody)
+          .empty()) {
     last_mock_error_ = "Failed to serialize preset to Lua";
+    return false;
+  }
+
+  const std::string& sourcePath = !active_mock_path_.empty() ? active_mock_path_ : dest;
+  std::string scriptText;
+  std::string safeErr;
+  if (!detail::BuildSafeMockScriptForSave(*uiRuntime, serializedBody, hasPresets, active_contract_, sourcePath, key,
+                                          has_live_mock_controller_, force, scriptText, safeErr)) {
+    last_mock_error_ = safeErr;
     return false;
   }
 
@@ -689,7 +758,7 @@ bool UIPreviewer::SaveMockPreset(const std::string& presetName, const bool setAs
   return true;
 }
 
-bool UIPreviewer::DeleteMockPreset(const std::string& presetName) {
+bool UIPreviewer::DeleteMockPreset(const std::string& presetName, const bool force) {
   if (!IsActive() || is_inline_ || registry_ == nullptr || presetName.empty()) return false;
   auto* uiRuntime = registry_->TryGet<UIRuntime>();
   if (uiRuntime == nullptr || uiRuntime->GetLua() == nullptr) return false;
@@ -712,8 +781,17 @@ bool UIPreviewer::DeleteMockPreset(const std::string& presetName) {
     last_mock_error_ = serErr;
     return false;
   }
+  const std::string& sourcePath = !active_mock_path_.empty() ? active_mock_path_ : dest;
+  std::string scriptText;
+  std::string safeErr;
+  if (!detail::BuildSafeMockScriptForSave(*uiRuntime, body, /*hasPresets=*/true, active_contract_, sourcePath,
+                                          nextPreset, has_live_mock_controller_, force, scriptText, safeErr)) {
+    last_mock_error_ = safeErr;
+    return false;
+  }
+
   std::string writeErr;
-  if (!detail::TryWriteTextFile(dest, "return " + body + "\n", writeErr)) {
+  if (!detail::TryWriteTextFile(dest, scriptText, writeErr)) {
     last_mock_error_ = writeErr;
     return false;
   }

@@ -1017,3 +1017,10 @@ imgui.ini
 # Local benchmark output and reports (root only — tests/benchmarks/ holds tracked sources)
 /benchmarks/
 
+# Coverage instrumentation outputs from player-debug runs
+*.profraw
+*.profdata
+*.gcda
+*.gcno
+
+

@@ -3928,7 +3928,7 @@ void TestStage13NamedPresetsStressAndControllerGuard() {
     Check(previewer.SetMockFieldString("quest_title", "CompactState"), "edits live field prior to SaveMockPreset");
     Check(previewer.SaveMockPreset("compact", /*setAsDefault=*/true),
           "SaveMockPreset('compact', true) promotes flat .preview.lua to multi-preset table");
-    Check(!previewer.HasLiveControllerScript(), "after serialization without functions, controller guard is clean");
+    Check(previewer.HasLiveControllerScript(), "preserved controller keeps HasLiveControllerScript = true");
     {
       const auto doc = lua.script_file(sidecarPath.string()).get<sol::table>();
       CheckEq(doc["default_preset"].get<std::string>(), std::string("compact"), "default_preset updated to compact");
@@ -3936,7 +3936,8 @@ void TestStage13NamedPresetsStressAndControllerGuard() {
               "flat promotion preserved original flat mock under presets.default");
       CheckEq(doc["presets"]["compact"]["context"]["quest_title"].get<std::string>(), std::string("CompactState"),
               "SaveMockPreset wrote edited state under presets.compact");
-      Check(doc["controller"] == sol::lua_nil, "empty controller = {} clutter omitted after function strip");
+      Check(doc["controller"].is<sol::table>() && doc["controller"]["on_claim"].is<sol::protected_function>(),
+            "flat promotion preserved controller.on_claim handler");
     }
 
     const auto presetList = previewer.ListMockPresets();
@@ -4121,6 +4122,153 @@ void TestStage13CliFlagsAndHeadlessMatrix() {
         "headless --ui-matrix wrote overflow PNG via 'auto' presets");
   game->Destroy();
 }
+
+void TestRepeaterPreservesSiblingOrderAcrossRebuilds() {
+  std::cout << "[Repeater: preserves declared sibling order across rebuilds]\n";
+  Registry reg;
+  TestUiBindingContext bindCtx(&reg);
+  sol::state lua;
+  const TempDirGuard tmp("oct_ui_repeater_order");
+  SetupUiTestRegistry(reg, lua, bindCtx, tmp.dir);
+  reg.RegisterBulkSystem(UILayoutSystem());
+
+  const auto mountRes = lua.safe_script(R"(
+    _G.obs = ui.observable({
+      items = { { label = "ItemA" }, { label = "ItemB" } }
+    })
+    _G.view = ui.mount([[
+      <Canvas width="400" height="400">
+        <Column ref="col" width="300" height="auto" gap="4">
+          <Label ref="hdr" text="Header" height="20" />
+          <Label each="item in items" text="{item.label}" height="20" />
+          <Button ref="ftr" text="Footer" width="100" height="24" />
+        </Column>
+      </Canvas>
+    ]], { context = _G.obs })
+  )",
+                                        sol::script_pass_on_error);
+  Check(mountRes.valid(), "repeater sibling order view mounted");
+
+  const Entity colEnt = lua["view"]["refs"]["col"]["entity"].get<Entity>();
+  const Entity hdrEnt = lua["view"]["refs"]["hdr"]["entity"].get<Entity>();
+  const Entity ftrEnt = lua["view"]["refs"]["ftr"]["entity"].get<Entity>();
+
+  auto checkOrder = [&](const char* phase, const size_t expectedItems) {
+    reg.Update(1.0f / 60.0f);
+    const auto kids = reg.GetChildren(colEnt);
+    CheckEq(kids.size(), expectedItems + 2, std::string(phase) + ": total child count matches");
+    if (kids.size() == expectedItems + 2) {
+      CheckEq(kids.front().id, hdrEnt.id, std::string(phase) + ": header remains first child");
+      CheckEq(kids.back().id, ftrEnt.id, std::string(phase) + ": footer remains last child");
+      const float hdrTop = reg.GetComponent<UIRectComponent>(hdrEnt).top;
+      const float ftrTop = reg.GetComponent<UIRectComponent>(ftrEnt).top;
+      Check(ftrTop > hdrTop, std::string(phase) + ": footer lays out below header");
+      if (expectedItems > 0) {
+        const float lastItemBottom = reg.GetComponent<UIRectComponent>(kids[expectedItems]).bottom;
+        Check(ftrTop >= lastItemBottom, std::string(phase) + ": footer lays out below last repeater item");
+      }
+    }
+  };
+
+  checkOrder("initial (2 items)", 2);
+  Check(lua.safe_script("_G.obs.items = {}").valid(), "shrink items to 0");
+  checkOrder("shrunk (0 items)", 0);
+  Check(lua.safe_script("_G.obs.items = { {label='1'}, {label='2'}, {label='3'}, {label='4'} }").valid(),
+        "expand items to 4");
+  checkOrder("expanded (4 items)", 4);
+}
+
+void TestPreviewerPreservesControllerOnSidecarAndPresetSaves() {
+  std::cout << "[UIPreviewer: preserves controller functions on SaveMockSidecar/SaveMockPreset/DeleteMockPreset]\n";
+  TempDirGuard tmp("oct_ui_ctrl_preserve");
+  const auto viewPath = tmp.dir / "assets/ui/ctrl_view.oxml";
+  const auto sidecarPath = tmp.dir / "assets/ui/ctrl_view.preview.lua";
+  WriteTempTextFile(viewPath, R"(
+    <OXML>
+      <Param name="mode" default="SAFE" />
+      <Canvas width="640" height="480">
+        <Column width="400" padding="12">
+          <Label ref="val_lbl" text="{mode}: {hp}" height="24" />
+          <Button ref="heal_btn" text="Heal" on-click="on_heal" width="120" height="32" />
+        </Column>
+      </Canvas>
+    </OXML>
+  )");
+  WriteTempTextFile(sidecarPath, R"(
+    local function clamp_hp(v, maxv)
+      return math.min(maxv, v)
+    end
+    return {
+      default_preset = "default",
+      controller = {
+        on_heal = function(self, view)
+          local ctx = view:get_context()
+          ctx.hp = clamp_hp((ctx.hp or 0) + 10, 100)
+        end,
+      },
+      presets = {
+        default = {
+          params = { mode = "SAFE" },
+          context = { hp = 50 },
+        },
+        low = {
+          params = { mode = "LOW" },
+          context = { hp = 15 },
+        },
+      },
+    }
+  )");
+  const auto dynSidecar = tmp.dir / "assets/ui/ctrl_dyn.preview.lua";
+  const auto dynView = tmp.dir / "assets/ui/ctrl_dyn.oxml";
+  WriteTempTextFile(dynView, R"(
+    <Canvas width="400" height="300">
+      <Button text="Go" on-click="on_go" width="80" height="30" />
+    </Canvas>
+  )");
+  WriteTempTextFile(dynSidecar, R"(
+    local function make_mock()
+      return { controller = { on_go = function() end }, context = { x = 1 } }
+    end
+    return make_mock()
+  )");
+
+  Registry reg;
+  TestUiBindingContext bindCtx(&reg);
+  sol::state lua;
+  SetupUiTestRegistry(reg, lua, bindCtx, tmp.dir);
+  auto& previewer = reg.Get<UIPreviewer>();
+
+  Check(previewer.MountPreview("ctrl_view.oxml"), "mounts ctrl_view.oxml with sidecar");
+  Check(previewer.HasLiveControllerScript(), "initial HasLiveControllerScript is true");
+  Check(previewer.SetMockFieldNumber("hp", 65), "mutates hp before SaveMockSidecar");
+  Check(previewer.SaveMockSidecar(), "SaveMockSidecar succeeds while preserving controller");
+  Check(previewer.HasLiveControllerScript(), "HasLiveControllerScript stays true after SaveMockSidecar");
+  Check(previewer.TriggerMockCallback("on_heal"), "on_heal callback executes after SaveMockSidecar");
+  CheckEq(lua.registry()["__octarine_preview_pin"]["refs"]["val_lbl"]["get_text"](
+                 lua.registry()["__octarine_preview_pin"]["refs"]["val_lbl"])
+              .get<std::string>(),
+          std::string("SAFE: 75"), "preserved controller + preamble helper updated hp to 75");
+
+  Check(previewer.SaveMockPreset("tmp_p", false), "SaveMockPreset succeeds while preserving controller");
+  Check(previewer.HasLiveControllerScript(), "HasLiveControllerScript stays true after SaveMockPreset");
+  Check(previewer.DeleteMockPreset("tmp_p"), "DeleteMockPreset succeeds while preserving controller");
+  Check(previewer.HasLiveControllerScript(), "HasLiveControllerScript stays true after DeleteMockPreset");
+  Check(previewer.SelectMockPreset("low"), "re-selecting low preset after saves still works");
+  Check(previewer.TriggerMockCallback("on_heal"), "on_heal callback still executes after preset save/delete");
+  CheckEq(lua.registry()["__octarine_preview_pin"]["refs"]["val_lbl"]["get_text"](
+                 lua.registry()["__octarine_preview_pin"]["refs"]["val_lbl"])
+              .get<std::string>(),
+          std::string("LOW: 25"), "preserved controller updated low preset hp to 25");
+
+  // Unpreservable dynamic builder script must refuse overwrite unless force=true.
+  Check(previewer.MountPreview("ctrl_dyn.oxml"), "mounts dynamic builder mock");
+  Check(previewer.HasLiveControllerScript(), "dynamic builder sets HasLiveControllerScript = true");
+  Check(!previewer.SaveMockSidecar(), "SaveMockSidecar refuses overwrite without force when unpreservable");
+  Check(!previewer.LastMockError().empty(), "refused save populates LastMockError");
+  Check(previewer.SaveMockSidecar("", /*force=*/true), "SaveMockSidecar succeeds when force=true");
+  Check(!previewer.HasLiveControllerScript(), "forced data-only save clears HasLiveControllerScript");
+  previewer.UnmountPreview(true);
+}
 #endif  // !OCTARINE_SHIPPED
 
 }  // namespace
@@ -4156,6 +4304,7 @@ int main() {
   TestUiHotReloadImportsParamsAndDiagnostics();
   TestUiRuntimeAutoAssetAcquireAndRelease();
   TestStage12NestedObservableAndSetPathValue();
+  TestRepeaterPreservesSiblingOrderAcrossRebuilds();
 #ifndef OCTARINE_SHIPPED
   TestUiPreviewerCatalogIsolationAndDevLua();
   TestUiPreviewerAuditRulesAndBackdrops();
@@ -4170,6 +4319,7 @@ int main() {
   TestStage13NamedPresetsStressAndControllerGuard();
   TestStage13BatchMatrixAndDevLua();
   TestStage13CliFlagsAndHeadlessMatrix();
+  TestPreviewerPreservesControllerOnSidecarAndPresetSaves();
 #endif
   return octarine::test::ReportSummary("UILayoutTest");
 }
