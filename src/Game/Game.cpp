@@ -104,6 +104,7 @@
 #ifndef OCTARINE_SHIPPED
 #include "Dev/DevListenDispatch.h"
 #include "Dev/DevListenServer.h"
+#include "UI/UIPreviewer.h"
 #endif
 
 inline void LoadGame(sol::state& lua, const AssetManager& assetManager, const GameConfig& gameConfig) {
@@ -554,14 +555,28 @@ bool Game::CreateWindowAndScene(bool projectLoaded) {
   gameConfig.windowHeight = projectLoaded ? gameConfig.GetBaseHeight() : Constants::kDefaultWindowHeight;
   const std::string title = projectLoaded ? gameConfig.GetGameTitle() : kDefaultWindowTitle;
 
-  const auto [initialWidth, initialHeight] = ResolveInitialWindowSize(*registry_, gameConfig, headless_);
+  auto [initialWidth, initialHeight] = ResolveInitialWindowSize(*registry_, gameConfig, headless_);
+  bool skipSavedWindowSize = false;
+#ifndef OCTARINE_SHIPPED
+  if (ui_preview_width_ > 0 && ui_preview_height_ > 0) {
+    initialWidth = ui_preview_width_;
+    initialHeight = ui_preview_height_;
+    gameConfig.windowWidth = ui_preview_width_;
+    gameConfig.windowHeight = ui_preview_height_;
+    skipSavedWindowSize = true;
+  }
+#endif
   const bool resizable = gameConfig.GetEngineOptions().windowResizable;
   const bool hasProjectIcon = projectLoaded && HasProjectWindowIcon(*registry_, gameConfig);
   if (!runtime_.CreateWindow(title, initialWidth, initialHeight, headless_, resizable, !hasProjectIcon)) {
     return false;
   }
 
-  ApplyInitialWindowSettings(*registry_, gameConfig, runtime_, headless_);
+  if (!skipSavedWindowSize) {
+    ApplyInitialWindowSettings(*registry_, gameConfig, runtime_, headless_);
+  } else if (!headless_ && runtime_.SdlRenderer() != nullptr) {
+    Renderer::ApplyVSync(runtime_.SdlRenderer(), gameConfig.GetEngineOptions().vsync);
+  }
   if (hasProjectIcon && !ApplyProjectWindowIcon(*registry_, gameConfig, runtime_, headless_) && !headless_) {
     runtime_.ApplyDefaultWindowIcon();
   }
@@ -736,7 +751,120 @@ void RegisterEventAndHotReloadSingletons(Registry& registry, const std::unique_p
   registry.Set<ScriptHotReload>(ScriptHotReload());
   registry.Set<AssetHotReload>(AssetHotReload());
 }
+
+#ifndef OCTARINE_SHIPPED
+void InitializeUiPreviewSession(Registry& registry, GameConfig& gameConfig, FrameLoop* frameLoop, const bool headless,
+                                const std::string& targetFile, const std::string& mockScript,
+                                const std::string& capturePath, const std::string& auditJsonPath) {
+  auto& previewer = registry.Get<UIPreviewer>();
+  previewer.SetRegistry(&registry);
+  previewer.RefreshCatalogViews();
+  previewer.SetBackdropMode(PreviewBackdropMode::DarkSlate);
+  previewer.SetIsolatedMode(true, /*managePauseState=*/false);
+
+  auto& options = gameConfig.GetEngineOptions();
+  options.hotReloadEnabled = true;
+
+  const bool oneShotExport = !capturePath.empty() || !auditJsonPath.empty();
+  if (!headless && !oneShotExport) {
+    options.showDebugGUI = true;
+    if (auto* debugReg = registry.TryGet<octarine::debug::DebugMenuRegistry>()) {
+      debugReg->ApplyPersistedOpenState("engine.ui_previewer", true);
+    }
+  }
+
+  std::string resolvedTarget = targetFile;
+  if (resolvedTarget.empty() && !previewer.CatalogViews().empty()) {
+    resolvedTarget = previewer.CatalogViews().front().fullPath;
+  }
+  if (!resolvedTarget.empty()) {
+    static_cast<void>(previewer.MountPreviewWithMock(resolvedTarget, mockScript));
+  }
+
+  if (oneShotExport && frameLoop != nullptr) {
+    frameLoop->ConfigureOneShotCapture(capturePath, auditJsonPath, /*captureFrame=*/2);
+  }
+}
+
+bool ParsePreviewDimensions(const std::string& spec, int& outW, int& outH) {
+  const auto sep = spec.find_first_of("xX");
+  if (sep == std::string::npos || sep == 0 || sep + 1 >= spec.size()) return false;
+  try {
+    const int w = std::stoi(spec.substr(0, sep));
+    const int h = std::stoi(spec.substr(sep + 1));
+    if (w <= 0 || h <= 0) return false;
+    outW = w;
+    outH = h;
+    return true;
+  } catch (const std::exception&) {
+    return false;
+  }
+}
+#endif
+
+void ApplyUiPreviewOptionValue([[maybe_unused]] const std::string& arg, [[maybe_unused]] const std::string& val,
+                               [[maybe_unused]] Game::UiPreviewCliOptions& out, bool& parseError) {
+#ifdef OCTARINE_SHIPPED
+  Logger::Warn(arg + " is stripped from shipped builds; ignoring.");
+  parseError = false;
+#else
+  if (arg == "--ui-file") {
+    out.file = val;
+  } else if (arg == "--ui-mock") {
+    out.mockScript = val;
+  } else if (arg == "--ui-size") {
+    if (!ParsePreviewDimensions(val, out.width, out.height)) {
+      Logger::Error("Error: --ui-size requires <Width>x<Height> (got '" + val + "').");
+      parseError = true;
+    }
+  } else if (arg == "--ui-capture") {
+    out.capturePath = val;
+  } else if (arg == "--ui-audit-json") {
+    out.auditJsonPath = val;
+  }
+#endif
+}
+
 }  // namespace
+
+bool Game::TryConsumeUiPreviewFlag(const std::string& arg, const std::string& nextVal, const bool hasNextVal,
+                                   UiPreviewCliOptions& out, bool& consumedNext, bool& parseError) {
+  consumedNext = false;
+  parseError = false;
+  const bool isPreviewFlag = (arg == "--ui-file" || arg == "--ui-mock" || arg == "--ui-size" || arg == "--ui-capture" ||
+                              arg == "--ui-audit-json");
+  if (!isPreviewFlag) return false;
+
+  if (!hasNextVal) {
+    Logger::Error("Error: " + arg + " flag requires an argument.");
+    parseError = true;
+    return true;
+  }
+  consumedNext = true;
+  ApplyUiPreviewOptionValue(arg, nextVal, out, parseError);
+  return true;
+}
+
+#ifndef OCTARINE_SHIPPED
+void Game::SetUiPreviewOptions(const UiPreviewCliOptions& cliOpts) {
+  SetUiPreviewOptions(cliOpts.file, cliOpts.mockScript, cliOpts.width, cliOpts.height, cliOpts.capturePath,
+                      cliOpts.auditJsonPath);
+}
+
+void Game::SetUiPreviewOptions(const std::string& file, const std::string& mockScript, const int width,
+                               const int height, const std::string& capturePath, const std::string& auditJsonPath) {
+  ui_preview_file_ = file;
+  ui_preview_mock_ = mockScript;
+  ui_preview_width_ = width;
+  ui_preview_height_ = height;
+  ui_preview_capture_path_ = capturePath;
+  ui_preview_audit_json_path_ = auditJsonPath;
+}
+
+bool Game::CaptureFrameToFile(const std::string& path) {
+  return frame_loop_ != nullptr && frame_loop_->RenderAndCaptureToFile(path);
+}
+#endif
 
 void Game::Setup() {
   auto& gameConfig = registry_->Get<GameConfig>();
@@ -782,7 +910,13 @@ void Game::Setup() {
   }
   registry_->Get<EngineContext>().mixer = audioSystem.Func().Mixer();
 
-  if (gameConfig.HasLoadedConfig()) {
+#ifndef OCTARINE_SHIPPED
+  registry_->Set<UIPreviewer>(UIPreviewer(registry_.get()));
+  const bool isUiPreviewMode = (startup_mode_ == "ui-preview");
+#else
+  constexpr bool isUiPreviewMode = false;
+#endif
+  if (gameConfig.HasLoadedConfig() && !isUiPreviewMode) {
     LoadGame(lua, assetManager, gameConfig);
   }
 
@@ -832,6 +966,12 @@ void Game::Setup() {
   registry_->Order(cameraFollow).After(transform).After(scriptSystem);
 
   RegisterEventAndHotReloadSingletons(*registry_, event_bus_);
+#ifndef OCTARINE_SHIPPED
+  if (isUiPreviewMode) {
+    InitializeUiPreviewSession(*registry_, gameConfig, frame_loop_.get(), headless_, ui_preview_file_, ui_preview_mock_,
+                               ui_preview_capture_path_, ui_preview_audit_json_path_);
+  }
+#endif
 }
 
 void Game::ReturnFocusToGame() {

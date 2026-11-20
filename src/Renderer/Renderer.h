@@ -92,10 +92,10 @@ class Renderer {
   [[nodiscard]] float GetRenderScaleX() const noexcept { return render_scale_x_; }
   [[nodiscard]] float GetRenderScaleY() const noexcept { return render_scale_y_; }
 
-  // Dev/headless capture: read the scene texture back to a surface and write it to `path` as a
-  // BMP. Lets a headless run (SDL_VIDEODRIVER=dummy, software renderer) produce a viewable frame
-  // of what was rendered. Returns false (and logs) if there's no scene texture, the readback
-  // fails, or the write fails.
+  // Dev/headless capture: read the scene texture back to a surface and write it to `path`
+  // (PNG when ending in `.png`, BMP otherwise). Lets a headless run (SDL_VIDEODRIVER=dummy,
+  // software renderer) or DevListen capture produce a viewable frame of what was rendered.
+  // Returns false (and logs) if there's no scene texture, the readback fails, or the write fails.
   bool CaptureScene(SDL_Renderer* sdlRenderer, const std::string& path) const;
 
  private:

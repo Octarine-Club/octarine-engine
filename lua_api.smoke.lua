@@ -1579,11 +1579,21 @@ color_grid_component = {}
 ---@class dev
 dev = {}
 
+function dev.audit_ui(...) end
+
+function dev.audit_ui_json(...) end
+
 function dev.clear(...) end
 
 function dev.get_selected_entity(...) end
 
 function dev.is_panel_open(...) end
+
+function dev.list_ui_views(...) end
+
+function dev.preview_inline_ui(...) end
+
+function dev.preview_ui(...) end
 
 function dev.register_action(...) end
 
@@ -1591,9 +1601,13 @@ function dev.register_panel(...) end
 
 function dev.register_toggle(...) end
 
+function dev.reload_preview_ui(...) end
+
 function dev.select_entity(...) end
 
 function dev.set_panel_open(...) end
+
+function dev.unmount_preview_ui(...) end
 
 function dev.unregister_panel(...) end
 

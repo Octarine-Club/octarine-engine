@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <optional>
 
 #include "AssetManager/AssetHotReload.h"
@@ -37,6 +39,7 @@
 
 #ifndef OCTARINE_SHIPPED
 #include "Dev/DevListenServer.h"
+#include "UI/UIPreviewer.h"
 #endif
 
 #ifdef OCTARINE_WITH_IMGUI
@@ -302,6 +305,95 @@ void HandleGamepadAxisMotionEvent(const SDL_GamepadAxisEvent& gaxis, InputSystem
   if (std::abs(norm) > 0.25f) inputSys->NoteGamepadActivity(gaxis.which);
 }
 
+void EnsureParentDirectories(const std::string& filePath) {
+  std::error_code ec;
+  const auto parent = std::filesystem::path(filePath).parent_path();
+  if (!parent.empty()) {
+    std::filesystem::create_directories(parent, ec);
+  }
+}
+
+void MaybeRenderPausedUiPreview([[maybe_unused]] Registry* registry) {
+#ifndef OCTARINE_SHIPPED
+  if (registry == nullptr) return;
+  if (auto* uiPreviewer = registry->TryGet<UIPreviewer>()) {
+    uiPreviewer->RenderWhenPaused(*registry);
+  }
+#endif
+}
+
+void MaybeSyncPreviewBackdrop([[maybe_unused]] Registry* registry) {
+#ifndef OCTARINE_SHIPPED
+  if (registry == nullptr) return;
+  if (auto* uiPreviewer = registry->TryGet<UIPreviewer>()) {
+    uiPreviewer->SyncActivePreview();
+    uiPreviewer->EmitBackdropIfNeeded(*registry);
+  }
+#endif
+}
+
+void WriteOneShotUiAuditJson([[maybe_unused]] Registry* registry, [[maybe_unused]] const std::string& auditJsonPath) {
+#ifndef OCTARINE_SHIPPED
+  if (auditJsonPath.empty() || registry == nullptr) return;
+  const auto* uiPreviewer = registry->TryGet<UIPreviewer>();
+  if (uiPreviewer == nullptr) return;
+  EnsureParentDirectories(auditJsonPath);
+  std::ofstream out(auditJsonPath, std::ios::trunc);
+  if (out) {
+    out << uiPreviewer->AuditLayoutJson();
+    Logger::Info("FrameLoop: wrote UI audit JSON to " + auditJsonPath);
+  }
+#endif
+}
+
+std::string ConsumePendingUiPreviewCapture([[maybe_unused]] Registry* registry) {
+#ifndef OCTARINE_SHIPPED
+  if (registry == nullptr) return {};
+  if (auto* uiPreviewer = registry->TryGet<UIPreviewer>()) {
+    return uiPreviewer->ConsumePendingCapturePath();
+  }
+#endif
+  return {};
+}
+
+void FinishPendingPanelCapture([[maybe_unused]] Renderer* renderer, [[maybe_unused]] SDL_Renderer* sdlRenderer,
+                               [[maybe_unused]] Registry* registry, [[maybe_unused]] const std::string& pendingPath) {
+#ifndef OCTARINE_SHIPPED
+  if (pendingPath.empty() || renderer == nullptr || sdlRenderer == nullptr || registry == nullptr) return;
+  if (auto* uiPreviewer = registry->TryGet<UIPreviewer>()) {
+    const bool capOk = renderer->CaptureScene(sdlRenderer, pendingPath);
+    uiPreviewer->SetLastCaptureStatus(capOk ? ("Saved " + std::filesystem::path(pendingPath).filename().string())
+                                            : "Capture failed");
+  }
+#endif
+}
+
+bool ShouldClearBackbuffer(SDL_Renderer* sdlRenderer, const GameConfig& gameConfig,
+                           const std::optional<SDL_FRect>& compositeRect) {
+  if (!compositeRect.has_value() || gameConfig.GetEngineOptions().showDebugGUI) {
+    return true;
+  }
+  int outPixelW = 0;
+  int outPixelH = 0;
+  if (SDL_GetRenderOutputSize(sdlRenderer, &outPixelW, &outPixelH) && compositeRect->x <= 0.0F &&
+      compositeRect->y <= 0.0F && (compositeRect->x + compositeRect->w) >= static_cast<float>(outPixelW) &&
+      (compositeRect->y + compositeRect->h) >= static_cast<float>(outPixelH)) {
+    return false;
+  }
+  return true;
+}
+
+void CompositeSceneToTarget(Renderer* renderer, SDL_Renderer* sdlRenderer, Registry* registry,
+                            const std::optional<SDL_FRect>& compositeRect) {
+  if (compositeRect.has_value()) {
+    renderer->CompositeSceneToWindow(sdlRenderer, &*compositeRect);
+    return;
+  }
+  const auto& viewportInfo = registry->Get<ViewportInfo>();
+  const SDL_FRect destRect{viewportInfo.x, viewportInfo.y, viewportInfo.width, viewportInfo.height};
+  renderer->CompositeSceneToWindow(sdlRenderer, &destRect);
+}
+
 }  // namespace
 
 void FrameLoop::HandleGamepadEvent(const SDL_Event& event) {
@@ -381,6 +473,7 @@ void FrameLoop::PollHotReload([[maybe_unused]] const EngineOptions& options, [[m
 
 int FrameLoop::ExecuteSimulationSteps(const float deltaTime, EngineOptions& options, InputSystem* inputSystem) {
   if (options.isPaused && !options.stepFrame) {
+    MaybeRenderPausedUiPreview(registry_);
     return 0;
   }
 
@@ -406,6 +499,7 @@ int FrameLoop::ExecuteSimulationSteps(const float deltaTime, EngineOptions& opti
       }
     }
     renderQueue.Clear();
+    MaybeSyncPreviewBackdrop(registry_);
     registry_->Update(stepDt);
     ++stepsExecuted;
     // Edge-triggered input (pressed/released, wheel) must be observed by exactly one sim step,
@@ -490,18 +584,75 @@ void FrameLoop::UpdateViewportInfo([[maybe_unused]] const bool showDebugGUI) {
 #endif
 }
 
+#ifndef OCTARINE_SHIPPED
+void FrameLoop::ConfigureOneShotCapture(const std::string& capturePath, const std::string& auditJsonPath,
+                                        const long captureFrame) {
+  if (!capturePath.empty()) {
+    capture_path_ = capturePath;
+  }
+  if (!auditJsonPath.empty()) {
+    audit_json_path_ = auditJsonPath;
+  }
+  capture_frame_ = captureFrame;
+  frame_index_ = 0;
+  capture_done_ = false;
+}
+
+bool FrameLoop::RenderAndCaptureToFile(const std::string& path) {
+  if (path.empty() || runtime_->SdlRenderer() == nullptr) return false;
+  auto& gameConfig = registry_->Get<GameConfig>();
+  auto& opts = gameConfig.GetEngineOptions();
+  auto& renderQueue = registry_->Get<RenderQueue>();
+  if (renderQueue.IsEmpty()) {
+    if (opts.isPaused) {
+      if (auto* uiPreviewer = registry_->TryGet<UIPreviewer>()) {
+        uiPreviewer->RenderWhenPaused(*registry_);
+      }
+    } else {
+      if (auto* uiPreviewer = registry_->TryGet<UIPreviewer>()) {
+        uiPreviewer->SyncActivePreview();
+        uiPreviewer->EmitBackdropIfNeeded(*registry_);
+      }
+      registry_->Update(0.0F);
+    }
+  }
+  const bool wasCaptureRender = force_capture_render_;
+  force_capture_render_ = true;
+  PrepareSceneTargetForWindow(*renderer_, runtime_->SdlRenderer(), gameConfig, &lua_, true);
+  renderer_->BeginScene(runtime_->SdlRenderer());
+  renderQueue.Sort();
+  renderer_->DrawQueue(renderQueue, runtime_->SdlRenderer());
+  renderer_->EndScene(runtime_->SdlRenderer(), false);
+  const bool ok = renderer_->CaptureScene(runtime_->SdlRenderer(), path);
+  renderQueue.Clear();
+  force_capture_render_ = wasCaptureRender;
+  return ok;
+}
+#endif
+
 void FrameLoop::CheckHeadlessCapture() {
-  // Headless capture: once the target frame is reached, write the rendered scene to disk and quit.
-  if (!capture_path_.empty() && !capture_done_) {
-    if (frame_index_ >= capture_frame_) {
+  // Headless / one-shot capture & audit: once target frame is reached, write outputs and quit.
+#ifndef OCTARINE_SHIPPED
+  const bool hasWork = !capture_path_.empty() || !audit_json_path_.empty();
+  const std::string auditPath = audit_json_path_;
+#else
+  const bool hasWork = !capture_path_.empty();
+  const std::string auditPath;
+#endif
+  if (!hasWork || capture_done_) return;
+
+  if (frame_index_ >= capture_frame_) {
+    if (!capture_path_.empty()) {
+      EnsureParentDirectories(capture_path_);
       if (renderer_->CaptureScene(runtime_->SdlRenderer(), capture_path_)) {
         Logger::Info("FrameLoop: captured frame " + std::to_string(frame_index_) + " to " + capture_path_);
       }
-      capture_done_ = true;
-      Game::Quit();
     }
-    ++frame_index_;
+    WriteOneShotUiAuditJson(registry_, auditPath);
+    capture_done_ = true;
+    Game::Quit();
   }
+  ++frame_index_;
 }
 
 void FrameLoop::Render(const float deltaTime) {
@@ -513,15 +664,23 @@ void FrameLoop::Render(const float deltaTime) {
   PROFILE_COUNTER_SET("RenderQueue: Size", static_cast<long long>(renderQueue.Size()));
   PROFILE_COUNTER_SET("Entities: User", static_cast<long long>(registry_->GetUserEntityCount()));
 
+  const std::string pendingPanelCapture = ConsumePendingUiPreviewCapture(registry_);
+#ifndef OCTARINE_SHIPPED
+  const bool forceCaptureRender = force_capture_render_;
+#else
+  constexpr bool forceCaptureRender = false;
+#endif
+  const bool captureRequested = !capture_path_.empty() || !pendingPanelCapture.empty() || forceCaptureRender;
   const bool isHeadless = game_->IsHeadless() || gameConfig.GetEngineOptions().headless;
-  if (isHeadless && capture_path_.empty()) {
+  if (isHeadless && !captureRequested) {
     PROFILE_COUNTERS_REPORT();
     renderQueue.Clear();
+    CheckHeadlessCapture();
     return;
   }
 
   const auto compositeRect = PrepareSceneTargetForWindow(*renderer_, runtime_->SdlRenderer(), gameConfig, &lua_,
-                                                         isHeadless || !capture_path_.empty());
+                                                         isHeadless || !capture_path_.empty() || forceCaptureRender);
   if (auto* ctx = registry_->TryGet<EngineContext>()) {
     ctx->sceneRenderScale = renderer_->GetRenderScale();
     ctx->sceneRenderScaleX = renderer_->GetRenderScaleX();
@@ -552,42 +711,21 @@ void FrameLoop::Render(const float deltaTime) {
     draw_collider_system_.Draw(registry_);
   }
 
-  bool clearBackbuffer = true;
-  if (compositeRect.has_value() && !gameConfig.GetEngineOptions().showDebugGUI) {
-    int outPixelW = 0;
-    int outPixelH = 0;
-    if (SDL_GetRenderOutputSize(runtime_->SdlRenderer(), &outPixelW, &outPixelH) && compositeRect->x <= 0.0F &&
-        compositeRect->y <= 0.0F && (compositeRect->x + compositeRect->w) >= static_cast<float>(outPixelW) &&
-        (compositeRect->y + compositeRect->h) >= static_cast<float>(outPixelH)) {
-      clearBackbuffer = false;
-    }
-  }
+  const bool clearBackbuffer = ShouldClearBackbuffer(runtime_->SdlRenderer(), gameConfig, compositeRect);
 
 #ifdef OCTARINE_PROFILING
   {
     PerfUtils::ScopedTimer compositeTimer("Render: Composite");
     renderer_->EndScene(runtime_->SdlRenderer(), clearBackbuffer);
+    FinishPendingPanelCapture(renderer_, runtime_->SdlRenderer(), registry_, pendingPanelCapture);
     UpdateViewportInfo(gameConfig.GetEngineOptions().showDebugGUI);
-    if (compositeRect.has_value()) {
-      renderer_->CompositeSceneToWindow(runtime_->SdlRenderer(), &*compositeRect);
-    } else {
-      const auto& viewportInfo = registry_->Get<ViewportInfo>();
-      const SDL_FRect destRect{viewportInfo.x, viewportInfo.y, viewportInfo.width, viewportInfo.height};
-      renderer_->CompositeSceneToWindow(runtime_->SdlRenderer(), &destRect);
-    }
+    CompositeSceneToTarget(renderer_, runtime_->SdlRenderer(), registry_, compositeRect);
   }
 #else
   renderer_->EndScene(runtime_->SdlRenderer(), clearBackbuffer);
-
+  FinishPendingPanelCapture(renderer_, runtime_->SdlRenderer(), registry_, pendingPanelCapture);
   UpdateViewportInfo(gameConfig.GetEngineOptions().showDebugGUI);
-
-  if (compositeRect.has_value()) {
-    renderer_->CompositeSceneToWindow(runtime_->SdlRenderer(), &*compositeRect);
-  } else {
-    const auto& viewportInfo = registry_->Get<ViewportInfo>();
-    const SDL_FRect destRect{viewportInfo.x, viewportInfo.y, viewportInfo.width, viewportInfo.height};
-    renderer_->CompositeSceneToWindow(runtime_->SdlRenderer(), &destRect);
-  }
+  CompositeSceneToTarget(renderer_, runtime_->SdlRenderer(), registry_, compositeRect);
 #endif
 
   if (!game_->IsBenchMode()) {

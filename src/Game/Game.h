@@ -84,10 +84,30 @@ class Game : public LuaBindingContext {
   void SetDevMode(bool dev) { dev_mode_ = dev; }
   [[nodiscard]] bool IsDevMode() const { return dev_mode_; }
 
+  struct UiPreviewCliOptions {
+    std::string file{};
+    std::string mockScript{};
+    int width{0};
+    int height{0};
+    std::string capturePath{};
+    std::string auditJsonPath{};
+
+    [[nodiscard]] bool HasAnyTrigger() const noexcept {
+      return !file.empty() || !capturePath.empty() || !auditJsonPath.empty();
+    }
+  };
+
+  static bool TryConsumeUiPreviewFlag(const std::string& arg, const std::string& nextVal, bool hasNextVal,
+                                      UiPreviewCliOptions& out, bool& consumedNext, bool& parseError);
+
 #ifndef OCTARINE_SHIPPED
   // Dev-only: opt into the DevListenServer. port=0 leaves the server stopped; >0 binds on
   // 127.0.0.1:<port>. Called by Main from --dev-listen and stripped from shipped binaries.
   void SetDevListen(int port) { dev_listen_port_ = port; }
+  void SetUiPreviewOptions(const UiPreviewCliOptions& cliOpts);
+  void SetUiPreviewOptions(const std::string& file, const std::string& mockScript, int width, int height,
+                           const std::string& capturePath, const std::string& auditJsonPath);
+  [[nodiscard]] bool CaptureFrameToFile(const std::string& path);
 #endif
 
   [[nodiscard]] SDL_Renderer* GetRenderer() const override { return runtime_.SdlRenderer(); }
@@ -151,6 +171,12 @@ class Game : public LuaBindingContext {
   bool dev_mode_ = false;
 #ifndef OCTARINE_SHIPPED
   int dev_listen_port_ = 0;
+  std::string ui_preview_file_;
+  std::string ui_preview_mock_;
+  int ui_preview_width_ = 0;
+  int ui_preview_height_ = 0;
+  std::string ui_preview_capture_path_;
+  std::string ui_preview_audit_json_path_;
 #endif
   int bake_validation_failures_ = 0;
 

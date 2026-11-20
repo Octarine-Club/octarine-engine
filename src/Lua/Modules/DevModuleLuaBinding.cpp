@@ -7,6 +7,9 @@
 #include "ECS/Registry.h"
 #include "General/Logger.h"
 #include "Lua/LuaBindingContext.h"
+#ifndef OCTARINE_SHIPPED
+#include "UI/UIPreviewer.h"
+#endif
 
 namespace {
 
@@ -172,6 +175,103 @@ void BindEntitySelectionFunctions(sol::table& dev, LuaBindingContext& ctx) {
   });
 }
 
+#ifndef OCTARINE_SHIPPED
+UIPreviewer* GetOrCreateUIPreviewer(LuaBindingContext& ctx) {
+  auto* reg = ctx.GetRegistry();
+  if (reg == nullptr) return nullptr;
+  auto* previewer = reg->TryGet<UIPreviewer>();
+  if (previewer == nullptr) {
+    previewer = &reg->Set<UIPreviewer>(UIPreviewer(reg));
+  } else {
+    previewer->SetRegistry(reg);
+  }
+  return previewer;
+}
+
+sol::table MakeAuditIssueTable(sol::state& lua, const UILayoutIssue& issue) {
+  sol::table row = lua.create_table();
+  row.set("code", issue.code);
+  row.set("severity", issue.severity);
+  row.set("entity", issue.entity);
+  row.set("label", issue.label);
+  row.set("message", issue.message);
+  sol::table rect = lua.create_table();
+  rect.set("left", issue.rect.left);
+  rect.set("top", issue.rect.top);
+  rect.set("right", issue.rect.right);
+  rect.set("bottom", issue.rect.bottom);
+  row.set("rect", rect);
+  return row;
+}
+
+sol::table MakeCatalogViewTable(sol::state& lua, const PreviewCatalogEntry& view) {
+  sol::table row = lua.create_table();
+  row.set("id", view.id);
+  row.set("path", view.displayPath);
+  return row;
+}
+
+void BindUIPreviewMountFunctions(sol::table& dev, LuaBindingContext& ctx) {
+  dev.set_function("preview_ui", [&ctx](const std::string& pathOrId, const sol::optional<sol::table>& opts) -> bool {
+    auto* previewer = GetOrCreateUIPreviewer(ctx);
+    return previewer != nullptr && previewer->MountPreview(pathOrId, opts);
+  });
+
+  dev.set_function("preview_inline_ui", [&ctx](const std::string& xml, const sol::optional<std::string>& oss) -> bool {
+    auto* previewer = GetOrCreateUIPreviewer(ctx);
+    return previewer != nullptr && previewer->MountInlineXml(xml, oss.value_or(""));
+  });
+
+  dev.set_function("unmount_preview_ui", [&ctx]() {
+    if (auto* reg = ctx.GetRegistry()) {
+      if (auto* previewer = reg->TryGet<UIPreviewer>()) {
+        previewer->UnmountPreview();
+      }
+    }
+  });
+
+  dev.set_function("reload_preview_ui", [&ctx]() -> bool {
+    auto* previewer = GetOrCreateUIPreviewer(ctx);
+    return previewer != nullptr && previewer->ReloadActivePreview();
+  });
+}
+
+void BindUIPreviewAuditFunctions(sol::table& dev, sol::state& lua, LuaBindingContext& ctx) {
+  dev.set_function("audit_ui", [&lua, &ctx]() -> sol::table {
+    sol::table arr = lua.create_table();
+    auto* previewer = GetOrCreateUIPreviewer(ctx);
+    if (previewer == nullptr) return arr;
+    const auto issues = previewer->AuditLayout();
+    for (std::size_t i = 0; i < issues.size(); ++i) {
+      arr.set(i + 1, MakeAuditIssueTable(lua, issues[i]));
+    }
+    return arr;
+  });
+
+  dev.set_function("audit_ui_json", [&ctx]() -> std::string {
+    auto* previewer = GetOrCreateUIPreviewer(ctx);
+    return previewer != nullptr ? previewer->AuditLayoutJson() : "{}";
+  });
+
+  dev.set_function("list_ui_views", [&lua, &ctx]() -> sol::table {
+    sol::table arr = lua.create_table();
+    auto* previewer = GetOrCreateUIPreviewer(ctx);
+    if (previewer == nullptr) return arr;
+    previewer->RefreshCatalogViews();
+    const auto& views = previewer->CatalogViews();
+    for (std::size_t i = 0; i < views.size(); ++i) {
+      arr.set(i + 1, MakeCatalogViewTable(lua, views[i]));
+    }
+    return arr;
+  });
+}
+
+void BindUIPreviewFunctions(sol::table& dev, sol::state& lua, LuaBindingContext& ctx) {
+  BindUIPreviewMountFunctions(dev, ctx);
+  BindUIPreviewAuditFunctions(dev, lua, ctx);
+}
+#endif
+
 }  // namespace
 
 void LuaModuleBinding<DevModule>::install(sol::state& lua, LuaBindingContext& ctx) {
@@ -180,4 +280,7 @@ void LuaModuleBinding<DevModule>::install(sol::state& lua, LuaBindingContext& ct
   BindActionAndToggleFunctions(dev, ctx);
   BindWatchFunctions(dev, ctx);
   BindEntitySelectionFunctions(dev, ctx);
+#ifndef OCTARINE_SHIPPED
+  BindUIPreviewFunctions(dev, lua, ctx);
+#endif
 }

@@ -9,9 +9,13 @@
 #include <vector>
 
 #include "AssetManager/AssetManager.h"
+#include "Debug/DebugMenuRegistry.h"
 #include "ECS/Registry.h"
 #include "Engine/SceneLoader.h"
 #include "Game/EngineContext.h"
+#ifndef OCTARINE_SHIPPED
+#include "UI/UIPreviewer.h"
+#endif
 #include "imgui.h"
 
 namespace octarine::debug {
@@ -226,17 +230,25 @@ void DrawAudioTab(Registry& registry, AssetManager* assets) {
   }
 }
 
-void DrawCatalogTab(AssetManager* assets) {
+void DrawCatalogTab([[maybe_unused]] Registry& registry, AssetManager* assets) {
   if (assets == nullptr) return;
 
   static char catFilter[64] = "";
   ImGui::InputTextWithHint("##cat_filter", "Search catalog...", catFilter, sizeof(catFilter));
 
-  if (ImGui::BeginTable("##catalog_all_table", 3,
+#ifdef OCTARINE_SHIPPED
+  constexpr int kCols = 3;
+#else
+  constexpr int kCols = 4;
+#endif
+  if (ImGui::BeginTable("##catalog_all_table", kCols,
                         ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY)) {
     ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed, 180.0f);
     ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 90.0f);
     ImGui::TableSetupColumn("Path", ImGuiTableColumnFlags_WidthStretch);
+#ifndef OCTARINE_SHIPPED
+    ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 75.0f);
+#endif
     ImGui::TableHeadersRow();
 
     const std::string filter(catFilter);
@@ -256,6 +268,25 @@ void DrawCatalogTab(AssetManager* assets) {
 
       ImGui::TableSetColumnIndex(2);
       ImGui::TextUnformatted(entry.fullPath.c_str());
+
+#ifndef OCTARINE_SHIPPED
+      ImGui::TableSetColumnIndex(3);
+      if (entry.type == AssetType::UIView) {
+        ImGui::PushID(id.c_str());
+        if (ImGui::SmallButton("Preview")) {
+          auto* previewer = registry.TryGet<UIPreviewer>();
+          if (previewer == nullptr) {
+            previewer = &registry.Set<UIPreviewer>(UIPreviewer(&registry));
+          }
+          previewer->SetRegistry(&registry);
+          previewer->MountPreview(entry.fullPath.empty() ? id : entry.fullPath);
+          if (auto* debugReg = registry.TryGet<DebugMenuRegistry>()) {
+            debugReg->SetPanelOpen("engine.ui_previewer", true);
+          }
+        }
+        ImGui::PopID();
+      }
+#endif
     }
     ImGui::EndTable();
   }
@@ -284,7 +315,7 @@ void DrawAssetScenePanel(Registry& registry) {
       ImGui::EndTabItem();
     }
     if (ImGui::BeginTabItem("Catalog")) {
-      DrawCatalogTab(assets);
+      DrawCatalogTab(registry, assets);
       ImGui::EndTabItem();
     }
     ImGui::EndTabBar();

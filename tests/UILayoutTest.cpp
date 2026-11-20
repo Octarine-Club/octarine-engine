@@ -1,17 +1,20 @@
 #include <SDL3/SDL.h>
 #include <SDL3_ttf/SDL_ttf.h>
 
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 
+#include "AssetManager/AssetCatalog.h"
 #include "AssetManager/AssetManager.h"
 #include "Components/CameraComponents.h"
 #include "Components/SpriteComponent.h"
 #include "Components/SquarePrimitiveComponent.h"
 #include "Components/TextLabelComponent.h"
 #include "Components/UIAnchorComponent.h"
+#include "Components/UIButtonComponent.h"
 #include "Components/UICanvasComponent.h"
 #include "Components/UIClipComponent.h"
 #include "Components/UIFlexComponent.h"
@@ -28,17 +31,20 @@
 #include "Events/KeyInputEvent.h"
 #include "Events/MouseInputEvent.h"
 #include "Events/MouseWheelEvent.h"
+#include "Game/Game.h"
 #include "Game/GameConfig.h"
 #include "Lua/Bindings/InputSystemLuaBinding.h"
 #include "Lua/Bindings/TextLabelComponentLuaBinding.h"
 #include "Lua/Bindings/UIStyleStateComponentLuaBinding.h"
 #include "Lua/LuaBindingContext.h"
+#include "Lua/Modules/DevModuleLuaBinding.h"
 #include "Lua/Modules/UIModuleLuaBinding.h"
 #include "Renderer/RenderKey.h"
 #include "Renderer/RenderQueue.h"
 #include "Systems/RenderTextSystem.h"
 #include "Systems/RenderUIPrimitiveSystem.h"
 #include "Systems/RenderUISpriteSystem.h"
+#include "Systems/TransformSystem.h"
 #include "Systems/UIButtonSystem.h"
 #include "Systems/UILayoutSystem.h"
 #include "TestHarness.h"
@@ -46,6 +52,11 @@
 #include "UI/OxmlParser.h"
 #include "UI/UIRuntime.h"
 #include "stb/stb_image_write.h"
+
+#ifndef OCTARINE_SHIPPED
+#include "Dev/DevListenDispatch.h"
+#include "UI/UIPreviewer.h"
+#endif
 
 using octarine::test::Check;
 using octarine::test::CheckEq;
@@ -2596,6 +2607,585 @@ void TestGlyphAtlasIntegerScaleAndRenderTextTwoLevelCache() {
   SDL_Quit();
 }
 
+struct TempDirGuard {
+  std::filesystem::path dir;
+  explicit TempDirGuard(const std::string& tag)
+      : dir(std::filesystem::temp_directory_path() /
+            (tag + "_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()))) {
+    std::filesystem::create_directories(dir);
+  }
+  ~TempDirGuard() {
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+  }
+  TempDirGuard(const TempDirGuard&) = delete;
+  TempDirGuard& operator=(const TempDirGuard&) = delete;
+};
+
+void WriteTempTextFile(const std::filesystem::path& path, const std::string& content) {
+  std::filesystem::create_directories(path.parent_path());
+  std::ofstream out(path, std::ios::binary);
+  out.write(content.data(), static_cast<std::streamsize>(content.size()));
+}
+
+void WriteTinyPngTexture(const std::filesystem::path& path, uint8_t r, uint8_t g, uint8_t b, const uint8_t a) {
+  std::filesystem::create_directories(path.parent_path());
+  const uint8_t px[4] = {r, g, b, a};
+  stbi_write_png(path.string().c_str(), 1, 1, 4, px, 4);
+}
+
+void BumpFileMtimeSeconds(const std::filesystem::path& path, const int seconds) {
+  std::error_code ec;
+  const auto cur = std::filesystem::last_write_time(path, ec);
+  if (!ec) {
+    std::filesystem::last_write_time(path, cur + std::chrono::seconds(seconds), ec);
+  }
+}
+
+bool HasPngMagicHeader(const std::filesystem::path& path) {
+  std::ifstream in(path, std::ios::binary);
+  if (!in.is_open()) return false;
+  unsigned char sig[8] = {};
+  in.read(reinterpret_cast<char*>(sig), sizeof(sig));
+  if (in.gcount() != 8) return false;
+  return sig[0] == 0x89 && sig[1] == 'P' && sig[2] == 'N' && sig[3] == 'G' && sig[4] == 0x0D && sig[5] == 0x0A &&
+         sig[6] == 0x1A && sig[7] == 0x0A;
+}
+
+void SetupUiTestRegistry(Registry& reg, sol::state& lua, LuaBindingContext& ctx,
+                         const std::filesystem::path& projectDir, SDL_Renderer* sdlRenderer = nullptr) {
+  lua.open_libraries(sol::lib::base, sol::lib::table, sol::lib::string, sol::lib::math);
+  if (!std::filesystem::exists(projectDir / "config.ini")) {
+    WriteTempTextFile(projectDir / "config.ini",
+                      "Title=UITest\nStartupScript=main.lua\nBaseResolutionWidth=1280\nBaseResolutionHeight=720\n");
+  }
+  auto& cfg = reg.Set<GameConfig>(GameConfig{});
+  static_cast<void>(cfg.LoadConfigFromFile(projectDir.string()));
+  cfg.windowWidth = 1280;
+  cfg.windowHeight = 720;
+
+  auto& am = reg.Set<AssetManager>(AssetManager{});
+  am.LoadGameConfig(cfg);
+  am.SetDefaultScaleMode("linear");
+  am.GetCatalog().ScanFilesystem(projectDir.string(), lua, cfg);
+
+  EngineContext engCtx;
+  engCtx.sdlRenderer = sdlRenderer;
+  reg.Set<EngineContext>(engCtx);
+  LuaModuleBinding<UIModule>::install(lua, ctx);
+#ifndef OCTARINE_SHIPPED
+  reg.Set<UIPreviewer>(UIPreviewer(&reg));
+  LuaModuleBinding<DevModule>::install(lua, ctx);
+#endif
+}
+
+void TestUiHotReloadImportsParamsAndDiagnostics() {
+  std::cout << "[UIRuntime: hot-reload dynamic watches, Param re-seed, and syntax diagnostics]\n";
+  TempDirGuard tmp("oct_ui_hotreload_test");
+  const auto mainOxml = tmp.dir / "assets/ui/main.oxml";
+  const auto subOxml = tmp.dir / "assets/ui/sub.oxml";
+  const auto themeOss = tmp.dir / "assets/ui/theme.oss";
+
+  WriteTempTextFile(mainOxml, R"(
+    <OXML>
+      <Param name="title" default="InitTitle" />
+      <Param name="sub" default="InitSub" />
+      <Canvas width="800" height="600">
+        <Label id="lbl_title" ref="lbl_title" text="{title}" />
+        <Label id="lbl_sub" ref="lbl_sub" text="{sub}" />
+      </Canvas>
+    </OXML>
+  )");
+  WriteTempTextFile(subOxml, R"(<Panel id="sub_box"><Label text="Sub" /></Panel>)");
+  WriteTempTextFile(themeOss, R"(#lbl_title { color: #ffffff; })");
+
+  Registry reg;
+  TestUiBindingContext bindCtx(&reg);
+  sol::state lua;
+  SetupUiTestRegistry(reg, lua, bindCtx, tmp.dir);
+  auto& rt = reg.Get<UIRuntime>();
+
+  const auto mountRes = lua.safe_script(R"(
+    local v = ui.mount("main.oxml", { params = { title = "CustomTitle" } })
+    assert(v ~= nil and v.root ~= nil, "view mounted")
+    _G.mounted_view = v
+    _G.root_entity = v.root
+  )");
+  Check(mountRes.valid(), "main.oxml mounted with param override");
+  const Entity firstRoot = lua["root_entity"].get<Entity>();
+  const auto viewId = rt.FindViewIdByRoot(firstRoot);
+  Check(viewId.has_value() && *viewId != 0 && rt.IsViewMounted(*viewId), "mounted view id lookup succeeds");
+  CheckEq(rt.GetDiagnostics().lastParseOk, true, "initial mount diagnostics lastParseOk is true");
+
+  // Edit main.oxml to add <Style> + <Use> imports and change default Param; keep caller override intact.
+  WriteTempTextFile(mainOxml, R"(
+    <OXML>
+      <Style src="theme.oss" />
+      <Use name="SubBox" src="sub.oxml" />
+      <Param name="title" default="ChangedDefault" />
+      <Param name="sub" default="UpdatedSubDefault" />
+      <Canvas width="800" height="600">
+        <Label id="lbl_title" ref="lbl_title" text="{title}" />
+        <Label id="lbl_sub" ref="lbl_sub" text="{sub}" />
+        <SubBox />
+      </Canvas>
+    </OXML>
+  )");
+  BumpFileMtimeSeconds(mainOxml, 2);
+  rt.PollHotReload(1.0f, 0.0f);
+
+  const auto& diagAfterImport = rt.GetDiagnostics();
+  Check(diagAfterImport.lastParseOk, "hot-reload adding <Style> and <Use> succeeds");
+  Check(diagAfterImport.reloadCount >= 1U, "reloadCount incremented on hot-reload");
+  CheckEq(diagAfterImport.watchedFiles.size(), size_t{3},
+          "watchedFiles dynamically expanded to main.oxml, theme.oss, and sub.oxml");
+  const Entity reloadedTitle = lua["mounted_view"]["refs"]["lbl_title"]["entity"].get<Entity>();
+  const Entity reloadedSub = lua["mounted_view"]["refs"]["lbl_sub"]["entity"].get<Entity>();
+  CheckEq(reg.GetComponent<TextLabelComponent>(reloadedTitle).text, std::string("CustomTitle"),
+          "caller override preserved across reload");
+  CheckEq(reg.GetComponent<TextLabelComponent>(reloadedSub).text, std::string("UpdatedSubDefault"),
+          "non-overridden Param re-seeded to new default");
+
+  // Corrupt sub.oxml -> reload must fail gracefully, report file/error, and keep previous view alive.
+  const Entity activeBeforeErr = lua["mounted_view"]["root"].get<Entity>();
+  WriteTempTextFile(subOxml, R"(<Panel id="sub_box"><Label text="Broken")");
+  BumpFileMtimeSeconds(subOxml, 4);
+  rt.PollHotReload(1.0f, 0.0f);
+
+  const auto& diagErrXml = rt.GetDiagnostics();
+  Check(!diagErrXml.lastParseOk, "malformed <Use> XML sets lastParseOk = false");
+  Check(!diagErrXml.lastError.empty(), "malformed <Use> XML records non-empty lastError");
+  Check(diagErrXml.lastErrorFile.find("sub.oxml") != std::string::npos, "lastErrorFile identifies broken sub.oxml");
+  Check(reg.IsAlive(activeBeforeErr), "previous valid UI tree remains alive after XML hot-reload error");
+
+  // Fix sub.oxml and recover cleanly via PollHotReload, then corrupt theme.oss.
+  WriteTempTextFile(subOxml, R"(<Panel id="sub_box"><Label text="Recovered" /></Panel>)");
+  BumpFileMtimeSeconds(subOxml, 6);
+  rt.PollHotReload(1.0f, 0.0f);
+  Check(rt.GetDiagnostics().lastParseOk, "hot-reload recovers cleanly after fixing broken watched sub.oxml");
+
+  const Entity activeBeforeOssErr = lua["mounted_view"]["root"].get<Entity>();
+  WriteTempTextFile(themeOss, R"(#lbl_title { color: )");
+  BumpFileMtimeSeconds(themeOss, 8);
+  rt.PollHotReload(1.0f, 0.0f);
+
+  const auto& diagErrOss = rt.GetDiagnostics();
+  Check(!diagErrOss.lastParseOk, "malformed imported .oss sets lastParseOk = false");
+  Check(diagErrOss.lastErrorFile.find("theme.oss") != std::string::npos, "lastErrorFile identifies broken theme.oss");
+  Check(reg.IsAlive(activeBeforeOssErr), "previous valid UI tree survives .oss parse failure");
+
+  // Malformed root OXML during reload fails gracefully, preserves entity tree, and recovers.
+  WriteTempTextFile(themeOss, R"(#lbl_title { color: #ffffff; })");
+  BumpFileMtimeSeconds(themeOss, 10);
+  WriteTempTextFile(mainOxml, R"(<OXML><Canvas><Label text="BrokenRoot")");
+  BumpFileMtimeSeconds(mainOxml, 10);
+  rt.PollHotReload(1.0f, 0.0f);
+  Check(!rt.GetDiagnostics().lastParseOk, "malformed root .oxml sets lastParseOk = false");
+  Check(reg.IsAlive(activeBeforeOssErr), "previous valid UI tree survives root .oxml parse failure");
+
+  // Missing <Style> / <Use> imports also record error cleanly without crashing.
+  WriteTempTextFile(mainOxml,
+                    R"(<OXML><Style src="no_such.oss" /><Use name="Bad" src="no_such.oxml" /><Canvas /></OXML>)");
+  BumpFileMtimeSeconds(mainOxml, 12);
+  rt.PollHotReload(1.0f, 0.0f);
+  Check(!rt.GetDiagnostics().lastParseOk, "missing <Style>/<Use> import sets lastParseOk = false");
+
+  // Direct mount of malformed XML also records error diagnostics.
+  Check(lua.safe_script(R"(assert(ui.mount("<Canvas><Label") == nil))").valid(),
+        "ui.mount returns nil on malformed inline XML");
+  Check(!rt.GetDiagnostics().lastParseOk, "failed ui.mount records diagnostics error");
+}
+
+void TestUiRuntimeAutoAssetAcquireAndRelease() {
+  std::cout << "[UIRuntime: auto asset acquire/release across mount, reload, unmount]\n";
+  SDL_Init(0);
+  TTF_Init();
+  SDL_Surface* surface = SDL_CreateSurface(64, 64, SDL_PIXELFORMAT_RGBA32);
+  SDL_Renderer* sdlRenderer = surface != nullptr ? SDL_CreateSoftwareRenderer(surface) : nullptr;
+  Check(sdlRenderer != nullptr, "software SDL_Renderer created for UI auto-asset test");
+
+  if (sdlRenderer != nullptr) {
+    TempDirGuard tmp("oct_ui_assets_test");
+    WriteTinyPngTexture(tmp.dir / "assets/images/tex_a.png", 255, 0, 0, 255);
+    WriteTinyPngTexture(tmp.dir / "assets/images/tex_b.png", 0, 255, 0, 255);
+    {
+      std::filesystem::create_directories(tmp.dir / "assets/fonts");
+      std::ofstream ttfOut((tmp.dir / "assets/fonts/uifont.ttf").string(), std::ios::binary);
+      ttfOut.write(reinterpret_cast<const char*>(kMinimalTestTtf), sizeof(kMinimalTestTtf));
+    }
+    const auto viewPath = tmp.dir / "assets/ui/assets_view.oxml";
+    WriteTempTextFile(viewPath, R"(
+      <Canvas width="640" height="480">
+        <Image sprite="tex_a" width="32" height="32" />
+        <Label font="uifont-16" text="Hi" />
+      </Canvas>
+    )");
+
+    {
+      Registry reg;
+      TestUiBindingContext bindCtx(&reg);
+      sol::state lua;
+      SetupUiTestRegistry(reg, lua, bindCtx, tmp.dir, sdlRenderer);
+      auto& am = reg.Get<AssetManager>();
+      auto& rt = reg.Get<UIRuntime>();
+
+      CheckEq(am.RefCount("tex_a"), 0, "tex_a initially unloaded (refcount 0)");
+      const auto res = lua.safe_script(R"(_G.v = ui.mount("assets_view.oxml"))");
+      Check(res.valid(), "assets_view.oxml mounted");
+      CheckEq(am.RefCount("tex_a"), 1, "tex_a auto-acquired on mount (refcount 1)");
+      Check(am.GetTexture("tex_a") != nullptr, "tex_a SDL_Texture resident");
+      CheckEq(am.RefCount("uifont-16"), 1, "uifont-16 auto-acquired on mount (refcount 1)");
+      Check(am.GetFont("uifont-16") != nullptr, "uifont-16 TTF_Font resident");
+
+      WriteTempTextFile(viewPath, R"(
+        <Canvas width="640" height="480">
+          <Image sprite="tex_b" width="32" height="32" />
+          <Label font="uifont-16" text="Hi" />
+        </Canvas>
+      )");
+      BumpFileMtimeSeconds(viewPath, 2);
+      rt.PollHotReload(1.0f, 0.0f);
+
+      CheckEq(am.RefCount("tex_b"), 1, "tex_b acquired after reload swap");
+      CheckEq(am.RefCount("tex_a"), 0, "tex_a released after reload swap");
+      CheckEq(am.RefCount("uifont-16"), 1, "shared uifont-16 stays at refcount 1 across reload");
+
+      const auto unmountRes = lua.safe_script(R"(_G.v:unmount(); _G.v = nil)");
+      Check(unmountRes.valid(), "view unmounted cleanly");
+      CheckEq(am.RefCount("tex_b"), 0, "tex_b released on view unmount");
+      CheckEq(am.RefCount("uifont-16"), 0, "uifont-16 released on view unmount");
+    }
+    SDL_DestroyRenderer(sdlRenderer);
+  }
+  if (surface != nullptr) {
+    SDL_DestroySurface(surface);
+  }
+  TTF_Quit();
+  SDL_Quit();
+}
+
+#ifndef OCTARINE_SHIPPED
+void TestUiPreviewerCatalogIsolationAndDevLua() {
+  std::cout << "[UIPreviewer & dev.* Lua API: discovery, isolation, callback log, inline mount]\n";
+  TempDirGuard tmp("oct_ui_preview_lua_test");
+  WriteTempTextFile(tmp.dir / "assets/ui/panel.oxml", R"(
+    <Canvas width="400" height="300" layer="50">
+      <Button id="btn_go" ref="btn_go" width="120" height="40" on-click="on_test_click" />
+    </Canvas>
+  )");
+
+  Registry reg;
+  TestUiBindingContext bindCtx(&reg);
+  sol::state lua;
+  SetupUiTestRegistry(reg, lua, bindCtx, tmp.dir);
+  auto& cfg = reg.Get<GameConfig>();
+  auto& previewer = reg.Get<UIPreviewer>();
+
+  // Mount a non-preview background HUD view first.
+  const auto mountHudRes = lua.safe_script(R"(
+    _G.bg_hud = ui.mount('<Canvas width="200" height="100" layer="20"><Button id="bg_btn" ref="bg_btn" width="80" height="30" /></Canvas>')
+    local views = dev.list_ui_views()
+    assert(#views == 1 and views[1].id == "panel.oxml", "dev.list_ui_views lists catalog .oxml")
+  )",
+                                           sol::script_pass_on_error);
+  Check(mountHudRes.valid(), "background HUD mounted and dev.list_ui_views returned panel.oxml");
+  const Entity bgBtn = lua["bg_hud"]["refs"]["bg_btn"]["entity"].get<Entity>();
+  Check(!reg.GetComponent<UIFocusComponent>(bgBtn).isInert, "background HUD starts non-inert");
+
+  Check(lua.safe_script(R"(assert(dev.preview_ui("panel.oxml") == true))").valid(),
+        "dev.preview_ui mounts catalog view");
+  Check(previewer.IsActive() && !previewer.IsInline(), "previewer reports active file preview");
+
+  // Exercise isolation and fallback controller callback logging.
+  previewer.ClearCallbackEvents();
+  const Entity previewRoot = previewer.ActiveRootEntity();
+  Check(reg.IsAlive(previewRoot), "preview root entity is alive");
+  previewer.SetIsolatedMode(true);
+  Check(previewer.IsIsolatedMode(), "SetIsolatedMode(true) activates isolation");
+  Check(cfg.GetEngineOptions().isPaused, "isolation pauses simulation");
+  Check(reg.GetComponent<UIFocusComponent>(bgBtn).isInert, "isolation sets background HUD inert");
+  Check(reg.GetComponent<UICanvasComponent>(previewRoot).baseLayer > 20,
+        "isolation elevates preview baseLayer above background canvas");
+
+  const sol::table pinnedView = lua.registry()["__octarine_preview_pin"];
+  Check(pinnedView.valid(), "preview view table pinned in Lua registry");
+  const Entity btnGo = pinnedView["refs"]["btn_go"]["entity"].get<Entity>();
+  Check(reg.HasComponent<UIButtonComponent>(btnGo), "preview button entity resolved via refs");
+  const auto& btnComp = reg.GetComponent<UIButtonComponent>(btnGo);
+  Check(btnComp.clickFunction.valid(), "preview button wired fallback clickFunction");
+  if (btnComp.clickFunction.valid()) {
+    const auto cbCall = btnComp.clickFunction();
+    Check(cbCall.valid(), "fallback controller callback invocation succeeded");
+  }
+  Check(!previewer.RecentCallbackEvents().empty() &&
+            previewer.RecentCallbackEvents().back().find("on_test_click") != std::string::npos,
+        "callback log recorded on_test_click event");
+  previewer.ClearCallbackEvents();
+  Check(previewer.RecentCallbackEvents().empty(), "ClearCallbackEvents cleared event history");
+
+  // Inline preview + reload + unmount restores pause & background HUD inert state.
+  const auto inlineRes = lua.safe_script(R"(
+    assert(dev.preview_inline_ui('<Panel id="inl"><Label text="Hello" /></Panel>', '#inl { width: 120px; height: 40px; }') == true)
+    assert(dev.reload_preview_ui() == true)
+    local issues = dev.audit_ui()
+    assert(type(issues) == "table", "dev.audit_ui returns table")
+    local json = dev.audit_ui_json()
+    assert(type(json) == "string" and json:find("issue_count") ~= nil, "dev.audit_ui_json returns JSON")
+  )");
+  Check(inlineRes.valid(), "dev.preview_inline_ui, reload_preview_ui, audit_ui, and audit_ui_json succeeded");
+  Check(previewer.IsActive() && previewer.IsInline(), "inline preview active after dev.preview_inline_ui");
+
+  Check(lua.safe_script("dev.unmount_preview_ui()").valid(), "dev.unmount_preview_ui ran cleanly");
+  Check(!previewer.IsActive(), "previewer inactive after unmount");
+  Check(!cfg.GetEngineOptions().isPaused, "unmount restores unpaused state");
+  Check(!reg.GetComponent<UIFocusComponent>(bgBtn).isInert, "unmount restores background HUD inert=false");
+}
+
+void TestUiPreviewerAuditRulesAndBackdrops() {
+  std::cout << "[UIPreviewer: deterministic layout audit rules, JSON export, & backdrop emission]\n";
+  SDL_Init(0);
+  TTF_Init();
+  {
+    Registry reg;
+    auto& cfg = reg.Set<GameConfig>(GameConfig{});
+    cfg.windowWidth = 800;
+    cfg.windowHeight = 600;
+    CameraComponent cam;
+    cam.viewport = {0.0f, 0.0f, 800.0f, 600.0f};
+    reg.Set<CameraComponent>(cam);
+    auto& am = reg.Set<AssetManager>(AssetManager{});
+    am.AddFontFromMemory("audit-16", kMinimalTestTtf, sizeof(kMinimalTestTtf), 16.0f);
+    reg.Set<RenderQueue>(RenderQueue(256));
+
+    const Entity root = reg.CreateEntity();
+    UICanvasComponent canvas;
+    canvas.isFixed = true;
+    canvas.baseLayer = 100;
+    reg.AddComponent(root, canvas);
+    reg.AddComponent(root, UIRectComponent{0.0f, 0.0f, 800.0f, 600.0f, 100});
+
+    // 1. zero_size_visible + missing_focus_feedback on visible zero-size focusable widget.
+    const Entity zeroBtn = reg.CreateEntity();
+    reg.SetParent(zeroBtn, root);
+    reg.AddComponent(zeroBtn, UIRectComponent{10.0f, 10.0f, 10.0f, 10.0f, 101});
+    SquarePrimitiveComponent sq;
+    sq.color.r = 255;
+    sq.color.a = 255;
+    reg.AddComponent(zeroBtn, sq);
+    UIFocusComponent focusComp;
+    focusComp.isFocusable = true;
+    reg.AddComponent(zeroBtn, focusComp);
+
+    // 2. viewport_overflow (and clipped child that must NOT trigger viewport_overflow).
+    const Entity overBox = reg.CreateEntity();
+    reg.SetParent(overBox, root);
+    reg.AddComponent(overBox, UIRectComponent{760.0f, 10.0f, 840.0f, 50.0f, 101});
+
+    const Entity clipParent = reg.CreateEntity();
+    reg.SetParent(clipParent, root);
+    reg.AddComponent(clipParent, UIRectComponent{10.0f, 10.0f, 100.0f, 100.0f, 101});
+    reg.AddComponent(clipParent, UIClipComponent{});
+    const Entity clippedChild = reg.CreateEntity();
+    reg.SetParent(clippedChild, clipParent);
+    reg.AddComponent(clippedChild, UIRectComponent{760.0f, 10.0f, 840.0f, 50.0f, 102});
+
+    // 3. text_overflow in a tiny box.
+    const Entity tightLbl = reg.CreateEntity();
+    reg.SetParent(tightLbl, root);
+    reg.AddComponent(tightLbl, UIRectComponent{10.0f, 50.0f, 20.0f, 62.0f, 101});
+    reg.AddComponent(tightLbl, TextLabelComponent{{0.0f, 0.0f}, 1, "WWWWWWWWWW", "audit-16"});
+
+    // 4. sibling_overlap inside a UIFlexComponent container on the same layer.
+    const Entity flexRow = reg.CreateEntity();
+    reg.SetParent(flexRow, root);
+    reg.AddComponent(flexRow, UIRectComponent{10.0f, 100.0f, 200.0f, 160.0f, 101});
+    reg.AddComponent(flexRow, UIFlexComponent{});
+    const Entity s1 = reg.CreateEntity();
+    reg.SetParent(s1, flexRow);
+    reg.AddComponent(s1, UIRectComponent{10.0f, 100.0f, 80.0f, 140.0f, 102});
+    const Entity s2 = reg.CreateEntity();
+    reg.SetParent(s2, flexRow);
+    reg.AddComponent(s2, UIRectComponent{50.0f, 100.0f, 120.0f, 140.0f, 102});
+
+    UIPreviewer previewer(&reg);
+    const auto issues = previewer.AuditLayout();
+    auto hasCode = [&](const std::string& code) {
+      for (const auto& it : issues) {
+        if (it.code == code) return true;
+      }
+      return false;
+    };
+    Check(hasCode("zero_size_visible"), "AuditLayout flags zero_size_visible");
+    Check(hasCode("viewport_overflow"), "AuditLayout flags viewport_overflow");
+    Check(hasCode("text_overflow"), "AuditLayout flags text_overflow");
+    Check(hasCode("sibling_overlap"), "AuditLayout flags sibling_overlap");
+    Check(hasCode("missing_focus_feedback"), "AuditLayout flags missing_focus_feedback");
+
+    int viewportOverflowCount = 0;
+    for (const auto& it : issues) {
+      if (it.code == "viewport_overflow") ++viewportOverflowCount;
+    }
+    CheckEq(viewportOverflowCount, 1, "AuditLayout ignores overflowing descendants inside UIClipComponent");
+
+    const std::string json = previewer.AuditLayoutJson();
+    Check(json.find("\"issue_count\"") != std::string::npos && json.find("\"sibling_overlap\"") != std::string::npos,
+          "AuditLayoutJson serializes structured issue list");
+
+    // Backdrop & RenderWhenPaused verification (1 backdrop quad + 1 square primitive quad = 2).
+    auto& rq = reg.Get<RenderQueue>();
+    previewer.SetBackdropMode(PreviewBackdropMode::DarkSlate);
+    previewer.RenderWhenPaused(reg);
+    CheckEq(rq.Size(), size_t{2}, "RenderWhenPaused emits DarkSlate backdrop quad plus UI square");
+
+    previewer.SetBackdropMode(PreviewBackdropMode::LightGray);
+    previewer.RenderWhenPaused(reg);
+    CheckEq(rq.Size(), size_t{2}, "RenderWhenPaused emits LightGray backdrop quad plus UI square");
+
+    previewer.SetBackdropMode(PreviewBackdropMode::Checkerboard);
+    previewer.RenderWhenPaused(reg);
+    Check(rq.Size() > 1U && rq.Size() <= 256U, "RenderWhenPaused emits Checkerboard pattern within queue bounds");
+
+    previewer.SetBackdropMode(PreviewBackdropMode::SceneOverlay);
+    Check(!previewer.ShouldRenderWhilePaused(), "SceneOverlay inactive previewer does not override paused render");
+  }
+  TTF_Quit();
+  SDL_Quit();
+}
+
+void TestUiPreviewerHeadlessGameCliCaptureAndDispatch() {
+  std::cout << "[Game & DevListen: headless -m ui-preview, PNG capture, & OpCode::Capture]\n";
+  TempDirGuard tmp("oct_ui_game_cli_test");
+  WriteTempTextFile(tmp.dir / "config.ini",
+                    "Title=UIPreviewTest\nStartupScript=scripts/main.lua\n"
+                    "BaseResolutionWidth=320\nBaseResolutionHeight=240\n"
+                    "DefaultWindowWidth=320\nDefaultWindowHeight=240\n");
+  WriteTempTextFile(tmp.dir / "scripts/main.lua", R"(error("Startup script must not execute in ui-preview mode"))");
+  WriteTempTextFile(tmp.dir / "assets/ui/hud.oxml", R"(
+    <Canvas width="320" height="240">
+      <Panel id="card" width="200" height="80" background="#2b303bff">
+        <Label id="hp_lbl" text="HP: {hp}" />
+      </Panel>
+    </Canvas>
+  )");
+  WriteTempTextFile(tmp.dir / "scripts/mock_hud.lua", R"(return { context = { hp = 85 } })");
+
+  const auto cliPngPath = tmp.dir / "out/cli_capture.png";
+  const auto auditJsonPath = tmp.dir / "out/cli_audit.json";
+  const auto dispatchPngPath = tmp.dir / "out/dispatch_capture.png";
+  std::filesystem::create_directories(tmp.dir / "out");
+
+  {
+    auto game = std::make_unique<Game>();
+    game->SetHeadless(true);
+    game->SetStartupMode("ui-preview");
+    game->SetUiPreviewOptions("hud.oxml", "scripts/mock_hud.lua", 320, 240, cliPngPath.string(),
+                              auditJsonPath.string());
+    Check(game->Initialize(tmp.dir.string()), "headless Game initializes in -m ui-preview without running main.lua");
+    for (int f = 0; f < 3; ++f) {
+      game->StepTicks(1);
+    }
+
+    auto* previewer = game->GetRegistry()->TryGet<UIPreviewer>();
+    Check(previewer != nullptr && previewer->IsActive(), "UIPreviewer automatically mounted hud.oxml");
+    Check(previewer != nullptr && previewer->IsIsolatedMode(), "ui-preview session isolates canvas by default");
+    Check(std::filesystem::exists(cliPngPath) && HasPngMagicHeader(cliPngPath),
+          "one-shot --ui-capture wrote valid lossless PNG image");
+    Check(std::filesystem::exists(auditJsonPath), "one-shot --ui-audit-json wrote layout audit JSON file");
+
+    // Verify DevListen OpCode::Capture round-trip through MakeEngineCommandHandler.
+    const auto handler = octarine::dev::MakeEngineCommandHandler(*game->GetRegistry(), game->GetLua(), game.get());
+    std::uint32_t replyOp = 0;
+    std::string replyBody;
+    const std::string emptyReq;
+    handler(octarine::dev::OpCode::Capture, {emptyReq.begin(), emptyReq.end()}, replyOp, replyBody);
+    Check(!replyBody.empty() && replyBody[0] == 0, "OpCode::Capture rejects empty output path");
+
+    const std::string pngReq = dispatchPngPath.string();
+    replyBody.clear();
+    handler(octarine::dev::OpCode::Capture, {pngReq.begin(), pngReq.end()}, replyOp, replyBody);
+    Check(!replyBody.empty() && replyBody[0] == 1, "OpCode::Capture returns ok status on valid .png path");
+    Check(std::filesystem::exists(dispatchPngPath) && HasPngMagicHeader(dispatchPngPath),
+          "OpCode::Capture wrote valid lossless PNG via Game::CaptureFrameToFile");
+
+    const std::string wsReq = "   \r\n";
+    replyBody.clear();
+    handler(octarine::dev::OpCode::Capture, {wsReq.begin(), wsReq.end()}, replyOp, replyBody);
+    Check(!replyBody.empty() && replyBody[0] == 0, "OpCode::Capture rejects whitespace-only path");
+
+    const std::string badDirReq = "/nonexistent_oct_capture_dir_xyz/fail.png";
+    replyBody.clear();
+    handler(octarine::dev::OpCode::Capture, {badDirReq.begin(), badDirReq.end()}, replyOp, replyBody);
+    Check(!replyBody.empty() && replyBody[0] == 0, "OpCode::Capture reports failure on unwritable path");
+
+    const auto nullHandler = octarine::dev::MakeEngineCommandHandler(*game->GetRegistry(), game->GetLua(), nullptr);
+    replyBody.clear();
+    nullHandler(octarine::dev::OpCode::Capture, {pngReq.begin(), pngReq.end()}, replyOp, replyBody);
+    Check(!replyBody.empty() && replyBody[0] == 0, "OpCode::Capture rejects null Game pointer");
+
+    game->Destroy();
+  }
+
+  // Second headless session: auto-selects catalog view (empty target), paused preview render, and RequestCapture.
+  const auto panelPngPath = tmp.dir / "out/panel_capture.png";
+  {
+    auto game2 = std::make_unique<Game>();
+    game2->SetHeadless(true);
+    game2->SetStartupMode("ui-preview");
+    game2->SetUiPreviewOptions(Game::UiPreviewCliOptions{});
+    Check(game2->Initialize(tmp.dir.string()), "headless ui-preview initializes with empty --ui-file");
+    game2->StepTicks(1);
+
+    auto* p2 = game2->GetRegistry()->TryGet<UIPreviewer>();
+    Check(p2 != nullptr && p2->IsActive(), "empty --ui-file auto-selects first catalog view");
+    game2->SetPaused(true);
+    if (p2 != nullptr) {
+      p2->RequestCapture(panelPngPath.string());
+    }
+    game2->StepTicks(1);
+    Check(std::filesystem::exists(panelPngPath) && HasPngMagicHeader(panelPngPath),
+          "paused UI preview + RequestCapture wrote lossless PNG");
+    Check(p2 != nullptr && p2->LastCaptureStatus().find("Saved ") == 0,
+          "RequestCapture updated LastCaptureStatus cleanly");
+    game2->Destroy();
+  }
+}
+
+void TestUiPreviewCliFlagParsing() {
+  std::cout << "[Game: UI preview CLI flag parsing]\n";
+  Game::UiPreviewCliOptions opts{};
+  bool consumed = false;
+  bool parseErr = false;
+
+  Check(!Game::TryConsumeUiPreviewFlag("--unrelated", "foo", true, opts, consumed, parseErr),
+        "non-preview flag returns false");
+  Check(!consumed && !parseErr, "non-preview flag leaves state untouched");
+
+  Check(Game::TryConsumeUiPreviewFlag("--ui-file", "", false, opts, consumed, parseErr) && parseErr,
+        "missing flag value reports parseErr");
+  Check(Game::TryConsumeUiPreviewFlag("--ui-file", "hud.oxml", true, opts, consumed, parseErr) && consumed && !parseErr,
+        "--ui-file parsed");
+  Check(Game::TryConsumeUiPreviewFlag("--ui-mock", "mock.lua", true, opts, consumed, parseErr) && consumed && !parseErr,
+        "--ui-mock parsed");
+  Check(Game::TryConsumeUiPreviewFlag("--ui-size", "1280x800", true, opts, consumed, parseErr) && consumed && !parseErr,
+        "--ui-size valid WxH parsed");
+  CheckEq(opts.width, 1280, "ui-size width == 1280");
+  CheckEq(opts.height, 800, "ui-size height == 800");
+
+  Check(Game::TryConsumeUiPreviewFlag("--ui-size", "badsize", true, opts, consumed, parseErr) && parseErr,
+        "invalid --ui-size format reports parseErr");
+  Check(Game::TryConsumeUiPreviewFlag("--ui-size", "-10x20", true, opts, consumed, parseErr) && parseErr,
+        "non-positive --ui-size reports parseErr");
+  Check(Game::TryConsumeUiPreviewFlag("--ui-size", "abcxdef", true, opts, consumed, parseErr) && parseErr,
+        "non-numeric --ui-size reports parseErr");
+
+  Check(Game::TryConsumeUiPreviewFlag("--ui-capture", "out.png", true, opts, consumed, parseErr) && !parseErr,
+        "--ui-capture parsed");
+  Check(Game::TryConsumeUiPreviewFlag("--ui-audit-json", "out.json", true, opts, consumed, parseErr) && !parseErr,
+        "--ui-audit-json parsed");
+  Check(opts.HasAnyTrigger(), "HasAnyTrigger true when file/capture/audit set");
+}
+#endif  // !OCTARINE_SHIPPED
+
 }  // namespace
 
 int main() {
@@ -2626,5 +3216,13 @@ int main() {
   TestRenderTextUiScaleNoDoubleWrapAndWorldUnscaled();
   TestFontStoreAndMeasureCacheLru();
   TestGlyphAtlasIntegerScaleAndRenderTextTwoLevelCache();
+  TestUiHotReloadImportsParamsAndDiagnostics();
+  TestUiRuntimeAutoAssetAcquireAndRelease();
+#ifndef OCTARINE_SHIPPED
+  TestUiPreviewerCatalogIsolationAndDevLua();
+  TestUiPreviewerAuditRulesAndBackdrops();
+  TestUiPreviewerHeadlessGameCliCaptureAndDispatch();
+  TestUiPreviewCliFlagParsing();
+#endif
   return octarine::test::ReportSummary("UILayoutTest");
 }

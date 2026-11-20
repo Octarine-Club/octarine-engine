@@ -157,7 +157,7 @@ target_link_libraries(octarine_systems PRIVATE nlohmann_json::nlohmann_json)
 # -----------------------------------------------------------------------------
 # octarine_lua — sol2 component/module bindings + EmmyLua API manifest + hot reload.
 # -----------------------------------------------------------------------------
-octarine_library(octarine_lua
+set(OCTARINE_LUA_SOURCES
         Lua/LuaApiManifest.cpp
         Lua/LuaTableSerializer.cpp
         Lua/Bindings/InputSystemLuaBinding.cpp
@@ -181,6 +181,10 @@ octarine_library(octarine_lua
         Lua/Modules/UIModuleLuaBinding.cpp
         UI/UIRuntime.cpp
 )
+if (NOT OCTARINE_SHIPPED)
+    list(APPEND OCTARINE_LUA_SOURCES UI/UIPreviewer.cpp)
+endif ()
+octarine_library(octarine_lua ${OCTARINE_LUA_SOURCES})
 target_link_libraries(octarine_lua PUBLIC
         octarine_core
         octarine_assets
@@ -241,6 +245,9 @@ if (OCTARINE_WITH_IMGUI)
             Systems/RenderDebugGUISystem.cpp
             Systems/TilemapDebugPanel.cpp
     )
+    if (NOT OCTARINE_SHIPPED)
+        list(APPEND OCTARINE_ENGINE_SOURCES Debug/Panels/DebugUIPreviewerPanel.cpp)
+    endif ()
 endif ()
 octarine_library(octarine_engine ${OCTARINE_ENGINE_SOURCES})
 target_link_libraries(octarine_engine PUBLIC

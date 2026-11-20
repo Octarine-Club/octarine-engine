@@ -35,10 +35,15 @@ void DrawOverlayControls(DebugMenuRegistry& debugReg) {
   }
 }
 
-void DrawMountedViewsSection(Registry& registry) {
+void DrawMountedViewsSection(Registry& registry, [[maybe_unused]] DebugMenuRegistry& debugReg) {
   auto* uiRuntime = registry.TryGet<UIRuntime>();
   if (uiRuntime == nullptr) {
     ImGui::TextDisabled("UIRuntime is not active.");
+#ifndef OCTARINE_SHIPPED
+    if (ImGui::SmallButton("Open UI Previewer")) {
+      debugReg.SetPanelOpen("engine.ui_previewer", true);
+    }
+#endif
     return;
   }
 
@@ -48,6 +53,12 @@ void DrawMountedViewsSection(Registry& registry) {
   if (ImGui::SmallButton("Reload All Views")) {
     uiRuntime->ReloadAllMountedViews();
   }
+#ifndef OCTARINE_SHIPPED
+  ImGui::SameLine();
+  if (ImGui::SmallButton("Open UI Previewer")) {
+    debugReg.SetPanelOpen("engine.ui_previewer", true);
+  }
+#endif
 
   if (ImGui::BeginTable("##mounted_views_tbl", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
     ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed, 40.0f);
@@ -182,7 +193,7 @@ void DrawUIPanel(Registry& registry) {
 
   DrawOverlayControls(*debugReg);
   ImGui::Separator();
-  DrawMountedViewsSection(registry);
+  DrawMountedViewsSection(registry, *debugReg);
   ImGui::Separator();
   DrawUIElementsSection(registry, *debugReg);
 }

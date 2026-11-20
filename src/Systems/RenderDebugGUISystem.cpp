@@ -17,6 +17,9 @@
 #include "Debug/Panels/DebugMainMenuBar.h"
 #include "Debug/Panels/DebugSystemProfilerPanel.h"
 #include "Debug/Panels/DebugUIPanel.h"
+#ifndef OCTARINE_SHIPPED
+#include "Debug/Panels/DebugUIPreviewerPanel.h"
+#endif
 #include "Debug/Panels/DebugViewportGizmos.h"
 #include "ECS/Query.h"
 #include "Game/GameConfig.h"
@@ -149,6 +152,17 @@ void InstallBuiltInDebugPanels(octarine::debug::DebugMenuRegistry& debugReg) {
       .autoWindow = true,
       .drawCallback = [](Registry& reg) { octarine::debug::DrawUIPanel(reg); },
   });
+
+#ifndef OCTARINE_SHIPPED
+  debugReg.RegisterPanel({
+      .id = "engine.ui_previewer",
+      .category = "UI",
+      .title = "UI Previewer",
+      .shortcut = "Ctrl+Shift+V",
+      .autoWindow = true,
+      .drawCallback = [](Registry& reg) { octarine::debug::DrawUIPreviewerPanel(reg); },
+  });
+#endif
 
   debugReg.RegisterPanel({
       .id = "engine.options_and_watches",
