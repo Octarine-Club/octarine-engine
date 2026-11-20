@@ -1579,21 +1579,29 @@ color_grid_component = {}
 ---@class dev
 dev = {}
 
+function dev.apply_ui_stress_preset(...) end
+
 function dev.audit_ui(...) end
 
 function dev.audit_ui_json(...) end
 
 function dev.clear(...) end
 
+function dev.delete_ui_preset(...) end
+
 function dev.export_ui_mock_lua(...) end
 
 function dev.get_selected_entity(...) end
+
+function dev.get_ui_viewport_json(...) end
 
 function dev.inspect_ui_contract(...) end
 
 function dev.inspect_ui_contract_json(...) end
 
 function dev.is_panel_open(...) end
+
+function dev.list_ui_presets_json(...) end
 
 function dev.list_ui_views(...) end
 
@@ -1613,17 +1621,29 @@ function dev.reload_preview_ui(...) end
 
 function dev.resize_ui_mock_array(...) end
 
+function dev.run_ui_matrix_json(...) end
+
 function dev.save_ui_mock(...) end
+
+function dev.save_ui_preset(...) end
 
 function dev.seed_ui_mock(...) end
 
 function dev.select_entity(...) end
 
+function dev.select_ui_preset(...) end
+
 function dev.set_panel_open(...) end
+
+function dev.set_ui_integer_zoom(...) end
 
 function dev.set_ui_mock_field(...) end
 
 function dev.set_ui_param(...) end
+
+function dev.set_ui_safe_area_guides(...) end
+
+function dev.set_ui_viewport(...) end
 
 function dev.unmount_preview_ui(...) end
 

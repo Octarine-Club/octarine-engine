@@ -187,6 +187,9 @@ UIPreviewer* GetOrCreateUIPreviewer(LuaBindingContext& ctx) {
   } else {
     previewer->SetRegistry(reg);
   }
+  if (!previewer->HasCaptureCallback()) {
+    previewer->SetCaptureCallback([&ctx](const std::string& path) { return ctx.CaptureFrameToFile(path); });
+  }
   return previewer;
 }
 
@@ -423,10 +426,76 @@ void BindUIPreviewMockFunctions(sol::table& dev, sol::state& lua, LuaBindingCont
   });
 }
 
+void BindUIPreviewViewportFunctions(sol::table& dev, LuaBindingContext& ctx) {
+  dev.set_function("set_ui_viewport", [&ctx](const int width, const int height) -> bool {
+    auto* previewer = GetOrCreateUIPreviewer(ctx);
+    if (previewer == nullptr) return false;
+    previewer->SetSimulatedViewport(width, height);
+    return true;
+  });
+
+  dev.set_function("get_ui_viewport_json", [&ctx]() -> std::string {
+    auto* previewer = GetOrCreateUIPreviewer(ctx);
+    return previewer != nullptr ? previewer->ViewportInfoJson() : "{}";
+  });
+
+  dev.set_function("set_ui_safe_area_guides", [&ctx](const bool enabled) -> bool {
+    auto* previewer = GetOrCreateUIPreviewer(ctx);
+    if (previewer == nullptr) return false;
+    previewer->SetShowSafeAreaGuides(enabled);
+    return true;
+  });
+
+  dev.set_function("set_ui_integer_zoom", [&ctx](const bool enabled) -> bool {
+    auto* previewer = GetOrCreateUIPreviewer(ctx);
+    if (previewer == nullptr) return false;
+    previewer->SetIntegerZoomSimulation(enabled);
+    return true;
+  });
+}
+
+void BindUIPreviewPresetFunctions(sol::table& dev, LuaBindingContext& ctx) {
+  dev.set_function("list_ui_presets_json", [&ctx]() -> std::string {
+    auto* previewer = GetOrCreateUIPreviewer(ctx);
+    return previewer != nullptr ? previewer->ListPresetsJson() : "{}";
+  });
+
+  dev.set_function("select_ui_preset", [&ctx](const std::string& name) -> bool {
+    auto* previewer = GetOrCreateUIPreviewer(ctx);
+    return previewer != nullptr && previewer->SelectMockPreset(name);
+  });
+
+  dev.set_function("save_ui_preset", [&ctx](const std::string& name, const sol::optional<bool>& setDefault) -> bool {
+    auto* previewer = GetOrCreateUIPreviewer(ctx);
+    return previewer != nullptr && previewer->SaveMockPreset(name, setDefault.value_or(false));
+  });
+
+  dev.set_function("delete_ui_preset", [&ctx](const std::string& name) -> bool {
+    auto* previewer = GetOrCreateUIPreviewer(ctx);
+    return previewer != nullptr && previewer->DeleteMockPreset(name);
+  });
+
+  dev.set_function("apply_ui_stress_preset", [&ctx](const std::string& kind) -> bool {
+    auto* previewer = GetOrCreateUIPreviewer(ctx);
+    return previewer != nullptr && previewer->ApplyStressPreset(kind);
+  });
+
+  dev.set_function("run_ui_matrix_json",
+                   [&ctx](const std::string& outDir, const sol::optional<std::string>& resolutionsCsv,
+                          const sol::optional<std::string>& presetsCsv) -> std::string {
+                     auto* previewer = GetOrCreateUIPreviewer(ctx);
+                     if (previewer == nullptr) return "{}";
+                     return previewer->RunPreviewMatrixJson(outDir, resolutionsCsv.value_or(""),
+                                                            presetsCsv.value_or(""));
+                   });
+}
+
 void BindUIPreviewFunctions(sol::table& dev, sol::state& lua, LuaBindingContext& ctx) {
   BindUIPreviewMountFunctions(dev, ctx);
   BindUIPreviewAuditFunctions(dev, lua, ctx);
   BindUIPreviewMockFunctions(dev, lua, ctx);
+  BindUIPreviewViewportFunctions(dev, ctx);
+  BindUIPreviewPresetFunctions(dev, ctx);
 }
 #endif
 

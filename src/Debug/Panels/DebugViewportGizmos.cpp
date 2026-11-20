@@ -1,6 +1,8 @@
 #include "Debug/Panels/DebugViewportGizmos.h"
 
 #ifdef OCTARINE_WITH_IMGUI
+#include <cstdio>
+
 #include "Components/BoxColliderComponent.h"
 #include "Components/CameraComponents.h"
 #include "Components/CircleColliderComponent.h"
@@ -14,6 +16,10 @@
 #include "ECS/Query.h"
 #include "ECS/Registry.h"
 #include "Game/GameConfig.h"
+#include "Systems/UILayoutMetrics.h"
+#ifndef OCTARINE_SHIPPED
+#include "UI/UIPreviewer.h"
+#endif
 #include "imgui.h"
 
 namespace octarine::debug {
@@ -135,6 +141,47 @@ void DrawUIOverlays(Registry& registry, const DebugMenuRegistry& debugReg, const
   });
 }
 
+#ifndef OCTARINE_SHIPPED
+void DrawPreviewViewportAndSafeAreaGuides(const Registry& registry, const ViewportInfo& vp, ImDrawList* drawList) {
+  const auto* previewer = registry.TryGet<UIPreviewer>();
+  if (previewer == nullptr) return;
+  const bool hasSim = previewer->HasSimulatedViewport();
+  const bool showGuides = previewer->ShowSafeAreaGuides();
+  if (!hasSim && !showGuides) return;
+
+  const ImVec2 p0{vp.x, vp.y};
+  const ImVec2 p1{vp.x + vp.width, vp.y + vp.height};
+  if (hasSim) {
+    drawList->AddRect(p0, p1, IM_COL32(120, 210, 255, 220), 0.0f, 0, 1.5f);
+    const auto* cfg = registry.TryGet<GameConfig>();
+    const float uiScale = cfg != nullptr ? octarine::ui::ResolveUiScale(*cfg) : 1.0f;
+    char badge[96];
+    std::snprintf(badge, sizeof(badge), "Sim %dx%d | %.2fx UI", previewer->SimulatedWidth(),
+                  previewer->SimulatedHeight(), static_cast<double>(uiScale));
+    const ImVec2 textSz = ImGui::CalcTextSize(badge);
+    const ImVec2 b0{vp.x + 6.0f, vp.y + 6.0f};
+    const ImVec2 b1{b0.x + textSz.x + 10.0f, b0.y + textSz.y + 6.0f};
+    drawList->AddRectFilled(b0, b1, IM_COL32(16, 20, 28, 200), 3.0f);
+    drawList->AddRect(b0, b1, IM_COL32(120, 210, 255, 190), 3.0f);
+    drawList->AddText(ImVec2(b0.x + 5.0f, b0.y + 3.0f), IM_COL32(220, 240, 255, 255), badge);
+  }
+  if (!showGuides) return;
+
+  auto drawSafeRect = [&](const float insetRatio, const ImU32 col) {
+    const float ix = vp.width * insetRatio;
+    const float iy = vp.height * insetRatio;
+    drawList->AddRect(ImVec2(vp.x + ix, vp.y + iy), ImVec2(vp.x + vp.width - ix, vp.y + vp.height - iy), col, 0.0f, 0,
+                      1.0f);
+  };
+  drawSafeRect(0.035f, IM_COL32(56, 189, 248, 150));  // Action-safe 93%
+  drawSafeRect(0.050f, IM_COL32(250, 204, 21, 175));  // Title-safe 90%
+  const float cx = vp.x + vp.width * 0.5f;
+  const float cy = vp.y + vp.height * 0.5f;
+  drawList->AddLine(ImVec2(cx - 10.0f, cy), ImVec2(cx + 10.0f, cy), IM_COL32(255, 255, 255, 95), 1.0f);
+  drawList->AddLine(ImVec2(cx, cy - 10.0f), ImVec2(cx, cy + 10.0f), IM_COL32(255, 255, 255, 95), 1.0f);
+}
+#endif
+
 }  // namespace
 
 void DrawDebugViewportGizmos(Registry& registry) {
@@ -157,6 +204,9 @@ void DrawDebugViewportGizmos(Registry& registry) {
   }
 
   DrawUIOverlays(registry, *debugReg, *vp, drawList);
+#ifndef OCTARINE_SHIPPED
+  DrawPreviewViewportAndSafeAreaGuides(registry, *vp, drawList);
+#endif
 }
 
 }  // namespace octarine::debug

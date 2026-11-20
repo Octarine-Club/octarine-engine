@@ -65,12 +65,53 @@ std::string GetEnvVar(const char* name) {
 #endif
 }
 
+PresentationMode ResolveFramingModeForPreview(const GameConfig& config, [[maybe_unused]] Registry* registry) {
+#ifndef OCTARINE_SHIPPED
+  if (registry != nullptr) {
+    if (const auto* previewer = registry->TryGet<UIPreviewer>();
+        previewer != nullptr && previewer->HasSimulatedViewport()) {
+      return previewer->IntegerZoomSimulation() ? PresentationMode::IntegerScale : PresentationMode::Letterbox;
+    }
+  }
+#endif
+  return config.GetEngineOptions().presentationMode;
+}
+
+void SyncLuaWindowGlobals(sol::state* lua, const int w, const int h) {
+  if (lua == nullptr) return;
+  (*lua)["game_window_width"] = w;
+  (*lua)["game_window_height"] = h;
+}
+
 std::optional<SDL_FRect> PrepareSceneTargetForWindow(Renderer& renderer, SDL_Renderer* sdlRenderer,
                                                      GameConfig& gameConfig, sol::state* lua,
+                                                     [[maybe_unused]] Registry* registry,
                                                      const bool isHeadlessOrCapture) {
   if (sdlRenderer == nullptr) return std::nullopt;
+  bool hasSimViewport = false;
+  int simW = 0;
+  int simH = 0;
+#ifndef OCTARINE_SHIPPED
+  if (registry != nullptr) {
+    if (const auto* previewer = registry->TryGet<UIPreviewer>();
+        previewer != nullptr && previewer->HasSimulatedViewport()) {
+      hasSimViewport = true;
+      simW = previewer->SimulatedWidth();
+      simH = previewer->SimulatedHeight();
+      gameConfig.windowWidth = simW;
+      gameConfig.windowHeight = simH;
+    }
+  }
+#endif
+
   if (isHeadlessOrCapture) {
-    renderer.EnsureSceneTargetSize(sdlRenderer, gameConfig.windowWidth, gameConfig.windowHeight);
+    const int targetW = std::max(1, gameConfig.windowWidth);
+    const int targetH = std::max(1, gameConfig.windowHeight);
+    if (renderer.GetLogicalWidth() != targetW || renderer.GetLogicalHeight() != targetH) {
+      renderer.SetLogicalSize(targetW, targetH);
+      SyncLuaWindowGlobals(lua, targetW, targetH);
+    }
+    renderer.EnsureSceneTargetSize(sdlRenderer, targetW, targetH);
     return std::nullopt;
   }
   int outPixelW = 0;
@@ -80,23 +121,23 @@ std::optional<SDL_FRect> PrepareSceneTargetForWindow(Renderer& renderer, SDL_Ren
   }
 
   const auto& opts = gameConfig.GetEngineOptions();
-  const auto [logicalW, logicalH] = Renderer::ComputeLogicalSceneSize(
-      gameConfig.GetBaseWidth(), gameConfig.GetBaseHeight(), outPixelW, outPixelH, opts.presentationMode,
-      gameConfig.GetMinAspectRatio(), gameConfig.GetMaxAspectRatio());
+  const auto [logicalW, logicalH] =
+      hasSimViewport ? std::pair<int, int>{simW, simH}
+                     : Renderer::ComputeLogicalSceneSize(
+                           gameConfig.GetBaseWidth(), gameConfig.GetBaseHeight(), outPixelW, outPixelH,
+                           opts.presentationMode, gameConfig.GetMinAspectRatio(), gameConfig.GetMaxAspectRatio());
 
   if (logicalW != gameConfig.windowWidth || logicalH != gameConfig.windowHeight ||
       renderer.GetLogicalWidth() != logicalW || renderer.GetLogicalHeight() != logicalH) {
     gameConfig.windowWidth = logicalW;
     gameConfig.windowHeight = logicalH;
     renderer.SetLogicalSize(logicalW, logicalH);
-    if (lua != nullptr) {
-      (*lua)["game_window_width"] = logicalW;
-      (*lua)["game_window_height"] = logicalH;
-    }
+    SyncLuaWindowGlobals(lua, logicalW, logicalH);
   }
 
+  const PresentationMode framingMode = ResolveFramingModeForPreview(gameConfig, registry);
   const SDL_FRect compositeRect = Renderer::ComputeCompositeRect(gameConfig.windowWidth, gameConfig.windowHeight,
-                                                                 outPixelW, outPixelH, opts.presentationMode);
+                                                                 outPixelW, outPixelH, framingMode);
   const int targetW = std::max(1, static_cast<int>(std::lround(compositeRect.w)));
   const int targetH = std::max(1, static_cast<int>(std::lround(compositeRect.h)));
   renderer.EnsureSceneTargetSize(sdlRenderer, targetW, targetH);
@@ -105,17 +146,18 @@ std::optional<SDL_FRect> PrepareSceneTargetForWindow(Renderer& renderer, SDL_Ren
 }
 
 void SyncViewportRectFromWindow(SDL_Window* window, SDL_Renderer* sdlRenderer, const GameConfig& config,
-                                ViewportInfo& viewportInfo) {
+                                Registry* registry, ViewportInfo& viewportInfo) {
   if (window == nullptr) return;
   int windowW = 0;
   int windowH = 0;
   SDL_GetWindowSize(window, &windowW, &windowH);
+  const PresentationMode framingMode = ResolveFramingModeForPreview(config, registry);
   int outPixelW = 0;
   int outPixelH = 0;
   if (sdlRenderer != nullptr && SDL_GetRenderOutputSize(sdlRenderer, &outPixelW, &outPixelH) && outPixelW > 0 &&
       outPixelH > 0 && windowW > 0 && windowH > 0) {
-    const SDL_FRect physRect = Renderer::ComputeCompositeRect(config.windowWidth, config.windowHeight, outPixelW,
-                                                              outPixelH, config.GetEngineOptions().presentationMode);
+    const SDL_FRect physRect =
+        Renderer::ComputeCompositeRect(config.windowWidth, config.windowHeight, outPixelW, outPixelH, framingMode);
     const float sx = static_cast<float>(windowW) / static_cast<float>(outPixelW);
     const float sy = static_cast<float>(windowH) / static_cast<float>(outPixelH);
     viewportInfo.x = physRect.x * sx;
@@ -124,8 +166,8 @@ void SyncViewportRectFromWindow(SDL_Window* window, SDL_Renderer* sdlRenderer, c
     viewportInfo.height = physRect.h * sy;
     return;
   }
-  const SDL_FRect rect = Renderer::ComputeCompositeRect(config.windowWidth, config.windowHeight, windowW, windowH,
-                                                        config.GetEngineOptions().presentationMode);
+  const SDL_FRect rect =
+      Renderer::ComputeCompositeRect(config.windowWidth, config.windowHeight, windowW, windowH, framingMode);
   viewportInfo.x = rect.x;
   viewportInfo.y = rect.y;
   viewportInfo.width = rect.w;
@@ -178,8 +220,15 @@ FrameLoop::FrameLoop(Game* game, Registry* registry, EventBus* eventBus, Rendere
 }
 
 void FrameLoop::SyncSceneTargetAndScale(GameConfig& config) {
-  const bool isHeadlessOrCapture = game_->IsHeadless() || config.GetEngineOptions().headless || !capture_path_.empty();
-  PrepareSceneTargetForWindow(*renderer_, runtime_->SdlRenderer(), config, &lua_, isHeadlessOrCapture);
+#ifndef OCTARINE_SHIPPED
+  const auto* previewer = registry_ != nullptr ? registry_->TryGet<UIPreviewer>() : nullptr;
+  const bool pendingCap = (previewer != nullptr && previewer->HasPendingCapture());
+#else
+  constexpr bool pendingCap = false;
+#endif
+  const bool isHeadlessOrCapture =
+      game_->IsHeadless() || config.GetEngineOptions().headless || !capture_path_.empty() || pendingCap;
+  PrepareSceneTargetForWindow(*renderer_, runtime_->SdlRenderer(), config, &lua_, registry_, isHeadlessOrCapture);
   if (auto* ctx = registry_->TryGet<EngineContext>()) {
     ctx->sceneRenderScale = renderer_->GetRenderScale();
     ctx->sceneRenderScaleX = renderer_->GetRenderScaleX();
@@ -192,7 +241,7 @@ void FrameLoop::Begin() {
   if (auto* gameConfig = registry_->TryGet<GameConfig>()) {
     SyncSceneTargetAndScale(*gameConfig);
     if (auto* viewportInfo = registry_->TryGet<ViewportInfo>()) {
-      SyncViewportRectFromWindow(runtime_->Window(), runtime_->SdlRenderer(), *gameConfig, *viewportInfo);
+      SyncViewportRectFromWindow(runtime_->Window(), runtime_->SdlRenderer(), *gameConfig, registry_, *viewportInfo);
     }
   }
   int count = 0;
@@ -375,12 +424,11 @@ bool ShouldClearBackbuffer(SDL_Renderer* sdlRenderer, const GameConfig& gameConf
   }
   int outPixelW = 0;
   int outPixelH = 0;
-  if (SDL_GetRenderOutputSize(sdlRenderer, &outPixelW, &outPixelH) && compositeRect->x <= 0.0F &&
-      compositeRect->y <= 0.0F && (compositeRect->x + compositeRect->w) >= static_cast<float>(outPixelW) &&
-      (compositeRect->y + compositeRect->h) >= static_cast<float>(outPixelH)) {
-    return false;
-  }
-  return true;
+  const bool coversOutput = SDL_GetRenderOutputSize(sdlRenderer, &outPixelW, &outPixelH) && compositeRect->x <= 0.0F &&
+                            compositeRect->y <= 0.0F &&
+                            (compositeRect->x + compositeRect->w) >= static_cast<float>(outPixelW) &&
+                            (compositeRect->y + compositeRect->h) >= static_cast<float>(outPixelH);
+  return !coversOutput;
 }
 
 void CompositeSceneToTarget(Renderer* renderer, SDL_Renderer* sdlRenderer, Registry* registry,
@@ -431,7 +479,7 @@ void FrameLoop::HandleWindowEvent(const SDL_Event& event) {
   }
   SyncSceneTargetAndScale(*config);
   if (auto* viewportInfo = registry_->TryGet<ViewportInfo>()) {
-    SyncViewportRectFromWindow(runtime_->Window(), runtime_->SdlRenderer(), *config, *viewportInfo);
+    SyncViewportRectFromWindow(runtime_->Window(), runtime_->SdlRenderer(), *config, registry_, *viewportInfo);
   }
   if (event.type == SDL_EVENT_WINDOW_DISPLAY_CHANGED && runtime_->SdlRenderer() != nullptr) {
     Renderer::ApplyVSync(runtime_->SdlRenderer(), config->GetEngineOptions().vsync);
@@ -569,7 +617,7 @@ int FrameLoop::Update(const float deltaTime) {
 void FrameLoop::UpdateViewportInfo([[maybe_unused]] const bool showDebugGUI) {
   auto& viewportInfo = registry_->Get<ViewportInfo>();
   const auto& gameConfig = registry_->Get<GameConfig>();
-  SyncViewportRectFromWindow(runtime_->Window(), runtime_->SdlRenderer(), gameConfig, viewportInfo);
+  SyncViewportRectFromWindow(runtime_->Window(), runtime_->SdlRenderer(), gameConfig, registry_, viewportInfo);
 
 #ifdef OCTARINE_WITH_IMGUI
   const auto& io = ImGui::GetIO();
@@ -601,27 +649,39 @@ void FrameLoop::ConfigureOneShotCapture(const std::string& capturePath, const st
   capture_done_ = false;
 }
 
+void FrameLoop::ConfigureOneShotMatrix(const std::string& outDir, const std::string& resolutionsCsv,
+                                       const std::string& presetsCsv, const long captureFrame) {
+  matrix_out_dir_ = outDir;
+  matrix_resolutions_csv_ = resolutionsCsv;
+  matrix_presets_csv_ = presetsCsv;
+  capture_frame_ = captureFrame;
+  frame_index_ = 0;
+  capture_done_ = false;
+}
+
 bool FrameLoop::RenderAndCaptureToFile(const std::string& path) {
   if (path.empty() || runtime_->SdlRenderer() == nullptr) return false;
   auto& gameConfig = registry_->Get<GameConfig>();
   auto& opts = gameConfig.GetEngineOptions();
   auto& renderQueue = registry_->Get<RenderQueue>();
+
+  const bool wasCaptureRender = force_capture_render_;
+  force_capture_render_ = true;
+  PrepareSceneTargetForWindow(*renderer_, runtime_->SdlRenderer(), gameConfig, &lua_, registry_, true);
+  if (auto* ctx = registry_->TryGet<EngineContext>()) {
+    ctx->sceneRenderScale = renderer_->GetRenderScale();
+    ctx->sceneRenderScaleX = renderer_->GetRenderScaleX();
+    ctx->sceneRenderScaleY = renderer_->GetRenderScaleY();
+  }
+
   if (renderQueue.IsEmpty()) {
-    if (opts.isPaused) {
-      if (auto* uiPreviewer = registry_->TryGet<UIPreviewer>()) {
-        uiPreviewer->RenderWhenPaused(*registry_);
-      }
-    } else {
-      if (auto* uiPreviewer = registry_->TryGet<UIPreviewer>()) {
-        uiPreviewer->SyncActivePreview();
-        uiPreviewer->EmitBackdropIfNeeded(*registry_);
-      }
+    if (auto* uiPreviewer = registry_->TryGet<UIPreviewer>(); uiPreviewer != nullptr && uiPreviewer->IsActive()) {
+      uiPreviewer->RenderWhenPaused(*registry_);
+    } else if (!opts.isPaused) {
       registry_->Update(0.0F);
     }
   }
-  const bool wasCaptureRender = force_capture_render_;
-  force_capture_render_ = true;
-  PrepareSceneTargetForWindow(*renderer_, runtime_->SdlRenderer(), gameConfig, &lua_, true);
+
   renderer_->BeginScene(runtime_->SdlRenderer());
   renderQueue.Sort();
   renderer_->DrawQueue(renderQueue, runtime_->SdlRenderer());
@@ -634,9 +694,9 @@ bool FrameLoop::RenderAndCaptureToFile(const std::string& path) {
 #endif
 
 void FrameLoop::CheckHeadlessCapture() {
-  // Headless / one-shot capture & audit: once target frame is reached, write outputs and quit.
+  // Headless / one-shot capture, audit, & matrix: once target frame is reached, write outputs and quit.
 #ifndef OCTARINE_SHIPPED
-  const bool hasWork = !capture_path_.empty() || !audit_json_path_.empty();
+  const bool hasWork = !capture_path_.empty() || !audit_json_path_.empty() || !matrix_out_dir_.empty();
   const std::string auditPath = audit_json_path_;
 #else
   const bool hasWork = !capture_path_.empty();
@@ -652,6 +712,15 @@ void FrameLoop::CheckHeadlessCapture() {
       }
     }
     WriteOneShotUiAuditJson(registry_, auditPath);
+#ifndef OCTARINE_SHIPPED
+    if (!matrix_out_dir_.empty()) {
+      if (auto* uiPreviewer = registry_->TryGet<UIPreviewer>()) {
+        static_cast<void>(
+            uiPreviewer->RunPreviewMatrixJson(matrix_out_dir_, matrix_resolutions_csv_, matrix_presets_csv_));
+        Logger::Info("FrameLoop: wrote UI preview matrix to " + matrix_out_dir_);
+      }
+    }
+#endif
     capture_done_ = true;
     Game::Quit();
   }
@@ -682,8 +751,9 @@ void FrameLoop::Render(const float deltaTime) {
     return;
   }
 
-  const auto compositeRect = PrepareSceneTargetForWindow(*renderer_, runtime_->SdlRenderer(), gameConfig, &lua_,
-                                                         isHeadless || !capture_path_.empty() || forceCaptureRender);
+  const auto compositeRect = PrepareSceneTargetForWindow(
+      *renderer_, runtime_->SdlRenderer(), gameConfig, &lua_, registry_,
+      isHeadless || !capture_path_.empty() || !pendingPanelCapture.empty() || forceCaptureRender);
   if (auto* ctx = registry_->TryGet<EngineContext>()) {
     ctx->sceneRenderScale = renderer_->GetRenderScale();
     ctx->sceneRenderScaleX = renderer_->GetRenderScaleX();

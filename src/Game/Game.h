@@ -87,13 +87,18 @@ class Game : public LuaBindingContext {
   struct UiPreviewCliOptions {
     std::string file{};
     std::string mockScript{};
+    std::string preset{};
     int width{0};
     int height{0};
     std::string capturePath{};
     std::string auditJsonPath{};
+    std::string matrixOutDir{};
+    std::string resolutionsCsv{};
+    std::string presetsCsv{};
 
     [[nodiscard]] bool HasAnyTrigger() const noexcept {
-      return !file.empty() || !capturePath.empty() || !auditJsonPath.empty();
+      return !file.empty() || !capturePath.empty() || !auditJsonPath.empty() || !matrixOutDir.empty() ||
+             !preset.empty();
     }
   };
 
@@ -107,7 +112,7 @@ class Game : public LuaBindingContext {
   void SetUiPreviewOptions(const UiPreviewCliOptions& cliOpts);
   void SetUiPreviewOptions(const std::string& file, const std::string& mockScript, int width, int height,
                            const std::string& capturePath, const std::string& auditJsonPath);
-  [[nodiscard]] bool CaptureFrameToFile(const std::string& path);
+  [[nodiscard]] bool CaptureFrameToFile(const std::string& path) override;
 #endif
 
   [[nodiscard]] SDL_Renderer* GetRenderer() const override { return runtime_.SdlRenderer(); }
@@ -171,12 +176,16 @@ class Game : public LuaBindingContext {
   bool dev_mode_ = false;
 #ifndef OCTARINE_SHIPPED
   int dev_listen_port_ = 0;
-  std::string ui_preview_file_;
-  std::string ui_preview_mock_;
+  std::string ui_preview_file_{};
+  std::string ui_preview_mock_{};
+  std::string ui_preview_preset_{};
   int ui_preview_width_ = 0;
   int ui_preview_height_ = 0;
-  std::string ui_preview_capture_path_;
-  std::string ui_preview_audit_json_path_;
+  std::string ui_preview_capture_path_{};
+  std::string ui_preview_audit_json_path_{};
+  std::string ui_preview_matrix_out_dir_{};
+  std::string ui_preview_resolutions_csv_{};
+  std::string ui_preview_presets_csv_{};
 #endif
   int bake_validation_failures_ = 0;
 

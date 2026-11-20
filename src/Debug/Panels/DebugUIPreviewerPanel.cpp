@@ -126,10 +126,120 @@ void DrawToolbarOverlayAndScaleRow(Registry& registry, UIPreviewer& previewer, D
   }
 }
 
+struct ViewportProfile {
+  const char* label;
+  int width;
+  int height;
+};
+
+constexpr ViewportProfile kViewportProfiles[] = {
+    {"Native Window", 0, 0},
+    {"1920x1080 (16:9 FHD)", 1920, 1080},
+    {"1280x800 (16:10 Deck)", 1280, 800},
+    {"1280x720 (16:9 HD)", 1280, 720},
+    {"2560x1080 (21:9 UW)", 2560, 1080},
+    {"800x600 (4:3 Compact)", 800, 600},
+    {"640x360 (16:9 Low)", 640, 360},
+    {"Custom (WxH)", -1, -1},
+};
+constexpr int kCustomViewportProfileIdx = 7;
+
+int FindActiveViewportProfileIndex(const UIPreviewer& previewer, int& customW, int& customH) {
+  if (!previewer.HasSimulatedViewport()) return 0;
+  const auto [simW, simH] = previewer.SimulatedViewport();
+  customW = simW;
+  customH = simH;
+  for (int i = 1; i < kCustomViewportProfileIdx; ++i) {
+    if (kViewportProfiles[i].width == simW && kViewportProfiles[i].height == simH) return i;
+  }
+  return kCustomViewportProfileIdx;
+}
+
+void DrawViewportComboControl(UIPreviewer& previewer, const int activeIdx, const int customW, const int customH) {
+  ImGui::SetNextItemWidth(175.0f);
+  if (!ImGui::BeginCombo("Viewport", kViewportProfiles[activeIdx].label)) return;
+  for (int i = 0; i <= kCustomViewportProfileIdx; ++i) {
+    if (!ImGui::Selectable(kViewportProfiles[i].label, i == activeIdx)) continue;
+    if (i == 0) {
+      previewer.ClearSimulatedViewport();
+    } else if (i == kCustomViewportProfileIdx) {
+      previewer.SetSimulatedViewport(std::clamp(customW, 64, 4096), std::clamp(customH, 64, 4096));
+    } else {
+      previewer.SetSimulatedViewport(kViewportProfiles[i].width, kViewportProfiles[i].height);
+    }
+  }
+  ImGui::EndCombo();
+}
+
+void DrawCustomViewportControls(UIPreviewer& previewer, int& customW, int& customH) {
+  const auto [simW, simH] = previewer.SimulatedViewport();
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(64.0f);
+  const bool wChanged = ImGui::InputInt("##sim_w", &customW, 0, 0, ImGuiInputTextFlags_EnterReturnsTrue);
+  ImGui::SameLine();
+  ImGui::TextUnformatted("x");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(64.0f);
+  const bool hChanged = ImGui::InputInt("##sim_h", &customH, 0, 0, ImGuiInputTextFlags_EnterReturnsTrue);
+  if (wChanged || hChanged) {
+    previewer.SetSimulatedViewport(std::clamp(customW, 64, 4096), std::clamp(customH, 64, 4096));
+  }
+  ImGui::SameLine();
+  if (ImGui::SmallButton("Swap")) {
+    previewer.SetSimulatedViewport(simH, simW);
+  }
+}
+
+void DrawPresetSelectorCombo(UIPreviewer& previewer, const std::vector<std::string>& presets,
+                             const std::string& activePreset, const char* comboId = "Preset",
+                             const float width = 140.0f) {
+  const char* comboLabel = activePreset.empty() ? (presets.empty() ? "(none)" : "default") : activePreset.c_str();
+  ImGui::SetNextItemWidth(width);
+  if (!ImGui::BeginCombo(comboId, comboLabel)) return;
+
+  for (const auto& p : presets) {
+    if (ImGui::Selectable(p.c_str(), p == activePreset)) previewer.SelectMockPreset(p);
+  }
+  if (ImGui::Selectable("@default", activePreset == "@default")) previewer.ApplyStressPreset("default");
+  if (ImGui::Selectable("@empty", activePreset == "@empty")) previewer.ApplyStressPreset("empty");
+  if (ImGui::Selectable("@overflow", activePreset == "@overflow")) previewer.ApplyStressPreset("overflow");
+  ImGui::EndCombo();
+}
+
+void DrawToolbarViewportRow(UIPreviewer& previewer) {
+  static int customW = 1280;
+  static int customH = 800;
+
+  const int activeIdx = FindActiveViewportProfileIndex(previewer, customW, customH);
+  DrawViewportComboControl(previewer, activeIdx, customW, customH);
+  if (previewer.HasSimulatedViewport()) {
+    DrawCustomViewportControls(previewer, customW, customH);
+  }
+
+  ImGui::SameLine();
+  bool safeAreas = previewer.ShowSafeAreaGuides();
+  if (ImGui::Checkbox("Safe Areas", &safeAreas)) {
+    previewer.SetShowSafeAreaGuides(safeAreas);
+  }
+  ImGui::SameLine();
+  ImGui::BeginDisabled(!previewer.HasSimulatedViewport());
+  bool intZoom = previewer.IntegerZoomSimulation();
+  if (ImGui::Checkbox("Int Zoom", &intZoom)) {
+    previewer.SetIntegerZoomSimulation(intZoom);
+  }
+  ImGui::EndDisabled();
+
+  if (const auto presets = previewer.ListMockPresets(); !presets.empty()) {
+    ImGui::SameLine();
+    DrawPresetSelectorCombo(previewer, presets, previewer.ActiveMockPreset(), "Preset##toolbar", 120.0f);
+  }
+}
+
 void DrawPrimaryToolbar(Registry& registry, UIPreviewer& previewer, DebugMenuRegistry& debugReg, GameConfig& cfg) {
   auto& opts = cfg.GetEngineOptions();
   DrawToolbarActionRow(previewer, opts);
   DrawToolbarOverlayAndScaleRow(registry, previewer, debugReg, cfg, opts);
+  DrawToolbarViewportRow(previewer);
 }
 
 const char* MockSourceBadgeLabel(const MockSourceMode mode) {
@@ -513,8 +623,114 @@ void DrawMockCallbacksAndMetaSection(UIPreviewer& previewer, const std::vector<M
   }
 }
 
-void DrawMockHeaderBar(UIPreviewer& previewer, const bool hasAnyUnset) {
+enum class PendingCtrlSaveKind : std::uint8_t { None = 0, Sidecar = 1, Preset = 2, DeletePreset = 3 };
+
+struct MockSaveModalState {
+  PendingCtrlSaveKind kind{PendingCtrlSaveKind::None};
+  std::string presetName{};
+  bool setAsDefault{false};
+};
+
+void DrawMockControllerOverwritePopup(UIPreviewer& previewer, MockSaveModalState& modalState) {
+  if (!ImGui::BeginPopupModal("##confirm_ctrl_overwrite", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+  ImGui::TextColored(ImVec4(1.0f, 0.78f, 0.25f, 1.0f), "Controller Functions Detected");
+  ImGui::TextWrapped(
+      "The loaded mock script contains Lua controller functions which cannot be serialized cleanly and will be omitted "
+      "when saving. Overwrite file on disk?");
+  if (ImGui::Button("Overwrite Anyway")) {
+    if (modalState.kind == PendingCtrlSaveKind::Sidecar) {
+      previewer.SaveMockSidecar();
+    } else if (modalState.kind == PendingCtrlSaveKind::Preset) {
+      previewer.SaveMockPreset(modalState.presetName, modalState.setAsDefault);
+    } else if (modalState.kind == PendingCtrlSaveKind::DeletePreset) {
+      previewer.DeleteMockPreset(modalState.presetName);
+    }
+    modalState.kind = PendingCtrlSaveKind::None;
+    ImGui::CloseCurrentPopup();
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Cancel")) {
+    modalState.kind = PendingCtrlSaveKind::None;
+    ImGui::CloseCurrentPopup();
+  }
+  ImGui::EndPopup();
+}
+
+void RequestSaveSidecarWithGuard(UIPreviewer& previewer, MockSaveModalState& modalState) {
+  if (previewer.HasLiveControllerScript()) {
+    modalState.kind = PendingCtrlSaveKind::Sidecar;
+    ImGui::OpenPopup("##confirm_ctrl_overwrite");
+  } else {
+    previewer.SaveMockSidecar();
+  }
+}
+
+void RequestSavePresetWithGuard(UIPreviewer& previewer, MockSaveModalState& modalState, const std::string& name,
+                                const bool setDef) {
+  if (name.empty()) return;
+  if (previewer.HasLiveControllerScript()) {
+    modalState.kind = PendingCtrlSaveKind::Preset;
+    modalState.presetName = name;
+    modalState.setAsDefault = setDef;
+    ImGui::OpenPopup("##confirm_ctrl_overwrite");
+  } else {
+    previewer.SaveMockPreset(name, setDef);
+  }
+}
+
+void RequestDeletePresetWithGuard(UIPreviewer& previewer, MockSaveModalState& modalState, const std::string& name) {
+  if (name.empty()) return;
+  if (previewer.HasLiveControllerScript()) {
+    modalState.kind = PendingCtrlSaveKind::DeletePreset;
+    modalState.presetName = name;
+    ImGui::OpenPopup("##confirm_ctrl_overwrite");
+  } else {
+    previewer.DeleteMockPreset(name);
+  }
+}
+
+void DrawMockPresetBar(UIPreviewer& previewer, const bool canSave, MockSaveModalState& modalState) {
+  static char savePresetBuf[64] = "compact";
+  static bool setAsDefault = false;
+
+  const auto presets = previewer.ListMockPresets();
+  const std::string& activePreset = previewer.ActiveMockPreset();
+  DrawPresetSelectorCombo(previewer, presets, activePreset);
+
+  ImGui::SameLine();
+  if (ImGui::SmallButton("Stress: Empty")) previewer.ApplyStressPreset("empty");
+  ImGui::SameLine();
+  if (ImGui::SmallButton("Stress: Overflow")) previewer.ApplyStressPreset("overflow");
+
+  const bool canDelete = canSave && !activePreset.empty() && !activePreset.starts_with('@') && presets.size() > 1;
+  ImGui::SameLine();
+  ImGui::BeginDisabled(!canDelete);
+  if (ImGui::SmallButton("Del Preset")) RequestDeletePresetWithGuard(previewer, modalState, activePreset);
+  ImGui::EndDisabled();
+
+  ImGui::BeginDisabled(!canSave);
+  ImGui::SetNextItemWidth(130.0f);
+  ImGui::InputTextWithHint("##save_preset_name", "Preset name...", savePresetBuf, sizeof(savePresetBuf));
+  ImGui::SameLine();
+  ImGui::Checkbox("Default", &setAsDefault);
+  ImGui::SameLine();
+  if (ImGui::Button("Save Preset") && savePresetBuf[0] != '\0') {
+    RequestSavePresetWithGuard(previewer, modalState, savePresetBuf, setAsDefault);
+  }
+  ImGui::EndDisabled();
+}
+
+void DrawMockScriptLoadRow(UIPreviewer& previewer) {
   static char loadPathBuf[256] = "";
+  ImGui::SetNextItemWidth(220.0f);
+  ImGui::InputTextWithHint("##load_mock_path", "Load mock .lua script...", loadPathBuf, sizeof(loadPathBuf));
+  ImGui::SameLine();
+  if (ImGui::Button("Load Mock") && loadPathBuf[0] != '\0') {
+    previewer.LoadMockScript(loadPathBuf);
+  }
+}
+
+void DrawMockHeaderBar(UIPreviewer& previewer, const bool hasAnyUnset, MockSaveModalState& modalState) {
   const bool canSave =
       !previewer.IsInline() && (!previewer.TargetSidecarPath().empty() || !previewer.ActiveMockPath().empty());
 
@@ -525,7 +741,7 @@ void DrawMockHeaderBar(UIPreviewer& previewer, const bool hasAnyUnset) {
   }
   ImGui::SameLine();
   ImGui::BeginDisabled(!canSave);
-  if (ImGui::Button("Save .preview.lua")) previewer.SaveMockSidecar();
+  if (ImGui::Button("Save .preview.lua")) RequestSaveSidecarWithGuard(previewer, modalState);
   ImGui::EndDisabled();
   ImGui::SameLine();
   if (ImGui::Button("Copy Mock Lua")) {
@@ -543,12 +759,7 @@ void DrawMockHeaderBar(UIPreviewer& previewer, const bool hasAnyUnset) {
     if (ImGui::Button("Seed Missing")) previewer.SeedMissingContractFields();
   }
 
-  ImGui::SetNextItemWidth(220.0f);
-  ImGui::InputTextWithHint("##load_mock_path", "Load mock .lua script...", loadPathBuf, sizeof(loadPathBuf));
-  ImGui::SameLine();
-  if (ImGui::Button("Load Mock") && loadPathBuf[0] != '\0') {
-    previewer.LoadMockScript(loadPathBuf);
-  }
+  DrawMockScriptLoadRow(previewer);
 }
 
 void DrawMockDataTab(UIPreviewer& previewer) {
@@ -561,8 +772,17 @@ void DrawMockDataTab(UIPreviewer& previewer) {
   const auto params = previewer.CollectMockParams();
   const auto callbacks = previewer.CollectMockCallbacks();
   const bool hasAnyUnset = std::ranges::any_of(fields, [](const MockFieldEntry& f) { return f.isUnset; });
+  static MockSaveModalState modalState{};
+  const bool canSave =
+      !previewer.IsInline() && (!previewer.TargetSidecarPath().empty() || !previewer.ActiveMockPath().empty());
 
-  DrawMockHeaderBar(previewer, hasAnyUnset);
+  if (previewer.HasLiveControllerScript()) {
+    ImGui::TextColored(ImVec4(1.0f, 0.78f, 0.25f, 1.0f),
+                       "Controller functions detected: saving or deleting presets will rewrite data-only Lua.");
+  }
+  DrawMockHeaderBar(previewer, hasAnyUnset, modalState);
+  DrawMockPresetBar(previewer, canSave, modalState);
+  DrawMockControllerOverwritePopup(previewer, modalState);
 
   ImGui::Separator();
   if (ImGui::BeginChild("##mock_data_scroll", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None)) {

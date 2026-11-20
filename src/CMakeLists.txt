@@ -185,6 +185,7 @@ if (NOT OCTARINE_SHIPPED)
     list(APPEND OCTARINE_LUA_SOURCES
             UI/OxmlContract.cpp
             UI/UIPreviewer.cpp
+            UI/UIPreviewerPresets.cpp
     )
 endif ()
 octarine_library(octarine_lua ${OCTARINE_LUA_SOURCES})

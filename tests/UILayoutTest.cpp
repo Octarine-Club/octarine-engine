@@ -1,4 +1,5 @@
 #include <SDL3/SDL.h>
+#include <SDL3_image/SDL_image.h>
 #include <SDL3_ttf/SDL_ttf.h>
 
 #include <chrono>
@@ -2652,6 +2653,25 @@ bool HasPngMagicHeader(const std::filesystem::path& path) {
          sig[6] == 0x1A && sig[7] == 0x0A;
 }
 
+bool ReadPngDimensions(const std::filesystem::path& path, int& outW, int& outH) {
+  std::ifstream in(path, std::ios::binary);
+  if (!in.is_open()) return false;
+  unsigned char hdr[24] = {};
+  in.read(reinterpret_cast<char*>(hdr), sizeof(hdr));
+  if (in.gcount() != 24) return false;
+  const bool validSig = hdr[0] == 0x89 && hdr[1] == 'P' && hdr[2] == 'N' && hdr[3] == 'G' && hdr[4] == 0x0D &&
+                        hdr[5] == 0x0A && hdr[6] == 0x1A && hdr[7] == 0x0A;
+  const bool validIhdr = hdr[12] == 'I' && hdr[13] == 'H' && hdr[14] == 'D' && hdr[15] == 'R';
+  if (!validSig || !validIhdr) return false;
+  auto readBe32 = [](const unsigned char* p) -> int {
+    return static_cast<int>((static_cast<unsigned int>(p[0]) << 24U) | (static_cast<unsigned int>(p[1]) << 16U) |
+                            (static_cast<unsigned int>(p[2]) << 8U) | static_cast<unsigned int>(p[3]));
+  };
+  outW = readBe32(hdr + 16);
+  outH = readBe32(hdr + 20);
+  return outW > 0 && outH > 0;
+}
+
 void SetupUiTestRegistry(Registry& reg, sol::state& lua, LuaBindingContext& ctx,
                          const std::filesystem::path& projectDir, SDL_Renderer* sdlRenderer = nullptr) {
   lua.open_libraries(sol::lib::base, sol::lib::table, sol::lib::string, sol::lib::math);
@@ -3728,6 +3748,379 @@ void TestStage12PartialMocksContractLintAndDevLua() {
   Check(!stillUnsetSubtitle, "seeding subtitle clears its unresolved_contract warning");
   previewer.UnmountPreview(true);
 }
+
+void TestStage13ViewportSimulatorAndFontLegibility() {
+  std::cout << "[Stage 1.3: Simulated viewports, font_too_small legibility rule, safe-area flags, & restore]\n";
+  SDL_Init(0);
+  TTF_Init();
+  {
+    TempDirGuard tmp("oct_ui_s13_vp");
+    WriteTempTextFile(tmp.dir / "config.ini",
+                      "Title=VPTest\nStartupScript=main.lua\n"
+                      "BaseResolutionWidth=1920\nBaseResolutionHeight=1080\n");
+    {
+      std::filesystem::create_directories(tmp.dir / "assets/fonts");
+      std::ofstream outSmall((tmp.dir / "assets/fonts/tiny.ttf").string(), std::ios::binary);
+      outSmall.write(reinterpret_cast<const char*>(kMinimalTestTtf), sizeof(kMinimalTestTtf));
+    }
+    WriteTempTextFile(tmp.dir / "assets/ui/resp_hud.oxml", R"oxml(
+      <Canvas width="0" height="0">
+        <Panel id="wide_bar" ref="wide_bar" width="2000" height="80" background="#223344ff">
+          <Label id="small_lbl" ref="small_lbl" font="tiny-14" text="{caption}" height="24" />
+          <Label id="large_lbl" ref="large_lbl" font="tiny-20" text="{heading}" height="28" />
+        </Panel>
+      </Canvas>
+    )oxml");
+    WriteTempTextFile(tmp.dir / "assets/ui/alt_view.oxml", R"oxml(
+      <Canvas width="0" height="0"><Label text="Alt" /></Canvas>
+    )oxml");
+
+    Registry reg;
+    TestUiBindingContext bindCtx(&reg);
+    sol::state lua;
+    SetupUiTestRegistry(reg, lua, bindCtx, tmp.dir);
+    reg.RegisterBulkSystem(UILayoutSystem());
+    auto& am = reg.Get<AssetManager>();
+    am.AddFontFromMemory("tiny-14", kMinimalTestTtf, sizeof(kMinimalTestTtf), 14.0f);
+    am.AddFontFromMemory("tiny-20", kMinimalTestTtf, sizeof(kMinimalTestTtf), 20.0f);
+    auto& cfg = reg.Get<GameConfig>();
+    cfg.windowWidth = 1920;
+    cfg.windowHeight = 1080;
+
+    auto& previewer = reg.Get<UIPreviewer>();
+    previewer.SetShowSafeAreaGuides(true);
+    previewer.SetIntegerZoomSimulation(true);
+    Check(previewer.ShowSafeAreaGuides() && previewer.IntegerZoomSimulation(),
+          "safe-area guide & integer zoom simulation toggles stored cleanly");
+
+    Check(previewer.MountPreview("resp_hud.oxml"), "mounts responsive HUD for viewport test");
+    previewer.SetSimulatedViewport(1280, 800);
+    Check(previewer.HasSimulatedViewport(), "HasSimulatedViewport active at 1280x800");
+    CheckEq(cfg.windowWidth, 1280, "SetSimulatedViewport updates GameConfig.windowWidth to 1280");
+    CheckEq(cfg.windowHeight, 800, "SetSimulatedViewport updates GameConfig.windowHeight to 800");
+    CheckEq(lua["game_window_width"].get<int>(), 1280, "Lua game_window_width synced to 1280");
+
+    reg.Update(0.016f);
+    const auto deckIssues = previewer.AuditLayout();
+    const bool hasSmallFontWarn = std::ranges::any_of(deckIssues, [](const UILayoutIssue& it) {
+      return it.code == "font_too_small" && it.label.find("small_lbl") != std::string::npos;
+    });
+    const bool falseLargeFontWarn = std::ranges::any_of(deckIssues, [](const UILayoutIssue& it) {
+      return it.code == "font_too_small" && it.label.find("large_lbl") != std::string::npos;
+    });
+    Check(hasSmallFontWarn, "font_too_small warns when 14px font scales to ~9.3px (< 10px) at 1280x800");
+    Check(!falseLargeFontWarn, "font_too_small does NOT warn on 20px font (~13.3px >= 10px) at 1280x800");
+
+    // Switching to another view preserves simulated viewport, while narrowing to 800x600 catches overflow.
+    Check(previewer.MountPreview("alt_view.oxml"), "switching views preserves simulated viewport");
+    Check(previewer.HasSimulatedViewport() && previewer.SimulatedWidth() == 1280,
+          "simulated viewport persists across view mount swap");
+
+    Check(previewer.MountPreview("resp_hud.oxml"), "remounts resp_hud.oxml");
+    previewer.SetSimulatedViewport(800, 600);
+    reg.Update(0.016f);
+    const auto compactIssues = previewer.AuditLayout();
+    const bool caughtOverflow800 = std::ranges::any_of(compactIssues, [](const UILayoutIssue& it) {
+      return it.code == "viewport_overflow" && it.label.find("wide_bar") != std::string::npos;
+    });
+    Check(caughtOverflow800, "fixed 2000px container triggers viewport_overflow when simulating 800x600");
+
+    const std::string vpJson = previewer.ViewportInfoJson();
+    const std::string auditJson = previewer.AuditLayoutJson();
+    Check(vpJson.find("\"simulated\": true") != std::string::npos && vpJson.find("800") != std::string::npos,
+          "ViewportInfoJson reports active simulated 800x600 viewport");
+    Check(auditJson.find("\"simulated\": true") != std::string::npos &&
+              auditJson.find("\"ui_scale\"") != std::string::npos,
+          "AuditLayoutJson includes Stage 1.3 simulated viewport metadata");
+
+    previewer.UnmountPreview(true);
+    Check(!previewer.HasSimulatedViewport(), "UnmountPreview(true) clears simulated viewport");
+    CheckEq(cfg.windowWidth, 1920, "UnmountPreview(true) restores original windowWidth (1920)");
+    CheckEq(cfg.windowHeight, 1080, "UnmountPreview(true) restores original windowHeight (1080)");
+  }
+  TTF_Quit();
+  SDL_Quit();
+}
+
+void TestStage13NamedPresetsStressAndControllerGuard() {
+  std::cout << "[Stage 1.3: Named .preview.lua presets, stress synthesis, flat promotion, & controller guard]\n";
+  SDL_Init(0);
+  TTF_Init();
+  {
+    TempDirGuard tmp("oct_ui_s13_presets");
+    const auto viewPath = tmp.dir / "assets/ui/quest_log.oxml";
+    const auto sidecarPath = tmp.dir / "assets/ui/quest_log.preview.lua";
+    WriteTempTextFile(viewPath, R"oxml(
+      <OXML>
+        <Param name="mode" default="full" />
+        <Canvas width="640" height="480">
+          <Column width="260" padding="8">
+            <Label id="title_lbl" ref="title_lbl" text="{mode}: {quest_title}" width="180" height="24" />
+            <ProgressBar id="prog_bar" ref="prog_bar" value="{done_count / total_count}" width="180" height="16" />
+            <Button id="act_btn" ref="act_btn" text="Claim" on-click="on_claim" width="120" height="28" />
+            <Column id="items_col" ref="items_col" width="240" height="auto">
+              <Label each="q in quests" text="{q.label}" height="20" />
+            </Column>
+          </Column>
+        </Canvas>
+      </OXML>
+    )oxml");
+
+    Registry reg;
+    TestUiBindingContext bindCtx(&reg);
+    sol::state lua;
+    SetupUiTestRegistry(reg, lua, bindCtx, tmp.dir);
+    reg.RegisterBulkSystem(UILayoutSystem());
+    reg.Get<AssetManager>().AddFontFromMemory("default", kMinimalTestTtf, sizeof(kMinimalTestTtf), 16.0f);
+    auto& previewer = reg.Get<UIPreviewer>();
+
+    // 1. Stress synthesis with zero sidecar present.
+    Check(previewer.MountPreview("quest_log.oxml"), "mounts quest_log in AutoSeeded mode");
+    reg.Update(0.016f);
+    Check(previewer.ListMockPresets().empty(), "ListMockPresets empty when no presets table exists");
+
+    Check(previewer.ApplyStressPreset("empty"), "ApplyStressPreset('empty') succeeds");
+    reg.Update(0.016f);
+    CheckEq(previewer.ActiveMockPreset(), std::string("@empty"), "ActiveMockPreset reflects @empty stress state");
+    {
+      const auto fields = previewer.CollectMockFields();
+      bool sawZeroArr = false;
+      bool sawEmptyTitle = false;
+      double denVal = 0.0;
+      for (const auto& f : fields) {
+        if (f.path == "quests") sawZeroArr = (f.arrayLength == 0);
+        if (f.path == "quest_title") sawEmptyTitle = f.stringValue.empty();
+        if (f.path == "total_count") denVal = f.numberValue;
+      }
+      Check(sawZeroArr && sawEmptyTitle, "@empty sets quests array to 0 items and quest_title to ''");
+      Check(denVal > 0.0, "@empty keeps divided_den > 0 to avoid NaN division");
+    }
+
+    Check(previewer.SelectMockPreset("@overflow"), "SelectMockPreset('@overflow') synthesizes overflow stress");
+    reg.Update(0.016f);
+    {
+      const auto fields = previewer.CollectMockFields();
+      int questLen = 0;
+      std::string title;
+      for (const auto& f : fields) {
+        if (f.path == "quests") questLen = f.arrayLength;
+        if (f.path == "quest_title") title = f.stringValue;
+      }
+      Check(questLen >= 10 && title.size() >= 30, "@overflow populates 10 repeater items and long localization string");
+    }
+    const auto overflowIssues = previewer.AuditLayout();
+    Check(std::ranges::any_of(overflowIssues, [](const UILayoutIssue& it) { return it.code == "text_overflow"; }),
+          "@overflow triggers deterministic text_overflow on narrow fixed container");
+
+    // 2. Flat-to-presets promotion & preset CRUD on disk.
+    WriteTempTextFile(sidecarPath, R"(
+      return {
+        params = { mode = "flat" },
+        context = { quest_title = "FlatOrig", done_count = 2, total_count = 5, quests = { { label = "Step 1" } } },
+        controller = {
+          on_claim = function(self, view) end
+        }
+      }
+    )");
+    Check(previewer.LoadMockScript(sidecarPath.string()), "loads flat .preview.lua with controller");
+    Check(previewer.HasLiveControllerScript(), "HasLiveControllerScript detects function handlers in controller");
+
+    Check(previewer.SetMockFieldString("quest_title", "CompactState"), "edits live field prior to SaveMockPreset");
+    Check(previewer.SaveMockPreset("compact", /*setAsDefault=*/true),
+          "SaveMockPreset('compact', true) promotes flat .preview.lua to multi-preset table");
+    Check(!previewer.HasLiveControllerScript(), "after serialization without functions, controller guard is clean");
+    {
+      const auto doc = lua.script_file(sidecarPath.string()).get<sol::table>();
+      CheckEq(doc["default_preset"].get<std::string>(), std::string("compact"), "default_preset updated to compact");
+      CheckEq(doc["presets"]["default"]["context"]["quest_title"].get<std::string>(), std::string("FlatOrig"),
+              "flat promotion preserved original flat mock under presets.default");
+      CheckEq(doc["presets"]["compact"]["context"]["quest_title"].get<std::string>(), std::string("CompactState"),
+              "SaveMockPreset wrote edited state under presets.compact");
+      Check(doc["controller"] == sol::lua_nil, "empty controller = {} clutter omitted after function strip");
+    }
+
+    const auto presetList = previewer.ListMockPresets();
+    CheckEq(presetList.size(), std::size_t{2}, "ListMockPresets returns 2 authored presets");
+    CheckEq(presetList[0], std::string("default"), "ListMockPresets orders 'default' first");
+
+    Check(previewer.SelectMockPreset("default"), "SelectMockPreset('default') switches cleanly");
+    CheckEq(previewer.ActiveMockPreset(), std::string("default"), "ActiveMockPreset == 'default'");
+    Check(previewer.DeleteMockPreset("default"), "DeleteMockPreset removes non-last preset");
+    CheckEq(previewer.ListMockPresets().size(), std::size_t{1}, "only 1 preset remains after delete");
+    Check(!previewer.DeleteMockPreset("compact"), "DeleteMockPreset refuses deleting the last remaining preset");
+    previewer.UnmountPreview(true);
+  }
+  TTF_Quit();
+  SDL_Quit();
+}
+
+void TestStage13BatchMatrixAndDevLua() {
+  std::cout << "[Stage 1.3: Batch RunPreviewMatrix, exact PNG pixel sizes, matrix_report.json, & dev.* API]\n";
+  SDL_Init(0);
+  TTF_Init();
+  {
+    TempDirGuard tmp("oct_ui_s13_matrix");
+    WriteTempTextFile(tmp.dir / "config.ini",
+                      "Title=MatrixTest\nStartupScript=main.lua\n"
+                      "BaseResolutionWidth=1280\nBaseResolutionHeight=720\n");
+    WriteTempTextFile(tmp.dir / "assets/ui/card.oxml", R"oxml(
+      <Canvas width="0" height="0">
+        <Panel width="280" height="120" background="#283040ff">
+          <Label ref="ttl" text="{card_title}" height="24" />
+          <Row each="tag in tags" height="20"><Label text="{tag.name}" /></Row>
+        </Panel>
+      </Canvas>
+    )oxml");
+
+    const auto parsedRes = UIPreviewer::ParseResolutionsCsv("1920x1080, 1280x800, bad, 0x100, 800x600");
+    CheckEq(parsedRes.size(), std::size_t{3}, "ParseResolutionsCsv accepts 3 valid specs and ignores malformed tokens");
+
+    Registry reg;
+    TestUiBindingContext bindCtx(&reg);
+    sol::state lua;
+    SetupUiTestRegistry(reg, lua, bindCtx, tmp.dir);
+    auto& previewer = reg.Get<UIPreviewer>();
+
+    // Wire a software SDL capture callback that writes true lossless WxH PNGs at SimulatedViewport size.
+    previewer.SetCaptureCallback([&](const std::string& pngPath) -> bool {
+      const auto& cfg = reg.Get<GameConfig>();
+      const int w = std::max(1, cfg.windowWidth);
+      const int h = std::max(1, cfg.windowHeight);
+      SDL_Surface* surf = SDL_CreateSurface(w, h, SDL_PIXELFORMAT_RGBA32);
+      if (surf == nullptr) return false;
+      const auto parent = std::filesystem::path(pngPath).parent_path();
+      if (!parent.empty()) std::filesystem::create_directories(parent);
+      const bool ok = IMG_SavePNG(surf, pngPath.c_str());
+      SDL_DestroySurface(surf);
+      return ok;
+    });
+
+    Check(previewer.MountPreview("card.oxml"), "mounts card.oxml for matrix & dev.* test");
+    const std::string outDir = (tmp.dir / "matrix_out").generic_string();
+
+    const auto luaRes = lua.safe_script(std::string(R"lua(
+      assert(dev.set_ui_viewport(1280, 800) == true)
+      local vp = dev.get_ui_viewport_json()
+      assert(vp:find('"simulated": true') ~= nil and vp:find('1280') ~= nil, "get_ui_viewport_json ok")
+      assert(dev.apply_ui_stress_preset("overflow") == true)
+      assert(dev.save_ui_preset("heavy", true) == true)
+      local pl = dev.list_ui_presets_json()
+      assert(pl:find('"heavy"') ~= nil and pl:find('"active_preset": "heavy"') ~= nil, "list_ui_presets_json ok")
+      assert(dev.select_ui_preset("heavy") == true)
+      local rpt = dev.run_ui_matrix_json(")lua") +
+                                            outDir + R"lua(", "1920x1080,800x600", "heavy,@empty")
+      assert(rpt:find('"cell_count": 4') ~= nil, "run_ui_matrix_json reports 4 cells (2 presets x 2 res)")
+      -- Original viewport 1280x800 must be restored after matrix run!
+      local vpAfter = dev.get_ui_viewport_json()
+      assert(vpAfter:find('"simulated": true') ~= nil and vpAfter:find('1280') ~= nil, "matrix restores prior viewport")
+      assert(dev.set_ui_viewport(0, 0) == true)
+      assert(dev.get_ui_viewport_json():find('"simulated": false') ~= nil, "set_ui_viewport(0,0) resets to native")
+      local badRes = dev.run_ui_matrix_json(")lua" +
+                                            outDir + R"lua(", "bogus", "heavy")
+      assert(badRes:find('"error"') ~= nil and badRes:find('"cell_count": 0') ~= nil, "bad resolution CSV returns error JSON")
+      local missRpt = dev.run_ui_matrix_json(")lua" +
+                                            outDir + R"lua(", "640x360", "nonexistent_preset")
+      assert(missRpt:find('"missing_preset"') ~= nil and missRpt:find('"capture_ok": false') ~= nil, "missing preset reports missing_preset")
+      -- Multi-preset sidecar currently viewing @empty must remain cleanly on @empty (and restore inline Lua mock preset "").
+      assert(dev.apply_ui_stress_preset("empty") == true)
+      dev.run_ui_matrix_json(")lua" + outDir +
+                                            R"lua(", "640x360", "heavy")
+      assert(dev.list_ui_presets_json():find('"active_preset": "@empty"') ~= nil, "@empty snapshot stays @empty after matrix")
+      assert(dev.preview_ui("card.oxml", { context = { card_title = "InlineLive" } }) == true)
+      dev.run_ui_matrix_json(")lua" + outDir +
+                                            R"lua(", "640x360", "@empty")
+      assert(dev.list_ui_presets_json():find('"active_preset": ""') ~= nil, "inline ExplicitLua snapshot resets active_preset")
+    )lua",
+                                        sol::script_pass_on_error);
+    if (!luaRes.valid()) {
+      const sol::error err = luaRes;
+      std::cerr << "Stage 1.3 dev.* error: " << err.what() << "\n";
+    }
+    Check(luaRes.valid(), "Stage 1.3 dev.* viewport, preset, stress, and run_ui_matrix_json passed");
+
+    const auto heavyFhd = tmp.dir / "matrix_out/heavy_1920x1080.png";
+    const auto emptyCompact = tmp.dir / "matrix_out/empty_800x600.png";
+    const auto reportPath = tmp.dir / "matrix_out/matrix_report.json";
+    int w1 = 0;
+    int h1 = 0;
+    int w2 = 0;
+    int h2 = 0;
+    Check(std::filesystem::exists(reportPath), "matrix_report.json written on disk");
+    Check(ReadPngDimensions(heavyFhd, w1, h1) && w1 == 1920 && h1 == 1080,
+          "heavy_1920x1080.png has exact 1920x1080 PNG dimensions");
+    Check(ReadPngDimensions(emptyCompact, w2, h2) && w2 == 800 && h2 == 600,
+          "empty_800x600.png has exact 800x600 PNG dimensions");
+    previewer.UnmountPreview(true);
+  }
+  TTF_Quit();
+  SDL_Quit();
+}
+
+void TestStage13CliFlagsAndHeadlessMatrix() {
+  std::cout << "[Stage 1.3: CLI flags (--ui-preset, --ui-matrix, --ui-resolutions, --ui-presets) & headless run]\n";
+  Game::UiPreviewCliOptions opts{};
+  bool consumed = false;
+  bool parseErr = false;
+
+  Check(
+      Game::TryConsumeUiPreviewFlag("--ui-preset", "compact", true, opts, consumed, parseErr) && consumed && !parseErr,
+      "--ui-preset parsed cleanly");
+  CheckEq(opts.preset, std::string("compact"), "opts.preset stored");
+  Check(
+      Game::TryConsumeUiPreviewFlag("--ui-matrix", "out_dir", true, opts, consumed, parseErr) && consumed && !parseErr,
+      "--ui-matrix parsed cleanly");
+  Check(Game::TryConsumeUiPreviewFlag("--ui-resolutions", "1280x800,800x600", true, opts, consumed, parseErr) &&
+            consumed && !parseErr,
+        "--ui-resolutions parsed cleanly");
+  Check(Game::TryConsumeUiPreviewFlag("--ui-presets", "all", true, opts, consumed, parseErr) && consumed && !parseErr,
+        "--ui-presets parsed cleanly");
+  Check(opts.HasAnyTrigger(), "HasAnyTrigger true with Stage 1.3 flags");
+
+  TempDirGuard tmp("oct_ui_s13_cli_matrix");
+  WriteTempTextFile(tmp.dir / "config.ini",
+                    "Title=MatrixCLI\nStartupScript=scripts/main.lua\n"
+                    "BaseResolutionWidth=640\nBaseResolutionHeight=360\n"
+                    "DefaultWindowWidth=640\nDefaultWindowHeight=360\n");
+  WriteTempTextFile(tmp.dir / "scripts/main.lua", R"(error("main.lua must not run in -m ui-preview"))");
+  WriteTempTextFile(tmp.dir / "assets/ui/panel.oxml", R"(
+    <Canvas width="0" height="0">
+      <Panel width="220" height="90" background="#2b303bff">
+        <Label text="{banner}" height="24" />
+      </Panel>
+    </Canvas>
+  )");
+
+  Game::UiPreviewCliOptions runOpts{};
+  runOpts.file = "panel.oxml";
+  runOpts.matrixOutDir = (tmp.dir / "cli_matrix").string();
+  runOpts.resolutionsCsv = "640x360,800x600";
+  runOpts.presetsCsv = "auto";
+
+  auto game = std::make_unique<Game>();
+  game->SetHeadless(true);
+  game->SetStartupMode("ui-preview");
+  game->SetUiPreviewOptions(runOpts);
+  Check(game->Initialize(tmp.dir.string()), "headless Game initializes with --ui-matrix options");
+  for (int f = 0; f < 4; ++f) {
+    game->StepTicks(1);
+  }
+  const auto pDefault = tmp.dir / "cli_matrix/default_640x360.png";
+  const auto pEmpty = tmp.dir / "cli_matrix/empty_800x600.png";
+  const auto pOverflow = tmp.dir / "cli_matrix/overflow_800x600.png";
+  const auto pReport = tmp.dir / "cli_matrix/matrix_report.json";
+  int wA = 0;
+  int hA = 0;
+  int wB = 0;
+  int hB = 0;
+  Check(std::filesystem::exists(pReport), "headless --ui-matrix wrote matrix_report.json");
+  Check(ReadPngDimensions(pDefault, wA, hA) && wA == 640 && hA == 360,
+        "headless --ui-matrix wrote pixel-exact 640x360 default PNG");
+  Check(ReadPngDimensions(pEmpty, wB, hB) && wB == 800 && hB == 600,
+        "headless --ui-matrix wrote pixel-exact 800x600 empty PNG");
+  Check(std::filesystem::exists(pOverflow) && HasPngMagicHeader(pOverflow),
+        "headless --ui-matrix wrote overflow PNG via 'auto' presets");
+  game->Destroy();
+}
 #endif  // !OCTARINE_SHIPPED
 
 }  // namespace
@@ -3773,6 +4166,10 @@ int main() {
   TestStage12HotReloadPresetsAndErrorRecovery();
   TestStage12NestedRepeatersDisabledAndIconHints();
   TestStage12PartialMocksContractLintAndDevLua();
+  TestStage13ViewportSimulatorAndFontLegibility();
+  TestStage13NamedPresetsStressAndControllerGuard();
+  TestStage13BatchMatrixAndDevLua();
+  TestStage13CliFlagsAndHeadlessMatrix();
 #endif
   return octarine::test::ReportSummary("UILayoutTest");
 }

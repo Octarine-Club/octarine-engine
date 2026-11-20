@@ -3,6 +3,8 @@
 #ifndef OCTARINE_SHIPPED
 
 #include <cstdint>
+#include <filesystem>
+#include <functional>
 #include <memory>
 #include <sol/sol.hpp>
 #include <string>
@@ -11,12 +13,9 @@
 
 #include "Components/UIRectComponent.h"
 #include "ECS/Entity.h"
+#include "UI/OxmlContract.h"
 
 class Registry;
-
-#include <filesystem>
-
-#include "UI/OxmlContract.h"
 
 enum class PreviewBackdropMode : std::uint8_t {
   SceneOverlay = 0,
@@ -91,8 +90,35 @@ struct MockCallbackEntry {
   bool hasControllerHandler{false};
 };
 
+struct PreviewMatrixOptions {
+  std::string outDir{};
+  std::vector<std::pair<int, int>> resolutions{};
+  std::vector<std::string> presets{};
+};
+
+struct PreviewMatrixCellResult {
+  std::string preset{};
+  int width{0};
+  int height{0};
+  float uiScale{1.0f};
+  std::string capturePath{};
+  std::size_t issueCount{0};
+  bool captureOk{false};
+  std::vector<UILayoutIssue> issues{};
+};
+
+struct PreviewMatrixResult {
+  bool ok{false};
+  std::string outDir{};
+  std::string reportPath{};
+  std::string reportJson{};
+  std::vector<PreviewMatrixCellResult> cells{};
+};
+
 class UIPreviewer {
  public:
+  using CaptureCallback = std::function<bool(const std::string&)>;
+
   explicit UIPreviewer(Registry* registry = nullptr);
   ~UIPreviewer();
 
@@ -108,7 +134,8 @@ class UIPreviewer {
   [[nodiscard]] const std::vector<PreviewCatalogEntry>& CatalogStyles() const noexcept { return catalog_styles_; }
 
   bool MountPreview(const std::string& pathOrId, const sol::optional<sol::table>& opts = sol::nullopt);
-  bool MountPreviewWithMock(const std::string& pathOrId, const std::string& mockScriptPath);
+  bool MountPreviewWithMock(const std::string& pathOrId, const std::string& mockScriptPath,
+                            const std::string& presetName = "");
   bool MountInlineXml(const std::string& xmlSource, const std::string& ossSource = "");
   bool ReloadActivePreview();
   void UnmountPreview(bool restoreIsolationState = true);
@@ -126,6 +153,20 @@ class UIPreviewer {
   void SetIsolatedMode(bool isolated, bool managePauseState = true);
   [[nodiscard]] bool IsIsolatedMode() const noexcept { return isolated_; }
   [[nodiscard]] bool ShouldRenderWhilePaused() const;
+
+  void SetSimulatedViewport(int width, int height);
+  void ClearSimulatedViewport();
+  [[nodiscard]] bool HasSimulatedViewport() const noexcept { return sim_viewport_w_ > 0 && sim_viewport_h_ > 0; }
+  [[nodiscard]] int SimulatedWidth() const noexcept { return sim_viewport_w_; }
+  [[nodiscard]] int SimulatedHeight() const noexcept { return sim_viewport_h_; }
+  [[nodiscard]] std::pair<int, int> SimulatedViewport() const noexcept { return {sim_viewport_w_, sim_viewport_h_}; }
+  void SetShowSafeAreaGuides(bool enabled) noexcept { show_safe_area_guides_ = enabled; }
+  [[nodiscard]] bool ShowSafeAreaGuides() const noexcept { return show_safe_area_guides_; }
+  void SetIntegerZoomSimulation(bool enabled) noexcept { integer_zoom_sim_ = enabled; }
+  [[nodiscard]] bool IntegerZoomSimulation() const noexcept { return integer_zoom_sim_; }
+  void SetCaptureCallback(CaptureCallback cb) { capture_callback_ = std::move(cb); }
+  [[nodiscard]] bool HasCaptureCallback() const noexcept { return static_cast<bool>(capture_callback_); }
+  [[nodiscard]] std::string ViewportInfoJson() const;
 
   void SyncActivePreview();
   void EmitBackdropIfNeeded(Registry& registry);
@@ -178,6 +219,21 @@ class UIPreviewer {
   void RefreshContractState();
   [[nodiscard]] static bool IsContractFieldUnset(const ContractField& f, const std::vector<MockFieldEntry>& liveFields);
 
+  [[nodiscard]] std::vector<std::string> ListMockPresets() const;
+  [[nodiscard]] const std::string& ActiveMockPreset() const noexcept { return active_mock_preset_; }
+  [[nodiscard]] std::string DefaultMockPreset() const;
+  [[nodiscard]] bool HasLiveControllerScript() const noexcept { return has_live_mock_controller_; }
+  bool SelectMockPreset(const std::string& presetName);
+  bool SaveMockPreset(const std::string& presetName, bool setAsDefault = false);
+  bool DeleteMockPreset(const std::string& presetName);
+  bool ApplyStressPreset(const std::string& kind);
+  [[nodiscard]] std::string ListPresetsJson() const;
+
+  [[nodiscard]] PreviewMatrixResult RunPreviewMatrix(const PreviewMatrixOptions& opts);
+  [[nodiscard]] std::string RunPreviewMatrixJson(const std::string& outDir, const std::string& resolutionsCsv = "",
+                                                 const std::string& presetsCsv = "");
+  [[nodiscard]] static std::vector<std::pair<int, int>> ParseResolutionsCsv(const std::string& csv);
+
  private:
   struct PausedRenderSystems;
 
@@ -225,12 +281,28 @@ class UIPreviewer {
   std::uint64_t last_seen_reload_count_{0};
   std::uint64_t callback_seq_{0};
   OxmlContract active_contract_{};
+  int sim_viewport_w_{0};
+  int sim_viewport_h_{0};
+  int saved_unsimulated_w_{0};
+  int saved_unsimulated_h_{0};
+  bool has_saved_unsimulated_size_{false};
+  bool show_safe_area_guides_{false};
+  bool integer_zoom_sim_{false};
+  std::string active_mock_preset_{};
+  bool has_live_mock_controller_{false};
+  CaptureCallback capture_callback_{};
 
-  bool MountResolvedPreview(const std::string& sourceCopy, const sol::optional<sol::table>& opts,
-                            const std::string& inlineOss, bool isInline, MockSourceMode mockMode,
-                            const std::string& mockPath, const std::string& sidecarPath,
-                            const sol::optional<sol::table>& rawMockRoot);
+  bool MountResolvedPreview(std::string sourceIn, const sol::optional<sol::table>& opts, std::string inlineOssIn,
+                            bool isInline, MockSourceMode mockMode, std::string mockPathIn, std::string sidecarPathIn,
+                            const sol::optional<sol::table>& rawMockRoot, std::string presetName = "");
+  bool MountSidecarPreview(const std::string& resolvedSource, const std::string& sidecarPath,
+                           const std::string& requestedPreset, const sol::optional<sol::table>& opts);
+  void RefreshSidecarMetadataAfterSave(const std::string& dest);
   void ApplyAuditIssuesForContract(std::vector<UILayoutIssue>& out) const;
+  void RestoreSimulatedViewportIfOwned();
+  [[nodiscard]] std::string ExportMockLuaScriptForDoc(const sol::table& docTbl, const std::string& targetPresetKey,
+                                                      const std::string& defaultPresetOverride,
+                                                      bool promoteFlatIfNeeded, bool* outHasPresets = nullptr) const;
 };
 
 #endif  // !OCTARINE_SHIPPED
