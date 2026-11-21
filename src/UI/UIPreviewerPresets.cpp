@@ -332,6 +332,7 @@ std::string FormatMatrixReportJson(const UIPreviewer& previewer, const PreviewMa
   ss << R"(  "mock_path": ")" << detail::EscapeJsonString(previewer.ActiveMockPath()) << "\",\n";
   ss << R"(  "out_dir": ")" << detail::EscapeJsonString(result.outDir) << "\",\n";
   ss << R"(  "report_path": ")" << detail::EscapeJsonString(result.reportPath) << "\",\n";
+  ss << R"(  "html_report_path": ")" << detail::EscapeJsonString(result.htmlReportPath) << "\",\n";
   ss << R"(  "cell_count": )" << result.cells.size() << ",\n";
   ss << R"(  "total_issues": )" << totalIssues << ",\n";
   ss << R"(  "resolutions": )";
@@ -356,6 +357,158 @@ std::string FormatMatrixReportJson(const UIPreviewer& previewer, const PreviewMa
     ss << "\n    }";
   }
   ss << (result.cells.empty() ? "]\n" : "\n  ]\n") << "}\n";
+  return ss.str();
+}
+
+std::string EscapeHtmlText(std::string_view sv) {
+  std::string out;
+  out.reserve(sv.size());
+  for (const char c : sv) {
+    switch (c) {
+      case '&':
+        out += "&amp;";
+        break;
+      case '<':
+        out += "&lt;";
+        break;
+      case '>':
+        out += "&gt;";
+        break;
+      case '"':
+        out += "&quot;";
+        break;
+      case '\'':
+        out += "&#39;";
+        break;
+      default:
+        out.push_back(c);
+        break;
+    }
+  }
+  return out;
+}
+
+void CountCellSeverities(const std::vector<UILayoutIssue>& issues, std::size_t& outErrors, std::size_t& outWarnings) {
+  outErrors = 0;
+  outWarnings = 0;
+  for (const auto& issue : issues) {
+    if (issue.severity == "error") {
+      ++outErrors;
+    } else {
+      ++outWarnings;
+    }
+  }
+}
+
+void AppendMatrixCellIssueListHtml(std::ostringstream& ss, const std::vector<UILayoutIssue>& issues) {
+  if (issues.empty()) return;
+  ss << R"(      <details class="issues"><summary>)" << issues.size() << " finding(s)</summary><ul>\n";
+  for (const auto& issue : issues) {
+    const char* cls = (issue.severity == "error") ? "sev-error" : "sev-warn";
+    ss << "        <li><span class=\"" << cls << "\">[" << EscapeHtmlText(issue.severity) << "]</span> <code>"
+       << EscapeHtmlText(issue.code) << "</code> - <strong>" << EscapeHtmlText(issue.label)
+       << "</strong>: " << EscapeHtmlText(issue.message) << "</li>\n";
+  }
+  ss << "      </ul></details>\n";
+}
+
+void AppendMatrixCellCardHtml(std::ostringstream& ss, const PreviewMatrixCellResult& cell) {
+  std::size_t errors = 0;
+  std::size_t warnings = 0;
+  CountCellSeverities(cell.issues, errors, warnings);
+
+  const std::string relCapture = fs::path(cell.capturePath).filename().generic_string();
+  const std::string escapedFile = EscapeHtmlText(relCapture);
+  const std::string escapedPreset = EscapeHtmlText(cell.preset);
+
+  std::string badgeClass = "badge-pass";
+  std::string badgeText = "PASS";
+  if (!cell.captureOk) {
+    badgeClass = "badge-fail";
+    badgeText = "CAPTURE FAILED";
+  } else if (errors > 0) {
+    badgeClass = "badge-fail";
+    badgeText = std::to_string(errors) + " ERROR" + (warnings > 0 ? ", " + std::to_string(warnings) + " WARN" : "");
+  } else if (warnings > 0) {
+    badgeClass = "badge-warn";
+    badgeText = std::to_string(warnings) + " WARN";
+  }
+
+  ss << "    <article class=\"card\">\n";
+  ss << "      <div class=\"card-head\"><div><strong>" << escapedPreset << "</strong> <span class=\"meta\">"
+     << cell.width << "x" << cell.height << " (scale " << std::fixed << std::setprecision(2) << cell.uiScale
+     << "x)</span></div><span class=\"badge " << badgeClass << "\">" << badgeText << "</span></div>\n";
+  if (cell.captureOk && !relCapture.empty()) {
+    ss << R"(      <a class="shot-link" href=")" << escapedFile << R"(" target="_blank" rel="noopener"><img src=")"
+       << escapedFile << R"(" loading="lazy" alt=")" << escapedPreset << " " << cell.width << "x" << cell.height
+       << "\" /></a>\n";
+  } else {
+    ss << "      <div class=\"missing\">Capture unavailable (" << escapedFile << ")</div>\n";
+  }
+  AppendMatrixCellIssueListHtml(ss, cell.issues);
+  ss << "    </article>\n";
+}
+
+std::string FormatMatrixReportHtml(const UIPreviewer& previewer, const PreviewMatrixResult& result,
+                                   const std::vector<std::pair<int, int>>& resolutions) {
+  std::size_t totalErrors = 0;
+  std::size_t totalWarnings = 0;
+  for (const auto& cell : result.cells) {
+    std::size_t e = 0;
+    std::size_t w = 0;
+    CountCellSeverities(cell.issues, e, w);
+    totalErrors += e;
+    totalWarnings += w;
+  }
+
+  const std::size_t colCount = std::max<std::size_t>(1, resolutions.size());
+  std::ostringstream ss;
+  ss << "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\" />\n"
+     << "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n"
+     << "<title>Octarine UI Matrix - " << EscapeHtmlText(previewer.ActiveSource()) << "</title>\n"
+     << "<style>\n"
+     << "  :root { color-scheme: dark; --bg: #0f131a; --card: #171c26; --border: #2b3344; --text: #e6edf5;"
+     << " --muted: #9aa7bd; --pass: #2ea043; --warn: #d29922; --fail: #f85149; }\n"
+     << "  * { box-sizing: border-box; }\n"
+     << "  body { margin: 0; padding: 20px; font-family: system-ui, -apple-system, sans-serif;"
+     << " background: var(--bg); color: var(--text); }\n"
+     << "  header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline;"
+     << " gap: 12px; margin-bottom: 18px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }\n"
+     << "  h1 { margin: 0; font-size: 18px; }\n"
+     << "  .summary { display: flex; flex-wrap: wrap; gap: 12px; font-size: 13px; color: var(--muted); }\n"
+     << "  .summary a { color: #79c0ff; text-decoration: none; }\n"
+     << "  .grid { display: grid; gap: 14px; overflow-x: auto; }\n"
+     << "  .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; overflow: hidden;"
+     << " display: flex; flex-direction: column; }\n"
+     << "  .card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px;"
+     << " padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 13px; }\n"
+     << "  .meta { color: var(--muted); font-weight: 400; }\n"
+     << "  .badge { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 999px; color: #fff;"
+     << " white-space: nowrap; }\n"
+     << "  .badge-pass { background: var(--pass); } .badge-warn { background: var(--warn); color: #111; }"
+     << " .badge-fail { background: var(--fail); }\n"
+     << "  .shot-link { display: block; background: #090c10; }\n"
+     << "  .shot-link img { width: 100%; height: auto; display: block; object-fit: contain; }\n"
+     << "  .missing { padding: 36px 12px; text-align: center; color: var(--muted); background: #090c10;"
+     << " font-size: 12px; }\n"
+     << "  .issues { padding: 8px 12px; font-size: 12px; border-top: 1px solid var(--border); }\n"
+     << "  .issues summary { cursor: pointer; color: #f2cc60; }\n"
+     << "  .issues ul { margin: 8px 0 0; padding-left: 18px; }\n"
+     << "  .issues li { margin-bottom: 4px; color: var(--muted); }\n"
+     << "  .sev-error { color: #ff7b72; font-weight: 600; } .sev-warn { color: #f2cc60; font-weight: 600; }\n"
+     << "</style>\n</head>\n<body>\n";
+
+  ss << "<header>\n  <div><h1>Octarine UI Preview Matrix: <code>" << EscapeHtmlText(previewer.ActiveSource())
+     << "</code></h1></div>\n  <div class=\"summary\"><span>Cells: <strong>" << result.cells.size()
+     << "</strong></span><span>Errors: <strong class=\"sev-error\">" << totalErrors
+     << "</strong></span><span>Warnings: <strong class=\"sev-warn\">" << totalWarnings
+     << "</strong></span><a href=\"matrix_report.json\">matrix_report.json</a></div>\n</header>\n";
+
+  ss << R"(<main class="grid" style="grid-template-columns: repeat()" << colCount << ", minmax(280px, 1fr));\">\n";
+  for (const auto& cell : result.cells) {
+    AppendMatrixCellCardHtml(ss, cell);
+  }
+  ss << "</main>\n</body>\n</html>\n";
   return ss.str();
 }
 
@@ -883,11 +1036,19 @@ PreviewMatrixResult UIPreviewer::RunPreviewMatrix(const PreviewMatrixOptions& op
   if (auto* rq = registry_->TryGet<RenderQueue>()) rq->Clear();
 
   result.reportPath = (fs::path(opts.outDir) / "matrix_report.json").generic_string();
+  result.htmlReportPath = (fs::path(opts.outDir) / "index.html").generic_string();
   result.reportJson = FormatMatrixReportJson(*this, result, resolutions, presets);
 
   std::string writeErr;
-  result.ok = detail::TryWriteTextFile(result.reportPath, result.reportJson, writeErr);
-  if (!result.ok) Logger::Error("[ui-preview] failed writing matrix report: " + writeErr);
+  const bool jsonOk = detail::TryWriteTextFile(result.reportPath, result.reportJson, writeErr);
+  if (!jsonOk) Logger::Error("[ui-preview] failed writing matrix report: " + writeErr);
+
+  std::string htmlErr;
+  const std::string htmlText = FormatMatrixReportHtml(*this, result, resolutions);
+  const bool htmlOk = detail::TryWriteTextFile(result.htmlReportPath, htmlText, htmlErr);
+  if (!htmlOk) Logger::Error("[ui-preview] failed writing matrix HTML contact sheet: " + htmlErr);
+
+  result.ok = jsonOk && htmlOk;
   return result;
 }
 

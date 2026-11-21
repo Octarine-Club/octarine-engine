@@ -112,3 +112,62 @@ Non-shipped builds support `--dev-listen <port>` (`1..65535`), implemented in [`
 | `20` | `Step` | Advance the simulation by N fixed ticks while paused |
 | `21` | `Pause` | Pause or resume simulation ticks |
 | `22` | `Inspect` | Query ECS state (`summary`, `entities`, `hash[:scale]`, `entity:<id>`, `query:<list>`) |
+
+---
+
+## 6. UI Previewer, Mock Sidecars & Layout Automation (`-m ui-preview` & `dev.*`)
+
+Non-shipped builds include [`UIPreviewer`](../src/UI/UIPreviewer.h) and the ImGui **UI Previewer** panel (`UI` -> `UI Previewer`, shortcut `Ctrl+Shift+V`; reload active preview with `F5`). Hovering rows in the **Layout Audit** tab highlights the target entity (`UIRectComponent`, or a `12x12px` reticle when `0x0`) in amber; clicking pins/unpins selection in cyan. Enabling **Safe Areas** draws `93%` action-safe (cyan) and `90%` title-safe (gold) viewport guides.
+
+### Standalone CLI Flags (`-m ui-preview`)
+
+```bash
+SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
+  ./build/player-debug/bin/debug/OctarineEngine ./projects/my-game \
+  -m ui-preview --headless --ui-file assets/ui/hud.oxml \
+  --ui-matrix ./out/hud_matrix --ui-resolutions 1920x1080,1280x800,800x600 --ui-presets all
+```
+
+| Flag | Purpose |
+|---|---|
+| `--ui-file <path_or_id>` | `.oxml` view to mount in preview mode (defaults to first catalog `.oxml`). |
+| `--ui-mock <path.lua>` | Explicit Lua mock script overriding `<view>.preview.lua` sidecar auto-loading. |
+| `--ui-preset <name>` | Named preset in `.preview.lua`, or stress preset (`@default`, `@empty`, `@overflow`). |
+| `--ui-size <WxH>` | Simulated viewport resolution (also supports `800x600`, `1280x800`, etc.). |
+| `--ui-capture <path.png>` | One-shot PNG screenshot output (non-`ui-preview` runs also support `OCTARINE_CAPTURE_PATH`). |
+| `--ui-audit-json <path\|->` | Write layout and contract audit JSON (`-` writes to stdout). |
+| `--ui-matrix <out_dir>` | Sweep `(preset x resolution)` captures + `matrix_report.json` + portable `index.html` contact sheet. |
+| `--ui-resolutions <csv>` | Comma-separated `WxH` list for `--ui-matrix` (default: `1920x1080,1280x800,800x600`). |
+| `--ui-presets <csv>` | Preset list, `auto`, or `all` for `--ui-matrix`. |
+
+### `dev.*` UI Preview & Audit Lua API
+
+Available in non-shipped builds (live `--dev` sessions or via `--dev-listen` `EvalLua`):
+
+| Function | Purpose |
+|---|---|
+| `dev.preview_ui(path_or_id, opts?) -> bool` | Mounts an `.oxml` view in `UIPreviewer` (`opts`: `{ context, controller, params, styles }`). |
+| `dev.preview_inline_ui(xml, oss?) -> bool` | Mounts inline OXML + optional OSS strings in the previewer. |
+| `dev.unmount_preview_ui()` | Unmounts the active preview and restores scene UI isolation state. |
+| `dev.reload_preview_ui() -> bool` | Reloads the active `.oxml`, `.oss`, and `.preview.lua` mock script. |
+| `dev.list_ui_views() -> table` | Returns array of `{ id, path }` catalog `.oxml` entries. |
+| `dev.audit_ui() -> table` / `dev.audit_ui_json() -> string` | Runs geometric, focus, and contract audit rules and returns Lua table or JSON. |
+| `dev.inspect_ui_contract(path_or_id?) -> table` | Inspects `<Param>`, `{var}`, `ref`, slot, and callback contracts (live or static `.oxml`). |
+| `dev.inspect_ui_contract_json(path_or_id?) -> string` | Returns live UI preview state, diagnostics, contract, and audit issues as JSON. |
+| `dev.set_ui_mock_field(path, value) -> bool` | Updates a mock `context` field live by dotted path. |
+| `dev.resize_ui_mock_array(path, len) -> bool` | Resizes a repeater table (`each="item in list"`) live using contract item hints. |
+| `dev.set_ui_param(name, value) -> bool` | Overrides a `<Param>` value (`string`, `bool`, or `number`). |
+| `dev.load_ui_mock(path) -> bool` | Loads a sandboxed `.lua` mock script onto the active preview. |
+| `dev.save_ui_mock(path?, force?) -> bool` | Saves live mock snapshot to `.preview.lua` (`force=true` overwrites controller functions). |
+| `dev.export_ui_mock_lua() -> string` | Serializes the live mock snapshot as Lua source without writing to disk. |
+| `dev.seed_ui_mock(path?) -> bool` | Seeds a single unset contract field or all missing contract fields. |
+| `dev.set_ui_viewport(w, h) -> bool` | Sets simulated viewport size (`0, 0` restores native window dimensions). |
+| `dev.get_ui_viewport_json() -> string` | Returns active width, height, `ui_scale`, `simulated`, `safe_areas`, `integer_zoom`. |
+| `dev.set_ui_safe_area_guides(enabled) -> bool` | Enables or disables 93% action-safe / 90% title-safe viewport guides. |
+| `dev.set_ui_integer_zoom(enabled) -> bool` | Enables or disables integer zoom scaling during viewport simulation. |
+| `dev.list_ui_presets_json() -> string` | Lists authored `.preview.lua` presets, active/default preset, and stress tags. |
+| `dev.select_ui_preset(name) -> bool` | Switches to an authored preset or `@default` / `@empty` / `@overflow`. |
+| `dev.save_ui_preset(name, set_default?, force?) -> bool` | Saves current live state as a named preset inside `.preview.lua`. |
+| `dev.delete_ui_preset(name, force?) -> bool` | Deletes a named preset from `.preview.lua` (preserving at least one preset). |
+| `dev.apply_ui_stress_preset(kind) -> bool` | Applies `"default"`, `"empty"`, or `"overflow"` stress seed data live. |
+| `dev.run_ui_matrix_json(out_dir, resolutions_csv?, presets_csv?) -> string` | Executes a `(preset x resolution)` sweep writing PNGs, `matrix_report.json`, and `index.html`. |

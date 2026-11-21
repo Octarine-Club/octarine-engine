@@ -4011,6 +4011,8 @@ void TestStage13BatchMatrixAndDevLua() {
       local rpt = dev.run_ui_matrix_json(")lua") +
                                             outDir + R"lua(", "1920x1080,800x600", "heavy,@empty")
       assert(rpt:find('"cell_count": 4') ~= nil, "run_ui_matrix_json reports 4 cells (2 presets x 2 res)")
+      assert(rpt:find('"html_report_path"') ~= nil and rpt:find('index.html') ~= nil,
+             "matrix_report.json includes html_report_path")
       -- Original viewport 1280x800 must be restored after matrix run!
       local vpAfter = dev.get_ui_viewport_json()
       assert(vpAfter:find('"simulated": true') ~= nil and vpAfter:find('1280') ~= nil, "matrix restores prior viewport")
@@ -4042,15 +4044,35 @@ void TestStage13BatchMatrixAndDevLua() {
     const auto heavyFhd = tmp.dir / "matrix_out/heavy_1920x1080.png";
     const auto emptyCompact = tmp.dir / "matrix_out/empty_800x600.png";
     const auto reportPath = tmp.dir / "matrix_out/matrix_report.json";
+    const auto htmlPath = tmp.dir / "matrix_out/index.html";
     int w1 = 0;
     int h1 = 0;
     int w2 = 0;
     int h2 = 0;
     Check(std::filesystem::exists(reportPath), "matrix_report.json written on disk");
+    Check(std::filesystem::exists(htmlPath), "matrix index.html contact sheet written on disk");
     Check(ReadPngDimensions(heavyFhd, w1, h1) && w1 == 1920 && h1 == 1080,
           "heavy_1920x1080.png has exact 1920x1080 PNG dimensions");
     Check(ReadPngDimensions(emptyCompact, w2, h2) && w2 == 800 && h2 == 600,
           "empty_800x600.png has exact 800x600 PNG dimensions");
+
+    // Verify PreviewMatrixResult::htmlReportPath, relative src links, and HTML escaping cleanly.
+    PreviewMatrixOptions htmlOpts{};
+    htmlOpts.outDir = (tmp.dir / "matrix_html_check").generic_string();
+    htmlOpts.resolutions = {{1280, 720}};
+    htmlOpts.presets = {"@empty", "missing_<tag>"};
+    const PreviewMatrixResult htmlRes = previewer.RunPreviewMatrix(htmlOpts);
+    Check(htmlRes.ok, "RunPreviewMatrix succeeds when writing JSON + HTML contact sheet");
+    CheckEq(htmlRes.htmlReportPath, (std::filesystem::path(htmlOpts.outDir) / "index.html").generic_string(),
+            "PreviewMatrixResult::htmlReportPath points to index.html");
+    std::ifstream htmlIn(htmlRes.htmlReportPath);
+    Check(htmlIn.is_open(), "HTML contact sheet readable from disk");
+    const std::string htmlBody((std::istreambuf_iterator<char>(htmlIn)), std::istreambuf_iterator<char>());
+    Check(htmlBody.find("src=\"empty_1280x720.png\"") != std::string::npos,
+          "HTML contact sheet uses portable relative PNG paths");
+    Check(htmlBody.find("missing_&lt;tag&gt;") != std::string::npos &&
+              htmlBody.find("missing_<tag>") == std::string::npos,
+          "HTML contact sheet escapes special characters in preset names and messages");
     previewer.UnmountPreview(true);
   }
   TTF_Quit();

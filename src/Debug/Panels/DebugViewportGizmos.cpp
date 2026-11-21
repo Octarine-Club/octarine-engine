@@ -1,6 +1,7 @@
 #include "Debug/Panels/DebugViewportGizmos.h"
 
 #ifdef OCTARINE_WITH_IMGUI
+#include <algorithm>
 #include <cstdio>
 
 #include "Components/BoxColliderComponent.h"
@@ -87,13 +88,66 @@ void HandleWorldPicking(Registry& registry, DebugMenuRegistry& debugReg, const o
   }
 }
 
+bool TryResolveUIScreenScale(const Registry& registry, const ViewportInfo& vp, float& outScaleX, float& outScaleY) {
+  const auto* config = registry.TryGet<GameConfig>();
+  if (config == nullptr || config->windowWidth <= 0 || config->windowHeight <= 0) return false;
+  outScaleX = vp.width / static_cast<float>(config->windowWidth);
+  outScaleY = vp.height / static_cast<float>(config->windowHeight);
+  return true;
+}
+
+ImVec2 MapUIPointToScreen(const ViewportInfo& vp, const float x, const float y, const float scaleX,
+                          const float scaleY) {
+  return {vp.x + x * scaleX, vp.y + y * scaleY};
+}
+
+bool TryMapUIRectToScreen(const Registry& registry, const ViewportInfo& vp, const UIRectComponent& r, ImVec2& outP1,
+                          ImVec2& outP2) {
+  float scaleX = 1.0f;
+  float scaleY = 1.0f;
+  if (!TryResolveUIScreenScale(registry, vp, scaleX, scaleY)) return false;
+  outP1 = MapUIPointToScreen(vp, r.left, r.top, scaleX, scaleY);
+  outP2 = MapUIPointToScreen(vp, r.right, r.bottom, scaleX, scaleY);
+  return true;
+}
+
+void DrawUIRectHighlight(ImDrawList* drawList, const ImVec2& p1, const ImVec2& p2, const ImU32 borderCol,
+                         const ImU32 fillCol, const float thickness) {
+  const float w = p2.x - p1.x;
+  const float h = p2.y - p1.y;
+  if (w <= 1.0f || h <= 1.0f) {
+    const float cx = (p1.x + p2.x) * 0.5f;
+    const float cy = (p1.y + p2.y) * 0.5f;
+    const ImVec2 minP{cx - 6.0f, cy - 6.0f};
+    const ImVec2 maxP{cx + 6.0f, cy + 6.0f};
+    if (fillCol != 0) drawList->AddRectFilled(minP, maxP, fillCol);
+    drawList->AddRect(minP, maxP, borderCol, 0.0f, 0, thickness);
+    drawList->AddLine(ImVec2(cx - 9.0f, cy), ImVec2(cx + 9.0f, cy), borderCol, thickness);
+    drawList->AddLine(ImVec2(cx, cy - 9.0f), ImVec2(cx, cy + 9.0f), borderCol, thickness);
+    return;
+  }
+  if (fillCol != 0) drawList->AddRectFilled(p1, p2, fillCol);
+  drawList->AddRect(p1, p2, borderCol, 0.0f, 0, thickness);
+}
+
 void DrawSelectedEntityGizmo(Registry& registry, Entity selected, const octarine::Rect& camView, const ViewportInfo& vp,
                              ImDrawList* drawList) {
-  if (!registry.IsAlive(selected) || !registry.HasComponent<PositionComponent>(selected)) return;
+  if (!registry.IsAlive(selected)) return;
+  constexpr ImU32 kCrosshairColor = IM_COL32(0, 255, 255, 255);
+  if (!registry.HasComponent<PositionComponent>(selected)) {
+    if (registry.HasComponent<UIRectComponent>(selected)) {
+      ImVec2 p1{};
+      ImVec2 p2{};
+      if (TryMapUIRectToScreen(registry, vp, registry.GetComponent<UIRectComponent>(selected), p1, p2)) {
+        DrawUIRectHighlight(drawList, p1, p2, kCrosshairColor, IM_COL32(0, 255, 255, 24), 2.5f);
+      }
+    }
+    return;
+  }
+
   const glm::vec2 pos = registry.GetComponent<PositionComponent>(selected).value;
   const ImVec2 screenPos = WorldToScreen(pos, camView, vp);
 
-  constexpr ImU32 kCrosshairColor = IM_COL32(0, 255, 255, 255);
   drawList->AddLine(ImVec2(screenPos.x - 8.0f, screenPos.y), ImVec2(screenPos.x + 8.0f, screenPos.y), kCrosshairColor,
                     2.0f);
   drawList->AddLine(ImVec2(screenPos.x, screenPos.y - 8.0f), ImVec2(screenPos.x, screenPos.y + 8.0f), kCrosshairColor,
@@ -112,20 +166,50 @@ void DrawSelectedEntityGizmo(Registry& registry, Entity selected, const octarine
   }
 }
 
+void DrawHoveredEntityGizmo(const Registry& registry, const DebugMenuRegistry& debugReg, const ViewportInfo& vp,
+                            ImDrawList* drawList) {
+  const Entity hovered = debugReg.GetHoveredEntity();
+  if (!registry.IsAlive(hovered) || !registry.HasComponent<UIRectComponent>(hovered)) return;
+
+  ImVec2 p1{};
+  ImVec2 p2{};
+  if (!TryMapUIRectToScreen(registry, vp, registry.GetComponent<UIRectComponent>(hovered), p1, p2)) return;
+
+  constexpr ImU32 kHoverBorder = IM_COL32(255, 196, 45, 255);
+  constexpr ImU32 kHoverFill = IM_COL32(255, 196, 45, 48);
+  DrawUIRectHighlight(drawList, p1, p2, kHoverBorder, kHoverFill, 2.5f);
+
+  const std::string& label = debugReg.GetHoveredEntityLabel();
+  if (label.empty()) return;
+
+  const ImVec2 textSz = ImGui::CalcTextSize(label.c_str());
+  const float pillW = textSz.x + 10.0f;
+  const float pillH = textSz.y + 6.0f;
+  const float minX = vp.x + 4.0f;
+  const float maxX = std::max(minX, vp.x + vp.width - pillW - 4.0f);
+  const float minY = vp.y + 4.0f;
+  const float maxY = std::max(minY, vp.y + vp.height - pillH - 4.0f);
+  const float prefY = (p1.y - pillH - 4.0f >= minY) ? (p1.y - pillH - 4.0f) : (p2.y + 4.0f);
+  const ImVec2 b0{std::clamp(p1.x, minX, maxX), std::clamp(prefY, minY, maxY)};
+  const ImVec2 b1{b0.x + pillW, b0.y + pillH};
+  drawList->AddRectFilled(b0, b1, IM_COL32(20, 22, 30, 220), 3.0f);
+  drawList->AddRect(b0, b1, kHoverBorder, 3.0f);
+  drawList->AddText(ImVec2(b0.x + 5.0f, b0.y + 3.0f), IM_COL32(255, 232, 160, 255), label.c_str());
+}
+
 void DrawUIOverlays(Registry& registry, const DebugMenuRegistry& debugReg, const ViewportInfo& vp,
                     ImDrawList* drawList) {
   if (!debugReg.ShowUILayoutBoxes() && !debugReg.ShowUIClipRects() && !debugReg.HighlightUIFocus()) {
     return;
   }
-  const auto* config = registry.TryGet<GameConfig>();
-  if (config == nullptr || config->windowWidth <= 0 || config->windowHeight <= 0) return;
-  const float scaleX = vp.width / static_cast<float>(config->windowWidth);
-  const float scaleY = vp.height / static_cast<float>(config->windowHeight);
+  float scaleX = 1.0f;
+  float scaleY = 1.0f;
+  if (!TryResolveUIScreenScale(registry, vp, scaleX, scaleY)) return;
 
   auto query = registry.CreateQuery<UIRectComponent>();
   query->ForEach([&](const Entity ent, const UIRectComponent& r) {
-    const ImVec2 p1{vp.x + r.left * scaleX, vp.y + r.top * scaleY};
-    const ImVec2 p2{vp.x + r.right * scaleX, vp.y + r.bottom * scaleY};
+    const ImVec2 p1 = MapUIPointToScreen(vp, r.left, r.top, scaleX, scaleY);
+    const ImVec2 p2 = MapUIPointToScreen(vp, r.right, r.bottom, scaleX, scaleY);
 
     if (debugReg.ShowUILayoutBoxes()) {
       drawList->AddRect(p1, p2, IM_COL32(0, 255, 255, 180), 0.0f, 0, 1.0f);
@@ -189,7 +273,10 @@ void DrawDebugViewportGizmos(Registry& registry) {
   if (debugReg == nullptr) return;
 
   const auto* vp = registry.TryGet<ViewportInfo>();
-  if (vp == nullptr || vp->width <= 0.0f || vp->height <= 0.0f) return;
+  if (vp == nullptr || vp->width <= 0.0f || vp->height <= 0.0f) {
+    debugReg->ClearHoveredEntity();
+    return;
+  }
 
   octarine::Rect camView{0, 0, vp->width, vp->height};
   if (const auto* cam = registry.TryGet<CameraComponent>()) {
@@ -204,9 +291,11 @@ void DrawDebugViewportGizmos(Registry& registry) {
   }
 
   DrawUIOverlays(registry, *debugReg, *vp, drawList);
+  DrawHoveredEntityGizmo(registry, *debugReg, *vp, drawList);
 #ifndef OCTARINE_SHIPPED
   DrawPreviewViewportAndSafeAreaGuides(registry, *vp, drawList);
 #endif
+  debugReg->ClearHoveredEntity();
 }
 
 }  // namespace octarine::debug

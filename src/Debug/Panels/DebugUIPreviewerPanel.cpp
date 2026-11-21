@@ -43,6 +43,9 @@ void DrawToolbarActionRow(UIPreviewer& previewer, EngineOptions& opts) {
   if (ImGui::Button("Reload Now")) {
     previewer.ReloadActivePreview();
   }
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("Reload active UI view and mock sidecar (F5)");
+  }
   ImGui::SameLine();
   if (ImGui::Button("Unmount")) {
     previewer.UnmountPreview(true);
@@ -221,6 +224,9 @@ void DrawToolbarViewportRow(UIPreviewer& previewer) {
   if (ImGui::Checkbox("Safe Areas", &safeAreas)) {
     previewer.SetShowSafeAreaGuides(safeAreas);
   }
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("Toggle 93%% action-safe (cyan) and 90%% title-safe (gold) guides + center crosshair");
+  }
   ImGui::SameLine();
   ImGui::BeginDisabled(!previewer.HasSimulatedViewport());
   bool intZoom = previewer.IntegerZoomSimulation();
@@ -254,6 +260,24 @@ const char* MockSourceBadgeLabel(const MockSourceMode mode) {
       return "Auto-Seeded";
   }
   return "None";
+}
+
+void DrawBannerIssueSummary(const std::vector<UILayoutIssue>& issues) {
+  if (issues.empty()) {
+    ImGui::TextColored(ImVec4(0.35f, 0.90f, 0.55f, 1.0f), "| 0 Issues");
+    return;
+  }
+  std::size_t errCount = 0;
+  std::size_t warnCount = 0;
+  for (const auto& issue : issues) {
+    if (issue.severity == "error") {
+      ++errCount;
+    } else {
+      ++warnCount;
+    }
+  }
+  const ImVec4 badgeCol = (errCount > 0) ? ImVec4(1.0f, 0.45f, 0.45f, 1.0f) : ImVec4(1.0f, 0.78f, 0.25f, 1.0f);
+  ImGui::TextColored(badgeCol, "| %zu Error(s), %zu Warning(s)", errCount, warnCount);
 }
 
 void DrawDiagnosticsBanner(const UIPreviewer& previewer, const UIRuntime* uiRuntime,
@@ -292,11 +316,7 @@ void DrawDiagnosticsBanner(const UIPreviewer& previewer, const UIRuntime* uiRunt
       ImGui::TextColored(ImVec4(1.0f, 0.78f, 0.25f, 1.0f), "[Modified]");
     }
     ImGui::SameLine();
-    if (issues.empty()) {
-      ImGui::TextColored(ImVec4(0.35f, 0.90f, 0.55f, 1.0f), "| 0 Warnings");
-    } else {
-      ImGui::TextColored(ImVec4(1.0f, 0.78f, 0.25f, 1.0f), "| %zu Warning(s)", issues.size());
-    }
+    DrawBannerIssueSummary(issues);
   } else {
     ImGui::TextDisabled("No view mounted. Select an .oxml view from the left catalog or use Quick Scratchpad.");
   }
@@ -342,6 +362,25 @@ void DrawCatalogPane(UIPreviewer& previewer) {
   }
 }
 
+void DrawAuditIssueElementCell(const UILayoutIssue& issue, const int rowIndex, DebugMenuRegistry& debugReg) {
+  ImGui::PushID(rowIndex);
+  const bool hasEntity = (issue.entity != Entity{});
+  const bool selected = hasEntity && (debugReg.GetSelectedEntity() == issue.entity);
+  if (ImGui::Selectable(issue.label.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns) && hasEntity) {
+    if (selected) {
+      debugReg.SelectEntity(Entity{});
+    } else {
+      debugReg.SelectEntity(issue.entity);
+      debugReg.SetHighlightSelectedEntity(true);
+    }
+  }
+  if (ImGui::IsItemHovered() && hasEntity) {
+    debugReg.SetHoveredEntity(issue.entity, issue.code + " | " + issue.label);
+    ImGui::SetTooltip("Hover highlights in viewport; click to pin/unpin selection");
+  }
+  ImGui::PopID();
+}
+
 void DrawAuditTab(const std::vector<UILayoutIssue>& issues, DebugMenuRegistry& debugReg) {
   if (issues.empty()) {
     ImGui::TextColored(ImVec4(0.35f, 0.90f, 0.55f, 1.0f), "No layout geometry or focus issues detected.");
@@ -359,16 +398,12 @@ void DrawAuditTab(const std::vector<UILayoutIssue>& issues, DebugMenuRegistry& d
     const auto& issue = issues[i];
     ImGui::TableNextRow();
     ImGui::TableSetColumnIndex(0);
-    ImGui::TextColored(ImVec4(1.0f, 0.78f, 0.25f, 1.0f), "%s", issue.code.c_str());
+    const ImVec4 sevColor =
+        (issue.severity == "error") ? ImVec4(1.0f, 0.45f, 0.45f, 1.0f) : ImVec4(1.0f, 0.78f, 0.25f, 1.0f);
+    ImGui::TextColored(sevColor, "%s", issue.code.c_str());
 
     ImGui::TableSetColumnIndex(1);
-    ImGui::PushID(static_cast<int>(i));
-    const bool selected = (debugReg.GetSelectedEntity() == issue.entity);
-    if (ImGui::Selectable(issue.label.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns)) {
-      debugReg.SelectEntity(issue.entity);
-      debugReg.SetHighlightSelectedEntity(true);
-    }
-    ImGui::PopID();
+    DrawAuditIssueElementCell(issue, static_cast<int>(i), debugReg);
 
     ImGui::TableSetColumnIndex(2);
     ImGui::TextWrapped("%s", issue.message.c_str());

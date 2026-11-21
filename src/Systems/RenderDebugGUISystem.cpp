@@ -19,6 +19,7 @@
 #include "Debug/Panels/DebugUIPanel.h"
 #ifndef OCTARINE_SHIPPED
 #include "Debug/Panels/DebugUIPreviewerPanel.h"
+#include "UI/UIPreviewer.h"
 #endif
 #include "Debug/Panels/DebugViewportGizmos.h"
 #include "ECS/Query.h"
@@ -207,6 +208,26 @@ void DrawRegisteredPanels(Registry& registry, octarine::debug::DebugMenuRegistry
     DrawSinglePanel(registry, panel);
   }
 }
+
+void HandleDebugShortcuts(Registry& registry, octarine::debug::DebugMenuRegistry& debugReg) {
+  const ImGuiIO& io = ImGui::GetIO();
+  if (io.WantTextInput) return;
+
+#ifndef OCTARINE_SHIPPED
+  const bool primaryMod = io.KeyCtrl || io.KeySuper;
+  if (primaryMod && io.KeyShift && !io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_V, false)) {
+    debugReg.SetPanelOpen("engine.ui_previewer", !debugReg.IsPanelOpen("engine.ui_previewer"));
+  }
+  if (!io.KeyCtrl && !io.KeySuper && !io.KeyShift && !io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_F5, false)) {
+    if (auto* previewer = registry.TryGet<UIPreviewer>(); previewer != nullptr && previewer->IsActive()) {
+      static_cast<void>(previewer->ReloadActivePreview());
+    }
+  }
+#else
+  (void)registry;
+  (void)debugReg;
+#endif
+}
 }  // namespace
 
 void RenderDebugGUISystem::DrawDebugOverlays(Registry* registry, const EngineOptions& engineOptions,
@@ -221,6 +242,9 @@ void RenderDebugGUISystem::DrawDebugOverlays(Registry* registry, const EngineOpt
     octarine::debug::DebugComponentInspectorRegistry::InstallBuiltInComponentInspectors();
     InstallBuiltInDebugPanels(*debugReg);
     debugReg->MarkBuiltInsInstalled();
+  }
+  if (debugReg != nullptr) {
+    HandleDebugShortcuts(*registry, *debugReg);
   }
 
   const bool hasCustomBg = (engineOptions.debugOverlayBackgroundColor.a > 0);

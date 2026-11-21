@@ -111,6 +111,7 @@ struct PreviewMatrixResult {
   bool ok{false};
   std::string outDir{};
   std::string reportPath{};
+  std::string htmlReportPath{};
   std::string reportJson{};
   std::vector<PreviewMatrixCellResult> cells{};
 };
