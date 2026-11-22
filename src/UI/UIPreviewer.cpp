@@ -149,15 +149,24 @@ sol::object UnwrapObservableDataDeep(sol::state& lua, const sol::object& val) {
 }
 
 // Bounded check for any Lua function handlers inside controller tables (depth <= 2).
-// NOLINTNEXTLINE(misc-no-recursion)
 bool ContainsFunctionValue(const sol::table& tbl, const int depth) {
   if (!tbl.valid() || depth > 2) return false;
-  const sol::table raw = UnwrapObservableShallow(tbl);
-  return std::any_of(raw.cbegin(), raw.cend(), [depth](const auto& kv) {
-    const sol::object& v = kv.second;
-    if (v.template is<sol::protected_function>()) return true;
-    return depth < 2 && v.template is<sol::table>() && ContainsFunctionValue(v.template as<sol::table>(), depth + 1);
-  });
+  std::vector<std::pair<sol::table, int>> stack;
+  stack.emplace_back(tbl, depth);
+  while (!stack.empty()) {
+    const auto [cur, d] = std::move(stack.back());
+    stack.pop_back();
+    if (!cur.valid() || d > 2) continue;
+    const sol::table raw = UnwrapObservableShallow(cur);
+    const bool found = std::any_of(raw.cbegin(), raw.cend(), [&](const auto& kv) {
+      const sol::object& v = kv.second;
+      if (v.template is<sol::protected_function>()) return true;
+      if (d < 2 && v.template is<sol::table>()) stack.emplace_back(v.template as<sol::table>(), d + 1);
+      return false;
+    });
+    if (found) return true;
+  }
+  return false;
 }
 
 bool HasAnyControllerFunction(const sol::table& rawRoot, const sol::table& activeCtrl) {

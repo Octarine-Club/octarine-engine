@@ -2922,6 +2922,19 @@ std::optional<OxmlDocument> ResolveUseDocForContract(const UIRuntime& runtime, c
 }  // namespace
 
 #ifndef OCTARINE_SHIPPED
+namespace {
+bool ApplyMountedViewParamOverride(sol::state* lua, const std::shared_ptr<UIViewInstance>& v, const std::string& name,
+                                   const std::string& value) {
+  if (!v || !v->IsCurrentlyMounted() || lua == nullptr) return false;
+  if (!v->paramOverrides.valid()) v->paramOverrides = lua->create_table();
+  v->paramOverrides.set(name, value);
+  if (!v->params.valid()) v->params = lua->create_table();
+  v->params.set(name, value);
+  v->Refresh();
+  return true;
+}
+}  // namespace
+
 void UIRuntime::WireMountedViewPreviewCallbacks(MountedViewRecord& rec, const std::shared_ptr<void>& viewErased) {
   const std::weak_ptr<UIViewInstance> weakView = std::static_pointer_cast<UIViewInstance>(viewErased);
   rec.inspectContractFn = [this, weakView](OxmlContract& outContract) -> bool {
@@ -2932,14 +2945,7 @@ void UIRuntime::WireMountedViewPreviewCallbacks(MountedViewRecord& rec, const st
     return true;
   };
   rec.setParamFn = [this, weakView](const std::string& name, const std::string& value) -> bool {
-    const auto v = weakView.lock();
-    if (!v || !v->IsCurrentlyMounted() || lua_ == nullptr) return false;
-    if (!v->paramOverrides.valid()) v->paramOverrides = lua_->create_table();
-    v->paramOverrides.set(name, value);
-    if (!v->params.valid()) v->params = lua_->create_table();
-    v->params.set(name, value);
-    v->Refresh();
-    return true;
+    return ApplyMountedViewParamOverride(lua_, weakView.lock(), name, value);
   };
   rec.getParamsFn = [weakView]() -> sol::object {
     const auto v = weakView.lock();

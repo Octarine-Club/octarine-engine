@@ -323,6 +323,19 @@ void DrawDiagnosticsBanner(const UIPreviewer& previewer, const UIRuntime* uiRunt
   }
 }
 
+void DrawCatalogViewEntry(UIPreviewer& previewer, const PreviewCatalogEntry& entry, const std::string& filter) {
+  const std::string label = entry.displayPath.empty() ? entry.id : entry.displayPath;
+  if (!ContainsCaseInsensitive(label, filter) && !ContainsCaseInsensitive(entry.id, filter)) return;
+  const bool selected =
+      previewer.IsActive() && (previewer.ActiveSource() == entry.fullPath || previewer.ActiveSource() == entry.id);
+  if (ImGui::Selectable(label.c_str(), selected)) {
+    previewer.MountPreview(entry.fullPath.empty() ? entry.id : entry.fullPath);
+  }
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("ID: %s\nPath: %s\nClick to mount in UI Previewer", entry.id.c_str(), entry.fullPath.c_str());
+  }
+}
+
 void DrawCatalogViewsList(UIPreviewer& previewer, const std::string& filter) {
   ImGui::SeparatorText("OXML Views");
   const auto& views = previewer.CatalogViews();
@@ -331,16 +344,7 @@ void DrawCatalogViewsList(UIPreviewer& previewer, const std::string& filter) {
     return;
   }
   for (const auto& entry : views) {
-    const std::string label = entry.displayPath.empty() ? entry.id : entry.displayPath;
-    if (!ContainsCaseInsensitive(label, filter) && !ContainsCaseInsensitive(entry.id, filter)) continue;
-    const bool selected =
-        previewer.IsActive() && (previewer.ActiveSource() == entry.fullPath || previewer.ActiveSource() == entry.id);
-    if (ImGui::Selectable(label.c_str(), selected)) {
-      previewer.MountPreview(entry.fullPath.empty() ? entry.id : entry.fullPath);
-    }
-    if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("ID: %s\nPath: %s\nClick to mount in UI Previewer", entry.id.c_str(), entry.fullPath.c_str());
-    }
+    DrawCatalogViewEntry(previewer, entry, filter);
   }
 }
 

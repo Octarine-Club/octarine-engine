@@ -385,7 +385,7 @@ bool SetUiMockParamFromLua(LuaBindingContext& ctx, const std::string& name, cons
   return previewer->SetMockParam(name, strVal);
 }
 
-void BindUIPreviewMockFunctions(sol::table& dev, sol::state& lua, LuaBindingContext& ctx) {
+void BindUIPreviewContractFunctions(sol::table& dev, sol::state& lua, LuaBindingContext& ctx) {
   dev.set_function("inspect_ui_contract", [&lua, &ctx](const sol::optional<std::string>& pathOrId) -> sol::table {
     if (pathOrId.has_value() && !pathOrId->empty()) {
       auto* reg = ctx.GetRegistry();
@@ -394,6 +394,15 @@ void BindUIPreviewMockFunctions(sol::table& dev, sol::state& lua, LuaBindingCont
     }
     return InspectActiveContractToLua(lua, ctx);
   });
+
+  dev.set_function("inspect_ui_contract_json", [&ctx](const sol::optional<std::string>& pathOrId) -> std::string {
+    auto* previewer = GetOrCreateUIPreviewer(ctx);
+    return previewer != nullptr ? previewer->InspectContractJson(pathOrId.value_or("")) : "{}";
+  });
+}
+
+void BindUIPreviewMockFunctions(sol::table& dev, sol::state& lua, LuaBindingContext& ctx) {
+  BindUIPreviewContractFunctions(dev, lua, ctx);
 
   dev.set_function("set_ui_mock_field", [&ctx](const std::string& path, const sol::object& value) -> bool {
     auto* previewer = GetOrCreateUIPreviewer(ctx);
@@ -429,11 +438,6 @@ void BindUIPreviewMockFunctions(sol::table& dev, sol::state& lua, LuaBindingCont
     auto* previewer = GetOrCreateUIPreviewer(ctx);
     if (previewer == nullptr) return false;
     return path.has_value() ? previewer->SeedSingleContractField(*path) : previewer->SeedMissingContractFields();
-  });
-
-  dev.set_function("inspect_ui_contract_json", [&ctx](const sol::optional<std::string>& pathOrId) -> std::string {
-    auto* previewer = GetOrCreateUIPreviewer(ctx);
-    return previewer != nullptr ? previewer->InspectContractJson(pathOrId.value_or("")) : "{}";
   });
 }
 
