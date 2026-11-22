@@ -1306,7 +1306,7 @@ sol::object InvokeUserCtrlFn(const sol::protected_function& userFn, const sol::t
   std::vector<sol::object> forwardArgs;
   forwardArgs.reserve(args.size());
   for (const auto& arg : args) {
-    forwardArgs.push_back(sol::object(arg));
+    forwardArgs.push_back(arg.get<sol::object>());
   }
   const sol::protected_function_result res =
       forwardArgs.empty() ? userFn(backing) : userFn(backing, sol::as_args(forwardArgs));
@@ -1315,7 +1315,7 @@ sol::object InvokeUserCtrlFn(const sol::protected_function& userFn, const sol::t
     Logger::Error(std::string("[ui-preview] controller error: ") + err.what());
     return sol::lua_nil;
   }
-  return res.return_count() > 0 ? sol::object(res[0]) : sol::object(sol::lua_nil);
+  return res.return_count() > 0 ? res.get<sol::object>(0) : sol::object(sol::lua_nil);
 }
 
 }  // namespace
@@ -1530,14 +1530,14 @@ void ApplyAutoSeedContextToMountedView(UIRuntime& uiRuntime, const Registry* reg
 sol::object MakeWrappedControllerFn(sol::state& lua, const std::shared_ptr<UIPreviewer*>& handle,
                                     const std::string& key, const sol::table& backing,
                                     const sol::protected_function& userFn) {
-  return sol::make_object(lua,
-                          [handle, key, backing, userFn](const sol::table&, sol::variadic_args args) -> sol::object {
-                            const sol::object firstArg = args.size() > 0 ? sol::object(args[0]) : sol::lua_nil;
-                            if (handle && *handle != nullptr) {
-                              (*handle)->RecordCallbackEvent(key + "(" + FormatFallbackArg(firstArg) + ")");
-                            }
-                            return InvokeUserCtrlFn(userFn, backing, args);
-                          });
+  return sol::make_object(
+      lua, [handle, key, backing, userFn](const sol::table&, sol::variadic_args args) -> sol::object {
+        const sol::object firstArg = args.size() > 0 ? args.get<sol::object>(0) : sol::object(sol::lua_nil);
+        if (handle && *handle != nullptr) {
+          (*handle)->RecordCallbackEvent(key + "(" + FormatFallbackArg(firstArg) + ")");
+        }
+        return InvokeUserCtrlFn(userFn, backing, args);
+      });
 }
 
 sol::object MakeStubControllerFn(sol::state& lua, const std::shared_ptr<UIPreviewer*>& handle, const std::string& key) {
@@ -1981,7 +1981,10 @@ void ReseedAutoPreviewAfterReload(UIRuntime& uiRuntime, Registry* registry, cons
   if (!pinObj.is<sol::table>()) return;
   const sol::table viewTbl = pinObj.as<sol::table>();
   const sol::protected_function getCtx = viewTbl.get<sol::protected_function>("get_context");
-  const sol::object ctxObj = getCtx.valid() ? sol::object(getCtx(viewTbl)) : sol::lua_nil;
+  if (!getCtx.valid()) return;
+  const sol::protected_function_result ctxRes = getCtx(viewTbl);
+  if (!ctxRes.valid() || ctxRes.return_count() == 0) return;
+  const sol::object ctxObj = ctxRes.get<sol::object>(0);
   if (!ctxObj.is<sol::table>()) return;
   sol::table ctx = ctxObj.as<sol::table>();
   SeedAutoFieldsIntoTable(lua, registry, ctx, activeContract);
@@ -2117,7 +2120,9 @@ bool TryGetActiveViewContext(const Registry* registry, sol::state*& outLua, sol:
   outViewTbl = pinObj.as<sol::table>();
   const sol::protected_function getCtx = outViewTbl.get<sol::protected_function>("get_context");
   if (!getCtx.valid()) return false;
-  const sol::object ctxObj = getCtx(outViewTbl);
+  const sol::protected_function_result ctxRes = getCtx(outViewTbl);
+  const sol::object ctxObj =
+      (ctxRes.valid() && ctxRes.return_count() > 0) ? ctxRes.get<sol::object>(0) : sol::object(sol::lua_nil);
   if (ctxObj.is<sol::table>()) {
     outCtxTbl = ctxObj.as<sol::table>();
   }

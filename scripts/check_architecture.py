@@ -190,10 +190,15 @@ def check_genre_purity() -> list[str]:
 def check_doc_parity() -> list[str]:
     violations = []
     docs_to_check = [
-        REPO_ROOT / "AGENTS.md",
-        REPO_ROOT / "CONTEXT.md",
+        REPO_ROOT / "README.md",
+        REPO_ROOT / "CONTRIBUTING.md",
     ]
-    docs_to_check.extend((REPO_ROOT / ".agents" / "skills").rglob("*.md"))
+    docs_dir = REPO_ROOT / "docs"
+    if docs_dir.is_dir():
+        for doc in sorted(docs_dir.rglob("*.md")):
+            if "docs/theme/" in doc.as_posix():
+                continue
+            docs_to_check.append(doc)
 
     for doc in docs_to_check:
         if not doc.exists():
@@ -218,7 +223,7 @@ def main() -> int:
     print("[check_architecture] Auditing genre-agnostic purity in src/...")
     genre_violations = check_genre_purity()
 
-    print("[check_architecture] Auditing agent documentation & skill parity...")
+    print("[check_architecture] Auditing documentation parity...")
     doc_violations = check_doc_parity()
 
     total_violations = len(inc_violations) + len(cmake_violations) + len(genre_violations) + len(doc_violations)
