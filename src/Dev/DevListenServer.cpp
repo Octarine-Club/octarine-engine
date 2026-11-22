@@ -177,6 +177,7 @@ bool IsMainThreadOp(OpCode op) {
     case OpCode::Step:
     case OpCode::Pause:
     case OpCode::Inspect:
+    case OpCode::Capture:
       return true;
     default:
       return false;

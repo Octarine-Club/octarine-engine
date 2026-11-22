@@ -35,6 +35,7 @@ enum class OpCode : std::uint32_t {
   Step = 20,         // body: [u32 ticks][float dt] or empty -> advances simulation; reply { u8 ok }
   Pause = 21,        // body: [u8 paused] or empty to query  -> sets/queries pause; reply { u8 ok, u8 is_paused }
   Inspect = 22,      // body: [query_mode] or empty          -> returns state JSON; reply { u8 ok, utf8 json }
+  Capture = 23,      // body: utf8 output path (.png/.bmp)   -> writes frame capture; reply { u8 ok, utf8 path }
 };
 
 // Handler the engine installs to apply an engine-mutating op on the main thread. Invoked from

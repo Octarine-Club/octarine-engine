@@ -222,6 +222,26 @@ void HandleInspect(Game* game, Registry& registry, const std::vector<char>& body
   }
 }
 
+void HandleCapture(Game* game, const std::vector<char>& body, std::string& reply_body) {
+  if (game == nullptr) {
+    reply_body = ErrReply("no game instance");
+    return;
+  }
+  std::string path(body.data(), body.size());
+  while (!path.empty() && (path.back() == '\n' || path.back() == '\r' || path.back() == ' ')) {
+    path.pop_back();
+  }
+  if (path.empty()) {
+    reply_body = ErrReply("capture requires output path");
+    return;
+  }
+  if (game->CaptureFrameToFile(path)) {
+    reply_body = OkReply(path);
+  } else {
+    reply_body = ErrReply("capture failed for: " + path);
+  }
+}
+
 }  // namespace
 
 CommandHandler MakeEngineCommandHandler(Registry& registry, sol::state& lua, Game* game) {
@@ -252,6 +272,9 @@ CommandHandler MakeEngineCommandHandler(Registry& registry, sol::state& lua, Gam
         return;
       case OpCode::Inspect:
         HandleInspect(game_ptr, *reg, body, reply_body);
+        return;
+      case OpCode::Capture:
+        HandleCapture(game_ptr, body, reply_body);
         return;
       default:
         reply_op = kErrorReplyOp;

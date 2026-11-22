@@ -31,6 +31,7 @@ Every `.oxml` view compiles directly into standard Octarine ECS entities and dat
 6. [Focus Navigation, Z-Order Hit Testing, Pointer Blocking & Inert States](#6-focus-navigation-z-order-hit-testing-pointer-blocking--inert-states)
 7. [UI Debug Wireframe Overlay (`ui.debug_draw`)](#7-ui-debug-wireframe-overlay-uidebug_draw)
 8. [Lifecycle, Hot Reload & Asset Baking](#8-lifecycle-hot-reload--asset-baking)
+   - [Isolated UI Preview and Matrix Workflow](#isolated-ui-preview-and-matrix-workflow)
 9. [Lua API Reference (`ui.*` & `view` Handle)](#9-lua-api-reference-ui--view-handle)
 
 ---
@@ -668,6 +669,31 @@ When running a development build (`player-debug` or `player-release`), `FrameLoo
 ### High-DPI Text & Measurement Caching
 - **Font Scaling Cache**: TTF font instances are cached per requested scale factor in `FontStore::GetScaled` to prevent costly per-frame glyph cache invalidations on High-DPI and scaled presentation modes.
 - **Text Measurement Cache**: `UILayoutMetrics` caches text bounds queries (`UILayoutMetrics::MeasureText`) keyed by string content and font ID, avoiding redundant glyph rasterization and measurement passes during flex and auto-sizing calculations.
+
+### Isolated UI Preview and Matrix Workflow
+
+In addition to in-game testing, non-shipped engine builds include an isolated previewer (`-m ui-preview`) and geometric layout auditor that mounts `.oxml` screens directly without running gameplay scripts (`StartupScript` is skipped in `-m ui-preview`):
+
+- **Windowed Interactive Preview (`Ctrl+Shift+V` / `F5`)**: Launch with `-m ui-preview --ui-file assets/ui/hud.oxml` (or open `UI` -> `UI Previewer` in any `--dev` session) to edit `.oxml`/`.oss` live with hot reload, switch backdrop modes (`Dark Slate`, `Checkerboard`, etc.), toggle `Safe Areas` (`93%` action-safe + `90%` title-safe guides), simulate viewports (`1920x1080`, `1280x800`, `800x600`, `640x360`, or custom `WxH`), inspect/edit live mock variables, and hover or click findings in the **Layout Audit** tab to highlight elements on screen. Press `F5` at any time (even when the panel is closed) to force-reload the active preview and mock sidecar.
+- **Mock Sidecars (`<view>.preview.lua`)**: Place `<view>.preview.lua` beside `<view>.oxml` to provide deterministic sample data across preview states without touching gameplay code. Sidecars run in a read-only sandbox, support flat `{ ... }`, structured `{ context, params, styles, controller }`, or multi-preset `{ default_preset, presets = { ... } }` tables, plus built-in stress presets (`@default`, `@empty`, `@overflow`). Files ending in `.preview.lua` are excluded automatically from `-m bake` asset archives.
+- **Headless Capture, Audit & Contact-Sheet Matrix (`--headless`)**:
+  - `--ui-audit-json <path|->`: Writes layout/contract diagnostics as JSON (`-` prints to stdout).
+  - `--ui-capture <path.png>`: Captures a PNG screenshot of the mounted view at `--ui-size <WxH>`.
+  - `--ui-matrix <out_dir>`: Sweeps `(preset x resolution)` combinations (defaulting to `1920x1080,1280x800,800x600`, configurable via `--ui-resolutions` and `--ui-presets`) and writes `<slug>_<W>x<H>.png`, `matrix_report.json`, and a portable dark-theme `index.html` contact sheet.
+
+| Audit Code | Severity | Meaning |
+|---|---|---|
+| `zero_size_visible` | error | Visible UI element resolved to `width <= 0` or `height <= 0`. |
+| `viewport_overflow` | error | Element bounds extend outside the active window/viewport on a non-clip ancestor. |
+| `unresolved_contract` | error | Required `<Param>` or data binding variable in `.oxml` is unset. |
+| `missing_preset` | error | Requested `--ui-preset` or `--ui-presets` entry does not exist in `.preview.lua`. |
+| `text_overflow` | warning | Rendered single-line or wrapped text exceeds its container box. |
+| `font_too_small` | warning | Effective font height (`authoredPx * uiScale`) drops below `10.0px`. |
+| `missing_focus_feedback` | warning | Focusable control has no `:focus` visual rule in `.oss`. |
+| `sibling_overlap` | warning | Non-anchored siblings inside a flex/grid container overlap by `> 1px`. |
+| `unsupported_attribute` | warning | Unrecognized or typoed attribute on a built-in `.oxml` tag. |
+
+See [`docs/dev-tools.md`](dev-tools.md) for the complete `-m ui-preview` CLI flags and `dev.*` Lua automation API.
 
 ---
 

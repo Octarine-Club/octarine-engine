@@ -1,5 +1,7 @@
 #include <SDL3/SDL_main.h>
 
+#include <string>
+
 #include "Game/Game.h"
 #include "General/Logger.h"
 
@@ -19,10 +21,21 @@ int main(const int argc, char* argv[]) {
   bool headless = false;
   bool devMode = false;
   int devListenPort = 0;  // 0 = disabled; >0 = bind on that TCP port
+  Game::UiPreviewCliOptions uiPreviewOpts{};
 
   // Parse command-line arguments
   for (int i = 1; i < argc; ++i) {
     std::string currentArg = argv[i];
+
+    bool consumedNext = false;
+    bool previewParseErr = false;
+    const bool hasNext = (i + 1 < argc);
+    if (Game::TryConsumeUiPreviewFlag(currentArg, hasNext ? argv[i + 1] : "", hasNext, uiPreviewOpts, consumedNext,
+                                      previewParseErr)) {
+      if (consumedNext) ++i;
+      if (previewParseErr) return 1;
+      continue;
+    }
 
     if (currentArg == "-m" || currentArg == "--startup-mode") {
       if (i + 1 < argc) {
@@ -112,6 +125,12 @@ int main(const int argc, char* argv[]) {
   useManifest = true;
 #endif
 
+#ifndef OCTARINE_SHIPPED
+  if (startupMode.empty() && uiPreviewOpts.HasAnyTrigger()) {
+    startupMode = "ui-preview";
+  }
+#endif
+
   Game game{};
   game.SetStartupMode(startupMode);
   game.SetUseManifest(useManifest);
@@ -119,14 +138,16 @@ int main(const int argc, char* argv[]) {
   game.SetDevMode(devMode);
 #ifndef OCTARINE_SHIPPED
   game.SetDevListen(devListenPort);
+  game.SetUiPreviewOptions(uiPreviewOpts);
 #else
   (void)devListenPort;
 #endif
 
-  if (game.Initialize(gamePath)) {
+  const bool initOk = game.Initialize(gamePath);
+  if (initOk) {
     game.Run();
   }
   game.Destroy();
 
-  return 0;
+  return initOk ? 0 : 1;
 }

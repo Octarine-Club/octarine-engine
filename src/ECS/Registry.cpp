@@ -678,6 +678,33 @@ void Registry::SetParent(const Entity child, const Entity parent) {
   AddPair(child, childOf, parent);
 }
 
+void Registry::ReorderChildren(const Entity parent, const std::span<const Entity> orderedChildren) {
+  const auto it = parent_to_children_.find(parent.id);
+  if (it == parent_to_children_.end() || orderedChildren.empty()) return;
+
+  auto& existing = it->second;
+  if (existing.size() <= 1) return;
+
+  std::vector<EntityID> reordered;
+  reordered.reserve(existing.size());
+  for (const Entity candidate : orderedChildren) {
+    const bool belongs = std::ranges::find(existing, candidate.id) != existing.end();
+    const bool alreadyAdded = std::ranges::find(reordered, candidate.id) != reordered.end();
+    if (belongs && !alreadyAdded) {
+      reordered.push_back(candidate.id);
+    }
+  }
+  for (const EntityID id : existing) {
+    if (std::ranges::find(reordered, id) == reordered.end()) {
+      reordered.push_back(id);
+    }
+  }
+  if (reordered != existing) {
+    existing = std::move(reordered);
+    ++hierarchy_generation_;
+  }
+}
+
 std::optional<Entity> Registry::GetParent(const Entity child) const {
   const auto it = child_to_parent_.find(child.id);
   if (it == child_to_parent_.end()) return std::nullopt;

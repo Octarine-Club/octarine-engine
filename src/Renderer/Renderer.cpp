@@ -1,11 +1,15 @@
 #include "Renderer/Renderer.h"
 
+#include <SDL3_image/SDL_image.h>
+
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <numbers>
 #include <string>
+#include <string_view>
 
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
@@ -276,6 +280,18 @@ void Renderer::ApplyVSync(SDL_Renderer* sdlRenderer, const bool enabled) {
 #endif
 }
 
+bool HasPngExtension(std::string_view path) {
+  constexpr std::string_view kPngExt = ".png";
+  if (path.size() < kPngExt.size()) return false;
+  const std::string_view tail = path.substr(path.size() - kPngExt.size());
+  for (std::size_t i = 0; i < kPngExt.size(); ++i) {
+    if (static_cast<char>(std::tolower(static_cast<unsigned char>(tail[i]))) != kPngExt[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 bool Renderer::CaptureScene(SDL_Renderer* sdlRenderer, const std::string& path) const {
   if (scene_texture_ == nullptr) {
     Logger::Error("Renderer::CaptureScene: no scene texture to capture");
@@ -291,9 +307,11 @@ bool Renderer::CaptureScene(SDL_Renderer* sdlRenderer, const std::string& path) 
     Logger::Error("Renderer::CaptureScene SDL_RenderReadPixels failed: " + std::string(SDL_GetError()));
     return false;
   }
-  const bool ok = SDL_SaveBMP(surface, path.c_str());
+  const bool isPng = HasPngExtension(path);
+  const bool ok = isPng ? IMG_SavePNG(surface, path.c_str()) : SDL_SaveBMP(surface, path.c_str());
   if (!ok) {
-    Logger::Error("Renderer::CaptureScene SDL_SaveBMP failed: " + std::string(SDL_GetError()));
+    Logger::Error(std::string("Renderer::CaptureScene ") + (isPng ? "IMG_SavePNG" : "SDL_SaveBMP") +
+                  " failed: " + std::string(SDL_GetError()));
   }
   SDL_DestroySurface(surface);
   return ok;

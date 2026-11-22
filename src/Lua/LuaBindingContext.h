@@ -44,4 +44,9 @@ class LuaBindingContext {
 
   // Return input focus to the game viewport when debug GUI overlays close.
   virtual void ReturnFocusToGame() {}
+
+#ifndef OCTARINE_SHIPPED
+  // Render current scene target and capture to a disk image (used by dev UI matrix export).
+  [[nodiscard]] virtual bool CaptureFrameToFile(const std::string& /*path*/) { return false; }
+#endif
 };

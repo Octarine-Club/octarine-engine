@@ -55,6 +55,13 @@ class FrameLoop {
   void Render(float deltaTime);
   [[nodiscard]] float WaitTime();
 
+#ifndef OCTARINE_SHIPPED
+  void ConfigureOneShotCapture(const std::string& capturePath, const std::string& auditJsonPath, long captureFrame = 2);
+  void ConfigureOneShotMatrix(const std::string& outDir, const std::string& resolutionsCsv,
+                              const std::string& presetsCsv, long captureFrame = 2);
+  [[nodiscard]] bool RenderAndCaptureToFile(const std::string& path);
+#endif
+
  private:
   static KeyInputEvent GetKeyInputEvent(SDL_KeyboardEvent* event);
   void SyncSceneTargetAndScale(GameConfig& config);
@@ -83,7 +90,14 @@ class FrameLoop {
   // writes that frame's scene texture to the path as BMP, then quits. Lets a headless run produce
   // a viewable rendered frame.
   static constexpr long kDefaultCaptureFrame = 180;  // ≈3s @60fps, past the stress warmup
-  std::string capture_path_;
+  std::string capture_path_{};
+#ifndef OCTARINE_SHIPPED
+  std::string audit_json_path_{};
+  std::string matrix_out_dir_{};
+  std::string matrix_resolutions_csv_{};
+  std::string matrix_presets_csv_{};
+  bool force_capture_render_ = false;
+#endif
   long capture_frame_ = kDefaultCaptureFrame;
   long frame_index_ = 0;
   bool capture_done_ = false;

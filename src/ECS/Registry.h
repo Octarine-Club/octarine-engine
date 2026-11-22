@@ -642,6 +642,8 @@ class Registry {
 
   void SetParent(Entity child, Entity parent);
 
+  void ReorderChildren(Entity parent, std::span<const Entity> orderedChildren);
+
   [[nodiscard]] std::optional<Entity> GetParent(Entity child) const;
 
   [[nodiscard]] std::vector<Entity> GetChildren(Entity parent) const;

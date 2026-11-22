@@ -231,5 +231,21 @@ int main() {
     Check(tracker.GetSnapshot().systems.empty(), "reset clears snapshot");
   }
 
+  std::cout << "[DebugMenuRegistry] Hovered Entity & Label Isolation\n";
+  {
+    DebugMenuRegistry reg;
+    const Entity selectedEnt(42);
+    const Entity hoveredEnt(99);
+    reg.SelectEntity(selectedEnt);
+    reg.SetHoveredEntity(hoveredEnt, "viewport_overflow | #hudBtn");
+    Check(reg.GetHoveredEntity() == hoveredEnt, "hovered entity stored");
+    Check(reg.GetHoveredEntityLabel() == "viewport_overflow | #hudBtn", "hovered label stored");
+    Check(reg.GetSelectedEntity() == selectedEnt, "setting hover does not alter selected entity");
+    reg.ClearHoveredEntity();
+    Check(reg.GetHoveredEntity() == Entity{}, "ClearHoveredEntity clears entity");
+    Check(reg.GetHoveredEntityLabel().empty(), "ClearHoveredEntity clears label");
+    Check(reg.GetSelectedEntity() == selectedEnt, "clearing hover preserves selected entity");
+  }
+
   return octarine::test::ReportSummary("DebugMenuRegistry");
 }

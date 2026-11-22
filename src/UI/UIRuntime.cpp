@@ -1,6 +1,7 @@
 #include "UI/UIRuntime.h"
 
 #include <SDL3/SDL.h>
+#include <SDL3_ttf/SDL_ttf.h>
 
 #include <algorithm>
 #include <cctype>
@@ -28,11 +29,15 @@
 #include "Components/UIZIndexComponent.h"
 #include "Components/ViewportInfo.h"
 #include "ECS/Registry.h"
+#include "Game/EngineContext.h"
 #include "Game/GameConfig.h"
 #include "General/Logger.h"
 #include "Lua/Bindings/TextLabelComponentLuaBinding.h"
 #include "Renderer/SpriteRenderCache.h"
 #include "Systems/UIButtonSystem.h"
+#ifndef OCTARINE_SHIPPED
+#include "UI/OxmlContract.h"
+#endif
 
 namespace {
 
@@ -94,7 +99,13 @@ void SetPathValue(sol::table& root, std::string_view path, const sol::object& va
     const std::string segment(path.substr(start, dot - start));
     sol::object nextObj = current.get<sol::object>(segment);
     if (!nextObj.is<sol::table>()) {
-      return;
+      sol::state_view luaView(root.lua_state());
+      sol::table created = luaView.create_table();
+      current[segment] = created;
+      nextObj = current.get<sol::object>(segment);
+      if (!nextObj.is<sol::table>()) {
+        return;
+      }
     }
     current = nextObj.as<sol::table>();
     start = dot + 1;
@@ -487,6 +498,12 @@ struct RepeaterRecord {
   std::vector<std::function<void()>> itemRefreshFns{};
 };
 
+struct ChildOrderSlot {
+  bool isRepeater{false};
+  Entity staticChild{};
+  std::weak_ptr<RepeaterRecord> repeater{};
+};
+
 sol::object LookupKeyInTable(const sol::table& tbl, const std::string& key) {
   if (!tbl.valid()) return sol::lua_nil;
   sol::object v = tbl.get<sol::object>(key);
@@ -501,14 +518,21 @@ struct UIViewInstance : std::enable_shared_from_this<UIViewInstance> {
   sol::table controller{};
   sol::table refsTable{};
   sol::table viewTable{};
+  sol::table paramOverrides{};
   OssStylesheet stylesheet{};
+  std::vector<std::string> extraStyleSources{};
   std::unordered_map<std::string, OxmlDocument> importedUses{};
+#ifndef OCTARINE_SHIPPED
+  OxmlDocument document{};
+#endif
   std::vector<std::function<void()>> refreshFns{};
   std::vector<std::function<void()>>* activeRefreshSink{nullptr};
   std::vector<std::function<void()>> unmountFns{};
   std::unordered_map<uint32_t, std::shared_ptr<SliderState>> sliders{};
   std::unordered_map<uint32_t, std::vector<sol::protected_function>> changeCallbacks{};
+  std::unordered_map<EntityID, std::vector<ChildOrderSlot>> parentChildSlots{};
   std::vector<Entity> inertSubtreeRoots{};
+  std::vector<std::string> acquiredAssetIds{};
   bool isMounted = true;
   bool isRefreshing = false;
   bool isInert = false;
@@ -614,6 +638,13 @@ struct UIViewInstance : std::enable_shared_from_this<UIViewInstance> {
     refreshFns.clear();
     sliders.clear();
     changeCallbacks.clear();
+    parentChildSlots.clear();
+    if (runtime != nullptr && !acquiredAssetIds.empty()) {
+      if (AssetManager* am = runtime->GetAssetManager()) {
+        am->ReleaseAll(acquiredAssetIds);
+      }
+      acquiredAssetIds.clear();
+    }
     Registry* reg = runtime != nullptr ? runtime->GetRegistry() : nullptr;
     if (reg != nullptr && reg->IsAlive(rootEntity)) {
       reg->BlamEntity(rootEntity);
@@ -1820,9 +1851,22 @@ Entity InstantiateNode(const std::shared_ptr<UIViewInstance>& view, const OxmlNo
                        const sol::table& scope, const SlotProjection* slotProjection,
                        const std::shared_ptr<RadioGroupState>& activeRadioGroup);
 
+void EraseSubtreeChildOrderSlots(Registry* r, UIViewInstance& v, const Entity root) {
+  std::vector<Entity> stack{root};
+  while (!stack.empty()) {
+    const Entity cur = stack.back();
+    stack.pop_back();
+    v.parentChildSlots.erase(cur.id);
+    if (r->IsAlive(cur)) {
+      r->ForEachChild(cur, [&stack](const Entity child) { stack.push_back(child); });
+    }
+  }
+}
+
 void ClearRepeaterSpawnedItems(const std::shared_ptr<UIViewInstance>& v, const std::shared_ptr<RepeaterRecord>& rec) {
   Registry* r = v->runtime->GetRegistry();
   for (const Entity e : rec->spawnedEntities) {
+    EraseSubtreeChildOrderSlots(r, *v, e);
     if (r->IsAlive(e)) {
       r->BlamEntity(e);
     }
@@ -1831,6 +1875,24 @@ void ClearRepeaterSpawnedItems(const std::shared_ptr<UIViewInstance>& v, const s
   rec->itemRefreshFns.clear();
   std::erase_if(v->sliders, [r](const auto& kv) { return !r->IsAlive(kv.second->entity); });
   std::erase_if(v->changeCallbacks, [r](const auto& kv) { return !r->IsAlive(Entity(kv.first)); });
+}
+
+void SyncParentChildOrder(Registry* r, const UIViewInstance& v, const Entity parentEntity) {
+  const auto it = v.parentChildSlots.find(parentEntity.id);
+  if (it == v.parentChildSlots.end()) return;
+  std::vector<Entity> desiredOrder;
+  for (const auto& slot : it->second) {
+    if (!slot.isRepeater) {
+      if (r->IsAlive(slot.staticChild)) desiredOrder.push_back(slot.staticChild);
+      continue;
+    }
+    const auto locked = slot.repeater.lock();
+    if (!locked) continue;
+    for (const Entity spawned : locked->spawnedEntities) {
+      if (r->IsAlive(spawned)) desiredOrder.push_back(spawned);
+    }
+  }
+  r->ReorderChildren(parentEntity, desiredOrder);
 }
 
 std::optional<std::size_t> FindFocusedRepeaterIndex(Registry* r, const std::vector<Entity>& spawned) {
@@ -1894,6 +1956,7 @@ void RebuildRepeaterItems(const std::shared_ptr<UIViewInstance>& v, const std::s
   }
   v->activeRefreshSink = prevSink;
   FinalizeRepeaterItems(r, v, rec, prevFocusedIdx);
+  SyncParentChildOrder(r, *v, rec->parentEntity);
 }
 
 // Repeater mounting delegates to RebuildRepeaterItems which recursively instantiates child nodes.
@@ -1915,6 +1978,7 @@ void MountRepeaterNode(const std::shared_ptr<UIViewInstance>& view, const OxmlNo
   rec->parentEntity = parentEntity;
   rec->itemTemplate = std::move(cleanTemplate);
   rec->clause = clause;
+  view->parentChildSlots[parentEntity.id].push_back(ChildOrderSlot{.isRepeater = true, .repeater = rec});
 
   std::weak_ptr<UIViewInstance> weakView = view;
   const std::vector<OxmlNode> savedSlots = (slotProjection != nullptr && slotProjection->nodes != nullptr)
@@ -2190,8 +2254,11 @@ void InstantiateSingleOrRepeater(const std::shared_ptr<UIViewInstance>& view, co
                                  const std::shared_ptr<RadioGroupState>& currentRadioGroup) {
   if (child.HasAttr("each")) {
     MountRepeaterNode(view, child, parentEntity, scope, slotProjection, currentRadioGroup);
-  } else {
-    InstantiateNode(view, child, parentEntity, scope, slotProjection, currentRadioGroup);
+    return;
+  }
+  const Entity spawned = InstantiateNode(view, child, parentEntity, scope, slotProjection, currentRadioGroup);
+  if (view->runtime->GetRegistry()->IsAlive(spawned)) {
+    view->parentChildSlots[parentEntity.id].push_back(ChildOrderSlot{.staticChild = spawned});
   }
 }
 
@@ -2283,69 +2350,215 @@ void SubscribeObservableTable(sol::table& obsTbl, const std::function<void(const
   }
 }
 
-void LoadDeclaredStylesForView(UIRuntime* runtime, const OxmlDocument& doc, const std::shared_ptr<UIViewInstance>& view,
-                               std::vector<std::string>& watchedPaths) {
+void AppendUniqueStr(std::vector<std::string>& out, const std::string& val) {
+  if (!val.empty() && std::find(out.begin(), out.end(), val) == out.end()) {
+    out.push_back(val);
+  }
+}
+
+struct LoadedViewResources {
+  bool ok = true;
+  std::string errorFile{};
+  int errorLine = 0;
+  std::string error{};
+  OssStylesheet stylesheet{};
+  std::unordered_map<std::string, OxmlDocument> uses{};
+  std::vector<std::string> watchedPaths{};
+
+  void RecordError(std::string file, int line, std::string msg) {
+    if (!ok) return;
+    ok = false;
+    errorFile = std::move(file);
+    errorLine = line;
+    error = std::move(msg);
+  }
+};
+
+void LoadDeclaredStylesForView(UIRuntime* runtime, const OxmlDocument& doc, LoadedViewResources& out) {
   for (const auto& styleImp : doc.styles) {
     std::string styleDiskPath;
     const auto ossText = runtime->ReadTextAsset(styleImp.src, &styleDiskPath);
+    AppendUniqueStr(out.watchedPaths, styleDiskPath);
     if (!ossText.has_value()) {
-      Logger::Error("ui.mount: missing stylesheet '" + styleImp.src + "'");
+      const std::string msg = "missing stylesheet '" + styleImp.src + "'";
+      Logger::Error("ui.mount: " + msg);
+      out.RecordError(styleImp.src, styleImp.line, msg);
       continue;
     }
     const OssParseResult ossRes = OssParser::Parse(*ossText);
     if (ossRes.ok) {
-      view->stylesheet.MergeFrom(ossRes.stylesheet);
-      if (!styleDiskPath.empty()) watchedPaths.push_back(styleDiskPath);
+      out.stylesheet.MergeFrom(ossRes.stylesheet);
     } else {
-      Logger::Error("ui.mount: OSS parse error in '" + styleImp.src + "': " + ossRes.error);
+      const std::string msg = "OSS parse error in '" + styleImp.src + "': " + ossRes.error;
+      Logger::Error("ui.mount: " + msg);
+      out.RecordError(styleImp.src, ossRes.errorLine, ossRes.error);
     }
   }
 }
 
-void LoadExtraOptionStylesForView(UIRuntime* runtime, const sol::optional<sol::table>& opts,
-                                  const std::shared_ptr<UIViewInstance>& view, std::vector<std::string>& watchedPaths) {
-  if (!opts.has_value()) return;
-  const sol::optional<sol::table> extraStyles = (*opts)["styles"];
-  if (!extraStyles) return;
-  for (const auto& [_, val] : *extraStyles) {
-    if (!val.is<std::string>()) continue;
-    const std::string s = val.as<std::string>();
+void LoadExtraOptionStylesFromSources(UIRuntime* runtime, const std::vector<std::string>& extraStyles,
+                                      LoadedViewResources& out) {
+  for (const std::string& s : extraStyles) {
     std::string styleDiskPath;
-    const auto text =
-        (s.find('{') != std::string::npos) ? std::optional<std::string>(s) : runtime->ReadTextAsset(s, &styleDiskPath);
+    const bool isInline = (s.find('{') != std::string::npos);
+    const auto text = isInline ? std::optional<std::string>(s) : runtime->ReadTextAsset(s, &styleDiskPath);
+    AppendUniqueStr(out.watchedPaths, styleDiskPath);
     if (!text.has_value()) continue;
     const OssParseResult ossRes = OssParser::Parse(*text);
-    if (ossRes.ok) view->stylesheet.MergeFrom(ossRes.stylesheet);
-    if (!styleDiskPath.empty()) watchedPaths.push_back(styleDiskPath);
+    if (ossRes.ok) {
+      out.stylesheet.MergeFrom(ossRes.stylesheet);
+    } else {
+      out.RecordError(isInline ? "<inline-oss>" : s, ossRes.errorLine, ossRes.error);
+    }
   }
 }
 
-void LoadUsesForView(UIRuntime* runtime, const OxmlDocument& doc, const std::shared_ptr<UIViewInstance>& view,
-                     std::vector<std::string>& watchedPaths) {
+std::vector<std::string> ExtractExtraStyleSources(const sol::optional<sol::table>& opts) {
+  std::vector<std::string> sources;
+  if (!opts.has_value()) return sources;
+  const sol::optional<sol::table> extraStyles = (*opts)["styles"];
+  if (!extraStyles) return sources;
+  for (const auto& [_, val] : *extraStyles) {
+    if (val.is<std::string>()) {
+      sources.push_back(val.as<std::string>());
+    }
+  }
+  return sources;
+}
+
+void LoadUsesForView(UIRuntime* runtime, const OxmlDocument& doc, LoadedViewResources& out) {
   for (const auto& useImp : doc.uses) {
     std::string useDiskPath;
     const auto useText = (!useImp.src.empty() && useImp.src.front() == '<')
                              ? std::optional<std::string>(useImp.src)
                              : runtime->ReadTextAsset(useImp.src, &useDiskPath);
+    AppendUniqueStr(out.watchedPaths, useDiskPath);
     if (!useText.has_value()) {
-      Logger::Error("ui.mount: missing <Use src='" + useImp.src + "'>");
+      const std::string msg = "missing <Use src='" + useImp.src + "'>";
+      Logger::Error("ui.mount: " + msg);
+      out.RecordError(useImp.src, useImp.line, msg);
       continue;
     }
     const OxmlParseResult useParsed = OxmlParser::Parse(*useText);
     if (useParsed.ok) {
-      view->importedUses[useImp.name] = useParsed.document;
-      if (!useDiskPath.empty()) watchedPaths.push_back(useDiskPath);
+      out.uses[useImp.name] = useParsed.document;
     } else {
-      Logger::Error("ui.mount: failed to parse <Use src='" + useImp.src + "'>: " + useParsed.error);
+      const std::string msg = "failed to parse <Use src='" + useImp.src + "'>: " + useParsed.error;
+      Logger::Error("ui.mount: " + msg);
+      out.RecordError(useImp.src, useParsed.errorLine, useParsed.error);
     }
   }
 }
 
-void LoadStylesAndUsesForView(UIRuntime* runtime, const OxmlDocument& doc, const sol::optional<sol::table>& opts,
-                              const std::shared_ptr<UIViewInstance>& view, std::vector<std::string>& watchedPaths) {
-  LoadDeclaredStylesForView(runtime, doc, view, watchedPaths);
-  LoadExtraOptionStylesForView(runtime, opts, view, watchedPaths);
-  LoadUsesForView(runtime, doc, view, watchedPaths);
+LoadedViewResources LoadResourcesForDocument(UIRuntime* runtime, const OxmlDocument& doc,
+                                             const std::vector<std::string>& extraStyles,
+                                             const std::string& resolvedMainPath) {
+  LoadedViewResources res;
+  AppendUniqueStr(res.watchedPaths, resolvedMainPath);
+  LoadDeclaredStylesForView(runtime, doc, res);
+  LoadExtraOptionStylesFromSources(runtime, extraStyles, res);
+  LoadUsesForView(runtime, doc, res);
+  return res;
+}
+
+void CollectStaticRefsFromDoc(const OxmlDocument& doc, std::vector<std::string>& outIds) {
+  const OxmlAssetRefs refs = OxmlParser::CollectStaticAssetRefs(doc);
+  for (const auto& id : refs.spriteIds) AppendUniqueStr(outIds, id);
+  for (const auto& id : refs.fontIds) AppendUniqueStr(outIds, id);
+  for (const auto& id : refs.audioIds) AppendUniqueStr(outIds, id);
+}
+
+void CollectStaticRefsFromStylesheet(const OssStylesheet& sheet, std::vector<std::string>& outIds) {
+  static constexpr const char* kAssetPropKeys[] = {
+      "font", "sprite", "icon", "sound-hover", "sound-click", "sound-press", "sound-focus", "sound",
+  };
+  for (const auto& rule : sheet.rules) {
+    for (const char* key : kAssetPropKeys) {
+      const auto it = rule.properties.find(key);
+      if (it == rule.properties.end()) continue;
+      const std::string resolved = StripStyleQuotes(sheet.ResolveVariables(it->second));
+      if (!resolved.empty() && !OxmlParser::ContainsBinding(resolved)) {
+        AppendUniqueStr(outIds, resolved);
+      }
+    }
+  }
+}
+
+bool CanAcquireAssetType(AssetType type, SDL_Renderer* renderer, MIX_Mixer* mixer) {
+  switch (type) {
+    case AssetType::Texture:
+      return renderer != nullptr;
+    case AssetType::Font:
+      return TTF_WasInit() > 0;
+    case AssetType::Audio:
+      return mixer != nullptr;
+    default:
+      return false;
+  }
+}
+
+std::vector<std::string> AcquireViewCatalogAssets(UIRuntime* runtime, const OxmlDocument& doc,
+                                                  const OssStylesheet& sheet,
+                                                  const std::unordered_map<std::string, OxmlDocument>& uses) {
+  std::vector<std::string> acquired;
+  AssetManager* am = runtime != nullptr ? runtime->GetAssetManager() : nullptr;
+  if (am == nullptr) return acquired;
+
+  std::vector<std::string> candidates;
+  CollectStaticRefsFromDoc(doc, candidates);
+  for (const auto& [_, useDoc] : uses) {
+    CollectStaticRefsFromDoc(useDoc, candidates);
+  }
+  CollectStaticRefsFromStylesheet(sheet, candidates);
+
+  Registry* reg = runtime->GetRegistry();
+  const auto* ctx = reg != nullptr ? reg->TryGet<EngineContext>() : nullptr;
+  SDL_Renderer* renderer = ctx != nullptr ? ctx->sdlRenderer : nullptr;
+  MIX_Mixer* mixer = ctx != nullptr ? ctx->mixer : nullptr;
+
+  for (const auto& id : candidates) {
+    const CatalogEntry* entry = am->GetCatalog().Find(id);
+    if (entry == nullptr || !CanAcquireAssetType(entry->type, renderer, mixer)) continue;
+    if (am->Acquire(id, renderer, mixer)) {
+      acquired.push_back(id);
+    }
+  }
+  return acquired;
+}
+
+void SeedParamsFromDocument(const std::shared_ptr<UIViewInstance>& view, const OxmlDocument& doc, sol::state& lua) {
+  view->params = lua.create_table();
+  for (const auto& p : doc.params) {
+    view->params[p.name] = p.defaultValue;
+  }
+  if (view->paramOverrides.valid()) {
+    for (const auto& [k, v] : view->paramOverrides) view->params[k] = v;
+  }
+}
+
+void SyncRecordWatchTimes(std::vector<std::string>& destFiles,
+                          std::unordered_map<std::string, fs::file_time_type>& destTimes,
+                          std::vector<std::string> newFiles) {
+  destFiles = std::move(newFiles);
+  destTimes.clear();
+  std::error_code ec;
+  for (const auto& f : destFiles) {
+    if (fs::exists(f, ec)) {
+      destTimes[f] = fs::last_write_time(f, ec);
+    }
+  }
+}
+
+void MergeNewWatchPaths(std::vector<std::string>& destFiles,
+                        std::unordered_map<std::string, fs::file_time_type>& destTimes,
+                        const std::vector<std::string>& discoveredFiles) {
+  std::error_code ec;
+  for (const auto& f : discoveredFiles) {
+    AppendUniqueStr(destFiles, f);
+    if (destTimes.find(f) == destTimes.end() && fs::exists(f, ec)) {
+      destTimes[f] = fs::last_write_time(f, ec);
+    }
+  }
 }
 
 void ApplyMountOptions(const sol::optional<sol::table>& opts, const std::shared_ptr<UIViewInstance>& view,
@@ -2356,7 +2569,7 @@ void ApplyMountOptions(const sol::optional<sol::table>& opts, const std::shared_
   if (const sol::optional<sol::table> ctx = o["context"]; ctx) view->context = *ctx;
   if (const sol::optional<sol::table> ctrl = o["controller"]; ctrl) view->controller = *ctrl;
   if (const sol::optional<sol::table> prm = o["params"]; prm) {
-    for (const auto& [k, v] : *prm) view->params[k] = v;
+    view->paramOverrides = *prm;
   }
 }
 
@@ -2400,20 +2613,15 @@ void PopulateMountViewTable(const std::shared_ptr<UIViewInstance>& view) {
     }
     return sol::nullopt;
   });
-  vt.set_function("unmount", [view](const sol::table&) { view->Unmount(); });
-  vt.set_function("destroy", [view](const sol::table&) { view->Unmount(); });
+  vt.set("unmount", [view](const sol::table&) { view->Unmount(); });
+  vt.set("destroy", [view](const sol::table&) { view->Unmount(); });
 }
 
-void ReloadMountedView(UIRuntime* runtime, const std::shared_ptr<UIViewInstance>& v, const std::string& sourceStr,
-                       const sol::optional<sol::table>& savedOpts, const std::optional<Entity>& savedParent) {
-  if (v == nullptr || !v->IsCurrentlyMounted()) return;
-  const auto loaded = runtime->ReadTextAsset(sourceStr);
-  if (!loaded.has_value()) return;
-  const OxmlParseResult reParsed = OxmlParser::Parse(*loaded);
-  if (!reParsed.ok || reParsed.document.roots.empty()) {
-    Logger::Error("UIRuntime: hot-reload OXML parse error: " + reParsed.error);
-    return;
-  }
+void RebuildViewTreeForReload(UIRuntime* runtime, const std::shared_ptr<UIViewInstance>& v, const OxmlDocument& doc,
+                              LoadedViewResources& resources, const std::optional<Entity>& savedParent) {
+  std::vector<std::string> newlyAcquired = AcquireViewCatalogAssets(runtime, doc, resources.stylesheet, resources.uses);
+  std::vector<std::string> prevAcquired = std::move(v->acquiredAssetIds);
+
   Registry* reg = runtime->GetRegistry();
   if (reg != nullptr && reg->IsAlive(v->rootEntity)) {
     reg->BlamEntity(v->rootEntity);
@@ -2422,14 +2630,61 @@ void ReloadMountedView(UIRuntime* runtime, const std::shared_ptr<UIViewInstance>
   v->unmountFns.clear();
   v->sliders.clear();
   v->changeCallbacks.clear();
-  v->stylesheet = OssStylesheet{};
-  v->importedUses.clear();
-  std::vector<std::string> dummyWatched;
-  LoadStylesAndUsesForView(runtime, reParsed.document, savedOpts, v, dummyWatched);
+  v->inertSubtreeRoots.clear();
+  v->stylesheet = std::move(resources.stylesheet);
+  v->importedUses = std::move(resources.uses);
+#ifndef OCTARINE_SHIPPED
+  v->document = doc;
+#endif
+  v->acquiredAssetIds = std::move(newlyAcquired);
+  if (AssetManager* am = runtime->GetAssetManager(); am != nullptr && !prevAcquired.empty()) {
+    am->ReleaseAll(prevAcquired);
+  }
+
+  SeedParamsFromDocument(v, doc, *runtime->GetLua());
   const sol::table reloadedScope = v->MakeScope();
-  v->rootEntity = InstantiateNode(v, reParsed.document.roots.front(), savedParent, reloadedScope, nullptr, nullptr);
+  v->rootEntity = InstantiateNode(v, doc.roots.front(), savedParent, reloadedScope, nullptr, nullptr);
   v->viewTable.set("root", v->rootEntity);
   v->Refresh();
+}
+
+bool ReloadMountedView(UIRuntime* runtime, const std::shared_ptr<UIViewInstance>& v, const std::string& sourceStr,
+                       const std::optional<Entity>& savedParent, std::vector<std::string>* watchedFilesOut = nullptr,
+                       std::unordered_map<std::string, fs::file_time_type>* lastWriteTimesOut = nullptr) {
+  if (v == nullptr || !v->IsCurrentlyMounted()) return false;
+  std::string resolvedMainPath;
+  const auto loaded = runtime->ReadTextAsset(sourceStr, &resolvedMainPath);
+  if (!loaded.has_value()) {
+    const std::string err = "failed to read OXML asset '" + sourceStr + "'";
+    Logger::Error("UIRuntime: hot-reload " + err);
+    runtime->RecordDiagnosticsError(sourceStr, 0, err);
+    return false;
+  }
+  const OxmlParseResult reParsed = OxmlParser::Parse(*loaded);
+  if (!reParsed.ok || reParsed.document.roots.empty()) {
+    const std::string err = reParsed.error.empty() ? "OXML document contains no root elements" : reParsed.error;
+    Logger::Error("UIRuntime: hot-reload OXML parse error: " + err);
+    runtime->RecordDiagnosticsError(resolvedMainPath.empty() ? sourceStr : resolvedMainPath, reParsed.errorLine, err);
+    return false;
+  }
+
+  LoadedViewResources resources =
+      LoadResourcesForDocument(runtime, reParsed.document, v->extraStyleSources, resolvedMainPath);
+  if (!resources.ok) {
+    if (watchedFilesOut != nullptr && lastWriteTimesOut != nullptr) {
+      MergeNewWatchPaths(*watchedFilesOut, *lastWriteTimesOut, resources.watchedPaths);
+    }
+    runtime->RecordDiagnosticsError(resources.errorFile, resources.errorLine, resources.error);
+    return false;
+  }
+
+  RebuildViewTreeForReload(runtime, v, reParsed.document, resources, savedParent);
+
+  if (watchedFilesOut != nullptr && lastWriteTimesOut != nullptr) {
+    SyncRecordWatchTimes(*watchedFilesOut, *lastWriteTimesOut, resources.watchedPaths);
+  }
+  runtime->RecordDiagnosticsSuccess(std::move(resources.watchedPaths), /*isReload=*/true);
+  return true;
 }
 
 }  // namespace
@@ -2513,6 +2768,19 @@ void UIRuntime::RegisterWidget(const std::string& name, const sol::table& descri
 
 namespace {
 void NotifyObservableListeners(const sol::table& listeners, const std::string& key) {
+  static thread_local std::unordered_set<const void*> activeNotifies;
+  const void* ptr = listeners.pointer();
+  if (ptr == nullptr || !activeNotifies.insert(ptr).second) return;
+  struct Guard {
+    const void* p;
+    explicit Guard(const void* ptr) : p(ptr) {}
+    ~Guard() { activeNotifies.erase(p); }
+    Guard(const Guard&) = delete;
+    Guard& operator=(const Guard&) = delete;
+    Guard(Guard&&) = delete;
+    Guard& operator=(Guard&&) = delete;
+  } guard(ptr);
+
   const std::size_t n = listeners.size();
   for (std::size_t i = 1; i <= n; ++i) {
     sol::object fnObj = listeners.get<sol::object>(i);
@@ -2522,57 +2790,203 @@ void NotifyObservableListeners(const sol::table& listeners, const std::string& k
   }
 }
 
+void ForwardChildObservable(sol::table& childObs, const sol::table& listeners) {
+  const sol::object childListeners = childObs.raw_get<sol::object>("__listeners");
+  if (childListeners.is<sol::table>() && childListeners.as<sol::table>().pointer() == listeners.pointer()) {
+    return;
+  }
+  sol::object sinksObj = childObs.raw_get<sol::object>("__forward_sinks");
+  sol::table sinks;
+  if (sinksObj.is<sol::table>()) {
+    sinks = sinksObj.as<sol::table>();
+  } else {
+    sol::state_view luaView(childObs.lua_state());
+    sinks = luaView.create_table();
+    sol::table weakMeta = luaView.create_table_with("__mode", "k");
+    sinks[sol::metatable_key] = weakMeta;
+    childObs.raw_set("__forward_sinks", sinks);
+  }
+  const sol::object already = sinks.get<sol::object>(listeners);
+  if (already.valid() && already != sol::lua_nil) return;
+  sinks.set(listeners, true);
+  SubscribeObservableTable(childObs,
+                           [listeners](const std::string& subKey) { NotifyObservableListeners(listeners, subKey); });
+}
+
+sol::table CreateObservableWithVisited(UIRuntime* runtime, const sol::table& rawTable,
+                                       std::unordered_set<const void*>& visited);
+
 // Wraps nested child tables recursively in observables so deep mutations propagate to parent listeners.
 // NOLINTNEXTLINE(misc-no-recursion)
 void AssignObservableBackingField(UIRuntime* runtime, sol::table& backing, const sol::object& key,
-                                  const sol::object& val, const sol::table& listeners) {
-  if (val.is<sol::table>() && !IsTableObservable(val.as<sol::table>())) {
-    sol::table childObs = runtime->CreateObservable(val.as<sol::table>());
-    SubscribeObservableTable(childObs,
-                             [listeners](const std::string& subKey) { NotifyObservableListeners(listeners, subKey); });
-    backing[key] = childObs;
+                                  const sol::object& val, const sol::table& listeners,
+                                  std::unordered_set<const void*>& visited) {
+  if (val.is<sol::table>()) {
+    sol::table tbl = val.as<sol::table>();
+    if (IsTableObservable(tbl)) {
+      ForwardChildObservable(tbl, listeners);
+      backing[key] = tbl;
+    } else if (visited.contains(tbl.pointer())) {
+      backing[key] = tbl;
+    } else {
+      sol::table childObs = CreateObservableWithVisited(runtime, tbl, visited);
+      ForwardChildObservable(childObs, listeners);
+      backing[key] = childObs;
+    }
   } else {
     backing[key] = val;
   }
 }
-}  // namespace
 
-// Observable tables wrap nested child tables recursively so deep mutations propagate to parent listeners.
 // NOLINTNEXTLINE(misc-no-recursion)
-sol::table UIRuntime::CreateObservable(const sol::table& rawTable) {
-  if (IsTableObservable(rawTable)) {
+sol::table CreateObservableWithVisited(UIRuntime* runtime, const sol::table& rawTable,
+                                       std::unordered_set<const void*>& visited) {
+  if (IsTableObservable(rawTable) || !visited.insert(rawTable.pointer()).second) {
     return rawTable;
   }
 
-  sol::table listeners = lua_->create_table();
-  sol::table backing = lua_->create_table();
+  sol::state* luaPtr = runtime->GetLua();
+  sol::table listeners = luaPtr->create_table();
+  sol::table backing = luaPtr->create_table();
 
   for (const auto& [k, v] : rawTable) {
-    AssignObservableBackingField(this, backing, k, v, listeners);
+    AssignObservableBackingField(runtime, backing, k, v, listeners, visited);
   }
+  visited.erase(rawTable.pointer());
 
-  sol::table proxy = lua_->create_table();
+  sol::table proxy = luaPtr->create_table();
   proxy.set("__is_observable", true);
   proxy.set("__raw", backing);
   proxy.set("__listeners", listeners);
+  sol::table sinks = luaPtr->create_table();
+  sinks[sol::metatable_key] = luaPtr->create_table_with("__mode", "k");
+  proxy.set("__forward_sinks", sinks);
   proxy.set_function("__subscribe", [listeners](const sol::table&, const sol::protected_function& fn) mutable {
     listeners[listeners.size() + 1] = fn;
   });
 
-  sol::table meta = lua_->create_table();
+  sol::table meta = luaPtr->create_table();
   meta.set_function("__index", [backing](const sol::table&, const sol::object& key) -> sol::object {
     return backing.get<sol::object>(key);
   });
-  meta.set_function("__newindex", [this, backing, listeners](const sol::table&, const sol::object& key,
-                                                             const sol::object& val) mutable {
+  meta.set_function("__newindex", [runtime, backing, listeners](const sol::table&, const sol::object& key,
+                                                                const sol::object& val) mutable {
     if (backing[key] == val && !val.is<sol::table>()) return;
-    AssignObservableBackingField(this, backing, key, val, listeners);
+    std::unordered_set<const void*> localVisited;
+    AssignObservableBackingField(runtime, backing, key, val, listeners, localVisited);
     NotifyObservableListeners(listeners, key.is<std::string>() ? key.as<std::string>() : "");
   });
   meta.set_function("__len", [backing](const sol::table&) -> std::size_t { return backing.size(); });
 
   proxy[sol::metatable_key] = meta;
   return proxy;
+}
+}  // namespace
+
+// Observable tables wrap nested child tables recursively so deep mutations propagate to parent listeners.
+// NOLINTNEXTLINE(misc-no-recursion)
+sol::table UIRuntime::CreateObservable(const sol::table& rawTable) {
+  std::unordered_set<const void*> visited;
+  return CreateObservableWithVisited(this, rawTable, visited);
+}
+
+namespace {
+bool LoadOxmlMountContent(UIRuntime& runtime, const std::string& sourceStr, std::string& xmlContent,
+                          std::string& resolvedMainPath, bool& isInlineXml) {
+  const std::string_view trimmed = TrimSv(sourceStr);
+  isInlineXml = (!trimmed.empty() && trimmed.front() == '<');
+  if (isInlineXml) {
+    xmlContent = sourceStr;
+    return true;
+  }
+  auto loaded = runtime.ReadTextAsset(sourceStr, &resolvedMainPath);
+  if (!loaded.has_value()) {
+    const std::string err = "failed to load OXML asset '" + sourceStr + "'";
+    Logger::Error("ui.mount: " + err);
+    runtime.RecordDiagnosticsError(sourceStr, 0, err);
+    return false;
+  }
+  xmlContent = std::move(*loaded);
+  return true;
+}
+
+#ifndef OCTARINE_SHIPPED
+std::optional<OxmlDocument> ResolveUseDocForContract(const UIRuntime& runtime, const std::string& src) {
+  const auto loaded =
+      (!src.empty() && src.front() == '<') ? std::optional<std::string>(src) : runtime.ReadTextAsset(src);
+  if (!loaded.has_value()) return std::nullopt;
+  const OxmlParseResult parsed = OxmlParser::Parse(*loaded);
+  return parsed.ok ? std::optional<OxmlDocument>(parsed.document) : std::nullopt;
+}
+#endif
+}  // namespace
+
+#ifndef OCTARINE_SHIPPED
+namespace {
+bool ApplyMountedViewParamOverride(sol::state* lua, const std::shared_ptr<UIViewInstance>& v, const std::string& name,
+                                   const std::string& value) {
+  if (!v || !v->IsCurrentlyMounted() || lua == nullptr) return false;
+  if (!v->paramOverrides.valid()) v->paramOverrides = lua->create_table();
+  v->paramOverrides.set(name, value);
+  if (!v->params.valid()) v->params = lua->create_table();
+  v->params.set(name, value);
+  v->Refresh();
+  return true;
+}
+}  // namespace
+
+void UIRuntime::WireMountedViewPreviewCallbacks(MountedViewRecord& rec, const std::shared_ptr<void>& viewErased) {
+  const std::weak_ptr<UIViewInstance> weakView = std::static_pointer_cast<UIViewInstance>(viewErased);
+  rec.inspectContractFn = [this, weakView](OxmlContract& outContract) -> bool {
+    const auto v = weakView.lock();
+    if (!v || !v->IsCurrentlyMounted()) return false;
+    auto resolveUse = [this](const std::string& src) { return ResolveUseDocForContract(*this, src); };
+    outContract = InspectOxmlContract(v->document, v->importedUses, resolveUse);
+    return true;
+  };
+  rec.setParamFn = [this, weakView](const std::string& name, const std::string& value) -> bool {
+    return ApplyMountedViewParamOverride(lua_, weakView.lock(), name, value);
+  };
+  rec.getParamsFn = [weakView]() -> sol::object {
+    const auto v = weakView.lock();
+    if (!v || !v->IsCurrentlyMounted() || !v->params.valid()) return sol::lua_nil;
+    return v->params;
+  };
+  rec.invokeControllerFn = [weakView](const std::string& methodName) -> bool {
+    const auto v = weakView.lock();
+    if (!v || !v->IsCurrentlyMounted() || methodName.empty()) return false;
+    v->InvokeController(methodName);
+    return true;
+  };
+}
+#endif
+
+void UIRuntime::WireMountedViewLifecycleCallbacks(MountedViewRecord& rec, const std::shared_ptr<void>& viewErased,
+                                                  const std::string& sourceStr,
+                                                  const std::optional<Entity>& parentEntity) {
+  const std::weak_ptr<UIViewInstance> weakView = std::static_pointer_cast<UIViewInstance>(viewErased);
+  rec.isMountedFn = [weakView]() {
+    const auto v = weakView.lock();
+    return v != nullptr && v->IsCurrentlyMounted();
+  };
+  rec.rootEntityFn = [weakView]() {
+    const auto v = weakView.lock();
+    return v != nullptr ? v->rootEntity : Entity{};
+  };
+  rec.isInertFn = [weakView]() {
+    const auto v = weakView.lock();
+    return v != nullptr && v->isInert;
+  };
+  rec.setInertFn = [weakView](const bool inert) {
+    if (const auto v = weakView.lock()) v->SetInert(inert);
+  };
+  rec.unmountFn = [weakView]() {
+    if (const auto v = weakView.lock()) v->Unmount();
+  };
+  rec.reloadFn = [this, weakView, sourceStr, parentEntity](const std::shared_ptr<MountedViewRecord>& r) {
+    return ::ReloadMountedView(this, weakView.lock(), sourceStr, parentEntity, r ? &r->watchedFiles : nullptr,
+                               r ? &r->lastWriteTimes : nullptr);
+  };
 }
 
 sol::object UIRuntime::Mount(const sol::object& sourceObj, const sol::optional<sol::table>& opts) {
@@ -2582,79 +2996,73 @@ sol::object UIRuntime::Mount(const sol::object& sourceObj, const sol::optional<s
   }
 
   const std::string sourceStr = sourceObj.as<std::string>();
-  const std::string_view trimmed = TrimSv(sourceStr);
   std::string xmlContent;
   std::string resolvedMainPath;
-  std::vector<std::string> watchedPaths;
-
-  if (!trimmed.empty() && trimmed.front() == '<') {
-    xmlContent = sourceStr;
-  } else {
-    auto loaded = ReadTextAsset(sourceStr, &resolvedMainPath);
-    if (!loaded.has_value()) {
-      Logger::Error("ui.mount: failed to load OXML asset '" + sourceStr + "'");
-      return sol::lua_nil;
-    }
-    xmlContent = std::move(*loaded);
-    if (!resolvedMainPath.empty()) watchedPaths.push_back(resolvedMainPath);
+  bool isInlineXml = false;
+  if (!LoadOxmlMountContent(*this, sourceStr, xmlContent, resolvedMainPath, isInlineXml)) {
+    return sol::lua_nil;
   }
 
   const OxmlParseResult parsed = OxmlParser::Parse(xmlContent);
   if (!parsed.ok || parsed.document.roots.empty()) {
-    Logger::Error("ui.mount: OXML parse error at line " + std::to_string(parsed.errorLine) + ": " + parsed.error);
+    const std::string err = parsed.error.empty() ? "OXML document contains no root elements" : parsed.error;
+    Logger::Error("ui.mount: OXML parse error at line " + std::to_string(parsed.errorLine) + ": " + err);
+    RecordDiagnosticsError(isInlineXml ? "<inline>" : (resolvedMainPath.empty() ? sourceStr : resolvedMainPath),
+                           parsed.errorLine, err);
     return sol::lua_nil;
   }
+
+  std::vector<std::string> extraStyleSources = ExtractExtraStyleSources(opts);
+  LoadedViewResources resources = LoadResourcesForDocument(this, parsed.document, extraStyleSources, resolvedMainPath);
 
   auto view = std::make_shared<UIViewInstance>();
   view->runtime = this;
   view->refsTable = lua_->create_table();
   view->viewTable = lua_->create_table();
-  view->params = lua_->create_table();
-
-  for (const auto& p : parsed.document.params) {
-    view->params[p.name] = p.defaultValue;
-  }
+  view->extraStyleSources = std::move(extraStyleSources);
 
   std::optional<Entity> parentEntity;
   ApplyMountOptions(opts, view, parentEntity);
-  LoadStylesAndUsesForView(this, parsed.document, opts, view, watchedPaths);
+  SeedParamsFromDocument(view, parsed.document, *lua_);
+  view->stylesheet = std::move(resources.stylesheet);
+  view->importedUses = std::move(resources.uses);
+#ifndef OCTARINE_SHIPPED
+  view->document = parsed.document;
+#endif
+  view->acquiredAssetIds = AcquireViewCatalogAssets(this, parsed.document, view->stylesheet, view->importedUses);
 
   const sol::table rootScope = view->MakeScope();
   view->rootEntity = InstantiateNode(view, parsed.document.roots.front(), parentEntity, rootScope, nullptr, nullptr);
   PopulateMountViewTable(view);
   view->InvokeController("on_mount");
 
-  if (!watchedPaths.empty()) {
-    RegisterMountedViewWatch(sourceStr, std::move(watchedPaths), view, opts, parentEntity);
+  if (resources.ok) {
+    RecordDiagnosticsSuccess(resources.watchedPaths, /*isReload=*/false);
+  } else {
+    RecordDiagnosticsError(resources.errorFile, resources.errorLine, resources.error);
   }
+
+  RegisterMountedViewWatch(sourceStr, std::move(resources.watchedPaths), view, parentEntity);
 
   return view->viewTable;
 }
 
-void UIRuntime::RegisterMountedViewWatch(const std::string& sourceStr, std::vector<std::string> watchedPaths,
-                                         const std::shared_ptr<void>& viewErased, const sol::optional<sol::table>& opts,
-                                         const std::optional<Entity>& parentEntity) {
-  const auto view = std::static_pointer_cast<UIViewInstance>(viewErased);
+uint64_t UIRuntime::RegisterMountedViewWatch(const std::string& sourceStr, std::vector<std::string> watchedPaths,
+                                             const std::shared_ptr<void>& viewErased,
+                                             const std::optional<Entity>& parentEntity) {
   std::erase_if(mounted_views_, [](const auto& r) { return !r->isMountedFn || !r->isMountedFn(); });
   auto rec = std::make_shared<MountedViewRecord>();
   rec->id = next_view_id_++;
   rec->sourcePath = sourceStr;
-  rec->watchedFiles = std::move(watchedPaths);
-  std::error_code ec;
-  for (const auto& f : rec->watchedFiles) {
-    if (fs::exists(f, ec)) {
-      rec->lastWriteTimes[f] = fs::last_write_time(f, ec);
-    }
-  }
-  std::weak_ptr<UIViewInstance> weakView = view;
-  rec->isMountedFn = [weakView]() {
-    const auto v = weakView.lock();
-    return v != nullptr && v->IsCurrentlyMounted();
-  };
-  rec->reloadFn = [this, weakView, sourceStr, opts, parentEntity]() {
-    ::ReloadMountedView(this, weakView.lock(), sourceStr, opts, parentEntity);
-  };
+  SyncRecordWatchTimes(rec->watchedFiles, rec->lastWriteTimes, std::move(watchedPaths));
+
+  WireMountedViewLifecycleCallbacks(*rec, viewErased, sourceStr, parentEntity);
+#ifndef OCTARINE_SHIPPED
+  WireMountedViewPreviewCallbacks(*rec, viewErased);
+#endif
+  const uint64_t id = rec->id;
   mounted_views_.push_back(std::move(rec));
+  return id;
 }
 
 namespace {
@@ -2684,10 +3092,12 @@ void UIRuntime::PollHotReload(const float deltaTime, const float pollIntervalSec
     hot_reload_accum_ = 0.0f;
   }
   std::erase_if(mounted_views_, [](const auto& r) { return !r->isMountedFn || !r->isMountedFn(); });
-  for (const auto& rec : mounted_views_) {
-    if (HasWatchedViewFilesChanged(rec->watchedFiles, rec->lastWriteTimes) && rec->reloadFn) {
+  const auto snapshot = mounted_views_;
+  for (const auto& rec : snapshot) {
+    if (!rec->watchedFiles.empty() && HasWatchedViewFilesChanged(rec->watchedFiles, rec->lastWriteTimes) &&
+        rec->reloadFn) {
       Logger::Info("UIRuntime: hot-reloading UI view '" + rec->sourcePath + "'");
-      rec->reloadFn();
+      rec->reloadFn(rec);
     }
   }
 }
@@ -2707,21 +3117,148 @@ std::vector<UIRuntime::MountedViewDebugInfo> UIRuntime::GetMountedViewsDebugInfo
   return list;
 }
 
+std::optional<uint64_t> UIRuntime::FindViewIdByRoot(const Entity rootEntity) const {
+  if (registry_ == nullptr || !registry_->IsAlive(rootEntity)) return std::nullopt;
+  for (const auto& rec : mounted_views_) {
+    if (!rec || !rec->isMountedFn || !rec->isMountedFn()) continue;
+    if (rec->rootEntityFn && rec->rootEntityFn().id == rootEntity.id) {
+      return rec->id;
+    }
+  }
+  return std::nullopt;
+}
+
+bool UIRuntime::IsViewMounted(const uint64_t id) const {
+  if (id == 0) return false;
+  for (const auto& rec : mounted_views_) {
+    if (rec && rec->id == id) {
+      return rec->isMountedFn && rec->isMountedFn();
+    }
+  }
+  return false;
+}
+
+Entity UIRuntime::GetViewRoot(const uint64_t id) const {
+  if (id == 0) return {};
+  for (const auto& rec : mounted_views_) {
+    if (rec && rec->id == id && rec->isMountedFn && rec->isMountedFn() && rec->rootEntityFn) {
+      return rec->rootEntityFn();
+    }
+  }
+  return {};
+}
+
+void UIRuntime::UnmountView(const uint64_t id) {
+  if (id == 0) return;
+  for (const auto& rec : mounted_views_) {
+    if (rec && rec->id == id && rec->unmountFn) {
+      rec->unmountFn();
+      break;
+    }
+  }
+  std::erase_if(mounted_views_,
+                [id](const auto& r) { return !r || r->id == id || !r->isMountedFn || !r->isMountedFn(); });
+}
+
+std::vector<std::pair<uint64_t, bool>> UIRuntime::SetNonPreviewViewsInert(const uint64_t previewViewId,
+                                                                          const bool inert) {
+  std::vector<std::pair<uint64_t, bool>> prevStates;
+  for (const auto& rec : mounted_views_) {
+    if (!rec || rec->id == previewViewId || !rec->isMountedFn || !rec->isMountedFn()) continue;
+    const bool wasInert = rec->isInertFn ? rec->isInertFn() : false;
+    prevStates.emplace_back(rec->id, wasInert);
+    if (rec->setInertFn) {
+      rec->setInertFn(inert);
+    }
+  }
+  return prevStates;
+}
+
+void UIRuntime::RestoreViewsInert(const std::vector<std::pair<uint64_t, bool>>& prevStates) {
+  for (const auto& [viewId, wasInert] : prevStates) {
+    const auto it =
+        std::ranges::find_if(mounted_views_, [viewId](const auto& rec) { return rec && rec->id == viewId; });
+    if (it != mounted_views_.end() && *it && (*it)->isMountedFn && (*it)->isMountedFn() && (*it)->setInertFn) {
+      (*it)->setInertFn(wasInert);
+    }
+  }
+}
+
+void UIRuntime::RecordDiagnosticsError(std::string file, const int line, std::string error) {
+  diagnostics_.lastParseOk = false;
+  diagnostics_.lastErrorFile = std::move(file);
+  diagnostics_.lastErrorLine = line;
+  diagnostics_.lastError = std::move(error);
+}
+
+void UIRuntime::RecordDiagnosticsSuccess(std::vector<std::string> watchedFiles, const bool isReload) {
+  diagnostics_.lastParseOk = true;
+  diagnostics_.lastError.clear();
+  diagnostics_.lastErrorFile.clear();
+  diagnostics_.lastErrorLine = 0;
+  diagnostics_.watchedFiles = std::move(watchedFiles);
+  if (isReload) {
+    ++diagnostics_.reloadCount;
+  }
+}
+
 bool UIRuntime::ReloadMountedView(const uint64_t id) {
   const auto it =
       std::ranges::find_if(mounted_views_, [id](const auto& rec) { return rec && rec->id == id && rec->reloadFn; });
   if (it == mounted_views_.end()) return false;
-  (*it)->reloadFn();
-  return true;
+  return (*it)->reloadFn(*it);
 }
 
 void UIRuntime::ReloadAllMountedViews() {
-  for (const auto& rec : mounted_views_) {
+  const auto snapshot = mounted_views_;
+  for (const auto& rec : snapshot) {
     if (rec && rec->reloadFn) {
-      rec->reloadFn();
+      rec->reloadFn(rec);
     }
   }
 }
+
+#ifndef OCTARINE_SHIPPED
+bool UIRuntime::InspectMountedViewContract(const uint64_t id, OxmlContract& outContract) const {
+  if (id == 0) return false;
+  for (const auto& rec : mounted_views_) {
+    if (rec && rec->id == id && rec->inspectContractFn) {
+      return rec->inspectContractFn(outContract);
+    }
+  }
+  return false;
+}
+
+bool UIRuntime::SetMountedViewParam(const uint64_t id, const std::string& name, const std::string& value) {
+  if (id == 0 || name.empty()) return false;
+  for (const auto& rec : mounted_views_) {
+    if (rec && rec->id == id && rec->setParamFn) {
+      return rec->setParamFn(name, value);
+    }
+  }
+  return false;
+}
+
+sol::object UIRuntime::GetMountedViewParams(const uint64_t id) const {
+  if (id == 0) return sol::lua_nil;
+  for (const auto& rec : mounted_views_) {
+    if (rec && rec->id == id && rec->getParamsFn) {
+      return rec->getParamsFn();
+    }
+  }
+  return sol::lua_nil;
+}
+
+bool UIRuntime::InvokeMountedViewController(const uint64_t id, const std::string& methodName) {
+  if (id == 0 || methodName.empty()) return false;
+  for (const auto& rec : mounted_views_) {
+    if (rec && rec->id == id && rec->invokeControllerFn) {
+      return rec->invokeControllerFn(methodName);
+    }
+  }
+  return false;
+}
+#endif
 
 namespace {
 bool IsUiRefResolvable(const AssetManager& assetManager, const std::string& refPathOrId) {

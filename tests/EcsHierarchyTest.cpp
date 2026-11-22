@@ -63,6 +63,30 @@ int main() {
     Check(registry.HasPair(child, registry.ChildOfEntity(), b), "reparent adds ChildOf pair for new parent");
   }
 
+  // ReorderChildren preserves parent membership, places unlisted children at tail, and bumps generation.
+  {
+    Registry registry;
+    const Entity parent = registry.CreateEntity();
+    const Entity c1 = registry.CreateEntity();
+    const Entity c2 = registry.CreateEntity();
+    const Entity c3 = registry.CreateEntity();
+    const Entity unrelated = registry.CreateEntity();
+    registry.SetParent(c1, parent);
+    registry.SetParent(c2, parent);
+    registry.SetParent(c3, parent);
+
+    const uint64_t genBefore = registry.HierarchyGeneration();
+    const std::array<Entity, 3> partial{c3, unrelated, c1};
+    registry.ReorderChildren(parent, partial);
+    const auto kids = registry.GetChildren(parent);
+    Check(kids.size() == 3 && kids[0].id == c3.id && kids[1].id == c1.id && kids[2].id == c2.id,
+          "ReorderChildren reorders listed children and preserves unlisted tail");
+    Check(registry.HierarchyGeneration() > genBefore, "ReorderChildren bumps HierarchyGeneration when order changes");
+    const uint64_t genAfter = registry.HierarchyGeneration();
+    registry.ReorderChildren(parent, kids);
+    Check(registry.HierarchyGeneration() == genAfter, "ReorderChildren is a no-op when order already matches");
+  }
+
   // Generic pairs: add / has round-trip via the reverse index.
   {
     Registry registry;

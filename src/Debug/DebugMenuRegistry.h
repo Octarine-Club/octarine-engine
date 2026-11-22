@@ -5,6 +5,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "ECS/Entity.h"
@@ -85,6 +86,16 @@ class DebugMenuRegistry {
   // Shared Inspector & Viewport Overlay State
   void SelectEntity(Entity entity) { selected_entity_ = entity; }
   [[nodiscard]] Entity GetSelectedEntity() const { return selected_entity_; }
+  void SetHoveredEntity(Entity entity, std::string label = {}) {
+    hovered_entity_ = entity;
+    hovered_entity_label_ = std::move(label);
+  }
+  void ClearHoveredEntity() {
+    hovered_entity_ = Entity{};
+    hovered_entity_label_.clear();
+  }
+  [[nodiscard]] Entity GetHoveredEntity() const { return hovered_entity_; }
+  [[nodiscard]] const std::string& GetHoveredEntityLabel() const { return hovered_entity_label_; }
   [[nodiscard]] bool IsWorldPickerEnabled() const { return world_picker_enabled_; }
   void SetWorldPickerEnabled(bool enabled) { world_picker_enabled_ = enabled; }
   [[nodiscard]] bool HighlightSelectedEntity() const { return highlight_selected_entity_; }
@@ -108,6 +119,8 @@ class DebugMenuRegistry {
   std::unordered_map<std::string, bool> persisted_open_states_{};
 
   Entity selected_entity_{};
+  Entity hovered_entity_{};
+  std::string hovered_entity_label_{};
   bool world_picker_enabled_ = false;
   bool highlight_selected_entity_ = true;
   bool show_ui_layout_boxes_ = false;
