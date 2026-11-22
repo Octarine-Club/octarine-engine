@@ -961,7 +961,7 @@ sol::environment CreateSandboxedMockEnv(sol::state& lua) {
 void MergeOptionalParams(sol::state& lua, const sol::table& rootFallback, const sol::table& tbl, sol::table& outOpts) {
   const sol::object rootParams =
       rootFallback.valid() ? rootFallback.get<sol::object>("params") : sol::object(sol::lua_nil);
-  const sol::object subParams = tbl["params"];
+  const sol::object subParams = tbl.get<sol::object>("params");
   if (!rootParams.is<sol::table>() && !subParams.is<sol::table>()) return;
   sol::table merged = lua.create_table();
   if (rootParams.is<sol::table>()) {
@@ -1095,13 +1095,13 @@ sol::table ResolveEffectivePresetTable(const sol::table& rootTbl, const std::str
 
 void ApplyMockTableFields(UIRuntime& uiRuntime, const sol::table& tbl, sol::table& outOpts, sol::table& outRawCtrl,
                           const sol::table& rootFallback) {
-  const sol::object ctxField = tbl["context"];
-  const sol::object subCtrl = tbl["controller"];
+  const sol::object ctxField = tbl.get<sol::object>("context");
+  const sol::object subCtrl = tbl.get<sol::object>("controller");
   const sol::object rootCtrl =
       rootFallback.valid() ? rootFallback.get<sol::object>("controller") : sol::object(sol::lua_nil);
   const sol::object ctrlField = subCtrl.is<sol::table>() ? subCtrl : rootCtrl;
-  const sol::object paramsField = tbl["params"];
-  const sol::object subStyles = tbl["styles"];
+  const sol::object paramsField = tbl.get<sol::object>("params");
+  const sol::object subStyles = tbl.get<sol::object>("styles");
   const sol::object rootStyles =
       rootFallback.valid() ? rootFallback.get<sol::object>("styles") : sol::object(sol::lua_nil);
   const sol::object stylesField = subStyles.is<sol::table>() ? subStyles : rootStyles;
@@ -1609,7 +1609,7 @@ sol::optional<sol::table> UIPreviewer::PrepareMountOptions(const sol::optional<s
     for (const auto& [k, v] : *opts) {
       out[k] = v;
     }
-    const sol::object ctrlObj = (*opts)["controller"];
+    const sol::object ctrlObj = opts->get<sol::object>("controller");
     if (ctrlObj.is<sol::table>()) {
       userCtrl = ctrlObj.as<sol::table>();
     }
@@ -1643,7 +1643,7 @@ bool UIPreviewer::LoadMockScriptOptions(const std::string& mockPath, sol::table&
 namespace {
 sol::object ExtractRawCtrlOpt(const sol::optional<sol::table>& opts) {
   if (!opts.has_value()) return sol::lua_nil;
-  const sol::object ctrlObj = (*opts)["controller"];
+  const sol::object ctrlObj = opts->get<sol::object>("controller");
   return ctrlObj.is<sol::table>() ? ctrlObj : sol::object(sol::lua_nil);
 }
 }  // namespace

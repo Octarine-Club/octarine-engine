@@ -735,7 +735,7 @@ void TestFieldReportRegressionsAndWrapping() {
   Check(cardRect.top > 100.0f, "Card remains vertically centered on Canvas despite non-UI child entity");
 
   // Bug 2 check: ref and if="{badge ~= ''}" on custom widget <PillBadge>
-  const sol::object pillRefObj = refs["pillRef"];
+  const sol::object pillRefObj = refs.get<sol::object>("pillRef");
   Check(pillRefObj.valid() && pillRefObj != sol::lua_nil, "ref='pillRef' registered on custom widget tag");
   if (pillRefObj.valid() && pillRefObj != sol::lua_nil) {
     Check(!callRefBool("pillRef", "is_visible"), "PillBadge hidden when badge == ''");
@@ -770,7 +770,7 @@ void TestFieldReportRegressionsAndWrapping() {
   )");
   registry.Update(0.016f);
 
-  const sol::object hdrRefObj = refs["hdrRef"];
+  const sol::object hdrRefObj = refs.get<sol::object>("hdrRef");
   Check(hdrRefObj.valid() && hdrRefObj != sol::lua_nil, "ref='hdrRef' registered on <Use> tag");
   if (hdrRefObj.valid() && hdrRefObj != sol::lua_nil) {
     Check(!callRefBool("hdrRef", "is_visible"), "<Use> ScreenHeader hidden when state.show_hdr mutates to false");
