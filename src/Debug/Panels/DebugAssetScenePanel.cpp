@@ -230,6 +230,38 @@ void DrawAudioTab(Registry& registry, AssetManager* assets) {
   }
 }
 
+void DrawCatalogEntryRow([[maybe_unused]] Registry& registry, const std::string& id, const CatalogEntry& entry) {
+  ImGui::TableNextRow();
+  ImGui::TableSetColumnIndex(0);
+  ImGui::TextUnformatted(id.c_str());
+
+  ImGui::TableSetColumnIndex(1);
+  static constexpr const char* kTypes[] = {"Texture", "Font", "Audio", "UIView", "UIStyle", "Tilemap"};
+  const int typeIdx = static_cast<int>(entry.type);
+  ImGui::TextUnformatted(typeIdx >= 0 && typeIdx < 6 ? kTypes[typeIdx] : "Unknown");
+
+  ImGui::TableSetColumnIndex(2);
+  ImGui::TextUnformatted(entry.fullPath.c_str());
+
+#ifndef OCTARINE_SHIPPED
+  ImGui::TableSetColumnIndex(3);
+  if (entry.type != AssetType::UIView) return;
+  ImGui::PushID(id.c_str());
+  if (ImGui::SmallButton("Preview")) {
+    auto* previewer = registry.TryGet<UIPreviewer>();
+    if (previewer == nullptr) {
+      previewer = &registry.Set<UIPreviewer>(UIPreviewer(&registry));
+    }
+    previewer->SetRegistry(&registry);
+    previewer->MountPreview(entry.fullPath.empty() ? id : entry.fullPath);
+    if (auto* debugReg = registry.TryGet<DebugMenuRegistry>()) {
+      debugReg->SetPanelOpen("engine.ui_previewer", true);
+    }
+  }
+  ImGui::PopID();
+#endif
+}
+
 void DrawCatalogTab([[maybe_unused]] Registry& registry, AssetManager* assets) {
   if (assets == nullptr) return;
 
@@ -241,55 +273,26 @@ void DrawCatalogTab([[maybe_unused]] Registry& registry, AssetManager* assets) {
 #else
   constexpr int kCols = 4;
 #endif
-  if (ImGui::BeginTable("##catalog_all_table", kCols,
-                        ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY)) {
-    ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed, 180.0f);
-    ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 90.0f);
-    ImGui::TableSetupColumn("Path", ImGuiTableColumnFlags_WidthStretch);
-#ifndef OCTARINE_SHIPPED
-    ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 75.0f);
-#endif
-    ImGui::TableHeadersRow();
-
-    const std::string filter(catFilter);
-    for (const auto& [id, entry] : assets->GetCatalog().Entries()) {
-      if (!filter.empty() && id.find(filter) == std::string::npos && entry.fullPath.find(filter) == std::string::npos) {
-        continue;
-      }
-
-      ImGui::TableNextRow();
-      ImGui::TableSetColumnIndex(0);
-      ImGui::TextUnformatted(id.c_str());
-
-      ImGui::TableSetColumnIndex(1);
-      static constexpr const char* kTypes[] = {"Texture", "Font", "Audio", "UIView", "UIStyle", "Tilemap"};
-      const int typeIdx = static_cast<int>(entry.type);
-      ImGui::TextUnformatted(typeIdx >= 0 && typeIdx < 6 ? kTypes[typeIdx] : "Unknown");
-
-      ImGui::TableSetColumnIndex(2);
-      ImGui::TextUnformatted(entry.fullPath.c_str());
-
-#ifndef OCTARINE_SHIPPED
-      ImGui::TableSetColumnIndex(3);
-      if (entry.type == AssetType::UIView) {
-        ImGui::PushID(id.c_str());
-        if (ImGui::SmallButton("Preview")) {
-          auto* previewer = registry.TryGet<UIPreviewer>();
-          if (previewer == nullptr) {
-            previewer = &registry.Set<UIPreviewer>(UIPreviewer(&registry));
-          }
-          previewer->SetRegistry(&registry);
-          previewer->MountPreview(entry.fullPath.empty() ? id : entry.fullPath);
-          if (auto* debugReg = registry.TryGet<DebugMenuRegistry>()) {
-            debugReg->SetPanelOpen("engine.ui_previewer", true);
-          }
-        }
-        ImGui::PopID();
-      }
-#endif
-    }
-    ImGui::EndTable();
+  if (!ImGui::BeginTable("##catalog_all_table", kCols,
+                         ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY)) {
+    return;
   }
+  ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed, 180.0f);
+  ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 90.0f);
+  ImGui::TableSetupColumn("Path", ImGuiTableColumnFlags_WidthStretch);
+#ifndef OCTARINE_SHIPPED
+  ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 75.0f);
+#endif
+  ImGui::TableHeadersRow();
+
+  const std::string filter(catFilter);
+  for (const auto& [id, entry] : assets->GetCatalog().Entries()) {
+    if (!filter.empty() && id.find(filter) == std::string::npos && entry.fullPath.find(filter) == std::string::npos) {
+      continue;
+    }
+    DrawCatalogEntryRow(registry, id, entry);
+  }
+  ImGui::EndTable();
 }
 
 }  // namespace

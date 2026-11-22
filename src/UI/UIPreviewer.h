@@ -245,6 +245,7 @@ class UIPreviewer {
   [[nodiscard]] bool LoadMockScriptOptions(const std::string& mockPath, sol::table& outOpts);
   void SyncPreviewLayerOrder();
   void RestoreBackgroundIsolation();
+  bool ReloadActiveMockPreview();
 
   Registry* registry_{nullptr};
   std::unique_ptr<PausedRenderSystems> paused_systems_;

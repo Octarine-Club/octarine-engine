@@ -2,6 +2,7 @@
 #include <SDL3_image/SDL_image.h>
 #include <SDL3_ttf/SDL_ttf.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -3077,10 +3078,7 @@ void TestUiPreviewerAuditRulesAndBackdrops() {
     UIPreviewer previewer(&reg);
     const auto issues = previewer.AuditLayout();
     auto hasCode = [&](const std::string& code) {
-      for (const auto& it : issues) {
-        if (it.code == code) return true;
-      }
-      return false;
+      return std::ranges::any_of(issues, [&](const auto& it) { return it.code == code; });
     };
     Check(hasCode("zero_size_visible"), "AuditLayout flags zero_size_visible");
     Check(hasCode("viewport_overflow"), "AuditLayout flags viewport_overflow");

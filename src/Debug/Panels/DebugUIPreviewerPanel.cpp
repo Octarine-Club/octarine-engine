@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -322,16 +323,12 @@ void DrawDiagnosticsBanner(const UIPreviewer& previewer, const UIRuntime* uiRunt
   }
 }
 
-void DrawCatalogPane(UIPreviewer& previewer) {
-  static char filterBuf[128] = "";
-  ImGui::SetNextItemWidth(-1.0f);
-  ImGui::InputTextWithHint("##preview_filter", "Filter .oxml / .oss...", filterBuf, sizeof(filterBuf));
-  const std::string filter(filterBuf);
-
+void DrawCatalogViewsList(UIPreviewer& previewer, const std::string& filter) {
   ImGui::SeparatorText("OXML Views");
   const auto& views = previewer.CatalogViews();
   if (views.empty()) {
     ImGui::TextDisabled("No .oxml files found in catalog.");
+    return;
   }
   for (const auto& entry : views) {
     const std::string label = entry.displayPath.empty() ? entry.id : entry.displayPath;
@@ -345,21 +342,33 @@ void DrawCatalogPane(UIPreviewer& previewer) {
       ImGui::SetTooltip("ID: %s\nPath: %s\nClick to mount in UI Previewer", entry.id.c_str(), entry.fullPath.c_str());
     }
   }
+}
 
-  if (ImGui::CollapsingHeader("OSS Stylesheets")) {
-    const auto& styles = previewer.CatalogStyles();
-    if (styles.empty()) {
-      ImGui::TextDisabled("No .oss files found in catalog.");
-    }
-    for (const auto& entry : styles) {
-      const std::string label = entry.displayPath.empty() ? entry.id : entry.displayPath;
-      if (!ContainsCaseInsensitive(label, filter) && !ContainsCaseInsensitive(entry.id, filter)) continue;
-      ImGui::TextUnformatted(label.c_str());
-      if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("ID: %s\nPath: %s", entry.id.c_str(), entry.fullPath.c_str());
-      }
+void DrawCatalogStylesSection(const UIPreviewer& previewer, const std::string& filter) {
+  if (!ImGui::CollapsingHeader("OSS Stylesheets")) return;
+  const auto& styles = previewer.CatalogStyles();
+  if (styles.empty()) {
+    ImGui::TextDisabled("No .oss files found in catalog.");
+    return;
+  }
+  for (const auto& entry : styles) {
+    const std::string label = entry.displayPath.empty() ? entry.id : entry.displayPath;
+    if (!ContainsCaseInsensitive(label, filter) && !ContainsCaseInsensitive(entry.id, filter)) continue;
+    ImGui::TextUnformatted(label.c_str());
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip("ID: %s\nPath: %s", entry.id.c_str(), entry.fullPath.c_str());
     }
   }
+}
+
+void DrawCatalogPane(UIPreviewer& previewer) {
+  static char filterBuf[128] = "";
+  ImGui::SetNextItemWidth(-1.0f);
+  ImGui::InputTextWithHint("##preview_filter", "Filter .oxml / .oss...", filterBuf, sizeof(filterBuf));
+  const std::string filter(filterBuf);
+
+  DrawCatalogViewsList(previewer, filter);
+  DrawCatalogStylesSection(previewer, filter);
 }
 
 void DrawAuditIssueElementCell(const UILayoutIssue& issue, const int rowIndex, DebugMenuRegistry& debugReg) {
@@ -431,34 +440,37 @@ void DrawWatchedFilesTab(const UIRuntime* uiRuntime) {
   }
 }
 
+int HexCharToInt(const char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
+  if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
+  return -1;
+}
+
+bool TryParseHexByte(const char hi, const char lo, float& out) {
+  const int a = HexCharToInt(hi);
+  const int b = HexCharToInt(lo);
+  if (a < 0 || b < 0) return false;
+  out = static_cast<float>((a << 4) | b) / 255.0f;
+  return true;
+}
+
 bool TryParseHexColorRgba(std::string_view sv, float rgba[4]) {
   if (sv.size() < 7 || sv.front() != '#') return false;
-  auto parseByte = [](const char hi, const char lo, float& out) -> bool {
-    auto hexVal = [](const char c) -> int {
-      if (c >= '0' && c <= '9') return c - '0';
-      if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
-      if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
-      return -1;
-    };
-    const int a = hexVal(hi);
-    const int b = hexVal(lo);
-    if (a < 0 || b < 0) return false;
-    out = static_cast<float>((a << 4) | b) / 255.0f;
-    return true;
-  };
-  if (!parseByte(sv[1], sv[2], rgba[0]) || !parseByte(sv[3], sv[4], rgba[1]) || !parseByte(sv[5], sv[6], rgba[2])) {
+  if (!TryParseHexByte(sv[1], sv[2], rgba[0]) || !TryParseHexByte(sv[3], sv[4], rgba[1]) ||
+      !TryParseHexByte(sv[5], sv[6], rgba[2])) {
     return false;
   }
   rgba[3] = 1.0f;
   if (sv.size() >= 9) {
-    static_cast<void>(parseByte(sv[7], sv[8], rgba[3]));
+    static_cast<void>(TryParseHexByte(sv[7], sv[8], rgba[3]));
   }
   return true;
 }
 
 std::string FormatHexColorRgba(const float rgba[4]) {
   auto toByte = [](const float f) -> unsigned int {
-    return static_cast<unsigned int>(std::clamp(f, 0.0f, 1.0f) * 255.0f + 0.5f);
+    return static_cast<unsigned int>(std::lround(std::clamp(f, 0.0f, 1.0f) * 255.0f));
   };
   char buf[16];
   if (toByte(rgba[3]) < 255U) {
@@ -512,8 +524,8 @@ std::string JoinCommaList(const std::vector<std::string>& items) {
 void DrawMockNumberControl(UIPreviewer& previewer, const MockFieldEntry& entry) {
   double d = entry.numberValue;
   if (entry.hasSliderRange && entry.sliderMax > entry.sliderMin) {
-    const double dMin = static_cast<double>(entry.sliderMin);
-    const double dMax = static_cast<double>(entry.sliderMax);
+    const auto dMin = static_cast<double>(entry.sliderMin);
+    const auto dMax = static_cast<double>(entry.sliderMax);
     ImGui::SetNextItemWidth(100.0f);
     if (ImGui::SliderScalar("##sld", ImGuiDataType_Double, &d, &dMin, &dMax, "%.3g")) {
       previewer.SetMockFieldNumber(entry.path, d);
@@ -627,34 +639,35 @@ void DrawMockParamsSection(UIPreviewer& previewer, const std::vector<MockParamEn
   }
 }
 
-void DrawMockCallbacksAndMetaSection(UIPreviewer& previewer, const std::vector<MockCallbackEntry>& callbacks) {
-  const auto& contract = previewer.ActiveContract();
-  if (!callbacks.empty()) {
-    ImGui::SeparatorText("Controller Callbacks");
-    for (const auto& cb : callbacks) {
-      ImGui::PushID(cb.name.c_str());
-      ImGui::TextColored(
-          cb.hasControllerHandler ? ImVec4(0.45f, 0.90f, 0.55f, 1.0f) : ImVec4(0.70f, 0.70f, 0.75f, 1.0f),
-          cb.hasControllerHandler ? "[Bound]" : "[Stub]");
-      ImGui::SameLine();
-      ImGui::Text("%s (%s)", cb.name.c_str(), cb.sourceAttr.c_str());
-      ImGui::SameLine();
-      if (ImGui::SmallButton("Trigger")) {
-        previewer.TriggerMockCallback(cb.name);
-      }
-      ImGui::PopID();
+void DrawMockCallbacksList(UIPreviewer& previewer, const std::vector<MockCallbackEntry>& callbacks) {
+  if (callbacks.empty()) return;
+  ImGui::SeparatorText("Controller Callbacks");
+  for (const auto& cb : callbacks) {
+    ImGui::PushID(cb.name.c_str());
+    ImGui::TextColored(cb.hasControllerHandler ? ImVec4(0.45f, 0.90f, 0.55f, 1.0f) : ImVec4(0.70f, 0.70f, 0.75f, 1.0f),
+                       cb.hasControllerHandler ? "[Bound]" : "[Stub]");
+    ImGui::SameLine();
+    ImGui::Text("%s (%s)", cb.name.c_str(), cb.sourceAttr.c_str());
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Trigger")) {
+      previewer.TriggerMockCallback(cb.name);
     }
+    ImGui::PopID();
   }
-  if (!contract.refs.empty() || !contract.slots.empty()) {
-    ImGui::SeparatorText("Contract Refs & Slots");
-    if (!contract.refs.empty()) {
-      const std::string joined = JoinCommaList(contract.refs);
-      ImGui::TextDisabled("Refs (%zu): %s", contract.refs.size(), joined.c_str());
-    }
-    if (!contract.slots.empty()) {
-      const std::string joined = JoinCommaList(contract.slots);
-      ImGui::TextDisabled("Slots (%zu): %s", contract.slots.size(), joined.c_str());
-    }
+}
+
+void DrawMockCallbacksAndMetaSection(UIPreviewer& previewer, const std::vector<MockCallbackEntry>& callbacks) {
+  DrawMockCallbacksList(previewer, callbacks);
+  const auto& contract = previewer.ActiveContract();
+  if (contract.refs.empty() && contract.slots.empty()) return;
+  ImGui::SeparatorText("Contract Refs & Slots");
+  if (!contract.refs.empty()) {
+    const std::string joined = JoinCommaList(contract.refs);
+    ImGui::TextDisabled("Refs (%zu): %s", contract.refs.size(), joined.c_str());
+  }
+  if (!contract.slots.empty()) {
+    const std::string joined = JoinCommaList(contract.slots);
+    ImGui::TextDisabled("Slots (%zu): %s", contract.slots.size(), joined.c_str());
   }
 }
 

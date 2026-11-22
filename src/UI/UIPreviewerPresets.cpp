@@ -96,6 +96,31 @@ bool CanPreserveControllerFromSource(UIRuntime* uiRuntime, const std::string& so
   return ExtractMockControllerSnippets(srcText, snippets) && snippets.HasAnyController();
 }
 
+bool TryPreserveControllerOnSave(UIRuntime& uiRuntime, const std::string& serializedBody, const std::string& sourcePath,
+                                 const std::string& requestedPreset, std::string& outScriptText) {
+  if (sourcePath.empty() || uiRuntime.GetLua() == nullptr) return false;
+  std::string readErr;
+  const std::string srcText = ReadFileOrAssetText(&uiRuntime, sourcePath, readErr);
+  MockControllerSnippets snippets;
+  if (srcText.empty() || !ExtractMockControllerSnippets(srcText, snippets) || !snippets.HasAnyController()) {
+    return false;
+  }
+  const std::string candidate = InjectMockControllerSnippets(serializedBody, snippets);
+  sol::table opts = uiRuntime.GetLua()->create_table();
+  sol::table ctrl;
+  sol::table root;
+  std::string key;
+  bool hasCtrl = false;
+  std::string valErr;
+  if (!LoadSandboxedMockScriptText(uiRuntime, candidate, sourcePath, requestedPreset, opts, ctrl, root, key, hasCtrl,
+                                   valErr) ||
+      !hasCtrl) {
+    return false;
+  }
+  outScriptText = candidate;
+  return true;
+}
+
 bool BuildSafeMockScriptForSave(UIRuntime& uiRuntime, const std::string& serializedBody, const bool hasPresets,
                                 const OxmlContract& contract, const std::string& sourcePath,
                                 const std::string& requestedPreset, const bool hasLiveController, const bool force,
@@ -103,28 +128,9 @@ bool BuildSafeMockScriptForSave(UIRuntime& uiRuntime, const std::string& seriali
   outScriptText.clear();
   outError.clear();
 
-  if (hasLiveController && !sourcePath.empty()) {
-    std::string readErr;
-    const std::string srcText = ReadFileOrAssetText(&uiRuntime, sourcePath, readErr);
-    MockControllerSnippets snippets;
-    if (!srcText.empty() && ExtractMockControllerSnippets(srcText, snippets) && snippets.HasAnyController()) {
-      const std::string candidate = InjectMockControllerSnippets(serializedBody, snippets);
-      if (uiRuntime.GetLua() != nullptr) {
-        sol::state& lua = *uiRuntime.GetLua();
-        sol::table opts = lua.create_table();
-        sol::table ctrl;
-        sol::table root;
-        std::string key;
-        bool hasCtrl = false;
-        std::string valErr;
-        if (LoadSandboxedMockScriptText(uiRuntime, candidate, sourcePath, requestedPreset, opts, ctrl, root, key,
-                                        hasCtrl, valErr) &&
-            hasCtrl) {
-          outScriptText = candidate;
-          return true;
-        }
-      }
-    }
+  if (hasLiveController &&
+      TryPreserveControllerOnSave(uiRuntime, serializedBody, sourcePath, requestedPreset, outScriptText)) {
+    return true;
   }
 
   if (hasLiveController && !force) {
@@ -991,6 +997,27 @@ std::vector<std::pair<int, int>> UIPreviewer::ParseResolutionsCsv(const std::str
   return out;
 }
 
+namespace {
+void WriteMatrixReports(const UIPreviewer& previewer, const std::string& outDir,
+                        const std::vector<std::pair<int, int>>& resolutions, const std::vector<std::string>& presets,
+                        PreviewMatrixResult& result) {
+  result.reportPath = (fs::path(outDir) / "matrix_report.json").generic_string();
+  result.htmlReportPath = (fs::path(outDir) / "index.html").generic_string();
+  result.reportJson = FormatMatrixReportJson(previewer, result, resolutions, presets);
+
+  std::string writeErr;
+  const bool jsonOk = detail::TryWriteTextFile(result.reportPath, result.reportJson, writeErr);
+  if (!jsonOk) Logger::Error("[ui-preview] failed writing matrix report: " + writeErr);
+
+  std::string htmlErr;
+  const std::string htmlText = FormatMatrixReportHtml(previewer, result, resolutions);
+  const bool htmlOk = detail::TryWriteTextFile(result.htmlReportPath, htmlText, htmlErr);
+  if (!htmlOk) Logger::Error("[ui-preview] failed writing matrix HTML contact sheet: " + htmlErr);
+
+  result.ok = jsonOk && htmlOk;
+}
+}  // namespace
+
 PreviewMatrixResult UIPreviewer::RunPreviewMatrix(const PreviewMatrixOptions& opts) {
   PreviewMatrixResult result;
   if (!IsActive() || registry_ == nullptr || opts.outDir.empty()) return result;
@@ -1035,20 +1062,7 @@ PreviewMatrixResult UIPreviewer::RunPreviewMatrix(const PreviewMatrixOptions& op
   }
   if (auto* rq = registry_->TryGet<RenderQueue>()) rq->Clear();
 
-  result.reportPath = (fs::path(opts.outDir) / "matrix_report.json").generic_string();
-  result.htmlReportPath = (fs::path(opts.outDir) / "index.html").generic_string();
-  result.reportJson = FormatMatrixReportJson(*this, result, resolutions, presets);
-
-  std::string writeErr;
-  const bool jsonOk = detail::TryWriteTextFile(result.reportPath, result.reportJson, writeErr);
-  if (!jsonOk) Logger::Error("[ui-preview] failed writing matrix report: " + writeErr);
-
-  std::string htmlErr;
-  const std::string htmlText = FormatMatrixReportHtml(*this, result, resolutions);
-  const bool htmlOk = detail::TryWriteTextFile(result.htmlReportPath, htmlText, htmlErr);
-  if (!htmlOk) Logger::Error("[ui-preview] failed writing matrix HTML contact sheet: " + htmlErr);
-
-  result.ok = jsonOk && htmlOk;
+  WriteMatrixReports(*this, opts.outDir, resolutions, presets, result);
   return result;
 }
 

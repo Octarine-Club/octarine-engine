@@ -332,10 +332,12 @@ sol::table InspectStaticOxmlContractToLua(sol::state& lua, UIRuntime* uiRuntime,
   };
   const OxmlContract contract = InspectOxmlContract(parsed.document, {}, resolveUse);
   std::vector<MockParamEntry> params;
+  params.reserve(contract.params.size());
   for (const auto& p : contract.params) {
     params.push_back({p.name, p.defaultValue, p.defaultValue, false});
   }
   std::vector<MockCallbackEntry> cbs;
+  cbs.reserve(contract.callbacks.size());
   for (const auto& cb : contract.callbacks) {
     cbs.push_back({cb.name, cb.sourceAttr, cb.rawExpr, false});
   }
@@ -349,26 +351,48 @@ sol::table InspectStaticOxmlContractToLua(sol::state& lua, UIRuntime* uiRuntime,
   return out;
 }
 
+sol::table InspectActiveContractToLua(sol::state& lua, LuaBindingContext& ctx) {
+  sol::table out = lua.create_table();
+  auto* previewer = GetOrCreateUIPreviewer(ctx);
+  if (previewer == nullptr) return out;
+  out.set("active", previewer->IsActive());
+  out.set("mock_path", previewer->ActiveMockPath());
+  out.set("mock_modified", previewer->IsMockModified());
+  out.set("last_mock_error", previewer->LastMockError());
+  AppendContractParamsToLua(lua, out, previewer->CollectMockParams());
+  AppendContractVarsToLua(lua, out, previewer->ActiveContract(), previewer->CollectMockFields());
+  AppendContractCallbacksToLua(lua, out, previewer->CollectMockCallbacks());
+  out.set("refs", previewer->ActiveContract().refs);
+  out.set("slots", previewer->ActiveContract().slots);
+  return out;
+}
+
+bool SetUiMockParamFromLua(LuaBindingContext& ctx, const std::string& name, const sol::object& value) {
+  auto* previewer = GetOrCreateUIPreviewer(ctx);
+  if (previewer == nullptr) return false;
+  std::string strVal;
+  if (value.is<std::string>()) {
+    strVal = value.as<std::string>();
+  } else if (value.is<bool>()) {
+    strVal = value.as<bool>() ? "true" : "false";
+  } else if (value.is<double>()) {
+    std::ostringstream oss;
+    oss << value.as<double>();
+    strVal = oss.str();
+  } else {
+    return false;
+  }
+  return previewer->SetMockParam(name, strVal);
+}
+
 void BindUIPreviewMockFunctions(sol::table& dev, sol::state& lua, LuaBindingContext& ctx) {
   dev.set_function("inspect_ui_contract", [&lua, &ctx](const sol::optional<std::string>& pathOrId) -> sol::table {
-    auto* reg = ctx.GetRegistry();
     if (pathOrId.has_value() && !pathOrId->empty()) {
+      auto* reg = ctx.GetRegistry();
       auto* uiRuntime = reg != nullptr ? reg->TryGet<UIRuntime>() : nullptr;
       return InspectStaticOxmlContractToLua(lua, uiRuntime, *pathOrId);
     }
-    sol::table out = lua.create_table();
-    auto* previewer = GetOrCreateUIPreviewer(ctx);
-    if (previewer == nullptr) return out;
-    out.set("active", previewer->IsActive());
-    out.set("mock_path", previewer->ActiveMockPath());
-    out.set("mock_modified", previewer->IsMockModified());
-    out.set("last_mock_error", previewer->LastMockError());
-    AppendContractParamsToLua(lua, out, previewer->CollectMockParams());
-    AppendContractVarsToLua(lua, out, previewer->ActiveContract(), previewer->CollectMockFields());
-    AppendContractCallbacksToLua(lua, out, previewer->CollectMockCallbacks());
-    out.set("refs", previewer->ActiveContract().refs);
-    out.set("slots", previewer->ActiveContract().slots);
-    return out;
+    return InspectActiveContractToLua(lua, ctx);
   });
 
   dev.set_function("set_ui_mock_field", [&ctx](const std::string& path, const sol::object& value) -> bool {
@@ -382,21 +406,7 @@ void BindUIPreviewMockFunctions(sol::table& dev, sol::state& lua, LuaBindingCont
   });
 
   dev.set_function("set_ui_param", [&ctx](const std::string& name, const sol::object& value) -> bool {
-    auto* previewer = GetOrCreateUIPreviewer(ctx);
-    if (previewer == nullptr) return false;
-    std::string strVal;
-    if (value.is<std::string>()) {
-      strVal = value.as<std::string>();
-    } else if (value.is<bool>()) {
-      strVal = value.as<bool>() ? "true" : "false";
-    } else if (value.is<double>()) {
-      std::ostringstream oss;
-      oss << value.as<double>();
-      strVal = oss.str();
-    } else {
-      return false;
-    }
-    return previewer->SetMockParam(name, strVal);
+    return SetUiMockParamFromLua(ctx, name, value);
   });
 
   dev.set_function("load_ui_mock", [&ctx](const std::string& path) -> bool {

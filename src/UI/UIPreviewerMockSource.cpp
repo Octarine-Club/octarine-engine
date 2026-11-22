@@ -108,6 +108,14 @@ void UpdateBlockStack(std::string_view word, std::vector<char>& blockStack) {
   }
 }
 
+void UpdateBraceDepth(const char ch, int& braceDepth) {
+  if (ch == '{' || ch == '(' || ch == '[') {
+    ++braceDepth;
+  } else if ((ch == '}' || ch == ')' || ch == ']') && braceDepth > 0) {
+    --braceDepth;
+  }
+}
+
 // Advances one Lua token (comment, whitespace, string, long bracket, word, or punctuation).
 // Updates braceDepth and blockStack while tracking the previous non-trivia token character.
 void AdvanceLuaToken(std::string_view src, std::size_t& pos, int& braceDepth, std::vector<char>& blockStack,
@@ -131,11 +139,7 @@ void AdvanceLuaToken(std::string_view src, std::size_t& pos, int& braceDepth, st
     prevSigChar = 'A';
     return;
   }
-  if (ch == '{' || ch == '(' || ch == '[') {
-    ++braceDepth;
-  } else if ((ch == '}' || ch == ')' || ch == ']') && braceDepth > 0) {
-    --braceDepth;
-  }
+  UpdateBraceDepth(ch, braceDepth);
   prevSigChar = ch;
   ++pos;
 }
@@ -312,6 +316,19 @@ TextInsertEdit BuildControllerInsertEdit(std::string_view src, const std::size_t
   return TextInsertEdit{insertPos, prefix + kv};
 }
 
+void CollectSinglePresetEntryEdit(std::string_view body, const TableEntrySpan& presetEntry,
+                                  const std::unordered_map<std::string, std::string>& presetCtrls,
+                                  std::vector<TextInsertEdit>& edits) {
+  const auto it = presetCtrls.find(presetEntry.key);
+  if (it == presetCtrls.end() || presetEntry.valStart >= presetEntry.valEnd || body[presetEntry.valStart] != '{') {
+    return;
+  }
+  const std::size_t pClose = FindMatchingBraceEnd(body, presetEntry.valStart);
+  if (pClose == std::string::npos) return;
+  const auto pEntries = ScanTableEntries(body, presetEntry.valStart, pClose);
+  edits.push_back(BuildControllerInsertEdit(body, presetEntry.valStart, pClose, pEntries, it->second, 6));
+}
+
 void CollectPresetControllerEdits(std::string_view body, const std::vector<TableEntrySpan>& rootEntries,
                                   const std::unordered_map<std::string, std::string>& presetCtrls,
                                   std::vector<TextInsertEdit>& edits) {
@@ -321,14 +338,7 @@ void CollectPresetControllerEdits(std::string_view body, const std::vector<Table
     const std::size_t presetsClose = FindMatchingBraceEnd(body, entry.valStart);
     if (presetsClose == std::string::npos) break;
     for (const auto& presetEntry : ScanTableEntries(body, entry.valStart, presetsClose)) {
-      const auto it = presetCtrls.find(presetEntry.key);
-      if (it == presetCtrls.end() || presetEntry.valStart >= presetEntry.valEnd || body[presetEntry.valStart] != '{') {
-        continue;
-      }
-      const std::size_t pClose = FindMatchingBraceEnd(body, presetEntry.valStart);
-      if (pClose == std::string::npos) continue;
-      const auto pEntries = ScanTableEntries(body, presetEntry.valStart, pClose);
-      edits.push_back(BuildControllerInsertEdit(body, presetEntry.valStart, pClose, pEntries, it->second, 6));
+      CollectSinglePresetEntryEdit(body, presetEntry, presetCtrls, edits);
     }
   }
 }

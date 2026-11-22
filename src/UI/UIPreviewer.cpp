@@ -153,12 +153,11 @@ sol::object UnwrapObservableDataDeep(sol::state& lua, const sol::object& val) {
 bool ContainsFunctionValue(const sol::table& tbl, const int depth) {
   if (!tbl.valid() || depth > 2) return false;
   const sol::table raw = UnwrapObservableShallow(tbl);
-  for (const auto& [k, v] : raw) {
-    static_cast<void>(k);
-    if (v.is<sol::protected_function>()) return true;
-    if (depth < 2 && v.is<sol::table>() && ContainsFunctionValue(v.as<sol::table>(), depth + 1)) return true;
-  }
-  return false;
+  return std::any_of(raw.cbegin(), raw.cend(), [depth](const auto& kv) {
+    const sol::object& v = kv.second;
+    if (v.template is<sol::protected_function>()) return true;
+    return depth < 2 && v.template is<sol::table>() && ContainsFunctionValue(v.template as<sol::table>(), depth + 1);
+  });
 }
 
 bool HasAnyControllerFunction(const sol::table& rawRoot, const sol::table& activeCtrl) {
@@ -217,7 +216,7 @@ void AppendJsonIssuesArray(std::ostringstream& ss, const std::vector<UILayoutIss
     const auto& it = issues[i];
     if (i > 0) ss << ",";
     ss << "\n"
-       << indent << "  {\"code\": \"" << EscapeJsonString(it.code) << R"(", "severity": ")"
+       << indent << R"(  {"code": ")" << EscapeJsonString(it.code) << R"(", "severity": ")"
        << EscapeJsonString(it.severity) << R"(", "entity": )" << it.entity.GetId() << R"(, "label": ")"
        << EscapeJsonString(it.label) << R"(", "message": ")" << EscapeJsonString(it.message)
        << R"(", "rect": {"left": )" << it.rect.left << R"(, "top": )" << it.rect.top << R"(, "right": )"
@@ -270,8 +269,11 @@ std::string MakeDisplayPath(const std::string& fullPath, const std::string& base
   if (basePath.empty()) return fullPath;
   std::error_code ec;
   const fs::path rel = fs::relative(fs::path(fullPath), fs::path(basePath), ec);
-  if (!ec && !rel.empty() && rel.native().rfind("..", 0) != 0) {
-    return rel.generic_string();
+  if (!ec) {
+    const std::string relStr = rel.generic_string();
+    if (!relStr.empty() && relStr.rfind("..", 0) != 0) {
+      return relStr;
+    }
   }
   return fullPath;
 }
@@ -495,12 +497,16 @@ void CheckParentSiblingOverlaps(const Registry& registry, const Entity parent, s
       if (!RectsOverlapSignificant(children[i].rect, children[j].rect)) continue;
       const std::string labelA = DescribeUIEntity(registry, children[i].entity);
       const std::string labelB = DescribeUIEntity(registry, children[j].entity);
+      std::string msg = labelA;
+      msg += " and ";
+      msg += labelB;
+      msg += " overlap on the same layer inside flex container.";
       out.push_back({
           .code = "sibling_overlap",
           .severity = "warning",
           .entity = children[j].entity,
           .label = labelB,
-          .message = labelA + " and " + labelB + " overlap on the same layer inside flex container.",
+          .message = std::move(msg),
           .rect = children[j].rect,
       });
     }
@@ -720,11 +726,11 @@ std::string MakeOverflowLabel(std::string_view path, const int arrayIdx = 0) {
 }
 
 double ComputeDefaultSliderValue(const ContractField& f) {
-  const double minV = static_cast<double>(f.minVal);
-  const double maxV = static_cast<double>(f.maxVal);
+  const auto minV = static_cast<double>(f.minVal);
+  const auto maxV = static_cast<double>(f.maxVal);
   double mid = 0.5 * (minV + maxV);
   if (f.step > 0.0f) {
-    const double stepD = static_cast<double>(f.step);
+    const auto stepD = static_cast<double>(f.step);
     mid = minV + std::round((mid - minV) / stepD) * stepD;
     mid = std::clamp(mid, std::min(minV, maxV), std::max(minV, maxV));
   }
@@ -763,6 +769,16 @@ sol::object BuildDefaultScalarOverflow(sol::state& lua, const Registry* reg, con
   return sol::make_object(lua, MakeOverflowLabel(f.path, arrayIdx));
 }
 
+sol::object BuildCompactNumberDefault(sol::state& lua, const ContractField& f) {
+  if (f.sampleHint == "slider" || f.hasSliderRange) {
+    return sol::make_object(lua, ComputeDefaultSliderValue(f));
+  }
+  if (f.sampleHint == "divided_den") return sol::make_object(lua, 100.0);
+  if (f.sampleHint == "divided_num") return sol::make_object(lua, 75.0);
+  if (f.sampleHint == "progress") return sol::make_object(lua, 0.65);
+  return sol::make_object(lua, 10.0);
+}
+
 sol::object BuildDefaultScalarCompact(sol::state& lua, const Registry* reg, const ContractField& f,
                                       const int arrayIdx) {
   if (f.sampleHint == "color") return sol::make_object(lua, "#4A5568");
@@ -772,13 +788,7 @@ sol::object BuildDefaultScalarCompact(sol::state& lua, const Registry* reg, cons
     return sol::make_object(lua, opt);
   }
   if (f.inferredType == ContractFieldType::Number) {
-    if (f.sampleHint == "slider" || f.hasSliderRange) {
-      return sol::make_object(lua, ComputeDefaultSliderValue(f));
-    }
-    if (f.sampleHint == "divided_den") return sol::make_object(lua, 100.0);
-    if (f.sampleHint == "divided_num") return sol::make_object(lua, 75.0);
-    if (f.sampleHint == "progress") return sol::make_object(lua, 0.65);
-    return sol::make_object(lua, 10.0);
+    return BuildCompactNumberDefault(lua, f);
   }
   if (f.inferredType == ContractFieldType::Boolean) {
     return sol::make_object(lua, f.sampleHint != "disabled");
@@ -821,9 +831,11 @@ sol::table BuildArrayItemTableWithVariant(sol::state& lua, const Registry* reg, 
     if (sub.find("[]") != std::string::npos) continue;
     if (f.inferredType == ContractFieldType::Array && depth < 4) {
       const int subCount = ArrayCountForVariant(variant, depth + 1);
-      SetLivePathValue(
-          lua, itemTbl, sub,
-          BuildSeededArrayWithVariant(lua, reg, contract, arrayPrefix + "[]." + sub, subCount, depth + 1, variant));
+      std::string subArrayPath = arrayPrefix;
+      subArrayPath += "[].";
+      subArrayPath += sub;
+      SetLivePathValue(lua, itemTbl, sub,
+                       BuildSeededArrayWithVariant(lua, reg, contract, subArrayPath, subCount, depth + 1, variant));
     } else if (f.inferredType != ContractFieldType::Table) {
       SetLivePathValue(lua, itemTbl, sub, BuildDefaultScalarValue(lua, reg, f, itemIdx, variant));
     }
@@ -947,7 +959,8 @@ sol::environment CreateSandboxedMockEnv(sol::state& lua) {
 }
 
 void MergeOptionalParams(sol::state& lua, const sol::table& rootFallback, const sol::table& tbl, sol::table& outOpts) {
-  const sol::object rootParams = rootFallback.valid() ? rootFallback["params"] : sol::object(sol::lua_nil);
+  const sol::object rootParams =
+      rootFallback.valid() ? rootFallback.get<sol::object>("params") : sol::object(sol::lua_nil);
   const sol::object subParams = tbl["params"];
   if (!rootParams.is<sol::table>() && !subParams.is<sol::table>()) return;
   sol::table merged = lua.create_table();
@@ -1084,11 +1097,13 @@ void ApplyMockTableFields(UIRuntime& uiRuntime, const sol::table& tbl, sol::tabl
                           const sol::table& rootFallback) {
   const sol::object ctxField = tbl["context"];
   const sol::object subCtrl = tbl["controller"];
-  const sol::object rootCtrl = rootFallback.valid() ? rootFallback["controller"] : sol::object(sol::lua_nil);
+  const sol::object rootCtrl =
+      rootFallback.valid() ? rootFallback.get<sol::object>("controller") : sol::object(sol::lua_nil);
   const sol::object ctrlField = subCtrl.is<sol::table>() ? subCtrl : rootCtrl;
   const sol::object paramsField = tbl["params"];
   const sol::object subStyles = tbl["styles"];
-  const sol::object rootStyles = rootFallback.valid() ? rootFallback["styles"] : sol::object(sol::lua_nil);
+  const sol::object rootStyles =
+      rootFallback.valid() ? rootFallback.get<sol::object>("styles") : sol::object(sol::lua_nil);
   const sol::object stylesField = subStyles.is<sol::table>() ? subStyles : rootStyles;
 
   const bool structured = ctxField.is<sol::table>() || ctrlField.is<sol::table>() || paramsField.is<sol::table>() ||
@@ -1127,7 +1142,7 @@ bool LoadSandboxedMockScriptText(UIRuntime& uiRuntime, const std::string& script
     return false;
   }
 
-  sol::protected_function fn = chunk.get<sol::protected_function>();
+  auto fn = chunk.get<sol::protected_function>();
   sol::environment env = CreateSandboxedMockEnv(lua);
   sol::set_environment(env, fn);
   const sol::protected_function_result res = fn();
@@ -1169,6 +1184,8 @@ MockFieldKind InferLiveFieldKind(const sol::object& obj) {
   if (obj.is<double>()) return MockFieldKind::Number;
   if (obj.is<sol::table>()) {
     const sol::table raw = UnwrapObservableShallow(obj.as<sol::table>());
+    // sol::table::size() returns Lua #t (array length); empty() checks all hash+array keys.
+    // NOLINTNEXTLINE(readability-container-size-empty)
     const bool hasArrayItems = raw.size() > 0;
     if (hasArrayItems) return MockFieldKind::Array;
     bool anyStringKey = false;
@@ -1234,7 +1251,7 @@ void CollectSortedLiveKeys(const sol::table& raw, std::vector<std::pair<int, sol
 }
 
 void AppendExtraLiveFields(const sol::table& tbl, const std::string& prefix, std::unordered_set<std::string>& seenPaths,
-                           const bool isAutoMode, std::vector<MockFieldEntry>& out, const int depth = 0);
+                           bool isAutoMode, std::vector<MockFieldEntry>& out, int depth = 0);
 
 // Mutually recursive with AppendExtraLiveFields; depth-bounded at <= 8.
 // NOLINTNEXTLINE(misc-no-recursion)
@@ -1270,7 +1287,12 @@ void AppendExtraLiveFields(const sol::table& tbl, const std::string& prefix, std
   CollectSortedLiveKeys(raw, intKeys, strKeys);
 
   for (const auto& keyStr : strKeys) {
-    const std::string fullPath = prefix.empty() ? keyStr : (prefix + "." + keyStr);
+    std::string fullPath = keyStr;
+    if (!prefix.empty()) {
+      fullPath = prefix;
+      fullPath += '.';
+      fullPath += keyStr;
+    }
     ProcessExtraLiveEntry(raw.get<sol::object>(keyStr), fullPath, seenPaths, isAutoMode, out, depth, true);
   }
   for (const auto& [idx, kObj] : intKeys) {
@@ -1293,7 +1315,7 @@ sol::object InvokeUserCtrlFn(const sol::protected_function& userFn, const sol::t
     Logger::Error(std::string("[ui-preview] controller error: ") + err.what());
     return sol::lua_nil;
   }
-  return res.return_count() > 0 ? res[0] : sol::object(sol::lua_nil);
+  return res.return_count() > 0 ? sol::object(res[0]) : sol::object(sol::lua_nil);
 }
 
 }  // namespace
@@ -1688,7 +1710,9 @@ bool UIPreviewer::MountPreview(const std::string& pathOrId, const sol::optional<
   auto* uiRuntime = registry_->TryGet<UIRuntime>();
   if (uiRuntime == nullptr || uiRuntime->GetLua() == nullptr) return false;
 
-  const std::string sourceCopy = pathOrId;
+  // Copy before RefreshCatalogViews() in case pathOrId aliases an entry in catalog_views_.
+  std::string sourceCopy;
+  sourceCopy.assign(pathOrId);
   std::string requestedPreset;
   bool hasExplicitData = false;
   if (opts.has_value()) {
@@ -1765,7 +1789,9 @@ bool UIPreviewer::MountPreviewWithMock(const std::string& pathOrId, const std::s
     return MountPreview(pathOrId);
   }
 
-  const std::string sourceCopy = pathOrId;
+  // Copy before RefreshCatalogViews() in case pathOrId aliases an entry in catalog_views_.
+  std::string sourceCopy;
+  sourceCopy.assign(pathOrId);
   const std::string resolvedMock = ResolveMockDiskPath(registry_, uiRuntime, mockScriptPath);
   RefreshCatalogViews();
   const std::string resolvedSource = MatchCatalogEntryForPreview(catalog_views_, sourceCopy);
@@ -1794,9 +1820,32 @@ bool UIPreviewer::MountPreviewWithMock(const std::string& pathOrId, const std::s
 
 bool UIPreviewer::MountInlineXml(const std::string& xmlSource, const std::string& ossSource) {
   if (registry_ == nullptr || xmlSource.empty()) return false;
-  const std::string xmlCopy = xmlSource;
-  const std::string ossCopy = ossSource;
-  return MountResolvedPreview(xmlCopy, sol::nullopt, ossCopy, true, MockSourceMode::AutoSeeded, "", "", sol::nullopt);
+  return MountResolvedPreview(std::string(xmlSource), sol::nullopt, std::string(ossSource), true,
+                              MockSourceMode::AutoSeeded, "", "", sol::nullopt);
+}
+
+bool UIPreviewer::ReloadActiveMockPreview() {
+  const std::string src = active_source_;
+  const std::string mock = active_mock_path_;
+  const std::string reqPreset =
+      (!active_mock_preset_.empty() && active_mock_preset_.front() != '@') ? active_mock_preset_ : "";
+  const MockSourceMode nextMode =
+      (mock == target_sidecar_path_) ? MockSourceMode::SidecarPreview : MockSourceMode::ExplicitLua;
+  auto* uiRuntime = registry_->TryGet<UIRuntime>();
+  if (uiRuntime == nullptr || uiRuntime->GetLua() == nullptr) return false;
+
+  sol::table mockOpts = uiRuntime->GetLua()->create_table();
+  sol::table rawCtrl;
+  sol::table rawRoot;
+  std::string resolvedKey;
+  bool hasCtrl = false;
+  std::string err;
+  if (!LoadSandboxedMockScript(*uiRuntime, mock, reqPreset, mockOpts, rawCtrl, rawRoot, resolvedKey, hasCtrl, err)) {
+    last_mock_error_ = err;
+    Logger::Error("[ui-preview] mock reload error: " + err);
+    return false;
+  }
+  return MountResolvedPreview(src, mockOpts, "", false, nextMode, mock, target_sidecar_path_, rawRoot, resolvedKey);
 }
 
 bool UIPreviewer::ReloadActivePreview() {
@@ -1805,27 +1854,7 @@ bool UIPreviewer::ReloadActivePreview() {
     return MountInlineXml(inline_xml_, inline_oss_);
   }
   if (!active_mock_path_.empty()) {
-    const std::string src = active_source_;
-    const std::string mock = active_mock_path_;
-    const std::string reqPreset =
-        (!active_mock_preset_.empty() && active_mock_preset_.front() != '@') ? active_mock_preset_ : "";
-    const MockSourceMode nextMode =
-        (mock == target_sidecar_path_) ? MockSourceMode::SidecarPreview : MockSourceMode::ExplicitLua;
-    auto* uiRuntime = registry_->TryGet<UIRuntime>();
-    if (uiRuntime == nullptr || uiRuntime->GetLua() == nullptr) return false;
-
-    sol::table mockOpts = uiRuntime->GetLua()->create_table();
-    sol::table rawCtrl;
-    sol::table rawRoot;
-    std::string resolvedKey;
-    bool hasCtrl = false;
-    std::string err;
-    if (!LoadSandboxedMockScript(*uiRuntime, mock, reqPreset, mockOpts, rawCtrl, rawRoot, resolvedKey, hasCtrl, err)) {
-      last_mock_error_ = err;
-      Logger::Error("[ui-preview] mock reload error: " + err);
-      return false;
-    }
-    return MountResolvedPreview(src, mockOpts, "", false, nextMode, mock, target_sidecar_path_, rawRoot, resolvedKey);
+    return ReloadActiveMockPreview();
   }
   auto* uiRuntime = registry_->TryGet<UIRuntime>();
   if (uiRuntime == nullptr || active_view_id_ == 0) return false;
@@ -1944,6 +1973,23 @@ void UIPreviewer::SyncPreviewLayerOrder() {
   backdrop_layer_ = hasBackdrop ? std::max(0, canvas.baseLayer - 1) : 0;
 }
 
+namespace {
+void ReseedAutoPreviewAfterReload(UIRuntime& uiRuntime, Registry* registry, const OxmlContract& activeContract) {
+  if (uiRuntime.GetLua() == nullptr) return;
+  sol::state& lua = *uiRuntime.GetLua();
+  const sol::object pinObj = GetPinnedLuaRegistryObject(lua.lua_state(), "__octarine_preview_pin");
+  if (!pinObj.is<sol::table>()) return;
+  const sol::table viewTbl = pinObj.as<sol::table>();
+  const sol::protected_function getCtx = viewTbl.get<sol::protected_function>("get_context");
+  const sol::object ctxObj = getCtx.valid() ? sol::object(getCtx(viewTbl)) : sol::lua_nil;
+  if (!ctxObj.is<sol::table>()) return;
+  sol::table ctx = ctxObj.as<sol::table>();
+  SeedAutoFieldsIntoTable(lua, registry, ctx, activeContract);
+  const sol::protected_function refreshFn = viewTbl.get<sol::protected_function>("refresh");
+  if (refreshFn.valid()) refreshFn(viewTbl);
+}
+}  // namespace
+
 void UIPreviewer::SyncActivePreview() {
   if (!IsActive()) {
     if (active_view_id_ != 0) {
@@ -1957,20 +2003,8 @@ void UIPreviewer::SyncActivePreview() {
     if (reloads != last_seen_reload_count_) {
       last_seen_reload_count_ = reloads;
       RefreshContractState();
-      if (mock_source_mode_ == MockSourceMode::AutoSeeded && uiRuntime->GetLua() != nullptr) {
-        sol::state& lua = *uiRuntime->GetLua();
-        const sol::object pinObj = GetPinnedLuaRegistryObject(lua.lua_state(), "__octarine_preview_pin");
-        if (pinObj.is<sol::table>()) {
-          const sol::table viewTbl = pinObj.as<sol::table>();
-          const sol::protected_function getCtx = viewTbl.get<sol::protected_function>("get_context");
-          const sol::object ctxObj = getCtx.valid() ? sol::object(getCtx(viewTbl)) : sol::lua_nil;
-          if (ctxObj.is<sol::table>()) {
-            sol::table ctx = ctxObj.as<sol::table>();
-            SeedAutoFieldsIntoTable(lua, registry_, ctx, active_contract_);
-            const sol::protected_function refreshFn = viewTbl.get<sol::protected_function>("refresh");
-            if (refreshFn.valid()) refreshFn(viewTbl);
-          }
-        }
+      if (mock_source_mode_ == MockSourceMode::AutoSeeded) {
+        ReseedAutoPreviewAfterReload(*uiRuntime, registry_, active_contract_);
       }
     }
   }
@@ -2167,7 +2201,9 @@ void EmitContractArrayItemEntries(const OxmlContract& contract, const ContractFi
     const std::string subSuffix = sf.path.substr(subNeedle.size());
     if (subSuffix.find("[]") != std::string::npos) continue;
     hadSubfields = true;
-    const std::string itemPath = prefix + "." + subSuffix;
+    std::string itemPath = prefix;
+    itemPath += '.';
+    itemPath += subSuffix;
     if (!seenPaths.insert(itemPath).second) continue;
     const sol::object subVal = elemObj.is<sol::table>() ? GetUnwrappedPathValue(elemObj.as<sol::table>(), subSuffix)
                                                         : sol::object(sol::lua_nil);
@@ -2255,10 +2291,7 @@ void CheckMissingControllerCallbacks(const OxmlContract& contract, lua_State* L,
   }
 }
 
-void AppendJsonContractSection(std::ostringstream& ss, const OxmlContract& contract,
-                               const std::vector<MockParamEntry>& params,
-                               const std::vector<MockCallbackEntry>& callbacks,
-                               const std::vector<MockFieldEntry>& liveFields) {
+void AppendJsonContractParams(std::ostringstream& ss, const std::vector<MockParamEntry>& params) {
   ss << "  \"contract\": {\n    \"params\": [";
   for (std::size_t i = 0; i < params.size(); ++i) {
     if (i > 0) ss << ", ";
@@ -2266,6 +2299,10 @@ void AppendJsonContractSection(std::ostringstream& ss, const OxmlContract& contr
        << EscapeJsonString(params[i].defaultValue) << R"(", "current": ")" << EscapeJsonString(params[i].currentValue)
        << R"(", "overridden": )" << (params[i].isOverridden ? "true" : "false") << "}";
   }
+}
+
+void AppendJsonContractVars(std::ostringstream& ss, const OxmlContract& contract,
+                            const std::vector<MockFieldEntry>& liveFields) {
   ss << "],\n    \"vars\": [";
   for (std::size_t i = 0; i < contract.fields.size(); ++i) {
     const auto& f = contract.fields[i];
@@ -2275,6 +2312,9 @@ void AppendJsonContractSection(std::ostringstream& ss, const OxmlContract& contr
        << R"(", "conditional_only": )" << (f.conditionalOnly ? "true" : "false") << R"(, "two_way": )"
        << (f.isTwoWay ? "true" : "false") << R"(, "unset": )" << (isUnset ? "true" : "false") << "}";
   }
+}
+
+void AppendJsonContractCallbacks(std::ostringstream& ss, const std::vector<MockCallbackEntry>& callbacks) {
   ss << "],\n    \"callbacks\": [";
   for (std::size_t i = 0; i < callbacks.size(); ++i) {
     if (i > 0) ss << ", ";
@@ -2282,11 +2322,65 @@ void AppendJsonContractSection(std::ostringstream& ss, const OxmlContract& contr
        << EscapeJsonString(callbacks[i].sourceAttr) << R"(", "raw": ")" << EscapeJsonString(callbacks[i].rawExpr)
        << R"(", "bound": )" << (callbacks[i].hasControllerHandler ? "true" : "false") << "}";
   }
+}
+
+void AppendJsonContractSection(std::ostringstream& ss, const OxmlContract& contract,
+                               const std::vector<MockParamEntry>& params,
+                               const std::vector<MockCallbackEntry>& callbacks,
+                               const std::vector<MockFieldEntry>& liveFields) {
+  AppendJsonContractParams(ss, params);
+  AppendJsonContractVars(ss, contract, liveFields);
+  AppendJsonContractCallbacks(ss, callbacks);
   ss << "],\n    \"refs\": ";
   AppendJsonStringList(ss, contract.refs);
   ss << ",\n    \"slots\": ";
   AppendJsonStringList(ss, contract.slots);
   ss << "\n  },\n";
+}
+
+std::optional<OxmlDocument> ResolveStaticContractUseDoc(const UIRuntime& uiRuntime, const std::string& src) {
+  const auto uTxt =
+      (!src.empty() && src.front() == '<') ? std::optional<std::string>(src) : uiRuntime.ReadTextAsset(src);
+  if (!uTxt.has_value()) return std::nullopt;
+  const OxmlParseResult uParsed = OxmlParser::Parse(*uTxt);
+  return uParsed.ok ? std::optional<OxmlDocument>(uParsed.document) : std::nullopt;
+}
+
+std::string InspectStaticContractJson(const UIRuntime* uiRuntime, const std::string& pathOrId) {
+  if (uiRuntime == nullptr) return "{}\n";
+  const auto txt =
+      (pathOrId.front() == '<') ? std::optional<std::string>(pathOrId) : uiRuntime->ReadTextAsset(pathOrId);
+  if (!txt.has_value()) return "{}\n";
+  const OxmlParseResult parsed = OxmlParser::Parse(*txt);
+  if (!parsed.ok) return "{}\n";
+
+  auto resolveUse = [uiRuntime](const std::string& src) { return ResolveStaticContractUseDoc(*uiRuntime, src); };
+  const OxmlContract contract = InspectOxmlContract(parsed.document, {}, resolveUse);
+  std::vector<MockParamEntry> params;
+  params.reserve(contract.params.size());
+  for (const auto& p : contract.params) params.push_back({p.name, p.defaultValue, p.defaultValue, false});
+  std::vector<MockCallbackEntry> cbs;
+  cbs.reserve(contract.callbacks.size());
+  for (const auto& cb : contract.callbacks) cbs.push_back({cb.name, cb.sourceAttr, cb.rawExpr, false});
+  std::ostringstream ss;
+  ss << "{\n";
+  AppendJsonContractSection(ss, contract, params, cbs, {});
+  ss << "  \"static\": true\n}\n";
+  return ss.str();
+}
+
+std::string ExtractLuaParamValueString(const sol::table& paramsTbl, const std::string& name,
+                                       const std::string& defaultValue) {
+  if (!paramsTbl.valid()) return defaultValue;
+  const sol::object val = paramsTbl.get<sol::object>(name);
+  if (val.is<std::string>()) return val.as<std::string>();
+  if (val.is<double>()) {
+    std::ostringstream oss;
+    oss << val.as<double>();
+    return oss.str();
+  }
+  if (val.is<bool>()) return val.as<bool>() ? "true" : "false";
+  return defaultValue;
 }
 
 }  // namespace
@@ -2374,29 +2468,7 @@ std::string UIPreviewer::AuditLayoutJson() const {
 std::string UIPreviewer::InspectContractJson(const std::string& pathOrId) const {
   if (!pathOrId.empty()) {
     const auto* uiRuntime = registry_ != nullptr ? registry_->TryGet<UIRuntime>() : nullptr;
-    if (uiRuntime == nullptr) return "{}\n";
-    const auto txt =
-        (pathOrId.front() == '<') ? std::optional<std::string>(pathOrId) : uiRuntime->ReadTextAsset(pathOrId);
-    if (!txt.has_value()) return "{}\n";
-    const OxmlParseResult parsed = OxmlParser::Parse(*txt);
-    if (!parsed.ok) return "{}\n";
-    auto resolveUse = [uiRuntime](const std::string& src) -> std::optional<OxmlDocument> {
-      const auto uTxt =
-          (!src.empty() && src.front() == '<') ? std::optional<std::string>(src) : uiRuntime->ReadTextAsset(src);
-      if (!uTxt.has_value()) return std::nullopt;
-      const OxmlParseResult uParsed = OxmlParser::Parse(*uTxt);
-      return uParsed.ok ? std::optional<OxmlDocument>(uParsed.document) : std::nullopt;
-    };
-    const OxmlContract contract = InspectOxmlContract(parsed.document, {}, resolveUse);
-    std::vector<MockParamEntry> params;
-    for (const auto& p : contract.params) params.push_back({p.name, p.defaultValue, p.defaultValue, false});
-    std::vector<MockCallbackEntry> cbs;
-    for (const auto& cb : contract.callbacks) cbs.push_back({cb.name, cb.sourceAttr, cb.rawExpr, false});
-    std::ostringstream ss;
-    ss << "{\n";
-    AppendJsonContractSection(ss, contract, params, cbs, {});
-    ss << "  \"static\": true\n}\n";
-    return ss.str();
+    return InspectStaticContractJson(uiRuntime, pathOrId);
   }
   const auto fields = CollectMockFields();
   const auto params = CollectMockParams();
@@ -2464,20 +2536,9 @@ std::vector<MockParamEntry> UIPreviewer::CollectMockParams() const {
   const sol::object paramsObj = uiRuntime->GetMountedViewParams(active_view_id_);
   const sol::table paramsTbl = paramsObj.is<sol::table>() ? paramsObj.as<sol::table>() : sol::table{};
 
+  out.reserve(active_contract_.params.size());
   for (const auto& p : active_contract_.params) {
-    std::string cur = p.defaultValue;
-    if (paramsTbl.valid()) {
-      const sol::object val = paramsTbl.get<sol::object>(p.name);
-      if (val.is<std::string>()) {
-        cur = val.as<std::string>();
-      } else if (val.is<double>()) {
-        std::ostringstream oss;
-        oss << val.as<double>();
-        cur = oss.str();
-      } else if (val.is<bool>()) {
-        cur = val.as<bool>() ? "true" : "false";
-      }
-    }
+    const std::string cur = ExtractLuaParamValueString(paramsTbl, p.name, p.defaultValue);
     out.push_back(MockParamEntry{
         .name = p.name,
         .defaultValue = p.defaultValue,
@@ -2596,11 +2657,9 @@ bool UIPreviewer::IsContractFieldUnset(const ContractField& f, const std::vector
     return false;
   }
   const std::string arrRoot = f.path.substr(0, br);
-  for (const auto& mf : liveFields) {
-    if (mf.path == arrRoot && mf.isUnset) return true;
-    if (NormalizeArrayContractPath(mf.path) == f.path && mf.isUnset) return true;
-  }
-  return false;
+  return std::ranges::any_of(liveFields, [&](const MockFieldEntry& mf) {
+    return mf.isUnset && (mf.path == arrRoot || NormalizeArrayContractPath(mf.path) == f.path);
+  });
 }
 
 bool UIPreviewer::SeedSingleContractField(const std::string& path) {

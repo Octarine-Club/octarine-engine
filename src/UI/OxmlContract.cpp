@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <memory>
+#include <ranges>
 #include <string_view>
 #include <unordered_set>
 
@@ -97,7 +99,7 @@ bool IsLuaKeywordOrBuiltin(std::string_view path) {
   return kSkip.contains(head);
 }
 
-enum class ExprTokKind { Ident, Number, String, Hash, Op, Cmp, BoolOp, NotOp, OpenParen, Other };
+enum class ExprTokKind : std::uint8_t { Ident, Number, String, Hash, Op, Cmp, BoolOp, NotOp, OpenParen, Other };
 
 struct ExprTok {
   ExprTokKind kind{ExprTokKind::Other};
@@ -281,9 +283,8 @@ struct ContractBuilder {
     f.inferredType = PromoteFieldType(f.inferredType, meta.type);
     f.conditionalOnly = f.conditionalOnly && meta.conditionalOnly;
     f.isTwoWay = f.isTwoWay || meta.isTwoWay;
-    if (f.sampleHint == "disabled" && !meta.conditionalOnly && meta.sampleHint != "disabled") {
-      f.sampleHint = meta.sampleHint;
-    } else if (f.sampleHint.empty() && !meta.sampleHint.empty()) {
+    const bool replaceDisabled = (f.sampleHint == "disabled" && !meta.conditionalOnly && meta.sampleHint != "disabled");
+    if (replaceDisabled || (f.sampleHint.empty() && !meta.sampleHint.empty())) {
       f.sampleHint = meta.sampleHint;
     }
     if (meta.hasSliderRange && !f.hasSliderRange) {
@@ -379,6 +380,12 @@ bool HasAdjacentEqualityKind(const std::vector<ExprTok>& toks, const std::size_t
   return leftMatch || rightMatch;
 }
 
+bool IsBoolAdjacentTok(const ExprTok* prev, const ExprTok* next) {
+  const bool prevBool = prev != nullptr && (prev->kind == ExprTokKind::NotOp || prev->kind == ExprTokKind::BoolOp);
+  const bool nextBool = next != nullptr && next->kind == ExprTokKind::BoolOp;
+  return prevBool || nextBool;
+}
+
 std::pair<ContractFieldType, std::string> InferTokenTypeAndHint(const std::vector<ExprTok>& toks, const std::size_t idx,
                                                                 const ContractFieldType defaultType,
                                                                 const std::string& defaultHint) {
@@ -392,10 +399,7 @@ std::pair<ContractFieldType, std::string> InferTokenTypeAndHint(const std::vecto
       HasAdjacentEqualityKind(toks, idx, ExprTokKind::Number)) {
     return {ContractFieldType::Number, defaultHint};
   }
-  const bool isBoolAdjacent =
-      (prev != nullptr && (prev->kind == ExprTokKind::NotOp || prev->kind == ExprTokKind::BoolOp)) ||
-      (next != nullptr && next->kind == ExprTokKind::BoolOp);
-  if (isBoolAdjacent) return {ContractFieldType::Boolean, defaultHint};
+  if (IsBoolAdjacentTok(prev, next)) return {ContractFieldType::Boolean, defaultHint};
   if (HasAdjacentEqualityKind(toks, idx, ExprTokKind::String)) {
     return {ContractFieldType::String, defaultHint};
   }
@@ -465,8 +469,8 @@ void RecordInlineStyleBindings(ContractBuilder& builder, std::string_view rawSty
 std::vector<std::string> CollectRadioOptions(const OxmlNode& radioGroupNode) {
   std::vector<std::string> opts;
   std::vector<const OxmlNode*> stack;
-  for (auto it = radioGroupNode.children.rbegin(); it != radioGroupNode.children.rend(); ++it) {
-    stack.push_back(&(*it));
+  for (const auto& child : std::views::reverse(radioGroupNode.children)) {
+    stack.push_back(&child);
   }
   while (!stack.empty()) {
     const OxmlNode* cur = stack.back();
@@ -478,8 +482,8 @@ std::vector<std::string> CollectRadioOptions(const OxmlNode& radioGroupNode) {
         opts.push_back(opt);
       }
     }
-    for (auto it = cur->children.rbegin(); it != cur->children.rend(); ++it) {
-      stack.push_back(&(*it));
+    for (const auto& child : std::views::reverse(cur->children)) {
+      stack.push_back(&child);
     }
   }
   return opts;
@@ -497,7 +501,7 @@ void PopulateSliderRangeMeta(const OxmlNode& node, ExprFieldMeta& meta) {
 void InspectBindValueAttr(ContractBuilder& builder, const OxmlNode& node, const InspectScope& scope) {
   const std::string bindPath = TrimCopy(node.GetAttr("bind-value"));
   if (bindPath.empty()) return;
-  const auto resolved = ResolveContractPath(bindPath, scope, builder.rootParams, /*allowRootParam=*/true);
+  const auto resolved = ResolveContractPath(bindPath, scope, builder.rootParams, /*allowRootParamAsContext=*/true);
   if (!resolved.has_value()) return;
 
   ExprFieldMeta meta;
@@ -562,6 +566,12 @@ bool TryInspectCommonControlAttr(ContractBuilder& builder, const std::string& at
   return false;
 }
 
+std::string InferBuiltInAttrHint(const std::string& attr) {
+  if (attr == "sprite" || attr == "icon") return "sprite";
+  if (IsColorAttrName(attr)) return "color";
+  return "";
+}
+
 void InspectSingleBuiltInAttr(ContractBuilder& builder, const OxmlNode& node, const std::string& attr,
                               const std::string& val, const InspectScope& scope) {
   if (attr == "each" || attr == "item-key" || attr == "id" || attr == "slot" || attr == "name") return;
@@ -591,8 +601,8 @@ void InspectSingleBuiltInAttr(ContractBuilder& builder, const OxmlNode& node, co
     InspectSliderValueAttr(builder, node, val, scope);
     return;
   }
-  const std::string hint = (attr == "sprite" || attr == "icon") ? "sprite" : (IsColorAttrName(attr) ? "color" : "");
-  RecordInterpolatedBindings(builder, val, scope, ContractFieldType::String, hint, false, node.line);
+  RecordInterpolatedBindings(builder, val, scope, ContractFieldType::String, InferBuiltInAttrHint(attr), false,
+                             node.line);
 }
 
 void InspectBuiltInNodeAttrs(ContractBuilder& builder, const OxmlNode& node, const InspectScope& scope) {
@@ -664,8 +674,8 @@ std::unordered_map<std::string, UseMapEntry> BuildUseMapForDoc(
 
 void PushNodeChildren(std::vector<TraversalFrame>& stack, const OxmlNode& node,
                       const std::shared_ptr<const InspectScope>& scope, const int useDepth) {
-  for (auto it = node.children.rbegin(); it != node.children.rend(); ++it) {
-    stack.push_back(TraversalFrame{&(*it), scope, useDepth});
+  for (const auto& child : std::views::reverse(node.children)) {
+    stack.push_back(TraversalFrame{&child, scope, useDepth});
   }
 }
 
@@ -684,8 +694,8 @@ void HandleSlotNode(ContractBuilder& builder, const OxmlNode& node, const std::s
     auto projScope = scope->callerScope ? std::make_shared<InspectScope>(*scope->callerScope)
                                         : std::make_shared<InspectScope>(*scope);
     projScope->slotCandidates.clear();
-    for (auto it = matched.rbegin(); it != matched.rend(); ++it) {
-      stack.push_back(TraversalFrame{*it, projScope, useDepth});
+    for (const OxmlNode* m : std::views::reverse(matched)) {
+      stack.push_back(TraversalFrame{m, projScope, useDepth});
     }
     return;
   }
@@ -759,8 +769,8 @@ OxmlContract InspectOxmlContract(const OxmlDocument& doc,
   rootScope->useMap = BuildUseMapForDoc(builder, doc, preloadedUses);
 
   std::vector<TraversalFrame> stack;
-  for (auto it = doc.roots.rbegin(); it != doc.roots.rend(); ++it) {
-    stack.push_back(TraversalFrame{&(*it), rootScope, 0});
+  for (const auto& root : std::views::reverse(doc.roots)) {
+    stack.push_back(TraversalFrame{&root, rootScope, 0});
   }
 
   while (!stack.empty()) {

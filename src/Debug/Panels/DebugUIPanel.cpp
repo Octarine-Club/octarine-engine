@@ -35,6 +35,30 @@ void DrawOverlayControls(DebugMenuRegistry& debugReg) {
   }
 }
 
+void DrawMountedViewRow(UIRuntime& uiRuntime, const UIRuntime::MountedViewDebugInfo& view) {
+  ImGui::TableNextRow();
+  ImGui::TableSetColumnIndex(0);
+  ImGui::Text("%llu", static_cast<unsigned long long>(view.id));
+
+  ImGui::TableSetColumnIndex(1);
+  ImGui::TextUnformatted(view.sourcePath.c_str());
+
+  ImGui::TableSetColumnIndex(2);
+  ImGui::Text("%zu file(s)", view.watchedFiles.size());
+  if (ImGui::IsItemHovered()) {
+    ImGui::BeginTooltip();
+    for (const auto& f : view.watchedFiles) ImGui::TextUnformatted(f.c_str());
+    ImGui::EndTooltip();
+  }
+
+  ImGui::TableSetColumnIndex(3);
+  ImGui::PushID(static_cast<int>(view.id));
+  if (ImGui::SmallButton("Reload")) {
+    uiRuntime.ReloadMountedView(view.id);
+  }
+  ImGui::PopID();
+}
+
 void DrawMountedViewsSection(Registry& registry, [[maybe_unused]] DebugMenuRegistry& debugReg) {
   auto* uiRuntime = registry.TryGet<UIRuntime>();
   if (uiRuntime == nullptr) {
@@ -60,38 +84,19 @@ void DrawMountedViewsSection(Registry& registry, [[maybe_unused]] DebugMenuRegis
   }
 #endif
 
-  if (ImGui::BeginTable("##mounted_views_tbl", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
-    ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed, 40.0f);
-    ImGui::TableSetupColumn("Source", ImGuiTableColumnFlags_WidthStretch);
-    ImGui::TableSetupColumn("Watched Files", ImGuiTableColumnFlags_WidthFixed, 100.0f);
-    ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 75.0f);
-    ImGui::TableHeadersRow();
-
-    for (const auto& v : views) {
-      ImGui::TableNextRow();
-      ImGui::TableSetColumnIndex(0);
-      ImGui::Text("%llu", static_cast<unsigned long long>(v.id));
-
-      ImGui::TableSetColumnIndex(1);
-      ImGui::TextUnformatted(v.sourcePath.c_str());
-
-      ImGui::TableSetColumnIndex(2);
-      ImGui::Text("%zu file(s)", v.watchedFiles.size());
-      if (ImGui::IsItemHovered()) {
-        ImGui::BeginTooltip();
-        for (const auto& f : v.watchedFiles) ImGui::TextUnformatted(f.c_str());
-        ImGui::EndTooltip();
-      }
-
-      ImGui::TableSetColumnIndex(3);
-      ImGui::PushID(static_cast<int>(v.id));
-      if (ImGui::SmallButton("Reload")) {
-        uiRuntime->ReloadMountedView(v.id);
-      }
-      ImGui::PopID();
-    }
-    ImGui::EndTable();
+  if (!ImGui::BeginTable("##mounted_views_tbl", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+    return;
   }
+  ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed, 40.0f);
+  ImGui::TableSetupColumn("Source", ImGuiTableColumnFlags_WidthStretch);
+  ImGui::TableSetupColumn("Watched Files", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+  ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 75.0f);
+  ImGui::TableHeadersRow();
+
+  for (const auto& v : views) {
+    DrawMountedViewRow(*uiRuntime, v);
+  }
+  ImGui::EndTable();
 }
 
 struct UIRectDisplayEntry {

@@ -108,6 +108,11 @@ class UIRuntime {
   };
   uint64_t RegisterMountedViewWatch(const std::string& sourceStr, std::vector<std::string> watchedPaths,
                                     const std::shared_ptr<void>& viewErased, const std::optional<Entity>& parentEntity);
+  void WireMountedViewLifecycleCallbacks(MountedViewRecord& rec, const std::shared_ptr<void>& viewErased,
+                                         const std::string& sourceStr, const std::optional<Entity>& parentEntity);
+#ifndef OCTARINE_SHIPPED
+  void WireMountedViewPreviewCallbacks(MountedViewRecord& rec, const std::shared_ptr<void>& viewErased);
+#endif
   uint64_t next_view_id_{1};
   float hot_reload_accum_ = 0.0f;
   std::vector<std::shared_ptr<MountedViewRecord>> mounted_views_{};
