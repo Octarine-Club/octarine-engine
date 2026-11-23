@@ -690,6 +690,7 @@ constexpr const char* kStyleAttrs[] = {
     "border-width",
     "text-color",
     "color",
+    "fill-color",
     "track-color",
     "font",
     "slice",
@@ -798,7 +799,10 @@ void AttachVisualBackground(Registry* reg, Entity entity, const OxmlNode& node, 
     reg->AddComponent(entity, sq);
   }
 
-  const std::string spriteId = node.GetAttr("sprite", resolved.Get("sprite"));
+  std::string spriteId = node.GetAttr("sprite", resolved.Get("sprite"));
+  if (spriteId.empty() && node.tag == "Image") {
+    spriteId = node.GetAttr("src");
+  }
   if (!spriteId.empty() && !OxmlParser::ContainsBinding(spriteId)) {
     SpriteComponent sp(spriteId, 0.0f, 0.0f, 0, true);
     reg->AddComponent(entity, sp);
@@ -1118,7 +1122,9 @@ void ConfigureButtonEntity(const std::shared_ptr<UIViewInstance>& view, Entity e
 void ConfigureProgressBarEntity(Registry* reg, Entity entity, const OxmlNode& node, const OssResolvedStyle& resolved,
                                 const sol::table& scope, sol::state& lua) {
   octarine::Color fillColor{6, 214, 160, 255};
-  if (!OssParser::ParseColor(node.GetAttr("color", resolved.Get("color")), fillColor)) {
+  const std::string rawFillColor =
+      node.GetAttr("fill-color", resolved.Get("fill-color", node.GetAttr("color", resolved.Get("color"))));
+  if (!OssParser::ParseColor(rawFillColor, fillColor)) {
     ExtractBgColor(resolved.base, fillColor);
   }
   octarine::Color trackColor{25, 22, 36, 220};
@@ -1571,7 +1577,8 @@ void ApplyResolvedBoxAndFlexUpdate(Registry* r, Entity entity, const OxmlNode& n
 }
 
 void ApplyProgressBarSquareUpdate(SquarePrimitiveComponent& sq, const OssResolvedStyle& resolved) {
-  if (!OssParser::ParseColor(resolved.Get("color"), sq.color)) {
+  const std::string rawColor = resolved.Has("fill-color") ? resolved.Get("fill-color") : resolved.Get("color");
+  if (!OssParser::ParseColor(rawColor, sq.color)) {
     ExtractBgColor(resolved.base, sq.color);
   }
   OssParser::ParseColor(resolved.Get("track-color"), sq.trackColor);
@@ -1695,8 +1702,14 @@ void RegisterAttributeBindings(const std::shared_ptr<UIViewInstance>& view, Enti
   if (node.HasAttr("disabled") && OxmlParser::ContainsBinding(node.GetAttr("disabled"))) {
     BindDisabledAttribute(view, entity, node.GetAttr("disabled"), scope);
   }
-  if (node.HasAttr("sprite") && OxmlParser::ContainsBinding(node.GetAttr("sprite"))) {
-    BindSpriteAttribute(view, entity, node.GetAttr("sprite"), scope);
+  const std::string spriteBindingAttr =
+      (node.HasAttr("sprite") && OxmlParser::ContainsBinding(node.GetAttr("sprite")))
+          ? node.GetAttr("sprite")
+          : ((node.tag == "Image" && node.HasAttr("src") && OxmlParser::ContainsBinding(node.GetAttr("src")))
+                 ? node.GetAttr("src")
+                 : std::string());
+  if (!spriteBindingAttr.empty()) {
+    BindSpriteAttribute(view, entity, spriteBindingAttr, scope);
   }
   BindDynamicStyleAttributes(view, entity, node, scope);
 }

@@ -246,9 +246,9 @@ Unlike manual multi-entity setups that require separate background and text enti
 | `<Grid>` | Fixed-column grid container (`direction="row"`, `wrap="true"`). Partitions children into `N` equal-width columns. | `columns="N"`, `gap`, `cross-gap`, `padding`, `justify`, `align`, `pointer-events="stop\|none"` |
 | `<Box>` | Non-flex container or spacer with explicit sizing. | `width`, `height`, `anchor`, `pointer-events="stop\|none"` |
 | `<Label>` | Text display (`TextLabelComponent`). Supports `{...}` interpolation, word wrapping (`wrap="true"`), drop shadows, and outlines. | `text`, `font`, `color`, `text-align`, `text-valign`, `wrap="true\|false\|<px>"`, `max-width`, `outline`, `outline-width`, `outline-color`, `shadow-color`, `shadow-offset` |
-| `<Image>` | Texture / atlas region (`SpriteComponent`). Resolves full texture dimensions when `srcRect` is empty. Supports 9-slice borders. | `src="asset_id"`, `slice="l,t,r,b"` (or `"all"`), `color` |
+| `<Image>` | Texture / atlas region (`SpriteComponent`). Resolves full texture dimensions when `srcRect` is empty. Supports 9-slice borders. | `src="asset_id"` (or `sprite="asset_id"`), `slice="l,t,r,b"` (or `"all"`), `color` |
 | `<Button>` | Interactive button (`UIButtonComponent` + background + label + focus/style state). | `text`, `on-click`, `on-focus`, `key`, `gamepad`, `action`, `sound-hover`, `sound-click`, `sound-focus`, `disabled`, `focusable` |
-| `<ProgressBar>` | Fill bar (`SquarePrimitiveComponent.fillRatio`). | `value="{0..1}"`, `fill-color`, `background-color` |
+| `<ProgressBar>` | Fill bar (`SquarePrimitiveComponent.fillRatio`). | `value="{0..1}"`, `fill-color` (or `color`), `track-color` (or `background-color`) |
 | `<Toggle>` | Boolean checkbox / switch with `:checked` state and two-way binding. | `checked="{bool}"`, `bind-value="field"`, `on-change="fn"`, `sound-hover`, `sound-click`, `text` |
 | `<RadioGroup>` | Mutual-exclusion container for `<RadioButton>` children. | `value="{val}"`, `bind-value="field"`, `on-change="fn"`, `direction="row\|column"` |
 | `<RadioButton>` | Selectable option inside a `<RadioGroup>`. | `value="option_id"`, `text`, `sound-hover`, `sound-click`, `disabled` |

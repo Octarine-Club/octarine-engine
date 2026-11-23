@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 
 #include "AssetManager/AssetCatalog.h"
 #include "AssetManager/AssetManager.h"
@@ -4141,6 +4142,31 @@ void TestStage13CliFlagsAndHeadlessMatrix() {
   Check(std::filesystem::exists(pOverflow) && HasPngMagicHeader(pOverflow),
         "headless --ui-matrix wrote overflow PNG via 'auto' presets");
   game->Destroy();
+
+  // Verify --ui-audit-json - writes JSON to stdout and does NOT create a literal '-' file on disk.
+  std::filesystem::remove("-");
+  Game::UiPreviewCliOptions stdoutOpts{};
+  stdoutOpts.file = "panel.oxml";
+  stdoutOpts.auditJsonPath = "-";
+  auto gameStdout = std::make_unique<Game>();
+  gameStdout->SetHeadless(true);
+  gameStdout->SetStartupMode("ui-preview");
+  gameStdout->SetUiPreviewOptions(stdoutOpts);
+  Check(gameStdout->Initialize(tmp.dir.string()), "headless Game initializes for --ui-audit-json -");
+  {
+    std::ostringstream cap;
+    std::streambuf* prevBuf = std::cout.rdbuf(cap.rdbuf());
+    for (int f = 0; f < 3; ++f) {
+      gameStdout->StepTicks(1);
+    }
+    std::cout.rdbuf(prevBuf);
+    const std::string printed = cap.str();
+    Check(printed.find("\"issue_count\"") != std::string::npos && printed.find("panel.oxml") != std::string::npos,
+          "--ui-audit-json - writes audit JSON to stdout");
+  }
+  Check(!std::filesystem::exists("-"), "--ui-audit-json - does not create a literal '-' file");
+  std::filesystem::remove("-");
+  gameStdout->Destroy();
 }
 
 void TestRepeaterPreservesSiblingOrderAcrossRebuilds() {
@@ -4291,6 +4317,74 @@ void TestPreviewerPreservesControllerOnSidecarAndPresetSaves() {
 }
 #endif  // !OCTARINE_SHIPPED
 
+void TestImageSrcAndProgressBarFillColorAliases() {
+  std::cout << "[Image src & ProgressBar fill-color attribute aliases]\n";
+  Registry reg;
+  TestUiBindingContext bindCtx(&reg);
+  sol::state lua;
+  const TempDirGuard tmp("oct_ui_img_src_fillcolor");
+  SetupUiTestRegistry(reg, lua, bindCtx, tmp.dir);
+  reg.RegisterBulkSystem(UILayoutSystem());
+
+  const std::string xml = R"(
+    <Canvas width="400" height="200">
+      <Image ref="img_static" src="logo_tex" width="32" height="32" />
+      <Image ref="img_dyn" src="{dyn_icon}" width="32" height="32" />
+      <ProgressBar ref="bar" value="0.5" fill-color="#44d060" track-color="#112233" width="120" height="16" />
+    </Canvas>
+  )";
+
+  const OxmlParseResult parsed = OxmlParser::Parse(xml);
+  Check(parsed.ok, "parsed Image src + ProgressBar fill-color test OXML");
+  const OxmlAssetRefs refs = OxmlParser::CollectStaticAssetRefs(parsed.document);
+  Check(std::ranges::find(refs.spriteIds, std::string("logo_tex")) != refs.spriteIds.end(),
+        "CollectStaticAssetRefs captures Image src asset id for bake validation");
+
+#ifndef OCTARINE_SHIPPED
+  const OxmlContract contract = InspectOxmlContract(parsed.document);
+  bool foundDynSpriteHint = false;
+  for (const auto& f : contract.fields) {
+    if (f.path == "dyn_icon" && f.sampleHint == "sprite") foundDynSpriteHint = true;
+  }
+  Check(foundDynSpriteHint, "InspectOxmlContract infers sprite hint from Image src='{dyn_icon}'");
+#endif
+
+  lua.safe_script(R"(
+    _G.obs = ui.observable({ dyn_icon = "logo_tex" })
+    _G.view = ui.mount([[
+      <Canvas width="400" height="200">
+        <Image ref="img_static" src="logo_tex" width="32" height="32" />
+        <Image ref="img_dyn" src="{dyn_icon}" width="32" height="32" />
+        <ProgressBar ref="bar" value="0.5" fill-color="#44d060" track-color="#112233" width="120" height="16" />
+      </Canvas>
+    ]], { context = _G.obs })
+  )");
+
+  const auto imgStaticId = lua["view"]["refs"]["img_static"]["entity"].get<Entity>();
+  const auto imgDynId = lua["view"]["refs"]["img_dyn"]["entity"].get<Entity>();
+  const auto barId = lua["view"]["refs"]["bar"]["entity"].get<Entity>();
+
+  Check(reg.HasComponent<SpriteComponent>(imgStaticId) &&
+            reg.GetComponent<SpriteComponent>(imgStaticId).assetId == "logo_tex",
+        "<Image src='logo_tex'> attaches SpriteComponent");
+  Check(
+      reg.HasComponent<SpriteComponent>(imgDynId) && reg.GetComponent<SpriteComponent>(imgDynId).assetId == "logo_tex",
+      "<Image src='{dyn_icon}'> attaches bound SpriteComponent");
+
+  lua.safe_script("_G.obs.dyn_icon = 'alt_tex'");
+  CheckEq(reg.GetComponent<SpriteComponent>(imgDynId).assetId, std::string("alt_tex"),
+          "mutating bound observable updates <Image src='{dyn_icon}'> SpriteComponent");
+
+  Check(reg.HasComponent<SquarePrimitiveComponent>(barId), "<ProgressBar> attaches SquarePrimitiveComponent");
+  const auto& sq = reg.GetComponent<SquarePrimitiveComponent>(barId);
+  CheckEq(static_cast<int>(sq.color.r), 0x44, "<ProgressBar fill-color> red channel");
+  CheckEq(static_cast<int>(sq.color.g), 0xd0, "<ProgressBar fill-color> green channel");
+  CheckEq(static_cast<int>(sq.color.b), 0x60, "<ProgressBar fill-color> blue channel");
+  CheckEq(static_cast<int>(sq.trackColor.r), 0x11, "<ProgressBar track-color> red channel");
+  CheckEq(static_cast<int>(sq.trackColor.g), 0x22, "<ProgressBar track-color> green channel");
+  CheckEq(static_cast<int>(sq.trackColor.b), 0x33, "<ProgressBar track-color> blue channel");
+}
+
 }  // namespace
 
 int main() {
@@ -4341,5 +4435,6 @@ int main() {
   TestStage13CliFlagsAndHeadlessMatrix();
   TestPreviewerPreservesControllerOnSidecarAndPresetSaves();
 #endif
+  TestImageSrcAndProgressBarFillColorAliases();
   return octarine::test::ReportSummary("UILayoutTest");
 }

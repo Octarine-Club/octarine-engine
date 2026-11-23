@@ -339,6 +339,9 @@ void AddUniqueRef(std::vector<std::string>& vec, std::string_view rawVal) {
 void WalkStaticNodeRefs(const OxmlNode& node, OxmlAssetRefs& refs) {
   AddUniqueRef(refs.spriteIds, node.GetAttr("sprite"));
   AddUniqueRef(refs.spriteIds, node.GetAttr("icon"));
+  if (node.tag == "Image") {
+    AddUniqueRef(refs.spriteIds, node.GetAttr("src"));
+  }
   AddUniqueRef(refs.fontIds, node.GetAttr("font"));
   AddUniqueRef(refs.audioIds, node.GetAttr("sound-hover"));
   AddUniqueRef(refs.audioIds, node.GetAttr("sound-click"));
