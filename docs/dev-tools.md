@@ -117,7 +117,7 @@ Non-shipped builds support `--dev-listen <port>` (`1..65535`), implemented in [`
 
 ## 6. UI Previewer, Mock Sidecars & Layout Automation (`-m ui-preview` & `dev.*`)
 
-Non-shipped builds include [`UIPreviewer`](../src/UI/UIPreviewer.h) and the ImGui **UI Previewer** panel (`UI` -> `UI Previewer`, shortcut `Ctrl+Shift+V`; reload active preview with `F5`). Hovering rows in the **Layout Audit** tab highlights the target entity (`UIRectComponent`, or a `12x12px` reticle when `0x0`) in amber; clicking pins/unpins selection in cyan. Enabling **Safe Areas** draws `93%` action-safe (cyan) and `90%` title-safe (gold) viewport guides.
+Non-shipped builds include [`UIPreviewer`](../src/UI/UIPreviewer.h) and the ImGui **UI Previewer** panel (`UI` -> `UI Previewer`; bind your own hotkeys in Lua via `dev.set_panel_open("engine.ui_previewer", ...)` and `dev.reload_preview_ui()`). Hovering rows in the **Layout Audit** tab highlights the target entity (`UIRectComponent`, or a `12x12px` reticle when `0x0`) in amber; clicking pins/unpins selection in cyan. Enabling **Safe Areas** draws `93%` action-safe (cyan) and `90%` title-safe (gold) viewport guides.
 
 ### Standalone CLI Flags (`-m ui-preview`)
 
