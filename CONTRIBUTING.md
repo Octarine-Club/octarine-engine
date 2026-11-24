@@ -46,7 +46,7 @@ The test suite in `tests/` (`tests/CMakeLists.txt`) contains 38 CTest targets, i
 
 - **`LuaApiSmokeTest`** — replays `Game::Setup`'s Lua-binding sequence
   headlessly, asserts every component / module / system surface is reachable
-  from Lua, and re-emits the EmmyLua stub at `lua_api.smoke.lua`. CI fails on
+  from Lua, and re-emits the EmmyLua stub at `generated/lua_api.smoke.lua`. CI fails on
   drift; regenerate catalogs with `LuaApiSmokeTest` and
   `python3 scripts/gen_api_catalogs.py` whenever a binding changes.
 - **`AssetPipelineTest`** — exercises `.meta` sidecar parsing, catalog build,

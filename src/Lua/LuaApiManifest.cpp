@@ -97,6 +97,11 @@ std::unordered_set<std::string> SnapshotGlobals(sol::state& lua) {
 }
 
 bool Write(sol::state& lua, const std::unordered_set<std::string>& before, const std::string& outPath) {
+  const auto parent = std::filesystem::path(outPath).parent_path();
+  if (!parent.empty()) {
+    std::error_code ec;
+    std::filesystem::create_directories(parent, ec);
+  }
   std::ofstream out(outPath);
   if (!out.is_open()) {
     Logger::Error("LuaApiManifest: could not open '" + outPath + "' for writing.");
@@ -211,6 +216,11 @@ void WriteJsonString(std::ofstream& out, const std::string& s) {
 }  // namespace
 
 bool WriteComponentsJson(const std::string& outPath) {
+  const auto parent = std::filesystem::path(outPath).parent_path();
+  if (!parent.empty()) {
+    std::error_code ec;
+    std::filesystem::create_directories(parent, ec);
+  }
   std::ofstream out(outPath);
   if (!out.is_open()) {
     Logger::Error("LuaApiManifest: could not open '" + outPath + "' for writing.");
@@ -244,6 +254,11 @@ bool WriteComponentsJson(const std::string& outPath) {
 }
 
 bool WriteModulesJson(const std::string& outPath) {
+  const auto parent = std::filesystem::path(outPath).parent_path();
+  if (!parent.empty()) {
+    std::error_code ec;
+    std::filesystem::create_directories(parent, ec);
+  }
   std::ofstream out(outPath);
   if (!out.is_open()) {
     Logger::Error("LuaApiManifest: could not open '" + outPath + "' for writing.");

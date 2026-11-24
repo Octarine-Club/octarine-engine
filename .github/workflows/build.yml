@@ -206,7 +206,7 @@ jobs:
         if: matrix.platform == 'linux' && matrix.preset == 'player-debug'
         shell: bash
         run: |
-          paths="lua_api.smoke.lua components.json modules.json"
+          paths="generated/lua_api.smoke.lua generated/components.json generated/modules.json"
           if ! git diff --quiet -- $paths; then
             echo "::error::One of $paths drifted. Run OctarineLuaApiTest (player-debug preset) locally and commit the regenerated files."
             git diff -- $paths | head -400
@@ -219,9 +219,9 @@ jobs:
         with:
           name: lua-api-artifacts-from-ci
           path: |
-            lua_api.smoke.lua
-            components.json
-            modules.json
+            generated/lua_api.smoke.lua
+            generated/components.json
+            generated/modules.json
           if-no-files-found: error
           retention-days: 7
 
@@ -428,7 +428,7 @@ jobs:
         shell: bash
         run: |
           if ! python3 scripts/gen_api_catalogs.py --check; then
-            git diff -- systems.json events.json | head -200
+            git diff -- generated/systems.json generated/events.json | head -200
             exit 1
           fi
 

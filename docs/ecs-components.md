@@ -2,7 +2,7 @@
 
 This document lists all components available to Lua in Octarine Engine, including their authoring schemas and runtime usertype fields.
 
-Components are added inside the `components` table of an entity definition. All 39 registered components in `components.json` also expose `registry.has_<key>(entity)` and `registry.get_<key>(entity)` accessors at runtime (`transform` and `entity_mask` are `LuaEntityLoader` spawn shorthands rather than standalone registered components, alongside top-level entity keys `name`, `tag`/`tags`, `group`/`groups`, and `entities`).
+Components are added inside the `components` table of an entity definition. All 39 registered components in `generated/components.json` also expose `registry.has_<key>(entity)` and `registry.get_<key>(entity)` accessors at runtime (`transform` and `entity_mask` are `LuaEntityLoader` spawn shorthands rather than standalone registered components, alongside top-level entity keys `name`, `tag`/`tags`, `group`/`groups`, and `entities`).
 
 ---
 

@@ -134,9 +134,9 @@ octarine_add_test(OctarineAssetRefcounterTest AssetRefcounterTest
 
 octarine_add_engine_test(OctarineLuaApiTest LuaApiSmokeTest LuaApiSmokeTest.cpp
         DEFINES
-            LUA_API_SMOKE_OUTPUT="${CMAKE_SOURCE_DIR}/lua_api.smoke.lua"
-            LUA_API_COMPONENTS_OUTPUT="${CMAKE_SOURCE_DIR}/components.json"
-            LUA_API_MODULES_OUTPUT="${CMAKE_SOURCE_DIR}/modules.json"
+            LUA_API_SMOKE_OUTPUT="${CMAKE_SOURCE_DIR}/generated/lua_api.smoke.lua"
+            LUA_API_COMPONENTS_OUTPUT="${CMAKE_SOURCE_DIR}/generated/components.json"
+            LUA_API_MODULES_OUTPUT="${CMAKE_SOURCE_DIR}/generated/modules.json"
 )
 
 octarine_add_engine_test(OctarineLuaBehaviorTest LuaBehaviorTest LuaBehaviorTest.cpp)

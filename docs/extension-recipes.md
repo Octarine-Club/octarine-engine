@@ -14,7 +14,7 @@ Step-by-step procedures for extending Octarine Engine's core ECS, scripting, sys
    - [`src/Lua/Bindings/RegisterPhysicsAudioScriptBindings.cpp`](../src/Lua/Bindings/RegisterPhysicsAudioScriptBindings.cpp)
    - [`src/Lua/Bindings/RegisterUIBindings.cpp`](../src/Lua/Bindings/RegisterUIBindings.cpp)
    (See [`src/Lua/Bindings/RegisterAllBindings.cpp`](../src/Lua/Bindings/RegisterAllBindings.cpp) for how the split TUs are invoked.)
-4. Run `ctest --test-dir build/player-debug -R LuaApiSmokeTest` to regenerate [`lua_api.smoke.lua`](../lua_api.smoke.lua), [`components.json`](../components.json), and [`modules.json`](../modules.json) (and run `python3 scripts/gen_api_catalogs.py` whenever adding or removing systems or events).
+4. Run `ctest --test-dir build/player-debug -R LuaApiSmokeTest` to regenerate [`generated/lua_api.smoke.lua`](../generated/lua_api.smoke.lua), [`generated/components.json`](../generated/components.json), and [`generated/modules.json`](../generated/modules.json) (and run `python3 scripts/gen_api_catalogs.py` whenever adding or removing systems or events).
 
 ---
 
@@ -32,7 +32,7 @@ Step-by-step procedures for extending Octarine Engine's core ECS, scripting, sys
 python3 scripts/gen_api_catalogs.py
 ```
 
-Commit updates to [`systems.json`](../systems.json) and [`events.json`](../events.json).
+Commit updates to [`generated/systems.json`](../generated/systems.json) and [`generated/events.json`](../generated/events.json).
 
 ---
 
@@ -41,7 +41,7 @@ Commit updates to [`systems.json`](../systems.json) and [`events.json`](../event
 1. Create `src/Lua/Modules/<Name>ModuleLuaBinding.h` and `.cpp`.
 2. Register the `.cpp` under `octarine_lua` in [`src/CMakeLists.txt`](../src/CMakeLists.txt).
 3. Add the descriptor to `kLuaModules` in [`src/Lua/Modules/RegisterAllModules.cpp`](../src/Lua/Modules/RegisterAllModules.cpp).
-4. Run `LuaApiSmokeTest` and `python3 scripts/gen_api_catalogs.py` to regenerate [`modules.json`](../modules.json) and [`lua_api.smoke.lua`](../lua_api.smoke.lua).
+4. Run `LuaApiSmokeTest` and `python3 scripts/gen_api_catalogs.py` to regenerate [`generated/modules.json`](../generated/modules.json) and [`generated/lua_api.smoke.lua`](../generated/lua_api.smoke.lua).
 
 ---
 
@@ -76,4 +76,4 @@ Game-specific C++ components, systems, events, Lua bindings, debug UI panels, te
 See [Native C++ Game Modules in `docs/making-games.md`](making-games.md#14-native-c-game-modules) for complete C++ and CMake examples.
 
 > [!WARNING]
-> **Catalog Drift Fails CI:** CI enforces zero drift on `components.json`, `modules.json`, `systems.json`, `events.json`, and `lua_api.smoke.lua`. Run `./scripts/octarine-verify.sh --fast` (or `--full`) and `python3 scripts/gen_api_catalogs.py --check` before pushing.
+> **Catalog Drift Fails CI:** CI enforces zero drift on `generated/components.json`, `generated/modules.json`, `generated/systems.json`, `generated/events.json`, and `generated/lua_api.smoke.lua`. Run `./scripts/octarine-verify.sh --fast` (or `--full`) and `python3 scripts/gen_api_catalogs.py --check` before pushing.

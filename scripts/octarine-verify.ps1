@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   One-command change validator (PowerShell mirror of octarine-verify.sh).
 
@@ -138,7 +138,7 @@ if ($Mode -eq 'full') {
   }
 
   Write-Host '== Lua API drift =='
-  $driftPaths = @('lua_api.smoke.lua', 'components.json', 'modules.json')
+  $driftPaths = @('generated/lua_api.smoke.lua', 'generated/components.json', 'generated/modules.json')
   git diff --quiet -- $driftPaths
   if ($LASTEXITCODE -eq 0) { Write-Host '  ok   no Lua API artifact drift' }
   else { Write-Error '  -> regenerated stubs differ — commit them'; git diff --stat -- $driftPaths; Invoke-Fail 14 'lua-api-drift' }
