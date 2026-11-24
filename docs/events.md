@@ -79,6 +79,6 @@ Event types live in `src/Events/`.
 Add `src/Events/<Name>Event.h` (derive from `Event`, give it a constructor over its payload). Emit it
 with `EmitEvent<Name>(...)` at the producing site, and subscribe in each consumer's `Init` /
 `SubscribeToEvents`. The bus discovers types on first use; run `python3 scripts/gen_api_catalogs.py`
-afterward to keep `events.json` in sync.
+afterward to keep `generated/events.json` in sync.
 
 For full C++ symbol documentation, see the [Doxygen API Reference](https://octarine-club.github.io/octarine-engine/).

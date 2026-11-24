@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <optional>
 
 #include "AssetManager/AssetHotReload.h"
@@ -386,10 +387,15 @@ void WriteOneShotUiAuditJson([[maybe_unused]] Registry* registry, [[maybe_unused
   if (auditJsonPath.empty() || registry == nullptr) return;
   const auto* uiPreviewer = registry->TryGet<UIPreviewer>();
   if (uiPreviewer == nullptr) return;
+  const std::string json = uiPreviewer->AuditLayoutJson();
+  if (auditJsonPath == "-") {
+    std::cout << json << std::flush;
+    return;
+  }
   EnsureParentDirectories(auditJsonPath);
   std::ofstream out(auditJsonPath, std::ios::trunc);
   if (out) {
-    out << uiPreviewer->AuditLayoutJson();
+    out << json;
     Logger::Info("FrameLoop: wrote UI audit JSON to " + auditJsonPath);
   }
 #endif

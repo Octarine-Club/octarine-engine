@@ -488,4 +488,4 @@ OCTARINE_GAME_MODULE_DIR=/path/to/MyGame/native ./scripts/octarine-verify.sh --f
 | [`docs/profiling.md`](profiling.md) | Profiling build, PerfUtils, and `OctarineBenchmarks` |
 | [`docs/security.md`](security.md) | OCPK encryption, Lua bytecode protection, and sandboxing |
 | [`docs/device-builds.md`](device-builds.md) | Desktop and experimental Android shipping builds |
-| [`lua_api.smoke.lua`](../lua_api.smoke.lua) | Auto-generated EmmyLua stub (load in LuaLS; refreshed on `--dev` into `types/octarine_api.lua`) |
+| [`generated/lua_api.smoke.lua`](../generated/lua_api.smoke.lua) | Auto-generated EmmyLua stub (load in LuaLS; refreshed on `--dev` into `types/octarine_api.lua`) |

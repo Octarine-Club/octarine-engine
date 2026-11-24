@@ -66,8 +66,8 @@ bool IsBuiltInOxmlTag(std::string_view tag) {
 
 bool IsColorAttrName(std::string_view attr) {
   static const std::unordered_set<std::string_view> kColorAttrs = {
-      "color",      "background-color", "bg-color",     "background",    "border-color",
-      "text-color", "track-color",      "shadow-color", "outline-color", "text-outline-color",
+      "color",      "fill-color",  "background-color", "bg-color",      "background",         "border-color",
+      "text-color", "track-color", "shadow-color",     "outline-color", "text-outline-color",
   };
   return kColorAttrs.contains(attr);
 }
@@ -566,8 +566,8 @@ bool TryInspectCommonControlAttr(ContractBuilder& builder, const std::string& at
   return false;
 }
 
-std::string InferBuiltInAttrHint(const std::string& attr) {
-  if (attr == "sprite" || attr == "icon") return "sprite";
+std::string InferBuiltInAttrHint(const OxmlNode& node, const std::string& attr) {
+  if (attr == "sprite" || attr == "icon" || (node.tag == "Image" && attr == "src")) return "sprite";
   if (IsColorAttrName(attr)) return "color";
   return "";
 }
@@ -601,7 +601,7 @@ void InspectSingleBuiltInAttr(ContractBuilder& builder, const OxmlNode& node, co
     InspectSliderValueAttr(builder, node, val, scope);
     return;
   }
-  RecordInterpolatedBindings(builder, val, scope, ContractFieldType::String, InferBuiltInAttrHint(attr), false,
+  RecordInterpolatedBindings(builder, val, scope, ContractFieldType::String, InferBuiltInAttrHint(node, attr), false,
                              node.line);
 }
 

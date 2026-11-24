@@ -199,12 +199,12 @@ def main() -> int:
     emits, subs = parse_event_sites()
 
     payloads = {
-        REPO / "systems.json": {
+        REPO / "generated" / "systems.json": {
             "_generated_by": "scripts/gen_api_catalogs.py",
             "_note": "Static catalog of src/Systems. Regenerate with scripts/gen_api_catalogs.py.",
             "systems": parse_systems(regs, emits, subs),
         },
-        REPO / "events.json": {
+        REPO / "generated" / "events.json": {
             "_generated_by": "scripts/gen_api_catalogs.py",
             "_note": "Static catalog of src/Events. Regenerate with scripts/gen_api_catalogs.py.",
             "events": parse_events(emits, subs),
@@ -218,6 +218,7 @@ def main() -> int:
         if old != new:
             drifted.append(rel(path))
             if not check:
+                path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(new, encoding="utf-8")
 
     if check and drifted:

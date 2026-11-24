@@ -45,7 +45,7 @@ void DrawToolbarActionRow(UIPreviewer& previewer, EngineOptions& opts) {
     previewer.ReloadActivePreview();
   }
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Reload active UI view and mock sidecar (F5)");
+    ImGui::SetTooltip("Reload active UI view and mock sidecar");
   }
   ImGui::SameLine();
   if (ImGui::Button("Unmount")) {

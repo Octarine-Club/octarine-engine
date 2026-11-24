@@ -92,7 +92,7 @@ ctest --test-dir build/player-debug --output-on-failure
 
 Key verification tools and tests:
 
-- **`LuaApiSmokeTest`** — constructs `Game` headlessly, replays Lua binding setup, asserts every component/module/system surface is reachable, and regenerates [`../lua_api.smoke.lua`](../lua_api.smoke.lua).
+- **`LuaApiSmokeTest`** — constructs `Game` headlessly, replays Lua binding setup, asserts every component/module/system surface is reachable, and regenerates [`../generated/lua_api.smoke.lua`](../generated/lua_api.smoke.lua).
 - **`AssetPipelineTest`** — validates `.meta` sidecar parsing, catalog building, and manifest round-trips.
 - **`./scripts/octarine-verify.sh --fast`** (`--full` for C++20 modules/sanitizers) — unified local verification gate.
 - **`python3 scripts/check_architecture.py`** — checks include DAG layering and CMake target parity.
@@ -119,7 +119,7 @@ Key verification tools and tests:
 | `tests/` | Engine unit and integration test suites (`OCTARINE_ENABLE_TESTS=ON`) |
 | `cmake/`, `scripts/` | Build modules, packaging, license aggregation, project scaffolding, verify scripts |
 | `android/` | Gradle host app (multi-ABI, vcpkg Android triplets) |
-| `components.json`, `modules.json`, `systems.json`, `events.json`, `lua_api.smoke.lua` | Auto-generated API catalogs and EmmyLua stub |
+| `generated/` (`components.json`, `modules.json`, `systems.json`, `events.json`, `lua_api.smoke.lua`) | Auto-generated API catalogs and EmmyLua stub |
 
 ## 5. Adding new code
 
@@ -154,4 +154,4 @@ Key verification tools and tests:
 - [`docs/security.md`](security.md) — OCPK bundle encryption, Lua bytecode protection, and filesystem sandboxing
 - [`docs/device-builds.md`](device-builds.md) — shipping artifacts for desktop (and experimental Android/iOS)
 - [`docs/commenting-guide.md`](commenting-guide.md) — code commenting standards
-- [`lua_api.smoke.lua`](../lua_api.smoke.lua) — auto-generated EmmyLua reference for the live Lua surface
+- [`generated/lua_api.smoke.lua`](../generated/lua_api.smoke.lua) — auto-generated EmmyLua reference for the live Lua surface

@@ -92,6 +92,6 @@ Not per-frame query systems, but part of the engine:
 2. Register simulation systems in `src/Engine/SimulationSystems.cpp` or engine-loop systems in `Game::Setup()` (`src/Game/Game.cpp`), and declare explicit DAG ordering via `registry.Order(...).After(...).Before(...)`. External native game projects can register systems through `GameModuleHooks` (`src/Engine/GameModuleHooks.h`) without editing `src/`.
 3. If it needs a Lua surface, add a module binding (`src/Lua/Modules/`) and register it in `RegisterAllModules.cpp`.
 4. If it reacts to events, subscribe in `Init` / `SubscribeToEvents` (see [`events.md`](events.md)).
-5. Keep generated catalogs in sync by running `python3 scripts/gen_api_catalogs.py` (which updates `systems.json`).
+5. Keep generated catalogs in sync by running `python3 scripts/gen_api_catalogs.py` (which updates `generated/systems.json`).
 
 For full C++ symbol documentation, see the [Doxygen API Reference](https://octarine-club.github.io/octarine-engine/).

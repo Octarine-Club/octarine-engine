@@ -251,7 +251,7 @@ if [[ "$mode" == "full" ]]; then
   fi
 
   echo "== Lua API drift =="
-  drift_paths=(lua_api.smoke.lua components.json modules.json)
+  drift_paths=(generated/lua_api.smoke.lua generated/components.json generated/modules.json)
   if git diff --quiet -- "${drift_paths[@]}"; then
     echo "  ok   no Lua API artifact drift"
   else
