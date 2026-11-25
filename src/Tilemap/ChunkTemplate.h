@@ -167,6 +167,7 @@ struct ChunkTemplate {
   std::vector<YSortTileCmd> ysortTiles{};
   std::array<uint8_t, kMaxChunkArea> collisions{};
   std::vector<PropSpawnDesc> propSpawns{};
+  const std::vector<ChunkTemplate>* cachedVariants = nullptr;
 
   [[nodiscard]] bool HasEdgeSockets() const noexcept {
     return !edgeNorth.empty() || !edgeEast.empty() || !edgeSouth.empty() || !edgeWest.empty();

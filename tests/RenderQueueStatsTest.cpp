@@ -295,5 +295,46 @@ int main() {
     CheckEq(stats.totalIndices, size_t{6}, "Only valid chunk contributes 6 indices");
   }
 
+  // Test 14: Tiny filled circle uses 8-segment minimum while tiny outline uses 16, and matching TileChunks batch
+  {
+    RenderQueue queue(16);
+    auto& smallFilled = queue.EmplaceCircle(0, 0.0f);
+    smallFilled.radiusX = 3.0f;
+    smallFilled.radiusY = 2.0f;
+    smallFilled.filled = true;
+    queue.Sort();
+    const auto filledStats = AnalyzeRenderQueue(queue, 1.0f);
+    CheckEq(filledStats.totalVertices, size_t{9}, "Tiny filled circle uses 8 segments (9 verts)");
+    CheckEq(filledStats.totalIndices, size_t{24}, "Tiny filled circle uses 8 segments (24 indices)");
+
+    RenderQueue outlineQueue(16);
+    auto& smallOutline = outlineQueue.EmplaceCircle(0, 0.0f);
+    smallOutline.radiusX = 3.0f;
+    smallOutline.radiusY = 2.0f;
+    smallOutline.thickness = 1.0f;
+    smallOutline.filled = false;
+    outlineQueue.Sort();
+    const auto outlineStats = AnalyzeRenderQueue(outlineQueue, 1.0f);
+    CheckEq(outlineStats.totalVertices, size_t{17}, "Tiny hairline circle keeps 16 segments (17 verts)");
+
+    RenderQueue chunkQueue(16);
+    auto* tex = reinterpret_cast<SDL_Texture*>(0x5000);
+    const SDL_Vertex verts[4]{};
+    const int indices[6]{0, 1, 2, 2, 3, 0};
+    for (int i = 0; i < 3; ++i) {
+      auto& c = chunkQueue.EmplaceTileChunk(0, static_cast<float>(i), tex);
+      c.texture = tex;
+      c.vertices = verts;
+      c.indices = indices;
+      c.vertexCount = 4;
+      c.indexCount = 6;
+      c.blendMode = SDL_BLENDMODE_BLEND;
+    }
+    chunkQueue.Sort();
+    const auto chunkStats = AnalyzeRenderQueue(chunkQueue, 1.0f);
+    CheckEq(chunkStats.drawBatches, size_t{1}, "Contiguous matching TileChunks coalesce to 1 batch");
+    CheckEq(chunkStats.totalVertices, size_t{12}, "3 TileChunks contribute 12 total vertices");
+  }
+
   return octarine::test::ReportSummary("RenderQueueStatsTest");
 }

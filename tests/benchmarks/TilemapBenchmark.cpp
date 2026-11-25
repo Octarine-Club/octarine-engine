@@ -183,3 +183,58 @@ static void BM_TilemapResolveCircleBatch(benchmark::State& state) {
   bench::ReportPerEntity(state, n);
 }
 BENCHMARK(BM_TilemapResolveCircleBatch)->Name("Sys/Tilemap/ResolveCircleBatch")->RangeMultiplier(4)->Range(1024, 16384);
+
+static void BM_TilemapIsSolidAtOutOfWindowOverrides(benchmark::State& state) {
+  const auto n = static_cast<int>(state.range(0));
+  Registry registry;
+  GameConfig cfg;
+  cfg.windowWidth = 1920;
+  cfg.windowHeight = 1080;
+  registry.Set<GameConfig>(cfg);
+  registry.Set<CameraComponent>(CameraComponent{octarine::Rect{0.0f, 0.0f, 1920.0f, 1080.0f}, 1.0f});
+  registry.Set<RenderQueue>(RenderQueue(8192));
+
+  octarine::tilemap::TilemapData data;
+  data.tileSize = 32;
+  data.chunkGridWidth = 32;
+  data.chunkGridHeight = 32;
+  data.gridCols = 28;
+  data.gridRows = 28;
+  for (int t = 0; t < 29; ++t) {
+    octarine::tilemap::ChunkTemplate tmpl;
+    tmpl.identifier = "Chunk_" + std::to_string(t);
+    tmpl.tileSize = 32;
+    tmpl.gridWidth = 32;
+    tmpl.gridHeight = 32;
+    tmpl.weight = (t == 0) ? 1.0f : 0.0f;
+    for (size_t i = 0; i < 1024u; ++i) {
+      tmpl.collisions[i] = (i % 17u == 0u) ? octarine::tilemap::kTileWall : octarine::tilemap::kTileEmpty;
+    }
+    data.templates.push_back(std::move(tmpl));
+  }
+
+  TilemapSystem sys;
+  octarine::tilemap::TilemapLoadOptions opts;
+  opts.stitchMode = octarine::tilemap::StitchMode::ProceduralHash;
+  opts.loadRadius = 1;
+  opts.unloadRadius = 2;
+  opts.variantCount = 8;
+  sys.LoadFromData(registry, std::move(data), opts);
+  for (int cy = 4; cy < 12; ++cy) {
+    for (int cx = 4; cx < 12; ++cx) {
+      sys.SetChunkOverride(registry, cx, cy, "Chunk_28");
+    }
+  }
+
+  for (auto _ : state) {
+    int solidHits = 0;
+    for (int i = 0; i < n; ++i) {
+      const auto wx = static_cast<float>(4096 + (i * 64) % 8192);
+      const auto wy = static_cast<float>(4096 + ((i * 197) % 8192));
+      solidHits += sys.IsSolidAt(wx, wy) ? 1 : 0;
+    }
+    benchmark::DoNotOptimize(solidHits);
+  }
+  bench::ReportPerEntity(state, n);
+}
+BENCHMARK(BM_TilemapIsSolidAtOutOfWindowOverrides)->Name("Sys/Tilemap/IsSolidAtOutOfWindowOverrides")->Arg(16384);

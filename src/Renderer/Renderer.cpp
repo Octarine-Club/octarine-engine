@@ -171,8 +171,11 @@ void Renderer::BeginScene(SDL_Renderer* sdlRenderer) const {
 
 void Renderer::EndScene(SDL_Renderer* sdlRenderer, const bool clearBackbuffer) const {
 #if defined(__APPLE__) && TARGET_OS_OSX
-  SDL_FlushRenderer(sdlRenderer);
-  ReclaimStaleMacMetalDrawables(sdlRenderer);
+  int vsync = 1;
+  if (SDL_GetRenderVSync(sdlRenderer, &vsync) && vsync == 0) {
+    SDL_FlushRenderer(sdlRenderer);
+    ReclaimStaleMacMetalDrawables(sdlRenderer);
+  }
 #endif
   SDL_SetRenderScale(sdlRenderer, 1.0F, 1.0F);
   SDL_SetRenderTarget(sdlRenderer, nullptr);
@@ -519,9 +522,11 @@ class GeometryBatcher {
   void PushCircle(SDL_Renderer* renderer, const CircleCommand& cmd, const float renderScale) {
     if (cmd.radiusX <= 0.0f || cmd.radiusY <= 0.0f) return;
 
-    constexpr int kMinSegments = 16;
+    constexpr int kMinOutlineSegments = 16;
+    constexpr int kMinFilledSegments = 8;
+    const int minSegments = cmd.filled ? kMinFilledSegments : kMinOutlineSegments;
     const float maxR = std::max(cmd.radiusX, cmd.radiusY) * std::max(1.0F, renderScale);
-    const int segments = std::clamp(static_cast<int>(maxR * 0.75f), kMinSegments, kMaxCircleSegments);
+    const int segments = std::clamp(static_cast<int>(maxR * 0.75f), minSegments, kMaxCircleSegments);
     const float step = (2.0f * std::numbers::pi_v<float>) / static_cast<float>(segments);
     const auto stepRot = octarine::Rotation2D::FromRadians(step);
     const bool rotateEllipse = (cmd.rotation != 0.0f) && (cmd.radiusX != cmd.radiusY);
@@ -620,6 +625,35 @@ class GeometryBatcher {
     AppendFan(ToSdlFColor(cmd.color), {midpoint.x, midpoint.y}, ringPts, kMaxCapsuleVerts);
   }
 
+  void PushTileChunk(SDL_Renderer* renderer, const TileChunkCommand& cmd) {
+    if (cmd.vertices == nullptr || cmd.vertexCount <= 0 || cmd.indices == nullptr || cmd.indexCount <= 0) {
+      return;
+    }
+    const auto vCount = static_cast<size_t>(cmd.vertexCount);
+    if (vCount > kMaxBatchVerts) {
+      Flush(renderer);
+      DrawTileChunk(renderer, state_, cmd);
+      return;
+    }
+    if (cmd.texture == nullptr) {
+      EnsureUntextured(renderer, cmd.blendMode, vCount);
+      AppendIndexedGeometry(cmd.vertices, cmd.vertexCount, cmd.indices, cmd.indexCount);
+      return;
+    }
+    if (kind_ != BatchKind::Sprite || batch_tex_ != cmd.texture || batch_blend_ != cmd.blendMode ||
+        verts_.size() + vCount > kMaxBatchVerts) {
+      Flush(renderer);
+      if (!ResolveTextureInvSize(cmd.texture)) {
+        DrawTileChunk(renderer, state_, cmd);
+        return;
+      }
+      kind_ = BatchKind::Sprite;
+      batch_tex_ = cmd.texture;
+      batch_blend_ = cmd.blendMode;
+    }
+    AppendIndexedGeometry(cmd.vertices, cmd.vertexCount, cmd.indices, cmd.indexCount);
+  }
+
   void Flush(SDL_Renderer* renderer) {
     if (verts_.empty()) return;
     if (kind_ == BatchKind::Sprite) {
@@ -642,6 +676,16 @@ class GeometryBatcher {
   static constexpr int kCapsuleArcSegs = 16;
   static constexpr int kMaxCapsuleVerts = (kCapsuleArcSegs + 1) * 2;
   enum class BatchKind : uint8_t { None, Sprite, Untextured };
+
+  void AppendIndexedGeometry(const SDL_Vertex* vertices, const int vertexCount, const int* indices,
+                             const int indexCount) {
+    const int base = static_cast<int>(verts_.size());
+    verts_.insert(verts_.end(), vertices, vertices + vertexCount);
+    indices_.reserve(indices_.size() + static_cast<size_t>(indexCount));
+    for (int i = 0; i < indexCount; ++i) {
+      indices_.push_back(base + indices[i]);
+    }
+  }
 
   void AppendTransformedQuad(const float destX, const float destY, const float destW, const float destH,
                              const SDL_FPoint& pivot, const float rotation, const SDL_FColor& fcol, const float u0,
@@ -873,8 +917,12 @@ void Renderer::DrawQueue(const RenderQueue& renderQueue, SDL_Renderer* renderer)
         batcher.PushCapsule(renderer, key.payload.capsule, renderScale);
         break;
       case TILE_CHUNK:
-        batcher.Flush(renderer);
-        DrawTileChunk(renderer, state, key.payload.tileChunk);
+        if (key.payload.tileChunk.vertexCount <= 256) {
+          batcher.PushTileChunk(renderer, key.payload.tileChunk);
+        } else {
+          batcher.Flush(renderer);
+          DrawTileChunk(renderer, state, key.payload.tileChunk);
+        }
         break;
       default:
         batcher.Flush(renderer);
