@@ -22,11 +22,16 @@ runs:
         fi
         echo "VCPKG_BINARY_SOURCES=clear;files,${cache_dir},readwrite" >> "$GITHUB_ENV"
         echo "VCPKG_DOWNLOADS=${dl_dir}" >> "$GITHUB_ENV"
+        vcpkg_root="${VCPKG_ROOT:-${VCPKG_INSTALLATION_ROOT:-}}"
+        vcpkg_rev="unknown"
+        if [ -n "$vcpkg_root" ] && [ -d "$vcpkg_root" ]; then
+          vcpkg_rev="$(git -C "$vcpkg_root" rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
+        fi
         if [ "${RUNNER_OS:-}" = "Windows" ]; then
-          echo "VCPKG_CACHE_ABI=${ImageOS:-windows}-msvc" >> "$GITHUB_ENV"
+          echo "VCPKG_CACHE_ABI=${ImageOS:-windows}-msvc-${vcpkg_rev}" >> "$GITHUB_ENV"
         else
           cc_abi="$("${CC:-cc}" -dumpfullversion -dumpmachine 2>/dev/null | tr ' /' '__' || echo unknown)"
-          echo "VCPKG_CACHE_ABI=${ImageOS:-unknown}-${cc_abi}" >> "$GITHUB_ENV"
+          echo "VCPKG_CACHE_ABI=${ImageOS:-unknown}-${cc_abi}-${vcpkg_rev}" >> "$GITHUB_ENV"
         fi
     - name: Restore/save vcpkg binary and downloads cache
       uses: actions/cache@v4

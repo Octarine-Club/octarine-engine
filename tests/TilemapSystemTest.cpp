@@ -1358,6 +1358,186 @@ void TestExpandSubpixelTargetPixelSnapping() {
   SDL_Quit();
 }
 
+void TestCachedTemplateLookupAndOverrides() {
+  std::cout << "[cache] O(1) GetChunkTemplate & precomputed override/variant resolution\n";
+  Registry registry;
+  registry.Set<GameConfig>(GameConfig{});
+  registry.Set<CameraComponent>(CameraComponent{octarine::Rect{0, 0, 512, 512}, 1.0f});
+
+  octarine::tilemap::TilemapData data;
+  data.tileSize = 16;
+  data.chunkGridWidth = 8;
+  data.chunkGridHeight = 8;
+  data.gridCols = 2;
+  data.gridRows = 1;
+
+  for (int i = 0; i < 20; ++i) {
+    octarine::tilemap::ChunkTemplate tmpl;
+    tmpl.identifier = "Tmpl_" + std::to_string(i);
+    tmpl.tileSize = 16;
+    tmpl.gridWidth = 8;
+    tmpl.gridHeight = 8;
+    tmpl.weight = (i == 0) ? 1.0f : 0.0f;
+    tmpl.collisions.fill(i == 19 ? octarine::tilemap::kTileWall : octarine::tilemap::kTileEmpty);
+    data.templates.push_back(std::move(tmpl));
+  }
+
+  TilemapSystem sys;
+  TilemapLoadOptions opts;
+  opts.stitchMode = StitchMode::ProceduralHash;
+  opts.seed = 42u;
+  opts.loadRadius = 0;
+  opts.unloadRadius = 0;
+  opts.variantCount = 4;
+  Check(sys.LoadFromData(registry, std::move(data), opts, "<cache-test>"), "LoadFromData succeeds");
+
+  // Out-of-window chunk (10, -4) starts as Tmpl_0 (empty)
+  const auto* baseOut = sys.GetChunkTemplate(10, -4);
+  Check(baseOut != nullptr && baseOut->identifier == "Tmpl_0", "Out-of-window chunk resolves base template");
+  Check(!sys.IsSolidAt(10.0f * 128.0f + 16.0f, -4.0f * 128.0f + 16.0f), "Base out-of-window chunk is open");
+
+  // Override out-of-window chunk to Tmpl_19 (wall)
+  Check(sys.SetChunkOverride(registry, 10, -4, "Tmpl_19"), "SetChunkOverride on out-of-window chunk succeeds");
+  const auto* ovOut = sys.GetChunkTemplate(10, -4);
+  Check(ovOut != nullptr && ovOut->identifier == "Tmpl_19", "GetChunkTemplate returns cached override");
+  Check(sys.IsSolidAt(10.0f * 128.0f + 16.0f, -4.0f * 128.0f + 16.0f), "Overridden out-of-window chunk is solid");
+  Check(!sys.SetChunkOverride(registry, 10, -4, "NonExistent"), "Unknown template override rejected");
+
+  // SetStitchMode with new seed rebuilds variants and keeps override intact
+  sys.SetStitchMode(registry, StitchMode::ProceduralHash, 99u);
+  CheckEq(sys.GetChunkTemplateId(10, -4), std::string("Tmpl_19"), "Override survives SetStitchMode seed change");
+
+  // ClearChunkOverrides restores base template
+  sys.ClearChunkOverrides(registry);
+  Check(!sys.IsSolidAt(10.0f * 128.0f + 16.0f, -4.0f * 128.0f + 16.0f),
+        "ClearChunkOverrides clears resolved_overrides_");
+}
+
+void TestYSortTileFrustumCullingAndChunkBatching() {
+  std::cout << "[cull+batch] Y-sort per-tile viewport culling & multi-chunk TILE_CHUNK batching\n";
+  SDL_Init(SDL_INIT_VIDEO);
+
+  SDL_Surface* backbuf = SDL_CreateSurface(128, 64, SDL_PIXELFORMAT_RGBA32);
+  SDL_Renderer* sdlRenderer = backbuf != nullptr ? SDL_CreateSoftwareRenderer(backbuf) : nullptr;
+  Check(sdlRenderer != nullptr, "cull+batch: software SDL_Renderer created");
+  if (sdlRenderer == nullptr) {
+    SDL_DestroySurface(backbuf);
+    SDL_Quit();
+    return;
+  }
+
+  SDL_Surface* tileSurf = SDL_CreateSurface(16, 16, SDL_PIXELFORMAT_RGBA32);
+  const Uint32 green = SDL_MapSurfaceRGBA(tileSurf, 40, 210, 90, 255);
+  SDL_FillSurfaceRect(tileSurf, nullptr, green);
+  SDL_Texture* tileTex = SDL_CreateTextureFromSurface(sdlRenderer, tileSurf);
+  SDL_DestroySurface(tileSurf);
+  Check(tileTex != nullptr, "cull+batch: test tile texture created");
+
+  // 1. Verify SubmitChunkRenderCommands culls out-of-viewport ysortTiles per tile.
+  Registry registry;
+  auto& cfg = registry.Set<GameConfig>(GameConfig{});
+  cfg.windowWidth = 100;
+  cfg.windowHeight = 100;
+  auto& assets = registry.Set<AssetManager>(AssetManager());
+  assets.AddTexture(sdlRenderer, "ytex", "");
+  registry.Set<CameraComponent>(CameraComponent{octarine::Rect{0.0f, 0.0f, 100.0f, 100.0f}, 1.0f});
+  auto& rq = registry.Set<RenderQueue>(RenderQueue(64));
+
+  octarine::tilemap::TilemapData data;
+  data.tileSize = 16;
+  data.chunkGridWidth = 32;  // 512px chunk
+  data.chunkGridHeight = 8;
+
+  octarine::tilemap::ChunkTemplate tmpl;
+  tmpl.identifier = "YSortCullChunk";
+  tmpl.tileSize = 16;
+  tmpl.gridWidth = 32;
+  tmpl.gridHeight = 8;
+  tmpl.weight = 1.0f;
+
+  octarine::tilemap::YSortTileCmd visTile{};
+  visTile.localX = 16.0f;
+  visTile.localY = 16.0f;
+  visTile.sortLocalY = 32.0f;
+  visTile.width = 16.0f;
+  visTile.height = 16.0f;
+  visTile.cachedTexture = tileTex;
+  tmpl.ysortTiles.push_back(visTile);
+
+  octarine::tilemap::YSortTileCmd offscreenTile = visTile;
+  offscreenTile.localX = 400.0f;  // well past viewW(100) + cullMargin(32)
+  tmpl.ysortTiles.push_back(offscreenTile);
+
+  data.templates.push_back(std::move(tmpl));
+
+  TilemapSystem sys;
+  TilemapLoadOptions opts;
+  opts.loadRadius = 0;
+  opts.unloadRadius = 0;
+  Check(sys.LoadFromData(registry, std::move(data), opts, "<ysort-cull>"), "LoadFromData ysort cull test succeeds");
+  sys.Tick(&registry);
+  CheckEq(rq.Size(), size_t{1}, "SubmitChunkYSortTiles culls offscreen tile and keeps visible tile");
+
+  // 2. Verify contiguous same-texture TILE_CHUNK commands coalesce and render every chunk quad accurately.
+  Renderer renderer;
+  renderer.SetLogicalSize(128, 64);
+  Check(renderer.EnsureSceneTargetSize(sdlRenderer, 128, 64), "cull+batch: EnsureSceneTargetSize succeeds");
+
+  RenderQueue batchQueue(16);
+  const SDL_FColor white{1.0f, 1.0f, 1.0f, 1.0f};
+  const int indices[6] = {0, 1, 2, 0, 2, 3};
+  const SDL_Vertex leftChunk[4] = {
+      {{8.0f, 8.0f}, white, {0.0f, 0.0f}},
+      {{24.0f, 8.0f}, white, {1.0f, 0.0f}},
+      {{24.0f, 24.0f}, white, {1.0f, 1.0f}},
+      {{8.0f, 24.0f}, white, {0.0f, 1.0f}},
+  };
+  const SDL_Vertex rightChunk[4] = {
+      {{80.0f, 24.0f}, white, {0.0f, 0.0f}},
+      {{96.0f, 24.0f}, white, {1.0f, 0.0f}},
+      {{96.0f, 40.0f}, white, {1.0f, 1.0f}},
+      {{80.0f, 40.0f}, white, {0.0f, 1.0f}},
+  };
+  auto& c0 = batchQueue.EmplaceTileChunk(0, 0.0f, tileTex);
+  c0.texture = tileTex;
+  c0.vertices = leftChunk;
+  c0.indices = indices;
+  c0.vertexCount = 4;
+  c0.indexCount = 6;
+  c0.blendMode = SDL_BLENDMODE_BLEND;
+
+  auto& c1 = batchQueue.EmplaceTileChunk(0, 1.0f, tileTex);
+  c1.texture = tileTex;
+  c1.vertices = rightChunk;
+  c1.indices = indices;
+  c1.vertexCount = 4;
+  c1.indexCount = 6;
+  c1.blendMode = SDL_BLENDMODE_BLEND;
+  batchQueue.Sort();
+
+  renderer.BeginScene(sdlRenderer);
+  renderer.DrawQueue(batchQueue, sdlRenderer);
+  renderer.EndScene(sdlRenderer, true);
+  renderer.CompositeSceneToWindow(sdlRenderer, nullptr);
+
+  SDL_Surface* readback = SDL_RenderReadPixels(sdlRenderer, nullptr);
+  Check(readback != nullptr, "cull+batch: SDL_RenderReadPixels succeeded");
+  if (readback != nullptr) {
+    uint8_t r = 0, g = 0, b = 0, a = 0;
+    SDL_ReadSurfacePixel(readback, 16, 16, &r, &g, &b, &a);
+    Check(g > 180 && r < 80, "cull+batch: left coalesced TILE_CHUNK rendered green");
+    SDL_ReadSurfacePixel(readback, 88, 32, &r, &g, &b, &a);
+    Check(g > 180 && r < 80, "cull+batch: right coalesced TILE_CHUNK rendered green");
+    SDL_DestroySurface(readback);
+  }
+
+  renderer.DestroyScene();
+  SDL_DestroyTexture(tileTex);
+  SDL_DestroyRenderer(sdlRenderer);
+  SDL_DestroySurface(backbuf);
+  SDL_Quit();
+}
+
 }  // namespace
 
 int main() {
@@ -1376,6 +1556,8 @@ int main() {
   TestMultiChunkLevelSlicing();
   TestDataDrivenCollisionLayersAndOptions();
   TestExpandSubpixelTargetPixelSnapping();
+  TestCachedTemplateLookupAndOverrides();
+  TestYSortTileFrustumCullingAndChunkBatching();
 
   return octarine::test::ReportSummary("TilemapSystemTest");
 }

@@ -48,9 +48,11 @@ CommandGeometry ClassifyLine(const LineCommand& cmd, const float renderScale) no
 CommandGeometry ClassifyCircle(const CircleCommand& cmd, const float renderScale) noexcept {
   if (cmd.radiusX <= 0.0F || cmd.radiusY <= 0.0F) return CommandGeometry{};
   constexpr int kMaxSegments = 64;
-  constexpr int kMinSegments = 16;
+  constexpr int kMinOutlineSegments = 16;
+  constexpr int kMinFilledSegments = 8;
+  const int minSegments = cmd.filled ? kMinFilledSegments : kMinOutlineSegments;
   const float maxR = std::max(cmd.radiusX, cmd.radiusY) * std::max(1.0F, renderScale);
-  const int segments = std::clamp(static_cast<int>(maxR * 0.75F), kMinSegments, kMaxSegments);
+  const int segments = std::clamp(static_cast<int>(maxR * 0.75F), minSegments, kMaxSegments);
 
   if (cmd.filled) {
     return CommandGeometry{Topology::Triangles,

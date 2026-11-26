@@ -1,6 +1,21 @@
 name: Build
 
 on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'CMakePresets.json'
+      - 'vcpkg.json'
+      - 'vcpkg-configuration.json'
+      - 'vcpkg-overlay-ports/**'
+      - 'libs/**'
+      - 'scripts/**'
+      - '.github/actions/**'
+      - '.github/workflows/build.yml'
   pull_request:
     branches: [ main ]
     paths:
@@ -74,24 +89,44 @@ jobs:
               {'os': 'macos-latest', 'platform': 'macos'},
           ]
 
-          if event == 'workflow_dispatch' and platform_filter != 'all':
-              platforms = [p for p in all_platforms if p['platform'] == platform_filter]
+          if event == 'pull_request':
+              # PRs run player-debug across all 3 OSes (GCC, MSVC, Apple Clang + ctest)
+              # plus linux ship-release (bake + runtime boot smoke gates).
+              matrix = [
+                  {'os': 'ubuntu-24.04', 'platform': 'linux', 'preset': 'player-debug'},
+                  {'os': 'ubuntu-24.04', 'platform': 'linux', 'preset': 'ship-release'},
+                  {'os': 'windows-latest', 'platform': 'windows', 'preset': 'player-debug'},
+                  {'os': 'macos-latest', 'platform': 'macos', 'preset': 'player-debug'},
+              ]
+          elif event == 'push':
+              # Pushes to main cover release builds across all 3 OSes (player-release + ship-release).
+              matrix = [
+                  {'os': 'ubuntu-24.04', 'platform': 'linux', 'preset': 'player-release'},
+                  {'os': 'ubuntu-24.04', 'platform': 'linux', 'preset': 'ship-release'},
+                  {'os': 'windows-latest', 'platform': 'windows', 'preset': 'player-release'},
+                  {'os': 'windows-latest', 'platform': 'windows', 'preset': 'ship-release'},
+                  {'os': 'macos-latest', 'platform': 'macos', 'preset': 'player-release'},
+                  {'os': 'macos-latest', 'platform': 'macos', 'preset': 'ship-release'},
+              ]
           else:
-              platforms = all_platforms
+              if event == 'workflow_dispatch' and platform_filter != 'all':
+                  platforms = [p for p in all_platforms if p['platform'] == platform_filter]
+              else:
+                  platforms = all_platforms
 
-          if event == 'workflow_dispatch' and preset_filter != 'all':
-              presets = [preset_filter]
-          else:
-              presets = ['player-debug', 'player-release', 'ship-release']
+              if event == 'workflow_dispatch' and preset_filter != 'all':
+                  presets = [preset_filter]
+              else:
+                  presets = ['player-debug', 'player-release', 'ship-release']
 
-          matrix = []
-          for p in platforms:
-              for pr in presets:
-                  matrix.append({
-                      'os': p['os'],
-                      'platform': p['platform'],
-                      'preset': pr
-                  })
+              matrix = []
+              for p in platforms:
+                  for pr in presets:
+                      matrix.append({
+                          'os': p['os'],
+                          'platform': p['platform'],
+                          'preset': pr
+                      })
 
           print('Matrix planned:', json.dumps(matrix))
           output_path = os.environ.get('GITHUB_OUTPUT')
@@ -102,7 +137,7 @@ jobs:
 
   build:
     name: ${{ matrix.platform }} (${{ matrix.preset }})
-    needs: plan
+    needs: [plan, lint]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -147,7 +182,7 @@ jobs:
         uses: hendrikmuhs/ccache-action@v1
         with:
           key: ${{ matrix.platform }}-${{ matrix.preset }}
-          max-size: 500M
+          max-size: 250M
 
       - name: Configure CMake
         shell: bash
@@ -301,6 +336,7 @@ jobs:
   # the two sanitizers cannot be combined in one binary.
   sanitize:
     name: linux (asan+ubsan, player-debug)
+    needs: lint
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
@@ -318,7 +354,7 @@ jobs:
         uses: hendrikmuhs/ccache-action@v1
         with:
           key: linux-player-debug-asan
-          max-size: 500M
+          max-size: 250M
 
       - name: Configure CMake
         run: cmake --preset player-debug -DOCTARINE_SANITIZE=asan -DOCTARINE_ENABLE_TESTS=ON
@@ -339,6 +375,8 @@ jobs:
   # and enforces >= 80% coverage on modified lines under src/ (excluding non-headless GUI panels).
   coverage:
     name: diff-coverage (clang, >=80%)
+    needs: lint
+    if: github.event_name != 'push'
     # Uses ubuntu-latest (Clang 21+) rather than ubuntu-24.04 (Clang 18), because Clang 18
     # rejects sol2 3.5.0's upvalue_this_member_variable::call dependent noexcept address.
     # Coverage does not publish binaries (so glibc 2.39 floor does not apply) and uses Clang,
@@ -367,7 +405,7 @@ jobs:
         uses: hendrikmuhs/ccache-action@v1
         with:
           key: linux-player-debug-coverage
-          max-size: 500M
+          max-size: 250M
 
       - name: Configure CMake
         run: cmake --preset player-debug -DOCTARINE_ENABLE_COVERAGE=ON -DOCTARINE_ENABLE_TESTS=ON

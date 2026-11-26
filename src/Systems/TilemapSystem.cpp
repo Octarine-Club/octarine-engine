@@ -179,6 +179,7 @@ bool TilemapSystem::LoadFromData(Registry& registry, TilemapData data, const Til
   SetWindowRadii(options.loadRadius, options.unloadRadius);
   ++map_revision_;
   is_loaded_ = true;
+  RebuildTemplateLookupCaches();
 
   EnsureTilesetTexturesLoaded(registry);
 
@@ -227,6 +228,8 @@ void TilemapSystem::Unload(Registry& registry) {
   DespawnAllChunkProps(registry);
   active_chunks_.clear();
   chunk_overrides_.clear();
+  resolved_overrides_.clear();
+  template_by_id_.clear();
   consumed_props_.clear();
   file_watcher_ = FileWatcher{};
   loaded_path_.clear();
@@ -255,6 +258,7 @@ bool TilemapSystem::Reload(Registry& registry) {
   TilemapBuilder::ApplyWorldTileScale(*parsed, tile_scale_);
   InvokeVariantGenerator(*parsed, variant_count_, seed_);
   project_data_ = std::move(*parsed);
+  RebuildTemplateLookupCaches();
   EnsureTilesetTexturesLoaded(registry);
   UpdateActiveWindow(registry, camera_chunk_x_, camera_chunk_y_);
   ++hot_reload_count_;
@@ -297,6 +301,7 @@ void TilemapSystem::SetStitchMode(Registry& registry, const StitchMode mode, con
     cached_texture_gen_ = 0;
     RefreshTemplateTextureCache(registry.TryGet<AssetManager>());
   }
+  RebuildTemplateLookupCaches();
   UpdateActiveWindow(registry, camera_chunk_x_, camera_chunk_y_);
 }
 
@@ -323,17 +328,59 @@ void TilemapSystem::InvokeVariantGenerator(TilemapData& data, const int32_t vari
   TilemapLoaderRegistry::ApplyVariantGenerator(data, variantCount, seed);
 }
 
+const ChunkTemplate* TilemapSystem::ResolveVariantForChunk(const ChunkTemplate* baseTmpl, const int32_t chunkX,
+                                                           const int32_t chunkY) const noexcept {
+  if (baseTmpl != nullptr && baseTmpl->cachedVariants != nullptr && !baseTmpl->cachedVariants->empty()) {
+    const uint64_t h = octarine::tilemap::HashChunkCoord(chunkX, chunkY, seed_ ^ 0xA5A55A5Au);
+    const auto& variants = *baseTmpl->cachedVariants;
+    return &variants[static_cast<size_t>(h % variants.size())];
+  }
+  return baseTmpl;
+}
+
+void TilemapSystem::RebuildTemplateLookupCaches() {
+  template_by_id_.clear();
+  resolved_overrides_.clear();
+
+  auto bindVariants = [&](ChunkTemplate& tmpl) {
+    const auto varIt = project_data_.templateVariants.find(tmpl.identifier);
+    tmpl.cachedVariants =
+        (varIt != project_data_.templateVariants.end() && !varIt->second.empty()) ? &varIt->second : nullptr;
+  };
+
+  for (auto& tmpl : project_data_.templates) {
+    bindVariants(tmpl);
+    if (!tmpl.identifier.empty()) {
+      template_by_id_.emplace(tmpl.identifier, &tmpl);
+    }
+  }
+  bindVariants(project_data_.borderTemplate);
+
+  for (const auto& [key, tmplId] : chunk_overrides_) {
+    const ChunkTemplate* baseTmpl = FindTemplateById(tmplId);
+    if (baseTmpl != nullptr) {
+      const auto ux = static_cast<uint32_t>(static_cast<uint64_t>(key) >> 32u);
+      const auto uy = static_cast<uint32_t>(static_cast<uint64_t>(key) & 0xFFFFFFFFu);
+      resolved_overrides_.emplace(key,
+                                  ResolveVariantForChunk(baseTmpl, static_cast<int32_t>(ux), static_cast<int32_t>(uy)));
+    }
+  }
+}
+
 const ChunkTemplate* TilemapSystem::FindTemplateById(const std::string& templateId) const noexcept {
   if (templateId.empty()) {
     return nullptr;
+  }
+  if (project_data_.borderTemplate.identifier == templateId) {
+    return &project_data_.borderTemplate;
+  }
+  if (const auto it = template_by_id_.find(templateId); it != template_by_id_.end()) {
+    return it->second;
   }
   for (const auto& tmpl : project_data_.templates) {
     if (tmpl.identifier == templateId) {
       return &tmpl;
     }
-  }
-  if (project_data_.borderTemplate.identifier == templateId) {
-    return &project_data_.borderTemplate;
   }
   return nullptr;
 }
@@ -343,18 +390,25 @@ bool TilemapSystem::SetChunkOverride(Registry& registry, const int32_t chunkX, c
   const int64_t key = PackChunkKey(chunkX, chunkY);
   if (templateId.empty()) {
     chunk_overrides_.erase(key);
+    resolved_overrides_.erase(key);
   } else {
-    if (is_loaded_ && FindTemplateById(templateId) == nullptr) {
+    const ChunkTemplate* baseTmpl = is_loaded_ ? FindTemplateById(templateId) : nullptr;
+    if (is_loaded_ && baseTmpl == nullptr) {
       return false;
     }
     chunk_overrides_[key] = templateId;
+    if (baseTmpl != nullptr) {
+      resolved_overrides_[key] = ResolveVariantForChunk(baseTmpl, chunkX, chunkY);
+    } else {
+      resolved_overrides_.erase(key);
+    }
   }
   ++map_revision_;
 
   if (const auto it = active_chunks_.find(key); it != active_chunks_.end()) {
     UnloadChunk(registry, it->second);
     it->second.templatePtr = nullptr;
-    it->second.templatePtr = GetTemplateAtChunk(chunkX, chunkY);
+    it->second.templatePtr = GetChunkTemplate(chunkX, chunkY);
     InitChunkScreenVertices(it->second);
     SpawnChunkProps(registry, it->second);
   }
@@ -366,6 +420,7 @@ void TilemapSystem::ClearChunkOverrides(Registry& registry) {
     return;
   }
   chunk_overrides_.clear();
+  resolved_overrides_.clear();
   ++map_revision_;
   if (!is_loaded_) {
     return;
@@ -376,7 +431,7 @@ void TilemapSystem::ClearChunkOverrides(Registry& registry) {
 }
 
 std::string TilemapSystem::GetChunkTemplateId(const int32_t chunkX, const int32_t chunkY) const {
-  const ChunkTemplate* tmpl = GetTemplateAtChunk(chunkX, chunkY);
+  const ChunkTemplate* tmpl = GetChunkTemplate(chunkX, chunkY);
   return tmpl != nullptr ? tmpl->identifier : std::string{};
 }
 
@@ -485,7 +540,7 @@ void TilemapSystem::LoadChunk(Registry& registry, const int32_t chunkX, const in
   ActiveChunk chunk;
   chunk.chunkX = chunkX;
   chunk.chunkY = chunkY;
-  chunk.templatePtr = GetTemplateAtChunk(chunkX, chunkY);
+  chunk.templatePtr = GetChunkTemplate(chunkX, chunkY);
   InitChunkScreenVertices(chunk);
   SpawnChunkProps(registry, chunk);
   active_chunks_.emplace(PackChunkKey(chunkX, chunkY), std::move(chunk));
@@ -539,6 +594,18 @@ bool ShouldSpawnProp(const PropSpawnDesc& prop, const int32_t chunkX, const int3
   return true;
 }
 
+sol::table BuildPropFieldsTable(sol::state_view& lua, const PropSpawnDesc& prop, sol::table& emptyFieldsTbl) {
+  if (prop.fields.empty()) {
+    if (!emptyFieldsTbl.valid() || !emptyFieldsTbl.empty()) {
+      emptyFieldsTbl = lua.create_table();
+    }
+    return emptyFieldsTbl;
+  }
+  sol::table fieldsTbl = lua.create_table(0, static_cast<int>(prop.fields.size()));
+  PopulateLuaFieldsTable(lua, fieldsTbl, prop.fields);
+  return fieldsTbl;
+}
+
 }  // namespace
 
 void TilemapSystem::SpawnChunkProps(Registry& registry, ActiveChunk& chunk) const {
@@ -548,6 +615,7 @@ void TilemapSystem::SpawnChunkProps(Registry& registry, ActiveChunk& chunk) cons
   const auto originX = static_cast<float>(chunk.chunkX * GetChunkPixelWidth());
   const auto originY = static_cast<float>(chunk.chunkY * GetChunkPixelHeight());
   sol::state_view lua(prop_spawner_.lua_state());
+  sol::table emptyFieldsTbl;
 
   for (const PropSpawnDesc& prop : chunk.templatePtr->propSpawns) {
     if (IsPropConsumed(chunk.chunkX, chunk.chunkY, prop.propIndex) ||
@@ -555,8 +623,7 @@ void TilemapSystem::SpawnChunkProps(Registry& registry, ActiveChunk& chunk) cons
       continue;
     }
 
-    sol::table fieldsTbl = lua.create_table();
-    PopulateLuaFieldsTable(lua, fieldsTbl, prop.fields);
+    const sol::table fieldsTbl = BuildPropFieldsTable(lua, prop, emptyFieldsTbl);
 
     const float worldX = originX + prop.localX;
     const float worldY = originY + prop.localY;
@@ -751,10 +818,18 @@ void SubmitChunkStaticLayers(ActiveChunk& chunk, RenderQueue& renderQueue, const
 }
 
 void SubmitChunkYSortTiles(const ActiveChunk& chunk, RenderQueue& renderQueue, const unsigned int ysortLayer,
-                           const double worldOriginX, const double worldOriginY, const TilemapSnapTransform& xform) {
+                           const double worldOriginX, const double worldOriginY, const TilemapSnapTransform& xform,
+                           const float minVisX, const float maxVisX, const float minVisY, const float maxVisY) {
+  const auto originXf = static_cast<float>(worldOriginX);
+  const auto originYf = static_cast<float>(worldOriginY);
   for (const auto& ytile : chunk.templatePtr->ysortTiles) {
+    const float tileX = originXf + ytile.localX;
+    const float tileY = originYf + ytile.localY;
+    if (tileX + ytile.width < minVisX || tileX > maxVisX || tileY + ytile.height < minVisY || tileY > maxVisY) {
+      continue;
+    }
     SDL_Texture* tex = ytile.cachedTexture;
-    const float worldSortY = static_cast<float>(worldOriginY) + ytile.sortLocalY;
+    const float worldSortY = originYf + ytile.sortLocalY;
     auto& scmd = renderQueue.EmplaceSprite(ysortLayer, worldSortY, tex);
     ComputeSnappedLogicalSpan(worldOriginX + static_cast<double>(ytile.localX), static_cast<double>(ytile.width),
                               xform.camX, xform.zoom, xform.scaleX, scmd.destX, scmd.destW);
@@ -840,6 +915,11 @@ void TilemapSystem::SubmitChunkRenderCommands(Registry& registry, RenderQueue& r
     snapXform.scaleY = (ctx->sceneRenderScaleY > 0.001F) ? ctx->sceneRenderScaleY : fallbackScale;
   }
 
+  const float minVisX = camX - cullMargin;
+  const float maxVisX = camX + viewW + cullMargin;
+  const float minVisY = camY - cullMargin;
+  const float maxVisY = camY + viewH + cullMargin;
+
   for (auto& [key, chunk] : active_chunks_) {
     if (chunk.templatePtr == nullptr) continue;
     const auto worldOriginX = static_cast<double>(chunk.chunkX) * static_cast<double>(chunkPxW);
@@ -847,13 +927,14 @@ void TilemapSystem::SubmitChunkRenderCommands(Registry& registry, RenderQueue& r
     const auto worldOriginXf = static_cast<float>(worldOriginX);
     const auto worldOriginYf = static_cast<float>(worldOriginY);
 
-    if (worldOriginXf + chunkPxW + cullMargin < camX || worldOriginXf - cullMargin > camX + viewW ||
-        worldOriginYf + chunkPxH + cullMargin < camY || worldOriginYf - cullMargin > camY + viewH) {
+    if (worldOriginXf + chunkPxW < minVisX || worldOriginXf > maxVisX || worldOriginYf + chunkPxH < minVisY ||
+        worldOriginYf > maxVisY) {
       continue;
     }
 
     SubmitChunkStaticLayers(chunk, renderQueue, worldOriginX, worldOriginY, snapXform);
-    SubmitChunkYSortTiles(chunk, renderQueue, ysort_layer_, worldOriginX, worldOriginY, snapXform);
+    SubmitChunkYSortTiles(chunk, renderQueue, ysort_layer_, worldOriginX, worldOriginY, snapXform, minVisX, maxVisX,
+                          minVisY, maxVisY);
   }
 }
 
@@ -878,7 +959,7 @@ void TilemapSystem::SubmitDebugOverlays(RenderQueue& renderQueue, const float ca
   }
 }
 
-const ChunkTemplate* TilemapSystem::GetTemplateAtChunk(const int32_t chunkX, const int32_t chunkY) const noexcept {
+const ChunkTemplate* TilemapSystem::GetChunkTemplate(const int32_t chunkX, const int32_t chunkY) const noexcept {
   if (!is_loaded_) {
     return nullptr;
   }
@@ -886,22 +967,13 @@ const ChunkTemplate* TilemapSystem::GetTemplateAtChunk(const int32_t chunkX, con
   if (const auto it = active_chunks_.find(key); it != active_chunks_.end() && it->second.templatePtr != nullptr) {
     return it->second.templatePtr;
   }
-  const ChunkTemplate* baseTmpl = nullptr;
-  if (const auto ovIt = chunk_overrides_.find(key); ovIt != chunk_overrides_.end()) {
-    baseTmpl = FindTemplateById(ovIt->second);
-  }
-  if (baseTmpl == nullptr) {
-    baseTmpl = TilemapStitcher::SelectTemplate(project_data_, stitch_mode_, seed_, chunkX, chunkY);
-  }
-  const ChunkTemplate* resolvedTmpl = baseTmpl;
-  if (baseTmpl != nullptr) {
-    const auto varIt = project_data_.templateVariants.find(baseTmpl->identifier);
-    if (varIt != project_data_.templateVariants.end() && !varIt->second.empty()) {
-      const uint64_t h = octarine::tilemap::HashChunkCoord(chunkX, chunkY, seed_ ^ 0xA5A55A5Au);
-      resolvedTmpl = &varIt->second[static_cast<size_t>(h % varIt->second.size())];
+  if (!resolved_overrides_.empty()) {
+    if (const auto ovIt = resolved_overrides_.find(key); ovIt != resolved_overrides_.end()) {
+      return ovIt->second;
     }
   }
-  return resolvedTmpl;
+  const ChunkTemplate* baseTmpl = TilemapStitcher::SelectTemplate(project_data_, stitch_mode_, seed_, chunkX, chunkY);
+  return ResolveVariantForChunk(baseTmpl, chunkX, chunkY);
 }
 
 uint8_t TilemapSystem::GetTileByGlobalCoord(const int32_t globalTx, const int32_t globalTy) const noexcept {
@@ -910,7 +982,7 @@ uint8_t TilemapSystem::GetTileByGlobalCoord(const int32_t globalTx, const int32_
   }
   const int32_t cx = GlobalTileToChunk(globalTx, project_data_.chunkGridWidth);
   const int32_t cy = GlobalTileToChunk(globalTy, project_data_.chunkGridHeight);
-  const ChunkTemplate* tmpl = GetTemplateAtChunk(cx, cy);
+  const ChunkTemplate* tmpl = GetChunkTemplate(cx, cy);
   if (tmpl == nullptr) {
     return kTileEmpty;
   }

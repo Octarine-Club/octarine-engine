@@ -130,6 +130,7 @@ class TilemapSystem {
   [[nodiscard]] uint8_t GetDefaultRaycastMask() const noexcept { return default_raycast_mask_; }
 
   // O(1) spatial & collision queries (seamlessly support negative coordinates across (0, 0)).
+  [[nodiscard]] const octarine::tilemap::ChunkTemplate* GetChunkTemplate(int32_t chunkX, int32_t chunkY) const noexcept;
   [[nodiscard]] uint8_t GetTileByGlobalCoord(int32_t globalTx, int32_t globalTy) const noexcept;
   [[nodiscard]] uint8_t GetTileAt(float worldX, float worldY) const noexcept;
   [[nodiscard]] bool IsSolidAt(float worldX, float worldY,
@@ -177,8 +178,9 @@ class TilemapSystem {
   [[nodiscard]] bool GetShowCollisionOverlay() const noexcept { return show_collision_overlay_; }
 
  private:
-  [[nodiscard]] const octarine::tilemap::ChunkTemplate* GetTemplateAtChunk(int32_t chunkX,
-                                                                           int32_t chunkY) const noexcept;
+  void RebuildTemplateLookupCaches();
+  [[nodiscard]] const octarine::tilemap::ChunkTemplate* ResolveVariantForChunk(
+      const octarine::tilemap::ChunkTemplate* baseTmpl, int32_t chunkX, int32_t chunkY) const noexcept;
   void InvokeVariantGenerator(octarine::tilemap::TilemapData& data, int32_t variantCount, uint32_t seed) const;
   void EnsureTilesetTexturesLoaded(Registry& registry);
   void RefreshTemplateTextureCache(AssetManager* assetManager);
@@ -209,6 +211,8 @@ class TilemapSystem {
 
   std::unordered_map<int64_t, octarine::tilemap::ActiveChunk> active_chunks_{};
   std::unordered_map<int64_t, std::string> chunk_overrides_{};
+  std::unordered_map<int64_t, const octarine::tilemap::ChunkTemplate*> resolved_overrides_{};
+  std::unordered_map<std::string, const octarine::tilemap::ChunkTemplate*> template_by_id_{};
   std::unordered_map<int64_t, octarine::tilemap::ConsumedPropMask> consumed_props_{};
   sol::protected_function prop_spawner_{};
   octarine::tilemap::VariantGeneratorFn variant_generator_{};
