@@ -1,0 +1,31 @@
+name: Cache Cleanup
+
+# Deletes GitHub Actions caches scoped to a PR once it is closed (merged or abandoned),
+# preventing stale PR caches from pushing the repository toward the 10 GB eviction cap.
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  actions: write
+
+jobs:
+  cleanup:
+    name: Delete PR caches
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Delete caches for closed PR
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          IS_SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          echo "Cleaning caches for refs/pull/${PR_NUMBER}/merge..."
+          gh cache delete --all --ref "refs/pull/${PR_NUMBER}/merge" --succeed-on-no-caches --repo "$GITHUB_REPOSITORY"
+
+          if [ "$IS_SAME_REPO" = "true" ] && [ -n "$HEAD_REF" ] && [ "$HEAD_REF" != "main" ]; then
+            echo "Cleaning caches for refs/heads/${HEAD_REF}..."
+            gh cache delete --all --ref "refs/heads/${HEAD_REF}" --succeed-on-no-caches --repo "$GITHUB_REPOSITORY"
+          fi
