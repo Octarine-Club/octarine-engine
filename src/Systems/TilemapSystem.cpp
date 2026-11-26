@@ -594,6 +594,18 @@ bool ShouldSpawnProp(const PropSpawnDesc& prop, const int32_t chunkX, const int3
   return true;
 }
 
+sol::table BuildPropFieldsTable(sol::state_view& lua, const PropSpawnDesc& prop, sol::table& emptyFieldsTbl) {
+  if (prop.fields.empty()) {
+    if (!emptyFieldsTbl.valid() || !emptyFieldsTbl.empty()) {
+      emptyFieldsTbl = lua.create_table();
+    }
+    return emptyFieldsTbl;
+  }
+  sol::table fieldsTbl = lua.create_table(0, static_cast<int>(prop.fields.size()));
+  PopulateLuaFieldsTable(lua, fieldsTbl, prop.fields);
+  return fieldsTbl;
+}
+
 }  // namespace
 
 void TilemapSystem::SpawnChunkProps(Registry& registry, ActiveChunk& chunk) const {
@@ -611,16 +623,7 @@ void TilemapSystem::SpawnChunkProps(Registry& registry, ActiveChunk& chunk) cons
       continue;
     }
 
-    sol::table fieldsTbl;
-    if (prop.fields.empty()) {
-      if (!emptyFieldsTbl.valid() || !emptyFieldsTbl.empty()) {
-        emptyFieldsTbl = lua.create_table();
-      }
-      fieldsTbl = emptyFieldsTbl;
-    } else {
-      fieldsTbl = lua.create_table(0, static_cast<int>(prop.fields.size()));
-      PopulateLuaFieldsTable(lua, fieldsTbl, prop.fields);
-    }
+    const sol::table fieldsTbl = BuildPropFieldsTable(lua, prop, emptyFieldsTbl);
 
     const float worldX = originX + prop.localX;
     const float worldY = originY + prop.localY;
