@@ -880,7 +880,7 @@ std::optional<Json> LoadExternalLevelJson(const Json& level, const std::string& 
     outHadExternalError = true;
     return std::nullopt;
   }
-  return parsed;
+  return std::optional<Json>(std::in_place, std::move(parsed));
 }
 
 void ClassifyParsedLevel(ParsedLevelRaw&& raw, const TilemapParseOptions& options, TilemapData& projectData,
