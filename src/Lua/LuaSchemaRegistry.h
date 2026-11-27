@@ -528,6 +528,8 @@ class LuaSchemaRegistry {
 
 class LuaSchemaRegistry {
  public:
+  static void RegisterFunctionSchema(std::string_view /*qualifiedName*/, const LuaFunctionSchema& /*schema*/) {}
+
   template <typename Fn>
   static void SetFunction(sol::state& lua, std::string_view name, Fn&& fn) {
     lua.set_function(std::string(name), std::forward<Fn>(fn));
