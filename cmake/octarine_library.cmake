@@ -27,7 +27,8 @@ function(octarine_library NAME)
         target_include_directories(${NAME} PUBLIC "${LUA_INCLUDE_DIR}")
     endif ()
 
-    if (OCTARINE_ENABLE_PCH AND NOT OCTARINE_ENABLE_LINTING)
+    if (OCTARINE_ENABLE_PCH AND NOT OCTARINE_ENABLE_LINTING
+            AND NOT (OCTARINE_DISABLE_GAME_MODULE_PCH AND NAME STREQUAL "octarine_game_module"))
         target_precompile_headers(${NAME} PRIVATE "${CMAKE_SOURCE_DIR}/src/General/OctarinePch.h")
     endif ()
 
