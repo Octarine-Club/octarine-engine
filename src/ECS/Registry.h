@@ -222,6 +222,7 @@ class Registry {
   // Moves an entity between the active and inactive partitions of its chunk.
   void Activate(Entity entity);
   void Deactivate(Entity entity);
+  void DetachRelationshipsForPool(Entity entity);
 
   [[nodiscard]] bool IsActive(Entity entity) const;
 
@@ -374,21 +375,28 @@ class Registry {
   }
 
   // Registers a system running per-entity callbacks in parallel across chunks on ThreadPool.
+  static constexpr size_t kDefaultParallelSerialThreshold = 8192;
+
   template <typename... TArgs, typename Func>
-  SystemHandle<std::decay_t<Func>> RegisterParallelSystem(Func&& func) {
+  SystemHandle<std::decay_t<Func>> RegisterParallelSystem(
+      Func&& func, const size_t serialBelowEntities = kDefaultParallelSerialThreshold) {
     using StoredFunc = std::decay_t<Func>;
-    static_assert(std::is_invocable_v<StoredFunc, Entity, float, TArgs&...> ||
-                      std::is_invocable_v<StoredFunc, Entity, TArgs&...> ||
-                      std::is_invocable_v<StoredFunc, float, TArgs&...> || std::is_invocable_v<StoredFunc, TArgs&...>,
-                  "RegisterParallelSystem func must match void(Entity, float, TArgs&...), void(Entity, TArgs&...), "
-                  "void(float, TArgs&...), or void(TArgs&...). "
-                  "ContextFacade signatures are not supported on the parallel path.");
+    static_assert(
+        std::is_invocable_v<StoredFunc, Entity, float, Internal::resolve_yield_t<TArgs>...> ||
+            std::is_invocable_v<StoredFunc, Entity, Internal::resolve_yield_t<TArgs>...> ||
+            std::is_invocable_v<StoredFunc, float, Internal::resolve_yield_t<TArgs>...> ||
+            std::is_invocable_v<StoredFunc, Internal::resolve_yield_t<TArgs>...>,
+        "RegisterParallelSystem func must match void(Entity, float, T&..., U*...), void(Entity, T&..., U*...), "
+        "void(float, T&..., U*...), or void(T&..., U*...). "
+        "ContextFacade signatures are not supported on the parallel path.");
 
     struct SystemState {
       StoredFunc func;
       std::unique_ptr<ComponentQuery<TArgs...>> query;
+      size_t serialThreshold;
     };
-    auto state = std::make_shared<SystemState>(SystemState{std::forward<Func>(func), CreateQuery<TArgs...>()});
+    auto state = std::make_shared<SystemState>(
+        SystemState{std::forward<Func>(func), CreateQuery<TArgs...>(), serialBelowEntities});
 
     RegisteredSystem sys;
     sys.name = PrettifyTypeName(typeid(StoredFunc).name());
@@ -405,14 +413,20 @@ class Registry {
         state->func.Prepare(regPtr);
       }
 
-      if constexpr (std::is_invocable_v<StoredFunc, Entity, float, TArgs&...>) {
-        state->query->ParallelForEach([&](Entity entity, TArgs&... args) { state->func(entity, dt, args...); });
-      } else if constexpr (std::is_invocable_v<StoredFunc, Entity, TArgs&...>) {
-        state->query->ParallelForEach([&](Entity entity, TArgs&... args) { state->func(entity, args...); });
-      } else if constexpr (std::is_invocable_v<StoredFunc, float, TArgs&...>) {
-        state->query->ParallelForEach([&](TArgs&... args) { state->func(dt, args...); });
-      } else if constexpr (std::is_invocable_v<StoredFunc, TArgs&...>) {
-        state->query->ParallelForEach([&](TArgs&... args) { state->func(args...); });
+      if constexpr (std::is_invocable_v<StoredFunc, Entity, float, Internal::resolve_yield_t<TArgs>...>) {
+        state->query->ParallelForEach(
+            [&](Entity entity, Internal::resolve_yield_t<TArgs>... args) { state->func(entity, dt, args...); },
+            state->serialThreshold);
+      } else if constexpr (std::is_invocable_v<StoredFunc, Entity, Internal::resolve_yield_t<TArgs>...>) {
+        state->query->ParallelForEach(
+            [&](Entity entity, Internal::resolve_yield_t<TArgs>... args) { state->func(entity, args...); },
+            state->serialThreshold);
+      } else if constexpr (std::is_invocable_v<StoredFunc, float, Internal::resolve_yield_t<TArgs>...>) {
+        state->query->ParallelForEach([&](Internal::resolve_yield_t<TArgs>... args) { state->func(dt, args...); },
+                                      state->serialThreshold);
+      } else if constexpr (std::is_invocable_v<StoredFunc, Internal::resolve_yield_t<TArgs>...>) {
+        state->query->ParallelForEach([&](Internal::resolve_yield_t<TArgs>... args) { state->func(args...); },
+                                      state->serialThreshold);
       } else {
         static_assert(!std::is_same_v<StoredFunc, StoredFunc>, "RegisterParallelSystem func signature mismatch.");
       }

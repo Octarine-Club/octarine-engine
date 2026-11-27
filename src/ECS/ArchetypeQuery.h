@@ -88,7 +88,7 @@ class ArchetypeQuery {
     }
   }
 
-  static constexpr size_t kDefaultSerialBelowEntities = 512;
+  static constexpr size_t kDefaultSerialBelowEntities = 8192;
   static constexpr size_t kMaxParallelBatches = 64;
 
   // Process matching entities in parallel across chunks.
@@ -105,7 +105,8 @@ class ArchetypeQuery {
       return;
     }
 
-    const size_t maxBatches = std::min({work.size(), ThreadPool::Instance().Size(), kMaxParallelBatches});
+    const size_t maxBatches =
+        std::min({work.size(), ThreadPool::Instance().AvailableConcurrency(), kMaxParallelBatches});
     if (maxBatches <= 1) {
       ProcessChunks(work, 0, work.size(), func);
       return;
@@ -130,15 +131,15 @@ class ArchetypeQuery {
       std::remove_reference_t<Func>& func;
     } ctx{this, work, batches, barrier, func};
 
-    for (size_t t = 0; t < num_batches - 1; ++t) {
-      ThreadPool::Instance().Submit([&ctx, t] {
+    ThreadPool::Instance().SubmitBatch(num_batches - 1, [&ctx](const size_t t) {
+      return [&ctx, t] {
         const auto [begin, end] = ctx.batches[t];
         if (begin < end) {
           ctx.self->ProcessChunks(ctx.work, begin, end, ctx.func);
         }
         ctx.barrier.Signal();
-      });
-    }
+      };
+    });
 
     const auto [inline_begin, inline_end] = batches[num_batches - 1];
     std::exception_ptr inline_exception = nullptr;

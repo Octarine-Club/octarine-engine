@@ -23,6 +23,18 @@ class ThreadPool {
 
   [[nodiscard]] size_t Size() const { return workers_.size(); }
 
+  void NoteAsyncWorkerOccupied() { occupied_async_workers_.fetch_add(1, std::memory_order_relaxed); }
+  void NoteAsyncWorkerReleased() {
+    size_t cur = occupied_async_workers_.load(std::memory_order_relaxed);
+    while (cur > 0 && !occupied_async_workers_.compare_exchange_weak(cur, cur - 1, std::memory_order_relaxed)) {
+    }
+  }
+  [[nodiscard]] size_t AvailableConcurrency() const {
+    const size_t total = workers_.size();
+    const size_t occupied = occupied_async_workers_.load(std::memory_order_relaxed);
+    return total > occupied ? std::max<size_t>(1, total - occupied) : 1;
+  }
+
   // Deterministic simulation switch. When enabled, ParallelChunks and ECS ParallelForEach run
   // serially on the calling thread so work-stealing order and floating-point accumulation order
   // are identical across runs (required for seeded bot replays / paired A/B experiments).
@@ -35,7 +47,7 @@ class ThreadPool {
   static void ParallelChunks(size_t count, Fn&& fn) {
     if (count == 0) return;
 
-    const size_t numBatches = IsForceSerial() ? 1 : std::min(count, Instance().Size());
+    const size_t numBatches = IsForceSerial() ? 1 : std::min(count, Instance().AvailableConcurrency());
     if (numBatches <= 1) {
       fn(static_cast<size_t>(0), static_cast<size_t>(0), count);
       return;
@@ -65,14 +77,14 @@ class ThreadPool {
       size_t per{0};
     } ctx{fn, barrier, count, per};
 
-    for (size_t b = 0; b < numBatches - 1; ++b) {
-      Instance().Submit([&ctx, b] {
+    Instance().SubmitBatch(numBatches - 1, [&ctx](const size_t b) {
+      return [&ctx, b] {
         const size_t begin = b * ctx.per;
         const size_t end = std::min(begin + ctx.per, ctx.count);
         ctx.fn(b, begin, end);
         ctx.barrier.Signal();
-      });
-    }
+      };
+    });
 
     // Caller runs the final batch inline rather than sitting idle, then waits for the dispatched
     // ones. The barrier count equals the number of Submits regardless of whether any range is
@@ -87,21 +99,27 @@ class ThreadPool {
   void Submit(std::function<void()> task) {
     {
       std::lock_guard<std::mutex> lk(jobs_mutex_);
-      if (count_ == jobs_.size()) {
-        const size_t oldSize = jobs_.size();
-        const size_t newSize = oldSize * 2;
-        std::vector<std::function<void()>> newJobs(newSize);
-        for (size_t i = 0; i < count_; ++i) {
-          newJobs[i] = std::move(jobs_[(head_ + i) % oldSize]);
-        }
-        jobs_ = std::move(newJobs);
-        head_ = 0;
-      }
-      const size_t tail = (head_ + count_) % jobs_.size();
-      jobs_[tail] = std::move(task);
-      ++count_;
+      EnsureCapacityLocked(1);
+      EnqueueLocked(std::move(task));
     }
     jobs_cv_.notify_one();
+  }
+
+  template <typename TaskFactory>
+  void SubmitBatch(const size_t taskCount, TaskFactory&& factory) {
+    if (taskCount == 0) return;
+    {
+      std::lock_guard<std::mutex> lk(jobs_mutex_);
+      EnsureCapacityLocked(taskCount);
+      for (size_t i = 0; i < taskCount; ++i) {
+        EnqueueLocked(factory(i));
+      }
+    }
+    if (taskCount == 1) {
+      jobs_cv_.notify_one();
+    } else {
+      jobs_cv_.notify_all();
+    }
   }
 
   ThreadPool(const ThreadPool&) = delete;
@@ -178,11 +196,33 @@ class ThreadPool {
     }
   }
 
+  void EnsureCapacityLocked(const size_t additional) {
+    if (count_ + additional <= jobs_.size()) return;
+    const size_t oldSize = jobs_.size();
+    size_t newSize = oldSize > 0 ? oldSize : 128;
+    while (newSize < count_ + additional) {
+      newSize *= 2;
+    }
+    std::vector<std::function<void()>> newJobs(newSize);
+    for (size_t i = 0; i < count_; ++i) {
+      newJobs[i] = std::move(jobs_[(head_ + i) % oldSize]);
+    }
+    jobs_ = std::move(newJobs);
+    head_ = 0;
+  }
+
+  void EnqueueLocked(std::function<void()> task) {
+    const size_t tail = (head_ + count_) % jobs_.size();
+    jobs_[tail] = std::move(task);
+    ++count_;
+  }
+
   std::vector<std::thread> workers_;
   std::vector<std::function<void()>> jobs_;
   size_t head_ = 0;
   size_t count_ = 0;
   std::mutex jobs_mutex_;
   std::condition_variable jobs_cv_;
+  std::atomic<size_t> occupied_async_workers_{0};
   bool stop_ = false;
 };

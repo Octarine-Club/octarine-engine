@@ -10,6 +10,7 @@
 #include "Components/SpriteComponent.h"
 #include "ECS/CommandBuffer.h"
 #include "ECS/Entity.h"
+#include "ECS/Query.h"
 #include "ECS/Registry.h"
 #include "Game/GameConfig.h"
 
@@ -28,20 +29,31 @@ class OffScreenDespawnSystem {
     playableAreaHeight_ = static_cast<float>(gameConfig.playableAreaHeight);
     if (playableAreaWidth_ <= 0) playableAreaWidth_ = windowWidth;
     if (playableAreaHeight_ <= 0) playableAreaHeight_ = windowHeight;
-    return true;
+
+    if (!opt_query_ || opt_query_registry_ != registry) {
+      opt_query_registry_ = registry;
+      opt_query_ = registry->CreateQuery<PositionComponent, SpriteComponent, Opt<GlobalTransformComponent>,
+                                         Opt<ScaleComponent>, Opt<CameraFollowComponent>>();
+    }
+    opt_query_->Update();
+    opt_query_->ParallelForEach([this](const Entity entity, const PositionComponent& position,
+                                       const SpriteComponent& sprite, const GlobalTransformComponent* globalTransform,
+                                       const ScaleComponent* scaleComp, const CameraFollowComponent* cameraFollow) {
+      (*this)(entity, position, sprite, globalTransform, scaleComp, cameraFollow);
+    });
+    cmd_buffer_.Playback(registry_);
+    return false;
   }
 
-  void operator()(const Entity entity, const PositionComponent& position, const SpriteComponent& sprite) const {
-    if (registry_->HasComponent<CameraFollowComponent>(entity)) return;
+  void operator()(const Entity entity, const PositionComponent& position, const SpriteComponent& sprite,
+                  const GlobalTransformComponent* globalTransform, const ScaleComponent* scaleComp,
+                  const CameraFollowComponent* cameraFollow) const {
+    if (cameraFollow != nullptr) return;
 
-    const glm::vec2 globalPos = registry_->HasComponent<GlobalTransformComponent>(entity)
-                                    ? registry_->GetComponent<GlobalTransformComponent>(entity).position
-                                    : position.value;
-    const glm::vec2 globalScale = registry_->HasComponent<GlobalTransformComponent>(entity)
-                                      ? registry_->GetComponent<GlobalTransformComponent>(entity).scale
-                                  : registry_->HasComponent<ScaleComponent>(entity)
-                                      ? registry_->GetComponent<ScaleComponent>(entity).value
-                                      : glm::vec2(1.0f, 1.0f);
+    const glm::vec2 globalPos = globalTransform != nullptr ? globalTransform->position : position.value;
+    const glm::vec2 globalScale = globalTransform != nullptr ? globalTransform->scale
+                                  : scaleComp != nullptr     ? scaleComp->value
+                                                             : glm::vec2(1.0f, 1.0f);
 
     const float extentX = sprite.width * globalScale.x;
     const float extentY = sprite.height * globalScale.y;
@@ -54,8 +66,30 @@ class OffScreenDespawnSystem {
     }
   }
 
+  void operator()(const Entity entity, const PositionComponent& position, const SpriteComponent& sprite) const {
+    const auto [archetype, chunkIdx, indexInChunk] = registry_->GetEntityLocation(entity);
+    if (!archetype) return;
+    const auto followOpt = registry_->TryComponent<CameraFollowComponent>();
+    const auto* followArr = followOpt.has_value()
+                                ? archetype->TryGetComponentArray<CameraFollowComponent>(chunkIdx, followOpt->GetId())
+                                : nullptr;
+    const auto globalOpt = registry_->TryComponent<GlobalTransformComponent>();
+    const auto* globalArr =
+        globalOpt.has_value() ? archetype->TryGetComponentArray<GlobalTransformComponent>(chunkIdx, globalOpt->GetId())
+                              : nullptr;
+    const auto scaleOpt = registry_->TryComponent<ScaleComponent>();
+    const auto* scaleArr =
+        scaleOpt.has_value() ? archetype->TryGetComponentArray<ScaleComponent>(chunkIdx, scaleOpt->GetId()) : nullptr;
+    (*this)(entity, position, sprite, globalArr ? &globalArr[indexInChunk] : nullptr,
+            scaleArr ? &scaleArr[indexInChunk] : nullptr, followArr ? &followArr[indexInChunk] : nullptr);
+  }
+
  private:
+  using OptDespawnQuery = ComponentQuery<PositionComponent, SpriteComponent, Opt<GlobalTransformComponent>,
+                                         Opt<ScaleComponent>, Opt<CameraFollowComponent>>;
   Registry* registry_ = nullptr;
+  Registry* opt_query_registry_ = nullptr;
+  std::unique_ptr<OptDespawnQuery> opt_query_;
   CommandBuffer cmd_buffer_;
   float playableAreaWidth_ = 0.0f;
   float playableAreaHeight_ = 0.0f;

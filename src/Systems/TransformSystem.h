@@ -223,6 +223,7 @@ class TransformSystem {
 
   GlobalTransform ComposeChild(const Registry* registry, const Entity child, const GlobalTransform& parentGlobal,
                                const octarine::Rotation2D parentRotation) const {
+    if (!registry->IsActive(child)) return {};
     const auto [archetype, chunkIdx, indexInChunk] = registry->GetEntityLocation(child);
     if (!archetype) return {};
     const GlobalTransform global = Compose(parentGlobal, parentRotation, LoadLocal(archetype, chunkIdx, indexInChunk));
@@ -233,12 +234,13 @@ class TransformSystem {
   // Whatever the flat pass finalised. A root with no GlobalTransformComponent was never in that
   // query, so its local stands in — otherwise a grouping node's own transform would be dropped.
   GlobalTransform LoadRootGlobal(const Registry* registry, const Entity root) const {
+    if (!registry->IsActive(root)) return {};
     const auto [archetype, chunkIdx, indexInChunk] = registry->GetEntityLocation(root);
     if (!archetype) return {};
-    if (!archetype->HasComponent(globalEntity_.GetId())) {
+    const auto* gArr = archetype->TryGetComponentArray<GlobalTransformComponent>(chunkIdx, globalEntity_.GetId());
+    if (!gArr) {
       return FromLocal(LoadLocal(archetype, chunkIdx, indexInChunk));
     }
-    const auto* gArr = archetype->GetComponentArray<GlobalTransformComponent>(chunkIdx, globalEntity_.GetId());
     const auto& g = gArr[indexInChunk];
     return {g.position, g.scale, g.rotation, g.pivot};
   }
@@ -252,18 +254,10 @@ class TransformSystem {
   // Per-entity chunk fetch: each component is independently optional, so we look up the
   // archetype's array per id and default missing slots to identity.
   LocalTransform LoadLocal(Archetype* archetype, size_t chunkIdx, size_t indexInChunk) const {
-    const auto* pArr = archetype->HasComponent(posEntity_.GetId())
-                           ? archetype->GetComponentArray<PositionComponent>(chunkIdx, posEntity_.GetId())
-                           : nullptr;
-    const auto* sArr = archetype->HasComponent(scaleEntity_.GetId())
-                           ? archetype->GetComponentArray<ScaleComponent>(chunkIdx, scaleEntity_.GetId())
-                           : nullptr;
-    const auto* rArr = archetype->HasComponent(rotEntity_.GetId())
-                           ? archetype->GetComponentArray<RotationComponent>(chunkIdx, rotEntity_.GetId())
-                           : nullptr;
-    const auto* pivotArr = archetype->HasComponent(pivotEntity_.GetId())
-                               ? archetype->GetComponentArray<PivotComponent>(chunkIdx, pivotEntity_.GetId())
-                               : nullptr;
+    const auto* pArr = archetype->TryGetComponentArray<PositionComponent>(chunkIdx, posEntity_.GetId());
+    const auto* sArr = archetype->TryGetComponentArray<ScaleComponent>(chunkIdx, scaleEntity_.GetId());
+    const auto* rArr = archetype->TryGetComponentArray<RotationComponent>(chunkIdx, rotEntity_.GetId());
+    const auto* pivotArr = archetype->TryGetComponentArray<PivotComponent>(chunkIdx, pivotEntity_.GetId());
     return {
         pArr ? pArr[indexInChunk].value : glm::vec2(0.0f, 0.0f),
         sArr ? sArr[indexInChunk].value : glm::vec2(1.0f, 1.0f),
@@ -275,17 +269,9 @@ class TransformSystem {
   // Hierarchy-path counterpart to ResolveAnchor. The flat pass gets geometry from its query; here
   // each size component costs an archetype probe, paid only by entities inside a hierarchy.
   glm::vec2 LoadAnchor(Archetype* archetype, size_t chunkIdx, size_t indexInChunk, const PivotComponent* pivot) const {
-    const auto* spriteArr = archetype->HasComponent(spriteEntity_.GetId())
-                                ? archetype->GetComponentArray<SpriteComponent>(chunkIdx, spriteEntity_.GetId())
-                                : nullptr;
-    const auto* squareArr =
-        archetype->HasComponent(squareEntity_.GetId())
-            ? archetype->GetComponentArray<SquarePrimitiveComponent>(chunkIdx, squareEntity_.GetId())
-            : nullptr;
-    const auto* colliderArr =
-        archetype->HasComponent(colliderEntity_.GetId())
-            ? archetype->GetComponentArray<BoxColliderComponent>(chunkIdx, colliderEntity_.GetId())
-            : nullptr;
+    const auto* spriteArr = archetype->TryGetComponentArray<SpriteComponent>(chunkIdx, spriteEntity_.GetId());
+    const auto* squareArr = archetype->TryGetComponentArray<SquarePrimitiveComponent>(chunkIdx, squareEntity_.GetId());
+    const auto* colliderArr = archetype->TryGetComponentArray<BoxColliderComponent>(chunkIdx, colliderEntity_.GetId());
     return ResolveAnchor(pivot, spriteArr ? &spriteArr[indexInChunk] : nullptr,
                          squareArr ? &squareArr[indexInChunk] : nullptr,
                          colliderArr ? &colliderArr[indexInChunk] : nullptr);
@@ -321,10 +307,8 @@ class TransformSystem {
 
   void WriteGlobal(Archetype* archetype, size_t chunkIdx, size_t indexInChunk, const GlobalTransform& g) const {
     // Hierarchy members are visited via the topology regardless of components, so a parented
-    // entity without a GlobalTransformComponent (e.g. a UI node) reaches here. Guard before the
-    // array fetch — GetComponentArray asserts HasComponent, it does not return null.
-    if (!archetype->HasComponent(globalEntity_.GetId())) return;
-    auto* gArray = archetype->GetComponentArray<GlobalTransformComponent>(chunkIdx, globalEntity_.GetId());
+    // entity without a GlobalTransformComponent (e.g. a UI node) reaches here.
+    auto* gArray = archetype->TryGetComponentArray<GlobalTransformComponent>(chunkIdx, globalEntity_.GetId());
     if (!gArray) return;
     auto& global = gArray[indexInChunk];
     global.position = g.position;

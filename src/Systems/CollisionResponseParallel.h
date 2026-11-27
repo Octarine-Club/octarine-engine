@@ -34,27 +34,40 @@ void RunCollisionResponse(const std::vector<std::pair<Entity, Entity>>& pairs, s
   if (count == 0) return;
 
   if (count <= threshold) {
-    std::vector<HitT> hits;
+    static thread_local std::vector<HitT> hits;
+    hits.clear();
     for (const auto& [a, b] : pairs) {
       classify(a, b, hits);
     }
     for (const HitT& hit : hits) {
       apply(hit);
     }
+    hits.clear();
     return;
   }
 
-  // Per-batch local sinks — sized to the pool width so any ParallelChunks batchIndex is in range
+  // Per-batch local sinks - sized to the pool width so any ParallelChunks batchIndex is in range
   // regardless of how the range happens to split. No locks/atomics: each batch owns one sink.
-  std::vector<std::vector<HitT>> perBatch(ThreadPool::Instance().Size());
+  // Use a function-local static owned by the calling thread (never thread_local, since worker
+  // threads access perBatch[batch] via captured reference to the caller's vector).
+  static std::vector<std::vector<HitT>> perBatch;
+  const size_t poolSize = ThreadPool::Instance().Size();
+  if (perBatch.size() < poolSize) {
+    perBatch.resize(poolSize);
+  }
+  for (size_t b = 0; b < poolSize; ++b) {
+    perBatch[b].clear();
+  }
+  std::vector<std::vector<HitT>>& batchesRef = perBatch;
   ThreadPool::ParallelChunks(count, [&](size_t batch, size_t begin, size_t end) {
-    std::vector<HitT>& sink = perBatch[batch];
+    std::vector<HitT>& sink = batchesRef[batch];
     for (size_t i = begin; i < end; ++i) {
       classify(pairs[i].first, pairs[i].second, sink);
     }
   });
 
-  for (const std::vector<HitT>& batch : perBatch) {
+  for (size_t b = 0; b < poolSize; ++b) {
+    const std::vector<HitT>& batch = perBatch[b];
     for (const HitT& hit : batch) {
       apply(hit);
     }

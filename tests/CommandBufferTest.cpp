@@ -200,6 +200,60 @@ void TestConcurrentRecording() {
   registry.ValidateInvariants();
 }
 
+void TestDeterministicPlaybackOrderAndClearCaptures() {
+  // Verify that out-of-order (reverse entity ID) recording plays back sorted by (EntityID, sequence)
+  // and that Channel::Clear() releases captured shared_ptr payloads when Clear() is called without Playback().
+  Registry regA;
+  Registry regB;
+  CommandBuffer cmdA(16);
+  CommandBuffer cmdB(16);
+
+  std::vector<Entity> entsA;
+  std::vector<Entity> entsB;
+  for (int i = 0; i < 8; ++i) {
+    entsA.push_back(regA.CreateEntity());
+    entsB.push_back(regB.CreateEntity());
+  }
+
+  // Record in forward order into cmdA and reverse order into cmdB
+  for (size_t i = 0; i < entsA.size(); ++i) {
+    cmdA.AddComponent(entsA[i], Position{1.0f, 0.0f});
+    cmdA.AddComponent(entsA[i], Position{2.0f, 0.0f});  // sequence 2 overwrites sequence 1 for same entity
+    cmdA.EmplaceDespawn(entsA[i]);
+  }
+  for (size_t i = entsB.size(); i > 0; --i) {
+    const size_t idx = i - 1;
+    cmdB.AddComponent(entsB[idx], Position{1.0f, 0.0f});
+    cmdB.AddComponent(entsB[idx], Position{2.0f, 0.0f});
+    cmdB.EmplaceDespawn(entsB[idx]);
+  }
+
+  cmdA.Playback(&regA);
+  cmdB.Playback(&regB);
+  for (size_t i = 0; i < entsA.size(); ++i) {
+    CheckEq(regA.GetComponent<Position>(entsA[i]).x, 2.0f, "same-entity op sequence preserved in forward record");
+    CheckEq(regB.GetComponent<Position>(entsB[i]).x, 2.0f, "same-entity op sequence preserved in reverse record");
+  }
+  regA.Update(0.0f);
+  regB.Update(0.0f);
+
+  // Next created entity IDs must match because despawns were replayed in identical deterministic EntityID order
+  const Entity nextA = regA.CreateEntity();
+  const Entity nextB = regB.CreateEntity();
+  CheckEq(nextA.id, nextB.id, "deterministic CommandBuffer despawn order yields identical recycled entity IDs");
+
+  // Verify Clear() releases std::function captures in buffer
+  struct SharedPayload {
+    std::shared_ptr<int> token;
+  };
+  auto token = std::make_shared<int>(99);
+  const Entity live = regA.CreateEntity();
+  cmdA.AddComponent(live, SharedPayload{token});
+  Check(token.use_count() > 1, "token captured inside CommandBuffer deferred channel");
+  cmdA.Clear();
+  CheckEq(token.use_count(), 1L, "CommandBuffer::Clear releases captured std::function payloads in buffer");
+}
+
 }  // namespace
 
 int main() {
@@ -208,5 +262,6 @@ int main() {
   TestDuplicateDestruction();
   TestStaleHandleSafety();
   TestConcurrentRecording();
+  TestDeterministicPlaybackOrderAndClearCaptures();
   return octarine::test::ReportSummary("OctarineCommandBufferTest");
 }

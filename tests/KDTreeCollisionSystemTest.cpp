@@ -532,5 +532,45 @@ int main() {
             "async active-mask pre-scan: zero seekers yields zero submitted boxes");
   }
 
+  // --- Multi-sub-step (simSubSteps > 1) forces synchronous detection so sub-steps are never dropped.
+  {
+    Registry reg;
+    auto bus = std::make_unique<EventBus>();
+    GameConfig cfg;
+    cfg.GetEngineOptions().simSubSteps = 4;
+    reg.Set<GameConfig>(cfg);
+    EngineContext ctx;
+    ctx.eventBus = bus.get();
+    ctx.config = &reg.Get<GameConfig>();
+    reg.Set<EngineContext>(ctx);
+
+    CollisionCapture cap;
+    cap.subscription = bus->SubscribeEvent<CollisionCapture, CollisionBatchEvent>(&cap, &CollisionCapture::OnBatch);
+
+    // Configured asynchronous (synchronous = false), but simSubSteps = 4 > 1
+    auto collision = reg.RegisterBulkSystem(KDTreeCollisionSystem(false));
+
+    const Entity e1 = reg.CreateEntity();
+    reg.AddComponent(e1, GlobalTransformComponent{glm::vec2(0.0f, 0.0f), glm::vec2(1.0f, 1.0f), 0.0f});
+    reg.AddComponent(e1, BoxColliderComponent{32, 32});
+    reg.AddComponent(e1, EntityMaskComponent{});
+
+    const Entity e2 = reg.CreateEntity();
+    reg.AddComponent(e2, GlobalTransformComponent{glm::vec2(100.0f, 0.0f), glm::vec2(1.0f, 1.0f), 0.0f});
+    reg.AddComponent(e2, BoxColliderComponent{32, 32});
+    reg.AddComponent(e2, EntityMaskComponent{});
+
+    // Sub-step 0: disjoint; Sub-step 1: move e2 to overlap e1; Sub-step 2: move e2 past e1.
+    // Without synchronous sub-step enforcement, sub-step 1 would see in_flight and skip detection!
+    reg.Update(1.0f / 60.0f);  // sub-step 0
+    reg.GetComponent<GlobalTransformComponent>(e2).position = glm::vec2(8.0f, 0.0f);
+    reg.Update(1.0f / 60.0f);  // sub-step 1: must detect overlap synchronously in same step
+    reg.GetComponent<GlobalTransformComponent>(e2).position = glm::vec2(200.0f, 0.0f);
+    reg.Update(1.0f / 60.0f);  // sub-step 2
+
+    CheckEq(cap.TotalPairs(), 1, "simSubSteps > 1 detects transient sub-step overlap without dropping sub-steps");
+    Check(cap.Contains(e1, e2), "simSubSteps > 1 emitted transient (e1, e2) overlap");
+  }
+
   return octarine::test::Result();
 }

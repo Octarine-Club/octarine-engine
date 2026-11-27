@@ -51,7 +51,7 @@
 
 namespace {
 // Portable env read. MSVC deprecates std::getenv (C4996) and the build treats warnings as errors,
-// so use _dupenv_s there — mirrors the split in Lua/LuaApiManifest.cpp. Returns "" when unset.
+// so use _dupenv_s there - mirrors the split in Lua/LuaApiManifest.cpp. Returns "" when unset.
 std::string GetEnvVar(const char* name) {
 #ifdef _MSC_VER
   char* value = nullptr;
@@ -528,6 +528,8 @@ void FrameLoop::PollHotReload([[maybe_unused]] const EngineOptions& options, [[m
 #endif
 }
 
+#include "Systems/KDTreeCollisionSystem.h"
+
 int FrameLoop::ExecuteSimulationSteps(const float deltaTime, EngineOptions& options, InputSystem* inputSystem) {
   if (options.isPaused && !options.stepFrame) {
     MaybeRenderPausedUiPreview(registry_);
@@ -539,6 +541,9 @@ int FrameLoop::ExecuteSimulationSteps(const float deltaTime, EngineOptions& opti
   // whenever a fixed step is in effect — fast-forward is expressed through simSubSteps instead.
   constexpr float kDefaultFixedStepDt = 1.0F / 60.0F;
   const int subSteps = std::max(1, options.simSubSteps);
+  if (auto* collisionPtr = registry_->TryGet<KDTreeCollisionSystem*>(); collisionPtr && *collisionPtr) {
+    (*collisionPtr)->SetActiveSubSteps(subSteps);
+  }
   float stepDt = deltaTime * options.timeScale;
   if (options.fixedStepDt > 0.0F) {
     stepDt = options.fixedStepDt;
