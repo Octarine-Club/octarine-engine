@@ -36,9 +36,10 @@ void TestScriptHotReloadWorkflow() {
     return M
   )LUA");
 
-  Registry registry;
+  // Declare sol::state before Registry so ECS ScriptComponent Lua refs unwind while lua_State* is live.
   sol::state lua;
   lua.open_libraries(sol::lib::base, sol::lib::table);
+  Registry registry;
 
   ScriptHotReload hotReload;
 

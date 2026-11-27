@@ -37,7 +37,14 @@ struct Channel {
   }
 
   void Clear() {
-    if (count.load(std::memory_order_relaxed) > buffer.size()) {
+    const size_t current = count.load(std::memory_order_relaxed);
+    const size_t inBuffer = std::min(current, buffer.size());
+    if constexpr (!std::is_trivially_destructible_v<T>) {
+      for (size_t i = 0; i < inBuffer; ++i) {
+        buffer[i] = T{};
+      }
+    }
+    if (current > buffer.size()) {
       std::lock_guard<std::mutex> lock(overflow_mutex);
       overflow_buffer.clear();
     }
@@ -51,10 +58,16 @@ class CommandBuffer {
  public:
   enum class CommandType { Blam, Despawn };
   struct EntityCommand {
-    CommandType type;
-    Entity entity;
+    CommandType type{};
+    Entity entity{};
+    uint64_t sequence{0};
   };
   using DeferredFn = std::function<void(Registry*)>;
+  struct DeferredCommand {
+    Entity entity{};
+    uint64_t sequence{0};
+    DeferredFn fn;
+  };
 
   explicit CommandBuffer(size_t capacity = Constants::kSystemCommandBufferSize)
       : state_(std::make_unique<State>(capacity)) {}
@@ -64,44 +77,54 @@ class CommandBuffer {
   CommandBuffer(const CommandBuffer&) = delete;
   CommandBuffer& operator=(const CommandBuffer&) = delete;
 
-  void EmplaceBlam(Entity entity) const { state_->commands.Emplace(EntityCommand{CommandType::Blam, entity}); }
+  void EmplaceBlam(Entity entity) const {
+    const uint64_t seq = state_->next_sequence.fetch_add(1, std::memory_order_relaxed);
+    state_->commands.Emplace(EntityCommand{CommandType::Blam, entity, seq});
+  }
 
-  void EmplaceDespawn(Entity entity) const { state_->commands.Emplace(EntityCommand{CommandType::Despawn, entity}); }
+  void EmplaceDespawn(Entity entity) const {
+    const uint64_t seq = state_->next_sequence.fetch_add(1, std::memory_order_relaxed);
+    state_->commands.Emplace(EntityCommand{CommandType::Despawn, entity, seq});
+  }
 
   template <typename T>
   void AddComponent(Entity entity, T component) const {
-    state_->deferred.Emplace([entity, c = std::move(component)](Registry* r) mutable {
-      if (r->IsAlive(entity)) {
-        r->AddComponent(entity, std::move(c));
-      }
-    });
+    const uint64_t seq = state_->next_sequence.fetch_add(1, std::memory_order_relaxed);
+    state_->deferred.Emplace(DeferredCommand{entity, seq, [entity, c = std::move(component)](Registry* r) mutable {
+                                               if (r->IsAlive(entity)) {
+                                                 r->AddComponent(entity, std::move(c));
+                                               }
+                                             }});
   }
 
   template <typename T>
   void RemoveComponent(Entity entity) const {
-    state_->deferred.Emplace([entity](Registry* r) {
-      if (r->IsAlive(entity)) {
-        r->RemoveComponent<T>(entity);
-      }
-    });
+    const uint64_t seq = state_->next_sequence.fetch_add(1, std::memory_order_relaxed);
+    state_->deferred.Emplace(DeferredCommand{entity, seq, [entity](Registry* r) {
+                                               if (r->IsAlive(entity)) {
+                                                 r->RemoveComponent<T>(entity);
+                                               }
+                                             }});
   }
 
   template <typename T>
   void AddTag(Entity entity) const {
-    state_->deferred.Emplace([entity](Registry* r) {
-      if (r->IsAlive(entity)) {
-        r->AddTag<T>(entity);
-      }
-    });
+    const uint64_t seq = state_->next_sequence.fetch_add(1, std::memory_order_relaxed);
+    state_->deferred.Emplace(DeferredCommand{entity, seq, [entity](Registry* r) {
+                                               if (r->IsAlive(entity)) {
+                                                 r->AddTag<T>(entity);
+                                               }
+                                             }});
   }
 
   template <typename T>
   void RemoveTag(Entity entity) const {
-    state_->deferred.Emplace([entity](Registry* r) {
-      if (r->IsAlive(entity)) {
-        r->RemoveTag<T>(entity);
-      }
-    });
+    const uint64_t seq = state_->next_sequence.fetch_add(1, std::memory_order_relaxed);
+    state_->deferred.Emplace(DeferredCommand{entity, seq, [entity](Registry* r) {
+                                               if (r->IsAlive(entity)) {
+                                                 r->RemoveTag<T>(entity);
+                                               }
+                                             }});
   }
 
   void Playback(Registry* registry) const;
@@ -109,12 +132,16 @@ class CommandBuffer {
   void Clear() const {
     state_->commands.Clear();
     state_->deferred.Clear();
+    state_->next_sequence.store(0, std::memory_order_relaxed);
   }
 
  private:
   struct State {
     Channel<EntityCommand> commands;
-    Channel<DeferredFn> deferred;
+    Channel<DeferredCommand> deferred;
+    std::atomic<uint64_t> next_sequence{0};
+    std::vector<EntityCommand> commands_scratch;
+    std::vector<DeferredCommand> deferred_scratch;
     explicit State(const size_t capacity) : commands(capacity), deferred(capacity) {}
   };
 

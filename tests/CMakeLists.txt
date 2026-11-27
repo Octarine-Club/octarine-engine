@@ -32,6 +32,10 @@ function(octarine_add_test TARGET CTEST_NAME)
         )
     endif ()
     add_test(NAME ${CTEST_NAME} COMMAND ${TARGET})
+    if (OCTARINE_ENABLE_COVERAGE)
+        set_tests_properties(${CTEST_NAME} PROPERTIES
+                ENVIRONMENT "LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/profraw/%p-%m.profraw")
+    endif ()
 endfunction()
 
 # Engine-spanning test helper (links octarine_engine)
@@ -41,18 +45,22 @@ function(octarine_add_engine_test TARGET CTEST_NAME SOURCE)
             LIBS octarine_engine
             ${ARGN}
     )
-    target_include_directories(${TARGET} PRIVATE "${CMAKE_SOURCE_DIR}/tests")
+    target_include_directories(${TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 endfunction()
 
 # Core ECS test helper (links octarine_core directly)
 function(octarine_add_core_test EXE_NAME CTEST_NAME SOURCE)
     add_executable(${EXE_NAME} ${SOURCE})
     target_include_directories(${EXE_NAME} PRIVATE
-            "${CMAKE_SOURCE_DIR}/src"
-            "${CMAKE_SOURCE_DIR}/libs"
-            "${CMAKE_SOURCE_DIR}/tests")
+            "${PROJECT_SOURCE_DIR}/src"
+            "${PROJECT_SOURCE_DIR}/libs"
+            "${PROJECT_SOURCE_DIR}/tests")
     target_link_libraries(${EXE_NAME} PRIVATE octarine_core)
     add_test(NAME ${CTEST_NAME} COMMAND ${EXE_NAME})
+    if (OCTARINE_ENABLE_COVERAGE)
+        set_tests_properties(${CTEST_NAME} PROPERTIES
+                ENVIRONMENT "LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/profraw/%p-%m.profraw")
+    endif ()
 endfunction()
 
 # -----------------------------------------------------------------------------
@@ -125,8 +133,73 @@ octarine_add_engine_test(OctarineAssetStoreTest AssetStoreTest AssetStoreTest.cp
 
 octarine_add_test(OctarineAssetRefcounterTest AssetRefcounterTest
         SOURCES AssetRefcounterTest.cpp
-        INCLUDES "${CMAKE_SOURCE_DIR}/src"
+        INCLUDES "${PROJECT_SOURCE_DIR}/src"
 )
+
+# Dedicated shipped-semantics asset layer (OCTARINE_SHIPPED=ON, OCTARINE_ALLOW_LOOSE_ASSETS=OFF)
+# so ShippedPakSmokeTest exercises the exact shipped OpenAssetIO / AssetCatalog / DecryptLuaBytes
+# branches even when ctest runs under the player-debug or asan-ubsan presets.
+# Compiles the required octarine_core sources with OCTARINE_SHIPPED directly instead of linking
+# non-shipped octarine_core, avoiding ODR collisions (e.g., MSVC LNK2005 on Logger::Info).
+set(_octarine_shipped_test_sources
+        "${PROJECT_SOURCE_DIR}/src/AssetManager/AssetCatalog.cpp"
+        "${PROJECT_SOURCE_DIR}/src/AssetManager/AssetManager.cpp"
+        "${PROJECT_SOURCE_DIR}/src/AssetManager/AssetPak.cpp"
+        "${PROJECT_SOURCE_DIR}/src/AssetManager/AudioClipStore.cpp"
+        "${PROJECT_SOURCE_DIR}/src/AssetManager/FontStore.cpp"
+        "${PROJECT_SOURCE_DIR}/src/AssetManager/GlyphAtlas.cpp"
+        "${PROJECT_SOURCE_DIR}/src/AssetManager/TextureStore.cpp"
+        "${PROJECT_SOURCE_DIR}/src/Game/GameConfig.cpp"
+        "${PROJECT_SOURCE_DIR}/src/General/IniParser.cpp"
+        "${PROJECT_SOURCE_DIR}/src/General/Logger.cpp"
+        "${PROJECT_SOURCE_DIR}/src/General/LuaEscape.cpp"
+)
+if (UNIX AND NOT APPLE AND NOT ANDROID)
+    list(APPEND _octarine_shipped_test_sources "${PROJECT_SOURCE_DIR}/src/General/SDL3_Linux_Stubs.cpp")
+endif ()
+add_library(octarine_assets_shipped_test STATIC ${_octarine_shipped_test_sources})
+set_source_files_properties("${PROJECT_SOURCE_DIR}/src/AssetManager/GlyphAtlas.cpp" PROPERTIES
+        COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>"
+        SKIP_PRECOMPILE_HEADERS ON)
+target_include_directories(octarine_assets_shipped_test PUBLIC
+        "${PROJECT_SOURCE_DIR}/src"
+        "${PROJECT_SOURCE_DIR}/libs"
+)
+target_include_directories(octarine_assets_shipped_test PRIVATE "${PROJECT_SOURCE_DIR}/libs/stb")
+target_compile_definitions(octarine_assets_shipped_test PUBLIC
+        GLM_FORCE_INTRINSICS
+        SOL_NO_CHECK_NUMBER_PRECISION=1
+        OCTARINE_SHIPPED
+        OCTARINE_PROTECT_SCRIPTS
+)
+if (OCTARINE_PACKAGE_KEY)
+    target_compile_definitions(octarine_assets_shipped_test PRIVATE
+            OCTARINE_PACKAGE_KEY="${OCTARINE_PACKAGE_KEY}")
+endif ()
+if (MSVC)
+    target_compile_options(octarine_assets_shipped_test PUBLIC /UOCTARINE_ALLOW_LOOSE_ASSETS)
+else ()
+    target_compile_options(octarine_assets_shipped_test PUBLIC -UOCTARINE_ALLOW_LOOSE_ASSETS)
+endif ()
+target_link_libraries(octarine_assets_shipped_test PUBLIC
+        glm::glm
+        SDL3::SDL3
+        sol2::sol2
+        ${LUA_LIBRARIES}
+        Threads::Threads
+        SDL3_ttf::SDL3_ttf
+        $<IF:$<TARGET_EXISTS:SDL3_mixer::SDL3_mixer>,SDL3_mixer::SDL3_mixer,SDL3_mixer::SDL3_mixer-static>
+        $<IF:$<TARGET_EXISTS:SDL3_image::SDL3_image-shared>,SDL3_image::SDL3_image-shared,SDL3_image::SDL3_image-static>
+)
+target_link_libraries(octarine_assets_shipped_test PRIVATE spdlog::spdlog)
+
+octarine_add_test(OctarineShippedPakSmokeTest ShippedPakSmokeTest
+        SOURCES ShippedPakSmokeTest.cpp
+        INCLUDES "${PROJECT_SOURCE_DIR}/src" "${PROJECT_SOURCE_DIR}/tests"
+        LIBS octarine_assets_shipped_test
+)
+
+octarine_add_engine_test(OctarineSceneSwapStressTest SceneSwapStressTest SceneSwapStressTest.cpp)
 
 # -----------------------------------------------------------------------------
 # Lua & Scripting Tests

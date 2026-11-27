@@ -2,73 +2,75 @@
 -- Introspected from the live sol::state after all bindings install.
 -- Refreshed automatically on every dev launch (types/octarine_api.lua);
 -- OCTARINE_DUMP_LUA_API=<path> overrides the destination.
+-- NOTE: registry.get_<key>(e) and registry.try_get_<key>(e) return zero-copy
+-- borrows into SoA archetype chunks; re-fetch after structural ECS mutations.
 ---@meta
 ---@diagnostic disable: lowercase-global, missing-return
 
 ---@class ImDrawFlags
----@field AAFill any
----@field AALineEnds any
----@field AALines any
----@field CapSquare any
----@field Closed any
----@field JoinMiter any
----@field None any
----@field RoundAll any
----@field RoundBottom any
----@field RoundBottomLeft any
----@field RoundBottomRight any
----@field RoundCornersAll any
----@field RoundCornersBottom any
----@field RoundCornersBottomLeft any
----@field RoundCornersBottomRight any
----@field RoundCornersLeft any
----@field RoundCornersNone any
----@field RoundCornersRight any
----@field RoundCornersTop any
----@field RoundCornersTopLeft any
----@field RoundCornersTopRight any
----@field RoundLeft any
----@field RoundNone any
----@field RoundRight any
----@field RoundTop any
----@field RoundTopLeft any
----@field RoundTopRight any
----@field StrokeCenter any
----@field StrokeCenterBiased any
----@field StrokeInside any
----@field StrokeLegacy any
----@field StrokeOutside any
----@field TextNoPixelSnap any
----@field UseTexForRoundCorners any
----@field UseVtxOffset any
+---@field AAFill integer
+---@field AALineEnds integer
+---@field AALines integer
+---@field CapSquare integer
+---@field Closed integer
+---@field JoinMiter integer
+---@field None integer
+---@field RoundAll integer
+---@field RoundBottom integer
+---@field RoundBottomLeft integer
+---@field RoundBottomRight integer
+---@field RoundCornersAll integer
+---@field RoundCornersBottom integer
+---@field RoundCornersBottomLeft integer
+---@field RoundCornersBottomRight integer
+---@field RoundCornersLeft integer
+---@field RoundCornersNone integer
+---@field RoundCornersRight integer
+---@field RoundCornersTop integer
+---@field RoundCornersTopLeft integer
+---@field RoundCornersTopRight integer
+---@field RoundLeft integer
+---@field RoundNone integer
+---@field RoundRight integer
+---@field RoundTop integer
+---@field RoundTopLeft integer
+---@field RoundTopRight integer
+---@field StrokeCenter integer
+---@field StrokeCenterBiased integer
+---@field StrokeInside integer
+---@field StrokeLegacy integer
+---@field StrokeOutside integer
+---@field TextNoPixelSnap integer
+---@field UseTexForRoundCorners integer
+---@field UseVtxOffset integer
 ImDrawFlags = {}
 
 
 ---@class ImDrawListFlags
----@field AllowVtxOffset any
----@field AntiAliasedFill any
----@field AntiAliasedLines any
----@field AntiAliasedLinesUseTex any
----@field None any
----@field TextNoPixelSnap any
+---@field AllowVtxOffset integer
+---@field AntiAliasedFill integer
+---@field AntiAliasedLines integer
+---@field AntiAliasedLinesUseTex integer
+---@field None integer
+---@field TextNoPixelSnap integer
 ImDrawListFlags = {}
 
 
 ---@class ImFontAtlasFlags
----@field NoBakedLines any
----@field NoBakedRoundCorners any
----@field NoMouseCursors any
----@field NoPowerOfTwoHeight any
----@field None any
+---@field NoBakedLines integer
+---@field NoBakedRoundCorners integer
+---@field NoMouseCursors integer
+---@field NoPowerOfTwoHeight integer
+---@field None integer
 ImFontAtlasFlags = {}
 
 
 ---@class ImFontFlags
----@field ImplicitRefSize any
----@field LockBakedSizes any
----@field NoLoadError any
----@field NoLoadGlyphs any
----@field None any
+---@field ImplicitRefSize integer
+---@field LockBakedSizes integer
+---@field NoLoadError integer
+---@field NoLoadGlyphs integer
+---@field None integer
 ImFontFlags = {}
 
 
@@ -689,826 +691,826 @@ function ImGui.VSliderInt(...) end
 
 
 ---@class ImGuiBackendFlags
----@field HasGamepad any
----@field HasMouseCursors any
----@field HasSetMousePos any
----@field None any
----@field RendererHasTextures any
----@field RendererHasVtxOffset any
+---@field HasGamepad integer
+---@field HasMouseCursors integer
+---@field HasSetMousePos integer
+---@field None integer
+---@field RendererHasTextures integer
+---@field RendererHasVtxOffset integer
 ImGuiBackendFlags = {}
 
 
 ---@class ImGuiButtonFlags
----@field AllowOverlap any
----@field EnableNav any
----@field MouseButtonLeft any
----@field MouseButtonMiddle any
----@field MouseButtonRight any
----@field None any
+---@field AllowOverlap integer
+---@field EnableNav integer
+---@field MouseButtonLeft integer
+---@field MouseButtonMiddle integer
+---@field MouseButtonRight integer
+---@field None integer
 ImGuiButtonFlags = {}
 
 
 ---@class ImGuiChildFlags
----@field AlwaysAutoResize any
----@field AlwaysUseWindowPadding any
----@field AutoResizeX any
----@field AutoResizeY any
----@field Borders any
----@field FrameStyle any
----@field NavFlattened any
----@field None any
----@field ResizeX any
----@field ResizeY any
+---@field AlwaysAutoResize integer
+---@field AlwaysUseWindowPadding integer
+---@field AutoResizeX integer
+---@field AutoResizeY integer
+---@field Borders integer
+---@field FrameStyle integer
+---@field NavFlattened integer
+---@field None integer
+---@field ResizeX integer
+---@field ResizeY integer
 ImGuiChildFlags = {}
 
 
 ---@class ImGuiCol
----@field Border any
----@field BorderShadow any
----@field Button any
----@field ButtonActive any
----@field ButtonHovered any
----@field COUNT any
----@field CheckMark any
----@field CheckboxSelectedBg any
----@field ChildBg any
----@field DragDropTarget any
----@field DragDropTargetBg any
----@field FrameBg any
----@field FrameBgActive any
----@field FrameBgHovered any
----@field Header any
----@field HeaderActive any
----@field HeaderHovered any
----@field InputTextCursor any
----@field MenuBarBg any
----@field ModalWindowDimBg any
----@field NavCursor any
----@field NavHighlight any
----@field NavWindowingDimBg any
----@field NavWindowingHighlight any
----@field PlotHistogram any
----@field PlotHistogramHovered any
----@field PlotLines any
----@field PlotLinesHovered any
----@field PopupBg any
----@field ResizeGrip any
----@field ResizeGripActive any
----@field ResizeGripHovered any
----@field ScrollbarBg any
----@field ScrollbarGrab any
----@field ScrollbarGrabActive any
----@field ScrollbarGrabHovered any
----@field Separator any
----@field SeparatorActive any
----@field SeparatorHovered any
----@field SliderGrab any
----@field SliderGrabActive any
----@field Tab any
----@field TabActive any
----@field TabDimmed any
----@field TabDimmedSelected any
----@field TabDimmedSelectedOverline any
----@field TabHovered any
----@field TabSelected any
----@field TabSelectedOverline any
----@field TabUnfocused any
----@field TabUnfocusedActive any
----@field TableBorderLight any
----@field TableBorderStrong any
----@field TableHeaderBg any
----@field TableRowBg any
----@field TableRowBgAlt any
----@field Text any
----@field TextDisabled any
----@field TextLink any
----@field TextSelectedBg any
----@field TitleBg any
----@field TitleBgActive any
----@field TitleBgCollapsed any
----@field TreeLines any
----@field UnsavedMarker any
----@field WindowBg any
+---@field Border integer
+---@field BorderShadow integer
+---@field Button integer
+---@field ButtonActive integer
+---@field ButtonHovered integer
+---@field COUNT integer
+---@field CheckMark integer
+---@field CheckboxSelectedBg integer
+---@field ChildBg integer
+---@field DragDropTarget integer
+---@field DragDropTargetBg integer
+---@field FrameBg integer
+---@field FrameBgActive integer
+---@field FrameBgHovered integer
+---@field Header integer
+---@field HeaderActive integer
+---@field HeaderHovered integer
+---@field InputTextCursor integer
+---@field MenuBarBg integer
+---@field ModalWindowDimBg integer
+---@field NavCursor integer
+---@field NavHighlight integer
+---@field NavWindowingDimBg integer
+---@field NavWindowingHighlight integer
+---@field PlotHistogram integer
+---@field PlotHistogramHovered integer
+---@field PlotLines integer
+---@field PlotLinesHovered integer
+---@field PopupBg integer
+---@field ResizeGrip integer
+---@field ResizeGripActive integer
+---@field ResizeGripHovered integer
+---@field ScrollbarBg integer
+---@field ScrollbarGrab integer
+---@field ScrollbarGrabActive integer
+---@field ScrollbarGrabHovered integer
+---@field Separator integer
+---@field SeparatorActive integer
+---@field SeparatorHovered integer
+---@field SliderGrab integer
+---@field SliderGrabActive integer
+---@field Tab integer
+---@field TabActive integer
+---@field TabDimmed integer
+---@field TabDimmedSelected integer
+---@field TabDimmedSelectedOverline integer
+---@field TabHovered integer
+---@field TabSelected integer
+---@field TabSelectedOverline integer
+---@field TabUnfocused integer
+---@field TabUnfocusedActive integer
+---@field TableBorderLight integer
+---@field TableBorderStrong integer
+---@field TableHeaderBg integer
+---@field TableRowBg integer
+---@field TableRowBgAlt integer
+---@field Text integer
+---@field TextDisabled integer
+---@field TextLink integer
+---@field TextSelectedBg integer
+---@field TitleBg integer
+---@field TitleBgActive integer
+---@field TitleBgCollapsed integer
+---@field TreeLines integer
+---@field UnsavedMarker integer
+---@field WindowBg integer
 ImGuiCol = {}
 
 
 ---@class ImGuiColorEditFlags
----@field AlphaBar any
----@field AlphaNoBg any
----@field AlphaOpaque any
----@field AlphaPreview any
----@field AlphaPreviewHalf any
----@field DisplayHSV any
----@field DisplayHex any
----@field DisplayRGB any
----@field Float any
----@field HDR any
----@field InputHSV any
----@field InputRGB any
----@field NoAlpha any
----@field NoBorder any
----@field NoColorMarkers any
----@field NoDragDrop any
----@field NoInputs any
----@field NoLabel any
----@field NoOptions any
----@field NoPicker any
----@field NoSidePreview any
----@field NoSmallPreview any
----@field NoTooltip any
----@field None any
----@field PickerHueBar any
----@field PickerHueWheel any
----@field PickerNoRotate any
----@field Uint8 any
+---@field AlphaBar integer
+---@field AlphaNoBg integer
+---@field AlphaOpaque integer
+---@field AlphaPreview integer
+---@field AlphaPreviewHalf integer
+---@field DisplayHSV integer
+---@field DisplayHex integer
+---@field DisplayRGB integer
+---@field Float integer
+---@field HDR integer
+---@field InputHSV integer
+---@field InputRGB integer
+---@field NoAlpha integer
+---@field NoBorder integer
+---@field NoColorMarkers integer
+---@field NoDragDrop integer
+---@field NoInputs integer
+---@field NoLabel integer
+---@field NoOptions integer
+---@field NoPicker integer
+---@field NoSidePreview integer
+---@field NoSmallPreview integer
+---@field NoTooltip integer
+---@field None integer
+---@field PickerHueBar integer
+---@field PickerHueWheel integer
+---@field PickerNoRotate integer
+---@field Uint8 integer
 ImGuiColorEditFlags = {}
 
 
 ---@class ImGuiComboFlags
----@field HeightLarge any
----@field HeightLargest any
----@field HeightRegular any
----@field HeightSmall any
----@field NoArrowButton any
----@field NoPreview any
----@field None any
----@field PopupAlignLeft any
----@field WidthFitPreview any
+---@field HeightLarge integer
+---@field HeightLargest integer
+---@field HeightRegular integer
+---@field HeightSmall integer
+---@field NoArrowButton integer
+---@field NoPreview integer
+---@field None integer
+---@field PopupAlignLeft integer
+---@field WidthFitPreview integer
 ImGuiComboFlags = {}
 
 
 ---@class ImGuiCond
----@field Always any
----@field Appearing any
----@field FirstUseEver any
----@field None any
----@field Once any
+---@field Always integer
+---@field Appearing integer
+---@field FirstUseEver integer
+---@field None integer
+---@field Once integer
 ImGuiCond = {}
 
 
 ---@class ImGuiConfigFlags
----@field IsSRGB any
----@field IsTouchScreen any
----@field NavEnableGamepad any
----@field NavEnableKeyboard any
----@field NavEnableSetMousePos any
----@field NavNoCaptureKeyboard any
----@field NoKeyboard any
----@field NoMouse any
----@field NoMouseCursorChange any
----@field None any
+---@field IsSRGB integer
+---@field IsTouchScreen integer
+---@field NavEnableGamepad integer
+---@field NavEnableKeyboard integer
+---@field NavEnableSetMousePos integer
+---@field NavNoCaptureKeyboard integer
+---@field NoKeyboard integer
+---@field NoMouse integer
+---@field NoMouseCursorChange integer
+---@field None integer
 ImGuiConfigFlags = {}
 
 
 ---@class ImGuiDataType
----@field Bool any
----@field COUNT any
----@field Double any
----@field Float any
----@field S16 any
----@field S32 any
----@field S64 any
----@field S8 any
----@field String any
----@field U16 any
----@field U32 any
----@field U64 any
----@field U8 any
+---@field Bool integer
+---@field COUNT integer
+---@field Double integer
+---@field Float integer
+---@field S16 integer
+---@field S32 integer
+---@field S64 integer
+---@field S8 integer
+---@field String integer
+---@field U16 integer
+---@field U32 integer
+---@field U64 integer
+---@field U8 integer
 ImGuiDataType = {}
 
 
 ---@class ImGuiDir
----@field _COUNT any
----@field _Down any
----@field _Left any
----@field _None any
----@field _Right any
----@field _Up any
+---@field _COUNT integer
+---@field _Down integer
+---@field _Left integer
+---@field _None integer
+---@field _Right integer
+---@field _Up integer
 ImGuiDir = {}
 
 
 ---@class ImGuiDragDropFlags
----@field AcceptBeforeDelivery any
----@field AcceptDrawAsHovered any
----@field AcceptNoDrawDefaultRect any
----@field AcceptNoPreviewTooltip any
----@field AcceptPeekOnly any
----@field None any
----@field PayloadAutoExpire any
----@field PayloadNoCrossContext any
----@field PayloadNoCrossProcess any
----@field SourceAllowNullID any
----@field SourceExtern any
----@field SourceNoDisableHover any
----@field SourceNoHoldToOpenOthers any
----@field SourceNoPreviewTooltip any
+---@field AcceptBeforeDelivery integer
+---@field AcceptDrawAsHovered integer
+---@field AcceptNoDrawDefaultRect integer
+---@field AcceptNoPreviewTooltip integer
+---@field AcceptPeekOnly integer
+---@field None integer
+---@field PayloadAutoExpire integer
+---@field PayloadNoCrossContext integer
+---@field PayloadNoCrossProcess integer
+---@field SourceAllowNullID integer
+---@field SourceExtern integer
+---@field SourceNoDisableHover integer
+---@field SourceNoHoldToOpenOthers integer
+---@field SourceNoPreviewTooltip integer
 ImGuiDragDropFlags = {}
 
 
 ---@class ImGuiFocusedFlags
----@field AnyWindow any
----@field ChildWindows any
----@field NoPopupHierarchy any
----@field None any
----@field RootAndChildWindows any
----@field RootWindow any
+---@field AnyWindow integer
+---@field ChildWindows integer
+---@field NoPopupHierarchy integer
+---@field None integer
+---@field RootAndChildWindows integer
+---@field RootWindow integer
 ImGuiFocusedFlags = {}
 
 
 ---@class ImGuiHoveredFlags
----@field AllowWhenBlockedByActiveItem any
----@field AllowWhenBlockedByPopup any
----@field AllowWhenDisabled any
----@field AllowWhenOverlapped any
----@field AllowWhenOverlappedByItem any
----@field AllowWhenOverlappedByWindow any
----@field AnyWindow any
----@field ChildWindows any
----@field DelayNone any
----@field DelayNormal any
----@field DelayShort any
----@field ForTooltip any
----@field NoNavOverride any
----@field NoPopupHierarchy any
----@field NoSharedDelay any
----@field None any
----@field RectOnly any
----@field RootAndChildWindows any
----@field RootWindow any
----@field Stationary any
+---@field AllowWhenBlockedByActiveItem integer
+---@field AllowWhenBlockedByPopup integer
+---@field AllowWhenDisabled integer
+---@field AllowWhenOverlapped integer
+---@field AllowWhenOverlappedByItem integer
+---@field AllowWhenOverlappedByWindow integer
+---@field AnyWindow integer
+---@field ChildWindows integer
+---@field DelayNone integer
+---@field DelayNormal integer
+---@field DelayShort integer
+---@field ForTooltip integer
+---@field NoNavOverride integer
+---@field NoPopupHierarchy integer
+---@field NoSharedDelay integer
+---@field None integer
+---@field RectOnly integer
+---@field RootAndChildWindows integer
+---@field RootWindow integer
+---@field Stationary integer
 ImGuiHoveredFlags = {}
 
 
 ---@class ImGuiInputFlags
----@field None any
----@field Repeat any
----@field RouteActive any
----@field RouteAlways any
----@field RouteFocused any
----@field RouteFromRootWindow any
----@field RouteGlobal any
----@field RouteOverActive any
----@field RouteOverFocused any
----@field RouteUnlessBgFocused any
----@field Tooltip any
+---@field None integer
+---@field Repeat integer
+---@field RouteActive integer
+---@field RouteAlways integer
+---@field RouteFocused integer
+---@field RouteFromRootWindow integer
+---@field RouteGlobal integer
+---@field RouteOverActive integer
+---@field RouteOverFocused integer
+---@field RouteUnlessBgFocused integer
+---@field Tooltip integer
 ImGuiInputFlags = {}
 
 
 ---@class ImGuiInputTextFlags
----@field AllowTabInput any
----@field AlwaysOverwrite any
----@field AutoSelectAll any
----@field CallbackAlways any
----@field CallbackCharFilter any
----@field CallbackCompletion any
----@field CallbackEdit any
----@field CallbackHistory any
----@field CallbackResize any
----@field CharsDecimal any
----@field CharsHexadecimal any
----@field CharsNoBlank any
----@field CharsScientific any
----@field CharsUppercase any
----@field CtrlEnterForNewLine any
----@field DisplayEmptyRefVal any
----@field ElideLeft any
----@field EnterReturnsTrue any
----@field EscapeClearsAll any
----@field NoHorizontalScroll any
----@field NoUndoRedo any
----@field None any
----@field ParseEmptyRefVal any
----@field Password any
----@field ReadOnly any
----@field WordWrap any
+---@field AllowTabInput integer
+---@field AlwaysOverwrite integer
+---@field AutoSelectAll integer
+---@field CallbackAlways integer
+---@field CallbackCharFilter integer
+---@field CallbackCompletion integer
+---@field CallbackEdit integer
+---@field CallbackHistory integer
+---@field CallbackResize integer
+---@field CharsDecimal integer
+---@field CharsHexadecimal integer
+---@field CharsNoBlank integer
+---@field CharsScientific integer
+---@field CharsUppercase integer
+---@field CtrlEnterForNewLine integer
+---@field DisplayEmptyRefVal integer
+---@field ElideLeft integer
+---@field EnterReturnsTrue integer
+---@field EscapeClearsAll integer
+---@field NoHorizontalScroll integer
+---@field NoUndoRedo integer
+---@field None integer
+---@field ParseEmptyRefVal integer
+---@field Password integer
+---@field ReadOnly integer
+---@field WordWrap integer
 ImGuiInputTextFlags = {}
 
 
 ---@class ImGuiItemFlags
----@field AllowDuplicateId any
----@field AutoClosePopups any
----@field ButtonRepeat any
----@field Disabled any
----@field LiveEditOnInput any
----@field LiveEditOnInputScalar any
----@field LiveEditOnInputText any
----@field MixedValue any
----@field NoNav any
----@field NoNavDefaultFocus any
----@field NoTabStop any
----@field None any
+---@field AllowDuplicateId integer
+---@field AutoClosePopups integer
+---@field ButtonRepeat integer
+---@field Disabled integer
+---@field LiveEditOnInput integer
+---@field LiveEditOnInputScalar integer
+---@field LiveEditOnInputText integer
+---@field MixedValue integer
+---@field NoNav integer
+---@field NoNavDefaultFocus integer
+---@field NoTabStop integer
+---@field None integer
 ImGuiItemFlags = {}
 
 
 ---@class ImGuiKey
----@field ImGuiMod_Alt any
----@field ImGuiMod_Ctrl any
----@field ImGuiMod_None any
----@field ImGuiMod_Shift any
----@field ImGuiMod_Shortcut any
----@field ImGuiMod_Super any
----@field _0 any
----@field _1 any
----@field _2 any
----@field _3 any
----@field _4 any
----@field _5 any
----@field _6 any
----@field _7 any
----@field _8 any
----@field _9 any
----@field _A any
----@field _Apostrophe any
----@field _AppBack any
----@field _AppForward any
----@field _B any
----@field _Backslash any
----@field _Backspace any
----@field _C any
----@field _COUNT any
----@field _CapsLock any
----@field _Comma any
----@field _D any
----@field _Delete any
----@field _DownArrow any
----@field _E any
----@field _End any
----@field _Enter any
----@field _Equal any
----@field _Escape any
----@field _F any
----@field _F1 any
----@field _F10 any
----@field _F11 any
----@field _F12 any
----@field _F13 any
----@field _F14 any
----@field _F15 any
----@field _F16 any
----@field _F17 any
----@field _F18 any
----@field _F19 any
----@field _F2 any
----@field _F20 any
----@field _F21 any
----@field _F22 any
----@field _F23 any
----@field _F24 any
----@field _F3 any
----@field _F4 any
----@field _F5 any
----@field _F6 any
----@field _F7 any
----@field _F8 any
----@field _F9 any
----@field _G any
----@field _GamepadBack any
----@field _GamepadDpadDown any
----@field _GamepadDpadLeft any
----@field _GamepadDpadRight any
----@field _GamepadDpadUp any
----@field _GamepadFaceDown any
----@field _GamepadFaceLeft any
----@field _GamepadFaceRight any
----@field _GamepadFaceUp any
----@field _GamepadL1 any
----@field _GamepadL2 any
----@field _GamepadL3 any
----@field _GamepadLStickDown any
----@field _GamepadLStickLeft any
----@field _GamepadLStickRight any
----@field _GamepadLStickUp any
----@field _GamepadR1 any
----@field _GamepadR2 any
----@field _GamepadR3 any
----@field _GamepadRStickDown any
----@field _GamepadRStickLeft any
----@field _GamepadRStickRight any
----@field _GamepadRStickUp any
----@field _GamepadStart any
----@field _GraveAccent any
----@field _H any
----@field _Home any
----@field _I any
----@field _Insert any
----@field _J any
----@field _K any
----@field _Keypad0 any
----@field _Keypad1 any
----@field _Keypad2 any
----@field _Keypad3 any
----@field _Keypad4 any
----@field _Keypad5 any
----@field _Keypad6 any
----@field _Keypad7 any
----@field _Keypad8 any
----@field _Keypad9 any
----@field _KeypadAdd any
----@field _KeypadDecimal any
----@field _KeypadDivide any
----@field _KeypadEnter any
----@field _KeypadEqual any
----@field _KeypadMultiply any
----@field _KeypadSubtract any
----@field _L any
----@field _LeftAlt any
----@field _LeftArrow any
----@field _LeftBracket any
----@field _LeftCtrl any
----@field _LeftShift any
----@field _LeftSuper any
----@field _M any
----@field _Menu any
----@field _Minus any
----@field _MouseLeft any
----@field _MouseMiddle any
----@field _MouseRight any
----@field _MouseWheelX any
----@field _MouseWheelY any
----@field _MouseX1 any
----@field _MouseX2 any
----@field _N any
----@field _NamedKey_BEGIN any
----@field _None any
----@field _NumLock any
----@field _O any
----@field _Oem102 any
----@field _P any
----@field _PageDown any
----@field _PageUp any
----@field _Pause any
----@field _Period any
----@field _PrintScreen any
----@field _Q any
----@field _R any
----@field _RightAlt any
----@field _RightArrow any
----@field _RightBracket any
----@field _RightCtrl any
----@field _RightShift any
----@field _RightSuper any
----@field _S any
----@field _ScrollLock any
----@field _Semicolon any
----@field _Slash any
----@field _Space any
----@field _T any
----@field _Tab any
----@field _U any
----@field _UpArrow any
----@field _V any
----@field _W any
----@field _X any
----@field _Y any
----@field _Z any
+---@field ImGuiMod_Alt integer
+---@field ImGuiMod_Ctrl integer
+---@field ImGuiMod_None integer
+---@field ImGuiMod_Shift integer
+---@field ImGuiMod_Shortcut integer
+---@field ImGuiMod_Super integer
+---@field _0 integer
+---@field _1 integer
+---@field _2 integer
+---@field _3 integer
+---@field _4 integer
+---@field _5 integer
+---@field _6 integer
+---@field _7 integer
+---@field _8 integer
+---@field _9 integer
+---@field _A integer
+---@field _Apostrophe integer
+---@field _AppBack integer
+---@field _AppForward integer
+---@field _B integer
+---@field _Backslash integer
+---@field _Backspace integer
+---@field _C integer
+---@field _COUNT integer
+---@field _CapsLock integer
+---@field _Comma integer
+---@field _D integer
+---@field _Delete integer
+---@field _DownArrow integer
+---@field _E integer
+---@field _End integer
+---@field _Enter integer
+---@field _Equal integer
+---@field _Escape integer
+---@field _F integer
+---@field _F1 integer
+---@field _F10 integer
+---@field _F11 integer
+---@field _F12 integer
+---@field _F13 integer
+---@field _F14 integer
+---@field _F15 integer
+---@field _F16 integer
+---@field _F17 integer
+---@field _F18 integer
+---@field _F19 integer
+---@field _F2 integer
+---@field _F20 integer
+---@field _F21 integer
+---@field _F22 integer
+---@field _F23 integer
+---@field _F24 integer
+---@field _F3 integer
+---@field _F4 integer
+---@field _F5 integer
+---@field _F6 integer
+---@field _F7 integer
+---@field _F8 integer
+---@field _F9 integer
+---@field _G integer
+---@field _GamepadBack integer
+---@field _GamepadDpadDown integer
+---@field _GamepadDpadLeft integer
+---@field _GamepadDpadRight integer
+---@field _GamepadDpadUp integer
+---@field _GamepadFaceDown integer
+---@field _GamepadFaceLeft integer
+---@field _GamepadFaceRight integer
+---@field _GamepadFaceUp integer
+---@field _GamepadL1 integer
+---@field _GamepadL2 integer
+---@field _GamepadL3 integer
+---@field _GamepadLStickDown integer
+---@field _GamepadLStickLeft integer
+---@field _GamepadLStickRight integer
+---@field _GamepadLStickUp integer
+---@field _GamepadR1 integer
+---@field _GamepadR2 integer
+---@field _GamepadR3 integer
+---@field _GamepadRStickDown integer
+---@field _GamepadRStickLeft integer
+---@field _GamepadRStickRight integer
+---@field _GamepadRStickUp integer
+---@field _GamepadStart integer
+---@field _GraveAccent integer
+---@field _H integer
+---@field _Home integer
+---@field _I integer
+---@field _Insert integer
+---@field _J integer
+---@field _K integer
+---@field _Keypad0 integer
+---@field _Keypad1 integer
+---@field _Keypad2 integer
+---@field _Keypad3 integer
+---@field _Keypad4 integer
+---@field _Keypad5 integer
+---@field _Keypad6 integer
+---@field _Keypad7 integer
+---@field _Keypad8 integer
+---@field _Keypad9 integer
+---@field _KeypadAdd integer
+---@field _KeypadDecimal integer
+---@field _KeypadDivide integer
+---@field _KeypadEnter integer
+---@field _KeypadEqual integer
+---@field _KeypadMultiply integer
+---@field _KeypadSubtract integer
+---@field _L integer
+---@field _LeftAlt integer
+---@field _LeftArrow integer
+---@field _LeftBracket integer
+---@field _LeftCtrl integer
+---@field _LeftShift integer
+---@field _LeftSuper integer
+---@field _M integer
+---@field _Menu integer
+---@field _Minus integer
+---@field _MouseLeft integer
+---@field _MouseMiddle integer
+---@field _MouseRight integer
+---@field _MouseWheelX integer
+---@field _MouseWheelY integer
+---@field _MouseX1 integer
+---@field _MouseX2 integer
+---@field _N integer
+---@field _NamedKey_BEGIN integer
+---@field _None integer
+---@field _NumLock integer
+---@field _O integer
+---@field _Oem102 integer
+---@field _P integer
+---@field _PageDown integer
+---@field _PageUp integer
+---@field _Pause integer
+---@field _Period integer
+---@field _PrintScreen integer
+---@field _Q integer
+---@field _R integer
+---@field _RightAlt integer
+---@field _RightArrow integer
+---@field _RightBracket integer
+---@field _RightCtrl integer
+---@field _RightShift integer
+---@field _RightSuper integer
+---@field _S integer
+---@field _ScrollLock integer
+---@field _Semicolon integer
+---@field _Slash integer
+---@field _Space integer
+---@field _T integer
+---@field _Tab integer
+---@field _U integer
+---@field _UpArrow integer
+---@field _V integer
+---@field _W integer
+---@field _X integer
+---@field _Y integer
+---@field _Z integer
 ImGuiKey = {}
 
 
 ---@class ImGuiListClipperFlags
----@field NoSetTableRowCounters any
----@field None any
+---@field NoSetTableRowCounters integer
+---@field None integer
 ImGuiListClipperFlags = {}
 
 
 ---@class ImGuiMouseButton
----@field COUNT any
----@field Left any
----@field Middle any
----@field Right any
+---@field COUNT integer
+---@field Left integer
+---@field Middle integer
+---@field Right integer
 ImGuiMouseButton = {}
 
 
 ---@class ImGuiMouseCursor
----@field Arrow any
----@field COUNT any
----@field Hand any
----@field None any
----@field NotAllowed any
----@field Progress any
----@field ResizeAll any
----@field ResizeEW any
----@field ResizeNESW any
----@field ResizeNS any
----@field ResizeNWSE any
----@field TextInput any
----@field Wait any
+---@field Arrow integer
+---@field COUNT integer
+---@field Hand integer
+---@field None integer
+---@field NotAllowed integer
+---@field Progress integer
+---@field ResizeAll integer
+---@field ResizeEW integer
+---@field ResizeNESW integer
+---@field ResizeNS integer
+---@field ResizeNWSE integer
+---@field TextInput integer
+---@field Wait integer
 ImGuiMouseCursor = {}
 
 
 ---@class ImGuiMouseSource
----@field _COUNT any
----@field _Mouse any
----@field _Pen any
----@field _TouchScreen any
+---@field _COUNT integer
+---@field _Mouse integer
+---@field _Pen integer
+---@field _TouchScreen integer
 ImGuiMouseSource = {}
 
 
 ---@class ImGuiMultiSelectFlags
----@field BoxSelect1d any
----@field BoxSelect2d any
----@field BoxSelectNoScroll any
----@field ClearOnClickVoid any
----@field ClearOnEscape any
----@field NavWrapX any
----@field NoAutoClear any
----@field NoAutoClearOnReselect any
----@field NoAutoSelect any
----@field NoRangeSelect any
----@field NoSelectAll any
----@field NoSelectOnRightClick any
----@field None any
----@field ScopeRect any
----@field ScopeWindow any
----@field SelectOnAuto any
----@field SelectOnClick any
----@field SelectOnClickAlways any
----@field SelectOnClickRelease any
----@field SingleSelect any
+---@field BoxSelect1d integer
+---@field BoxSelect2d integer
+---@field BoxSelectNoScroll integer
+---@field ClearOnClickVoid integer
+---@field ClearOnEscape integer
+---@field NavWrapX integer
+---@field NoAutoClear integer
+---@field NoAutoClearOnReselect integer
+---@field NoAutoSelect integer
+---@field NoRangeSelect integer
+---@field NoSelectAll integer
+---@field NoSelectOnRightClick integer
+---@field None integer
+---@field ScopeRect integer
+---@field ScopeWindow integer
+---@field SelectOnAuto integer
+---@field SelectOnClick integer
+---@field SelectOnClickAlways integer
+---@field SelectOnClickRelease integer
+---@field SingleSelect integer
 ImGuiMultiSelectFlags = {}
 
 
 ---@class ImGuiPopupFlags
----@field AnyPopup any
----@field AnyPopupId any
----@field AnyPopupLevel any
----@field MouseButtonLeft any
----@field MouseButtonMiddle any
----@field MouseButtonRight any
----@field NoOpenOverExistingPopup any
----@field NoOpenOverItems any
----@field NoReopen any
----@field None any
+---@field AnyPopup integer
+---@field AnyPopupId integer
+---@field AnyPopupLevel integer
+---@field MouseButtonLeft integer
+---@field MouseButtonMiddle integer
+---@field MouseButtonRight integer
+---@field NoOpenOverExistingPopup integer
+---@field NoOpenOverItems integer
+---@field NoReopen integer
+---@field None integer
 ImGuiPopupFlags = {}
 
 
 ---@class ImGuiSelectableFlags
----@field AllowDoubleClick any
----@field AllowOverlap any
----@field Disabled any
----@field DontClosePopups any
----@field Highlight any
----@field NoAutoClosePopups any
----@field None any
----@field SelectOnNav any
----@field SpanAllColumns any
+---@field AllowDoubleClick integer
+---@field AllowOverlap integer
+---@field Disabled integer
+---@field DontClosePopups integer
+---@field Highlight integer
+---@field NoAutoClosePopups integer
+---@field None integer
+---@field SelectOnNav integer
+---@field SpanAllColumns integer
 ImGuiSelectableFlags = {}
 
 
 ---@class ImGuiSelectionRequestType
----@field _None any
----@field _SetAll any
----@field _SetRange any
+---@field _None integer
+---@field _SetAll integer
+---@field _SetRange integer
 ImGuiSelectionRequestType = {}
 
 
 ---@class ImGuiSliderFlags
----@field AlwaysClamp any
----@field ClampOnInput any
----@field ClampZeroRange any
----@field ColorMarkers any
----@field Logarithmic any
----@field NoInput any
----@field NoRoundToFormat any
----@field NoSpeedTweaks any
----@field None any
----@field WrapAround any
+---@field AlwaysClamp integer
+---@field ClampOnInput integer
+---@field ClampZeroRange integer
+---@field ColorMarkers integer
+---@field Logarithmic integer
+---@field NoInput integer
+---@field NoRoundToFormat integer
+---@field NoSpeedTweaks integer
+---@field None integer
+---@field WrapAround integer
 ImGuiSliderFlags = {}
 
 
 ---@class ImGuiSortDirection
----@field _Ascending any
----@field _Descending any
----@field _None any
+---@field _Ascending integer
+---@field _Descending integer
+---@field _None integer
 ImGuiSortDirection = {}
 
 
 ---@class ImGuiStyleVar
----@field Alpha any
----@field ButtonTextAlign any
----@field COUNT any
----@field CellPadding any
----@field ChildBorderSize any
----@field ChildRounding any
----@field DisabledAlpha any
----@field DragDropTargetRounding any
----@field FrameBorderSize any
----@field FramePadding any
----@field FrameRounding any
----@field GrabMinSize any
----@field GrabRounding any
----@field ImageBorderSize any
----@field ImageRounding any
----@field IndentSpacing any
----@field ItemInnerSpacing any
----@field ItemSpacing any
----@field MenuItemRounding any
----@field PopupBorderSize any
----@field PopupRounding any
----@field ScrollbarPadding any
----@field ScrollbarRounding any
----@field ScrollbarSize any
----@field SelectableRounding any
----@field SelectableTextAlign any
----@field SeparatorSize any
----@field SeparatorTextAlign any
----@field SeparatorTextBorderSize any
----@field SeparatorTextPadding any
----@field TabBarBorderSize any
----@field TabBarOverlineSize any
----@field TabBorderSize any
----@field TabMinWidthBase any
----@field TabMinWidthShrink any
----@field TabRounding any
----@field TableAngledHeadersAngle any
----@field TableAngledHeadersTextAlign any
----@field TreeLinesRounding any
----@field TreeLinesSize any
----@field WindowBorderSize any
----@field WindowMinSize any
----@field WindowPadding any
----@field WindowRounding any
----@field WindowTitleAlign any
+---@field Alpha integer
+---@field ButtonTextAlign integer
+---@field COUNT integer
+---@field CellPadding integer
+---@field ChildBorderSize integer
+---@field ChildRounding integer
+---@field DisabledAlpha integer
+---@field DragDropTargetRounding integer
+---@field FrameBorderSize integer
+---@field FramePadding integer
+---@field FrameRounding integer
+---@field GrabMinSize integer
+---@field GrabRounding integer
+---@field ImageBorderSize integer
+---@field ImageRounding integer
+---@field IndentSpacing integer
+---@field ItemInnerSpacing integer
+---@field ItemSpacing integer
+---@field MenuItemRounding integer
+---@field PopupBorderSize integer
+---@field PopupRounding integer
+---@field ScrollbarPadding integer
+---@field ScrollbarRounding integer
+---@field ScrollbarSize integer
+---@field SelectableRounding integer
+---@field SelectableTextAlign integer
+---@field SeparatorSize integer
+---@field SeparatorTextAlign integer
+---@field SeparatorTextBorderSize integer
+---@field SeparatorTextPadding integer
+---@field TabBarBorderSize integer
+---@field TabBarOverlineSize integer
+---@field TabBorderSize integer
+---@field TabMinWidthBase integer
+---@field TabMinWidthShrink integer
+---@field TabRounding integer
+---@field TableAngledHeadersAngle integer
+---@field TableAngledHeadersTextAlign integer
+---@field TreeLinesRounding integer
+---@field TreeLinesSize integer
+---@field WindowBorderSize integer
+---@field WindowMinSize integer
+---@field WindowPadding integer
+---@field WindowRounding integer
+---@field WindowTitleAlign integer
 ImGuiStyleVar = {}
 
 
 ---@class ImGuiTabBarFlags
----@field AutoSelectNewTabs any
----@field DrawSelectedOverline any
----@field FittingPolicyMixed any
----@field FittingPolicyResizeDown any
----@field FittingPolicyScroll any
----@field FittingPolicyShrink any
----@field NoCloseWithMiddleMouseButton any
----@field NoTabListScrollingButtons any
----@field NoTooltip any
----@field None any
----@field Reorderable any
----@field TabListPopupButton any
+---@field AutoSelectNewTabs integer
+---@field DrawSelectedOverline integer
+---@field FittingPolicyMixed integer
+---@field FittingPolicyResizeDown integer
+---@field FittingPolicyScroll integer
+---@field FittingPolicyShrink integer
+---@field NoCloseWithMiddleMouseButton integer
+---@field NoTabListScrollingButtons integer
+---@field NoTooltip integer
+---@field None integer
+---@field Reorderable integer
+---@field TabListPopupButton integer
 ImGuiTabBarFlags = {}
 
 
 ---@class ImGuiTabItemFlags
----@field Leading any
----@field NoAssumedClosure any
----@field NoCloseWithMiddleMouseButton any
----@field NoPushId any
----@field NoReorder any
----@field NoTooltip any
----@field None any
----@field SetSelected any
----@field Trailing any
----@field UnsavedDocument any
+---@field Leading integer
+---@field NoAssumedClosure integer
+---@field NoCloseWithMiddleMouseButton integer
+---@field NoPushId integer
+---@field NoReorder integer
+---@field NoTooltip integer
+---@field None integer
+---@field SetSelected integer
+---@field Trailing integer
+---@field UnsavedDocument integer
 ImGuiTabItemFlags = {}
 
 
 ---@class ImGuiTableBgTarget
----@field CellBg any
----@field None any
----@field RowBg0 any
----@field RowBg1 any
+---@field CellBg integer
+---@field None integer
+---@field RowBg0 integer
+---@field RowBg1 integer
 ImGuiTableBgTarget = {}
 
 
 ---@class ImGuiTableColumnFlags
----@field AngledHeader any
----@field DefaultHide any
----@field DefaultSort any
----@field Disabled any
----@field IndentDisable any
----@field IndentEnable any
----@field IsEnabled any
----@field IsHovered any
----@field IsSorted any
----@field IsVisible any
----@field NoClip any
----@field NoHeaderLabel any
----@field NoHeaderWidth any
----@field NoHide any
----@field NoReorder any
----@field NoResize any
----@field NoSort any
----@field NoSortAscending any
----@field NoSortDescending any
----@field None any
----@field PreferSortAscending any
----@field PreferSortDescending any
----@field WidthFixed any
----@field WidthStretch any
+---@field AngledHeader integer
+---@field DefaultHide integer
+---@field DefaultSort integer
+---@field Disabled integer
+---@field IndentDisable integer
+---@field IndentEnable integer
+---@field IsEnabled integer
+---@field IsHovered integer
+---@field IsSorted integer
+---@field IsVisible integer
+---@field NoClip integer
+---@field NoHeaderLabel integer
+---@field NoHeaderWidth integer
+---@field NoHide integer
+---@field NoReorder integer
+---@field NoResize integer
+---@field NoSort integer
+---@field NoSortAscending integer
+---@field NoSortDescending integer
+---@field None integer
+---@field PreferSortAscending integer
+---@field PreferSortDescending integer
+---@field WidthFixed integer
+---@field WidthStretch integer
 ImGuiTableColumnFlags = {}
 
 
 ---@class ImGuiTableFlags
----@field Borders any
----@field BordersH any
----@field BordersInner any
----@field BordersInnerH any
----@field BordersInnerV any
----@field BordersOuter any
----@field BordersOuterH any
----@field BordersOuterV any
----@field BordersV any
----@field ContextMenuInBody any
----@field Hideable any
----@field HighlightHoveredColumn any
----@field NoBordersInBody any
----@field NoBordersInBodyUntilResize any
----@field NoClip any
----@field NoHostExtendX any
----@field NoHostExtendY any
----@field NoKeepColumnsVisible any
----@field NoPadInnerX any
----@field NoPadOuterX any
----@field NoSavedSettings any
----@field None any
----@field PadOuterX any
----@field PreciseWidths any
----@field Reorderable any
----@field Resizable any
----@field RowBg any
----@field ScrollX any
----@field ScrollY any
----@field SizingFixedFit any
----@field SizingFixedSame any
----@field SizingStretchProp any
----@field SizingStretchSame any
----@field SortMulti any
----@field SortTristate any
----@field Sortable any
+---@field Borders integer
+---@field BordersH integer
+---@field BordersInner integer
+---@field BordersInnerH integer
+---@field BordersInnerV integer
+---@field BordersOuter integer
+---@field BordersOuterH integer
+---@field BordersOuterV integer
+---@field BordersV integer
+---@field ContextMenuInBody integer
+---@field Hideable integer
+---@field HighlightHoveredColumn integer
+---@field NoBordersInBody integer
+---@field NoBordersInBodyUntilResize integer
+---@field NoClip integer
+---@field NoHostExtendX integer
+---@field NoHostExtendY integer
+---@field NoKeepColumnsVisible integer
+---@field NoPadInnerX integer
+---@field NoPadOuterX integer
+---@field NoSavedSettings integer
+---@field None integer
+---@field PadOuterX integer
+---@field PreciseWidths integer
+---@field Reorderable integer
+---@field Resizable integer
+---@field RowBg integer
+---@field ScrollX integer
+---@field ScrollY integer
+---@field SizingFixedFit integer
+---@field SizingFixedSame integer
+---@field SizingStretchProp integer
+---@field SizingStretchSame integer
+---@field SortMulti integer
+---@field SortTristate integer
+---@field Sortable integer
 ImGuiTableFlags = {}
 
 
 ---@class ImGuiTableRowFlags
----@field Headers any
----@field None any
+---@field Headers integer
+---@field None integer
 ImGuiTableRowFlags = {}
 
 
 ---@class ImGuiTreeNodeFlags
----@field AllowOverlap any
----@field Bullet any
----@field CollapsingHeader any
----@field DefaultOpen any
----@field DrawLinesFull any
----@field DrawLinesNone any
----@field DrawLinesToNodes any
----@field FramePadding any
----@field Framed any
----@field LabelSpanAllColumns any
----@field Leaf any
----@field NavLeftJumpsBackHere any
----@field NavLeftJumpsToParent any
----@field NoAutoOpenOnLog any
----@field NoTreePushOnOpen any
----@field None any
----@field OpenOnArrow any
----@field OpenOnDoubleClick any
----@field Selected any
----@field SpanAllColumns any
----@field SpanAvailWidth any
----@field SpanFullWidth any
----@field SpanLabelWidth any
+---@field AllowOverlap integer
+---@field Bullet integer
+---@field CollapsingHeader integer
+---@field DefaultOpen integer
+---@field DrawLinesFull integer
+---@field DrawLinesNone integer
+---@field DrawLinesToNodes integer
+---@field FramePadding integer
+---@field Framed integer
+---@field LabelSpanAllColumns integer
+---@field Leaf integer
+---@field NavLeftJumpsBackHere integer
+---@field NavLeftJumpsToParent integer
+---@field NoAutoOpenOnLog integer
+---@field NoTreePushOnOpen integer
+---@field None integer
+---@field OpenOnArrow integer
+---@field OpenOnDoubleClick integer
+---@field Selected integer
+---@field SpanAllColumns integer
+---@field SpanAvailWidth integer
+---@field SpanFullWidth integer
+---@field SpanLabelWidth integer
 ImGuiTreeNodeFlags = {}
 
 
 ---@class ImGuiWindowFlags
----@field AlwaysAutoResize any
----@field AlwaysHorizontalScrollbar any
----@field AlwaysVerticalScrollbar any
----@field HorizontalScrollbar any
----@field MenuBar any
----@field NoBackground any
----@field NoBringToFrontOnFocus any
----@field NoCollapse any
----@field NoDecoration any
----@field NoFocusOnAppearing any
----@field NoInputs any
----@field NoMouseInputs any
----@field NoMove any
----@field NoNav any
----@field NoNavFocus any
----@field NoNavInputs any
----@field NoResize any
----@field NoSavedSettings any
----@field NoScrollWithMouse any
----@field NoScrollbar any
----@field NoTitleBar any
----@field None any
----@field UnsavedDocument any
+---@field AlwaysAutoResize integer
+---@field AlwaysHorizontalScrollbar integer
+---@field AlwaysVerticalScrollbar integer
+---@field HorizontalScrollbar integer
+---@field MenuBar integer
+---@field NoBackground integer
+---@field NoBringToFrontOnFocus integer
+---@field NoCollapse integer
+---@field NoDecoration integer
+---@field NoFocusOnAppearing integer
+---@field NoInputs integer
+---@field NoMouseInputs integer
+---@field NoMove integer
+---@field NoNav integer
+---@field NoNavFocus integer
+---@field NoNavInputs integer
+---@field NoResize integer
+---@field NoSavedSettings integer
+---@field NoScrollWithMouse integer
+---@field NoScrollbar integer
+---@field NoTitleBar integer
+---@field None integer
+---@field UnsavedDocument integer
 ImGuiWindowFlags = {}
 
 
 ---@class ImTextureFormat
----@field _Alpha8 any
----@field _RGBA32 any
+---@field _Alpha8 integer
+---@field _RGBA32 integer
 ImTextureFormat = {}
 
 
 ---@class ImTextureStatus
----@field _Destroyed any
----@field _OK any
----@field _WantCreate any
----@field _WantDestroy any
----@field _WantUpdates any
+---@field _Destroyed integer
+---@field _OK integer
+---@field _WantCreate integer
+---@field _WantDestroy integer
+---@field _WantUpdates integer
 ImTextureStatus = {}
 
 
@@ -1520,843 +1522,2466 @@ ImVec2 = {}
 ImVec4 = {}
 
 
-function acquire_scene_assets(...) end
+---@param scene_path? string
+---@return integer
+function acquire_scene_assets(scene_path) end
+
+---@param arg1 entity
+---@param arg2 string
+function add_tag(arg1, arg2) end
 
 ---@class animation_component
+---@field current_frame integer
+---@field frame_rate_speed integer
+---@field is_finished boolean
+---@field num_frames integer
+---@field should_loop boolean
 animation_component = {}
 
+---@param ... any
+---@return animation_component
+function animation_component.new(...) end
 
-function are_colliding(...) end
+---@param arg1 entity
+---@param arg2 entity
+---@return boolean
+function are_colliding(arg1, arg2) end
 
 ---@class audio_listener_component
+---@field doppler_factor number
+---@field max_distance number
+---@field rolloff number
+---@field speed_of_sound number
 audio_listener_component = {}
 
+---@param ... any
+---@return audio_listener_component
+function audio_listener_component.new(...) end
 
 ---@class audio_source_component
+---@field clip_id string
+---@field despawn_on_finish boolean
+---@field doppler boolean
+---@field loop boolean
+---@field max_distance number
+---@field min_distance number
+---@field pitch number
+---@field play_on_spawn boolean
+---@field spatial boolean
+---@field volume number
 audio_source_component = {}
 
+---@param ... any
+---@return audio_source_component
+function audio_source_component.new(...) end
 
-function blam(...) end
+---@overload fun(arg1: table)
+---@param arg1 entity
+function blam(arg1) end
 
 ---@class box_collider_component
+---@field height integer
+---@field is_fixed boolean
+---@field offset vec2
+---@field width integer
 box_collider_component = {}
 
+---@param ... any
+---@return box_collider_component
+function box_collider_component.new(...) end
 
 ---@class camera_follow_component
 camera_follow_component = {}
 
+---@param ... any
+---@return camera_follow_component
+function camera_follow_component.new(...) end
 
 ---@class capsule_collider_component
+---@field end vec2
+---@field is_fixed boolean
+---@field radius number
+---@field start vec2
 capsule_collider_component = {}
 
+---@param ... any
+---@return capsule_collider_component
+function capsule_collider_component.new(...) end
 
 ---@class capsule_primitive_component
+---@field blend_mode string
+---@field color color
+---@field end vec2
+---@field fill_ratio number
+---@field filled boolean
+---@field is_fixed boolean
+---@field layer integer
+---@field radius number
+---@field start vec2
+---@field thickness number
 capsule_primitive_component = {}
 
+---@param ... any
+---@return capsule_primitive_component
+function capsule_primitive_component.new(...) end
 
 ---@class chunk_resident_component
+---@field chunk_x integer
+---@field chunk_y integer
+---@field prop_index integer
 chunk_resident_component = {}
 
+---@param ... any
+---@return chunk_resident_component
+function chunk_resident_component.new(...) end
 
 ---@class circle_collider_component
+---@field is_fixed boolean
+---@field offset vec2
+---@field radius number
 circle_collider_component = {}
 
+---@param ... any
+---@return circle_collider_component
+function circle_collider_component.new(...) end
 
 ---@class circle_primitive_component
+---@field blend_mode string
+---@field color color
+---@field filled boolean
+---@field is_fixed boolean
+---@field layer integer
+---@field position vec2
+---@field radius number
+---@field thickness number
 circle_primitive_component = {}
 
+---@param ... any
+---@return circle_primitive_component
+function circle_primitive_component.new(...) end
 
-function clear_scene(...) end
+---@param arg1? string
+function clear_import_cache(arg1) end
+
+function clear_scene() end
 
 ---@class color
+---@field a integer
+---@field b integer
+---@field g integer
+---@field r integer
 color = {}
 
+---@param ... any
+---@return color
+function color.new(...) end
 
 ---@class color_grid_component
+---@field blend_mode string
+---@field bounds vec2
+---@field cell_height number
+---@field cell_size number
+---@field cell_width number
+---@field color1 color
+---@field color2 color
+---@field color_a color
+---@field color_b color
+---@field is_fixed boolean
+---@field layer integer
+---@field offset vec2
+---@field scroll_velocity vec2
 color_grid_component = {}
 
+---@param ... any
+---@return color_grid_component
+function color_grid_component.new(...) end
 
 ---@class dev
 dev = {}
 
-function dev.apply_ui_stress_preset(...) end
+---@param arg1 string
+---@return boolean
+function dev.apply_ui_stress_preset(arg1) end
 
-function dev.audit_ui(...) end
+---@return table
+function dev.audit_ui() end
 
-function dev.audit_ui_json(...) end
+---@return string
+function dev.audit_ui_json() end
 
-function dev.clear(...) end
+function dev.clear() end
 
-function dev.delete_ui_preset(...) end
+---@param arg1 string
+---@param arg2? boolean
+---@return boolean
+function dev.delete_ui_preset(arg1, arg2) end
 
-function dev.export_ui_mock_lua(...) end
+---@return string
+function dev.export_ui_mock_lua() end
 
-function dev.get_selected_entity(...) end
+---@return entity?
+function dev.get_selected_entity() end
 
-function dev.get_ui_viewport_json(...) end
+---@return string
+function dev.get_ui_viewport_json() end
 
-function dev.inspect_ui_contract(...) end
+---@param arg1? string
+---@return table
+function dev.inspect_ui_contract(arg1) end
 
-function dev.inspect_ui_contract_json(...) end
+---@param arg1? string
+---@return string
+function dev.inspect_ui_contract_json(arg1) end
 
-function dev.is_panel_open(...) end
+---@param arg1 string
+---@return boolean
+function dev.is_panel_open(arg1) end
 
-function dev.list_ui_presets_json(...) end
+---@return string
+function dev.list_ui_presets_json() end
 
-function dev.list_ui_views(...) end
+---@return table
+function dev.list_ui_views() end
 
-function dev.load_ui_mock(...) end
+---@param arg1 string
+---@return boolean
+function dev.load_ui_mock(arg1) end
 
-function dev.preview_inline_ui(...) end
+---@param arg1 string
+---@param arg2? string
+---@return boolean
+function dev.preview_inline_ui(arg1, arg2) end
 
-function dev.preview_ui(...) end
+---@param arg1 string
+---@param arg2? table
+---@return boolean
+function dev.preview_ui(arg1, arg2) end
 
-function dev.register_action(...) end
+---@param arg1 string
+---@param arg2 fun(...)
+---@param arg3? string
+function dev.register_action(arg1, arg2, arg3) end
 
-function dev.register_panel(...) end
+---@param arg1 string
+---@param arg2 any
+function dev.register_panel(arg1, arg2) end
 
-function dev.register_toggle(...) end
+---@param arg1 string
+---@param arg2 fun(...)
+---@param arg3 fun(...)
+function dev.register_toggle(arg1, arg2, arg3) end
 
-function dev.reload_preview_ui(...) end
+---@return boolean
+function dev.reload_preview_ui() end
 
-function dev.resize_ui_mock_array(...) end
+---@param arg1 string
+---@param arg2 integer
+---@return boolean
+function dev.resize_ui_mock_array(arg1, arg2) end
 
-function dev.run_ui_matrix_json(...) end
+---@param arg1 string
+---@param arg2? string
+---@param arg3? string
+---@return string
+function dev.run_ui_matrix_json(arg1, arg2, arg3) end
 
-function dev.save_ui_mock(...) end
+---@param arg1? string
+---@param arg2? boolean
+---@return boolean
+function dev.save_ui_mock(arg1, arg2) end
 
-function dev.save_ui_preset(...) end
+---@param arg1 string
+---@param arg2? boolean
+---@param arg3? boolean
+---@return boolean
+function dev.save_ui_preset(arg1, arg2, arg3) end
 
-function dev.seed_ui_mock(...) end
+---@param arg1? string
+---@return boolean
+function dev.seed_ui_mock(arg1) end
 
-function dev.select_entity(...) end
+---@param arg1? entity
+function dev.select_entity(arg1) end
 
-function dev.select_ui_preset(...) end
+---@param arg1 string
+---@return boolean
+function dev.select_ui_preset(arg1) end
 
-function dev.set_panel_open(...) end
+---@param arg1 string
+---@param arg2 boolean
+function dev.set_panel_open(arg1, arg2) end
 
-function dev.set_ui_integer_zoom(...) end
+---@param arg1 boolean
+---@return boolean
+function dev.set_ui_integer_zoom(arg1) end
 
-function dev.set_ui_mock_field(...) end
+---@param arg1 string
+---@param arg2 any
+---@return boolean
+function dev.set_ui_mock_field(arg1, arg2) end
 
-function dev.set_ui_param(...) end
+---@param arg1 string
+---@param arg2 any
+---@return boolean
+function dev.set_ui_param(arg1, arg2) end
 
-function dev.set_ui_safe_area_guides(...) end
+---@param arg1 boolean
+---@return boolean
+function dev.set_ui_safe_area_guides(arg1) end
 
-function dev.set_ui_viewport(...) end
+---@param arg1 integer
+---@param arg2 integer
+---@return boolean
+function dev.set_ui_viewport(arg1, arg2) end
 
-function dev.unmount_preview_ui(...) end
+function dev.unmount_preview_ui() end
 
-function dev.unregister_panel(...) end
+---@param arg1 string
+---@return boolean
+function dev.unregister_panel(arg1) end
 
-function dev.unwatch(...) end
+---@param arg1 string
+---@return boolean
+function dev.unwatch(arg1) end
 
-function dev.watch(...) end
+---@param arg1 string
+---@param arg2 fun(...)
+function dev.watch(arg1, arg2) end
 
 
 ---@class entity
 entity = {}
 
+---@param ... any
+---@return entity
+function entity.new(...) end
 
-function find_entity_by_name(...) end
+---@return integer
+function entity:get_id() end
 
-function get_asset_path(...) end
+---@param arg1 string
+---@return any
+function find_entity_by_name(arg1) end
 
-function get_avg_fps(...) end
+---@type integer
+game_window_height = 0
 
-function get_base_resolution(...) end
+---@type integer
+game_window_width = 0
 
-function get_camera_position(...) end
+---@param arg1 string
+---@return string
+function get_asset_path(arg1) end
 
-function get_camera_zoom(...) end
+---@return number
+function get_avg_fps() end
 
-function get_current_display_index(...) end
+---@return integer, integer
+function get_base_resolution() end
 
-function get_current_display_name(...) end
+---@return vec2
+function get_camera_position() end
 
-function get_display_count(...) end
+---@return number, number
+function get_camera_position_xy() end
 
-function get_display_modes(...) end
+---@return number
+function get_camera_zoom() end
 
-function get_display_size(...) end
+---@return integer
+function get_current_display_index() end
 
-function get_displays(...) end
+---@return string
+function get_current_display_name() end
 
-function get_entity_count(...) end
+---@return integer
+function get_display_count() end
 
-function get_env(...) end
+---@param arg1? integer
+---@return table
+function get_display_modes(arg1) end
 
-function get_fixed_dt(...) end
+---@param arg1? integer
+---@return integer, integer
+function get_display_size(arg1) end
 
-function get_fps(...) end
+---@return table
+function get_displays() end
 
-function get_fps_target(...) end
+---@param arg1 entity
+---@return table
+function get_entity_children(arg1) end
 
-function get_frame_time(...) end
+---@return integer
+function get_entity_count() end
 
-function get_fullscreen_resolution(...) end
+---@param arg1 string
+---@return string?
+function get_env(arg1) end
 
-function get_game_map_dimensions(...) end
+---@return number
+function get_fixed_dt() end
 
-function get_logical_size(...) end
+---@return number
+function get_fps() end
 
-function get_master_volume(...) end
+---@return integer
+function get_fps_target() end
 
-function get_memory_usage(...) end
+---@return number
+function get_frame_time() end
 
-function get_name(...) end
+---@return integer, integer, number
+function get_fullscreen_resolution() end
 
-function get_perf_stats(...) end
+---@return vec2
+function get_game_map_dimensions() end
 
-function get_position(...) end
+---@return number, number
+function get_game_map_dimensions_xy() end
 
-function get_position_xy(...) end
+---@return integer, integer
+function get_logical_size() end
 
-function get_presentation_mode(...) end
+---@return number
+function get_master_volume() end
 
-function get_sim_substeps(...) end
+---@return integer
+function get_memory_usage() end
 
-function get_state_hash(...) end
+---@param arg1 entity
+---@return string
+function get_name(arg1) end
 
-function get_texture_scale_mode(...) end
+---@return table
+function get_perf_stats() end
 
-function get_user_setting(...) end
+---@param arg1 entity
+---@return vec2
+function get_position(arg1) end
 
-function get_vsync(...) end
+---@param arg1 entity
+---@return number, number
+function get_position_xy(arg1) end
 
-function get_window_mode(...) end
+---@return string
+function get_presentation_mode() end
 
-function get_window_position(...) end
+---@return integer
+function get_sim_substeps() end
 
-function get_window_size(...) end
+---@param arg1 entity
+---@return number, number, number, number
+function get_sprite_src_rect(arg1) end
+
+---@return string
+function get_state_hash() end
+
+---@return number
+function get_system_time() end
+
+---@param arg1 entity
+---@return string
+function get_text_label_font(arg1) end
+
+---@return string
+function get_texture_scale_mode() end
+
+---@return string
+function get_timestamp_string() end
+
+---@param arg1 string
+---@param arg2? string
+---@return string
+function get_user_setting(arg1, arg2) end
+
+---@return boolean
+function get_vsync() end
+
+---@return string
+function get_window_mode() end
+
+---@return integer, integer
+function get_window_position() end
+
+---@return integer, integer
+function get_window_size() end
+
+---@param arg1 string
+---@return boolean
+function has_catalog_asset(arg1) end
+
+---@param arg1 entity
+---@param arg2 string
+---@return boolean
+function has_tag(arg1, arg2) end
+
+---@return boolean
+function has_verify_failed() end
+
+---@class hot_reload
+hot_reload = {}
+
+---@return integer
+function hot_reload.get_tracked_count() end
+
+---@param arg1? number
+---@return table
+function hot_reload.poll_scripts(arg1) end
+
+---@param arg1 string
+function hot_reload.track_script(arg1) end
+
+---@param arg1 string
+function hot_reload.untrack_script(arg1) end
+
+
+---@param arg1 string
+---@param arg2? boolean
+---@return any
+function import(arg1, arg2) end
 
 ---@class input
 input = {}
 
-function input.bind(...) end
+---@param arg1 string
+---@param arg2 string
+function input.bind(arg1, arg2) end
 
-function input.bind_gamepad(...) end
+---@param arg1 string
+---@param arg2 string
+function input.bind_gamepad(arg1, arg2) end
 
-function input.bind_key(...) end
+---@param arg1 string
+---@param arg2 string
+function input.bind_key(arg1, arg2) end
 
-function input.gamepad_axis(...) end
+---@param arg1 string
+---@param arg2? number
+---@return number
+function input.gamepad_axis(arg1, arg2) end
 
-function input.gamepad_stick(...) end
+---@param arg1 string
+---@param arg2? number
+---@return vec2
+function input.gamepad_stick(arg1, arg2) end
 
-function input.get_bindings(...) end
+---@param arg1 string
+---@param arg2? number
+---@return number, number
+function input.gamepad_stick_xy(arg1, arg2) end
 
-function input.is_action_down(...) end
+---@param arg1? string
+---@return table
+function input.get_bindings(arg1) end
 
-function input.is_action_pressed(...) end
+---@param arg1 string
+---@return boolean
+function input.is_action_down(arg1) end
 
-function input.is_action_released(...) end
+---@param arg1 string
+---@return boolean
+function input.is_action_pressed(arg1) end
 
-function input.is_focused(...) end
+---@param arg1 string
+---@return boolean
+function input.is_action_released(arg1) end
 
-function input.is_gamepad_connected(...) end
+---@return boolean
+function input.is_focused() end
 
-function input.is_gamepad_down(...) end
+---@return boolean
+function input.is_gamepad_connected() end
 
-function input.is_gamepad_pressed(...) end
+---@param arg1 string
+---@return boolean
+function input.is_gamepad_down(arg1) end
 
-function input.is_gamepad_released(...) end
+---@param arg1 string
+---@return boolean
+function input.is_gamepad_pressed(arg1) end
 
-function input.is_hovered(...) end
+---@param arg1 string
+---@return boolean
+function input.is_gamepad_released(arg1) end
 
-function input.is_key_down(...) end
+---@return boolean
+function input.is_hovered() end
 
-function input.is_key_pressed(...) end
+---@param arg1 string
+---@return boolean
+function input.is_key_down(arg1) end
 
-function input.is_key_released(...) end
+---@param arg1 string
+---@return boolean
+function input.is_key_pressed(arg1) end
 
-function input.is_mouse_down(...) end
+---@param arg1 string
+---@return boolean
+function input.is_key_released(arg1) end
 
-function input.is_mouse_pressed(...) end
+---@param arg1 any
+---@return boolean
+function input.is_mouse_down(arg1) end
 
-function input.is_mouse_released(...) end
+---@param arg1 any
+---@return boolean
+function input.is_mouse_pressed(arg1) end
 
-function input.mouse_position(...) end
+---@param arg1 any
+---@return boolean
+function input.is_mouse_released(arg1) end
 
-function input.mouse_wheel(...) end
+---@return vec2
+function input.mouse_position() end
 
-function input.on_gamepad_down(...) end
+---@return number, number
+function input.mouse_position_xy() end
 
-function input.on_gamepad_up(...) end
+---@return vec2
+function input.mouse_wheel() end
 
-function input.on_key_down(...) end
+---@return number, number
+function input.mouse_wheel_xy() end
 
-function input.on_key_up(...) end
+---@param arg1 fun(...)
+function input.on_gamepad_down(arg1) end
 
-function input.on_mouse_down(...) end
+---@param arg1 fun(...)
+function input.on_gamepad_up(arg1) end
 
-function input.on_mouse_up(...) end
+---@param arg1 fun(...)
+function input.on_key_down(arg1) end
 
-function input.on_mouse_wheel(...) end
+---@param arg1 fun(...)
+function input.on_key_up(arg1) end
 
-function input.set_bindings(...) end
+---@param arg1 fun(...)
+function input.on_mouse_down(arg1) end
 
-function input.unbind(...) end
+---@param arg1 fun(...)
+function input.on_mouse_up(arg1) end
 
-function input.unbind_gamepad(...) end
+---@param arg1 fun(...)
+function input.on_mouse_wheel(arg1) end
 
-function input.unbind_key(...) end
+---@param arg1 any
+---@param arg2? table
+function input.set_bindings(arg1, arg2) end
+
+---@param arg1 string
+---@param arg2? string
+function input.unbind(arg1, arg2) end
+
+---@param arg1 string
+---@param arg2? string
+function input.unbind_gamepad(arg1, arg2) end
+
+---@param arg1 string
+---@param arg2? string
+function input.unbind_key(arg1, arg2) end
 
 
-function is_audio_muted(...) end
+---@return boolean
+function is_audio_muted() end
 
-function is_deterministic(...) end
+---@return boolean
+function is_deterministic() end
 
-function is_fullscreen(...) end
+---@return boolean
+function is_fullscreen() end
 
-function is_headless(...) end
+---@return boolean
+function is_headless() end
 
-function is_maximized(...) end
+---@return boolean
+function is_hot_reload_enabled() end
 
-function is_window_resizable(...) end
+---@return boolean
+function is_maximized() end
+
+---@return boolean
+function is_shipped_build() end
+
+---@return boolean
+function is_window_resizable() end
 
 ---@class lifetime_component
+---@field duration number
+---@field remaining_duration number
 lifetime_component = {}
 
+---@param ... any
+---@return lifetime_component
+function lifetime_component.new(...) end
+
+---@param arg1 number
+function lifetime_component:extend(arg1) end
+
+---@return boolean
+function lifetime_component:is_alive() end
+
+function lifetime_component:reset() end
 
 ---@class line_collider_component
+---@field end vec2
+---@field is_fixed boolean
+---@field start vec2
 line_collider_component = {}
 
+---@param ... any
+---@return line_collider_component
+function line_collider_component.new(...) end
 
 ---@class line_primitive_component
+---@field blend_mode string
+---@field color color
+---@field end vec2
+---@field is_fixed boolean
+---@field layer integer
+---@field start vec2
+---@field thickness number
 line_primitive_component = {}
 
+---@param ... any
+---@return line_primitive_component
+function line_primitive_component.new(...) end
 
-function load_asset(...) end
+---@param descriptor table
+---@return boolean
+function load_asset(descriptor) end
 
-function load_entity(...) end
+---@param entity_path string
+---@return entity
+function load_entity(entity_path) end
 
-function load_scene(...) end
+---@param scene_path string
+---@return boolean
+function load_scene(scene_path) end
 
-function log(...) end
+---@param arg1 string
+function log(arg1) end
 
-function log_e(...) end
+---@param arg1 string
+function log_e(arg1) end
 
-function log_i(...) end
+---@param arg1 string
+function log_i(arg1) end
 
-function log_table(...) end
+---@param arg1 table
+---@param arg2? string
+function log_table(arg1, arg2) end
 
-function log_w(...) end
+---@param arg1 string
+function log_w(arg1) end
+
+---@param arg1 string
+function mark_verify_failed(arg1) end
 
 ---@class name_component
+---@field name string
 name_component = {}
 
+---@param ... any
+---@return name_component
+function name_component.new(...) end
+
+---@type boolean
+oct_dev_mode = false
+
+---@type boolean
+oct_shipped = false
+
+---@type string
+oct_startup_mode = ""
+
+---@param arg1 string
+---@return boolean
+function open_external_url(arg1) end
 
 ---@class pivot_component
+---@field value vec2
+---@field x number
+---@field y number
 pivot_component = {}
 
+---@param ... any
+---@return pivot_component
+function pivot_component.new(...) end
 
-function play_sound(...) end
+---@param arg1 string
+---@param arg2? number
+function play_sound(arg1, arg2) end
 
 ---@class position_component
+---@field value vec2
+---@field x number
+---@field y number
 position_component = {}
 
+---@param ... any
+---@return position_component
+function position_component.new(...) end
 
-function quit_game(...) end
+function quit_game() end
 
-function read_file_lines(...) end
+---@param arg1 string
+---@return string[]
+function read_file_lines(arg1) end
 
 ---@class registry
 registry = {}
 
-function registry.get_animation(...) end
-
-function registry.get_audio_listener(...) end
-
-function registry.get_audio_source(...) end
-
-function registry.get_box_collider(...) end
-
-function registry.get_camera_follow(...) end
-
-function registry.get_capsule(...) end
-
-function registry.get_capsule_collider(...) end
-
-function registry.get_chunk_resident(...) end
-
-function registry.get_circle(...) end
-
-function registry.get_circle_collider(...) end
-
-function registry.get_color_grid(...) end
-
-function registry.get_lifetime(...) end
-
-function registry.get_line(...) end
-
-function registry.get_line_collider(...) end
-
-function registry.get_name(...) end
-
-function registry.get_parent(...) end
-
-function registry.get_pivot(...) end
-
-function registry.get_position(...) end
-
-function registry.get_rigidbody(...) end
-
-function registry.get_rotation(...) end
-
-function registry.get_scale(...) end
-
-function registry.get_script(...) end
-
-function registry.get_script_callbacks(...) end
-
-function registry.get_sprite(...) end
-
-function registry.get_square(...) end
-
-function registry.get_text_label(...) end
-
-function registry.get_triangle(...) end
-
-function registry.get_triangle_collider(...) end
-
-function registry.get_ui_anchor(...) end
-
-function registry.get_ui_button(...) end
-
-function registry.get_ui_canvas(...) end
-
-function registry.get_ui_clip(...) end
-
-function registry.get_ui_flex(...) end
-
-function registry.get_ui_focus(...) end
-
-function registry.get_ui_layout_box(...) end
-
-function registry.get_ui_nine_slice(...) end
-
-function registry.get_ui_rect(...) end
-
-function registry.get_ui_scroll(...) end
-
-function registry.get_ui_style_state(...) end
-
-function registry.get_ui_z_index(...) end
-
-function registry.has_animation(...) end
-
-function registry.has_audio_listener(...) end
-
-function registry.has_audio_source(...) end
-
-function registry.has_box_collider(...) end
-
-function registry.has_camera_follow(...) end
-
-function registry.has_capsule(...) end
-
-function registry.has_capsule_collider(...) end
-
-function registry.has_chunk_resident(...) end
-
-function registry.has_circle(...) end
-
-function registry.has_circle_collider(...) end
-
-function registry.has_color_grid(...) end
-
-function registry.has_lifetime(...) end
-
-function registry.has_line(...) end
-
-function registry.has_line_collider(...) end
-
-function registry.has_name(...) end
-
-function registry.has_pivot(...) end
-
-function registry.has_position(...) end
-
-function registry.has_rigidbody(...) end
-
-function registry.has_rotation(...) end
-
-function registry.has_scale(...) end
-
-function registry.has_script(...) end
-
-function registry.has_script_callbacks(...) end
-
-function registry.has_sprite(...) end
-
-function registry.has_square(...) end
-
-function registry.has_text_label(...) end
-
-function registry.has_triangle(...) end
-
-function registry.has_triangle_collider(...) end
-
-function registry.has_ui_anchor(...) end
-
-function registry.has_ui_button(...) end
-
-function registry.has_ui_canvas(...) end
-
-function registry.has_ui_clip(...) end
-
-function registry.has_ui_flex(...) end
-
-function registry.has_ui_focus(...) end
-
-function registry.has_ui_layout_box(...) end
-
-function registry.has_ui_nine_slice(...) end
-
-function registry.has_ui_rect(...) end
-
-function registry.has_ui_scroll(...) end
-
-function registry.has_ui_style_state(...) end
-
-function registry.has_ui_z_index(...) end
-
-function registry.is_alive(...) end
-
-function registry.is_paused(...) end
-
-function registry.set_parent(...) end
-
-function registry.set_paused(...) end
-
-
-function reload_scene(...) end
+---@param arg1 entity
+---@param arg2? any
+---@return animation_component?
+function registry.add_animation(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return audio_listener_component?
+function registry.add_audio_listener(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return audio_source_component?
+function registry.add_audio_source(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return box_collider_component?
+function registry.add_box_collider(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return camera_follow_component?
+function registry.add_camera_follow(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return capsule_primitive_component?
+function registry.add_capsule(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return capsule_collider_component?
+function registry.add_capsule_collider(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return chunk_resident_component?
+function registry.add_chunk_resident(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return circle_primitive_component?
+function registry.add_circle(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return circle_collider_component?
+function registry.add_circle_collider(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return color_grid_component?
+function registry.add_color_grid(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return lifetime_component?
+function registry.add_lifetime(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return line_primitive_component?
+function registry.add_line(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return line_collider_component?
+function registry.add_line_collider(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return name_component?
+function registry.add_name(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return pivot_component?
+function registry.add_pivot(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return position_component?
+function registry.add_position(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return rigidbody_component?
+function registry.add_rigidbody(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return rotation_component?
+function registry.add_rotation(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return scale_component?
+function registry.add_scale(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return script_component?
+function registry.add_script(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return script_callback_component?
+function registry.add_script_callbacks(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return sprite_component?
+function registry.add_sprite(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return square_primitive_component?
+function registry.add_square(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2 string
+function registry.add_tag(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return text_label_component?
+function registry.add_text_label(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return triangle_primitive_component?
+function registry.add_triangle(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return triangle_collider_component?
+function registry.add_triangle_collider(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return ui_anchor_component?
+function registry.add_ui_anchor(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return ui_button_component?
+function registry.add_ui_button(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return ui_canvas_component?
+function registry.add_ui_canvas(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return ui_clip_component?
+function registry.add_ui_clip(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return ui_flex_component?
+function registry.add_ui_flex(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return ui_focus_component?
+function registry.add_ui_focus(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return ui_layout_box_component?
+function registry.add_ui_layout_box(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return ui_nine_slice_component?
+function registry.add_ui_nine_slice(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return ui_rect_component?
+function registry.add_ui_rect(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return ui_scroll_component?
+function registry.add_ui_scroll(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return ui_style_state_component?
+function registry.add_ui_style_state(arg1, arg2) end
+
+---@param arg1 entity
+---@param arg2? any
+---@return ui_z_index_component?
+function registry.add_ui_z_index(arg1, arg2) end
+
+---@param arg1 entity
+---@return animation_component
+function registry.get_animation(arg1) end
+
+---@param arg1 entity
+---@return audio_listener_component
+function registry.get_audio_listener(arg1) end
+
+---@param arg1 entity
+---@return audio_source_component
+function registry.get_audio_source(arg1) end
+
+---@param arg1 entity
+---@return box_collider_component
+function registry.get_box_collider(arg1) end
+
+---@param arg1 entity
+---@return camera_follow_component
+function registry.get_camera_follow(arg1) end
+
+---@param arg1 entity
+---@return capsule_primitive_component
+function registry.get_capsule(arg1) end
+
+---@param arg1 entity
+---@return capsule_collider_component
+function registry.get_capsule_collider(arg1) end
+
+---@param arg1 entity
+---@return chunk_resident_component
+function registry.get_chunk_resident(arg1) end
+
+---@param arg1 entity
+---@return circle_primitive_component
+function registry.get_circle(arg1) end
+
+---@param arg1 entity
+---@return circle_collider_component
+function registry.get_circle_collider(arg1) end
+
+---@param arg1 entity
+---@return color_grid_component
+function registry.get_color_grid(arg1) end
+
+---@param arg1 entity
+---@return lifetime_component
+function registry.get_lifetime(arg1) end
+
+---@param arg1 entity
+---@return line_primitive_component
+function registry.get_line(arg1) end
+
+---@param arg1 entity
+---@return line_collider_component
+function registry.get_line_collider(arg1) end
+
+---@param arg1 entity
+---@return name_component
+function registry.get_name(arg1) end
+
+---@param arg1 entity
+---@return any
+function registry.get_parent(arg1) end
+
+---@param arg1 entity
+---@return pivot_component
+function registry.get_pivot(arg1) end
+
+---@param arg1 entity
+---@return position_component
+function registry.get_position(arg1) end
+
+---@param arg1 entity
+---@return rigidbody_component
+function registry.get_rigidbody(arg1) end
+
+---@param arg1 entity
+---@return rotation_component
+function registry.get_rotation(arg1) end
+
+---@param arg1 entity
+---@return scale_component
+function registry.get_scale(arg1) end
+
+---@param arg1 entity
+---@return script_component
+function registry.get_script(arg1) end
+
+---@param arg1 entity
+---@return script_callback_component
+function registry.get_script_callbacks(arg1) end
+
+---@param arg1 entity
+---@return sprite_component
+function registry.get_sprite(arg1) end
+
+---@param arg1 entity
+---@return square_primitive_component
+function registry.get_square(arg1) end
+
+---@param arg1 entity
+---@return text_label_component
+function registry.get_text_label(arg1) end
+
+---@param arg1 entity
+---@return triangle_primitive_component
+function registry.get_triangle(arg1) end
+
+---@param arg1 entity
+---@return triangle_collider_component
+function registry.get_triangle_collider(arg1) end
+
+---@param arg1 entity
+---@return ui_anchor_component
+function registry.get_ui_anchor(arg1) end
+
+---@param arg1 entity
+---@return ui_button_component
+function registry.get_ui_button(arg1) end
+
+---@param arg1 entity
+---@return ui_canvas_component
+function registry.get_ui_canvas(arg1) end
+
+---@param arg1 entity
+---@return ui_clip_component
+function registry.get_ui_clip(arg1) end
+
+---@param arg1 entity
+---@return ui_flex_component
+function registry.get_ui_flex(arg1) end
+
+---@param arg1 entity
+---@return ui_focus_component
+function registry.get_ui_focus(arg1) end
+
+---@param arg1 entity
+---@return ui_layout_box_component
+function registry.get_ui_layout_box(arg1) end
+
+---@param arg1 entity
+---@return ui_nine_slice_component
+function registry.get_ui_nine_slice(arg1) end
+
+---@param arg1 entity
+---@return ui_rect_component
+function registry.get_ui_rect(arg1) end
+
+---@param arg1 entity
+---@return ui_scroll_component
+function registry.get_ui_scroll(arg1) end
+
+---@param arg1 entity
+---@return ui_style_state_component
+function registry.get_ui_style_state(arg1) end
+
+---@param arg1 entity
+---@return ui_z_index_component
+function registry.get_ui_z_index(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_animation(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_audio_listener(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_audio_source(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_box_collider(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_camera_follow(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_capsule(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_capsule_collider(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_chunk_resident(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_circle(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_circle_collider(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_color_grid(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_lifetime(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_line(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_line_collider(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_name(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_pivot(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_position(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_rigidbody(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_rotation(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_scale(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_script(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_script_callbacks(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_sprite(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_square(arg1) end
+
+---@param arg1 entity
+---@param arg2 string
+---@return boolean
+function registry.has_tag(arg1, arg2) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_text_label(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_triangle(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_triangle_collider(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_ui_anchor(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_ui_button(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_ui_canvas(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_ui_clip(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_ui_flex(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_ui_focus(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_ui_layout_box(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_ui_nine_slice(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_ui_rect(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_ui_scroll(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_ui_style_state(arg1) end
+
+---@param arg1 entity
+---@return boolean
+function registry.has_ui_z_index(arg1) end
+
+---@overload fun(): boolean
+---@param arg1 any
+---@return boolean
+function registry.is_alive(arg1) end
+
+---@return boolean
+function registry.is_paused() end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_animation(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_audio_listener(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_audio_source(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_box_collider(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_camera_follow(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_capsule(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_capsule_collider(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_chunk_resident(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_circle(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_circle_collider(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_color_grid(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_lifetime(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_line(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_line_collider(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_name(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_pivot(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_position(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_rigidbody(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_rotation(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_scale(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_script(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_script_callbacks(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_sprite(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_square(arg1) end
+
+---@param arg1 entity
+---@param arg2 string
+function registry.remove_tag(arg1, arg2) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_text_label(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_triangle(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_triangle_collider(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_ui_anchor(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_ui_button(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_ui_canvas(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_ui_clip(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_ui_flex(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_ui_focus(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_ui_layout_box(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_ui_nine_slice(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_ui_rect(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_ui_scroll(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_ui_style_state(arg1) end
+
+---@param arg1? entity
+---@return boolean
+function registry.remove_ui_z_index(arg1) end
+
+---@param arg1 entity
+---@param arg2 entity
+function registry.set_parent(arg1, arg2) end
+
+---@param arg1 boolean
+function registry.set_paused(arg1) end
+
+---@param arg1? entity
+---@return animation_component?
+function registry.try_get_animation(arg1) end
+
+---@param arg1? entity
+---@return audio_listener_component?
+function registry.try_get_audio_listener(arg1) end
+
+---@param arg1? entity
+---@return audio_source_component?
+function registry.try_get_audio_source(arg1) end
+
+---@param arg1? entity
+---@return box_collider_component?
+function registry.try_get_box_collider(arg1) end
+
+---@param arg1? entity
+---@return camera_follow_component?
+function registry.try_get_camera_follow(arg1) end
+
+---@param arg1? entity
+---@return capsule_primitive_component?
+function registry.try_get_capsule(arg1) end
+
+---@param arg1? entity
+---@return capsule_collider_component?
+function registry.try_get_capsule_collider(arg1) end
+
+---@param arg1? entity
+---@return chunk_resident_component?
+function registry.try_get_chunk_resident(arg1) end
+
+---@param arg1? entity
+---@return circle_primitive_component?
+function registry.try_get_circle(arg1) end
+
+---@param arg1? entity
+---@return circle_collider_component?
+function registry.try_get_circle_collider(arg1) end
+
+---@param arg1? entity
+---@return color_grid_component?
+function registry.try_get_color_grid(arg1) end
+
+---@param arg1? entity
+---@return lifetime_component?
+function registry.try_get_lifetime(arg1) end
+
+---@param arg1? entity
+---@return line_primitive_component?
+function registry.try_get_line(arg1) end
+
+---@param arg1? entity
+---@return line_collider_component?
+function registry.try_get_line_collider(arg1) end
+
+---@param arg1? entity
+---@return name_component?
+function registry.try_get_name(arg1) end
+
+---@param arg1? entity
+---@return pivot_component?
+function registry.try_get_pivot(arg1) end
+
+---@param arg1? entity
+---@return position_component?
+function registry.try_get_position(arg1) end
+
+---@param arg1? entity
+---@return rigidbody_component?
+function registry.try_get_rigidbody(arg1) end
+
+---@param arg1? entity
+---@return rotation_component?
+function registry.try_get_rotation(arg1) end
+
+---@param arg1? entity
+---@return scale_component?
+function registry.try_get_scale(arg1) end
+
+---@param arg1? entity
+---@return script_component?
+function registry.try_get_script(arg1) end
+
+---@param arg1? entity
+---@return script_callback_component?
+function registry.try_get_script_callbacks(arg1) end
+
+---@param arg1? entity
+---@return sprite_component?
+function registry.try_get_sprite(arg1) end
+
+---@param arg1? entity
+---@return square_primitive_component?
+function registry.try_get_square(arg1) end
+
+---@param arg1? entity
+---@return text_label_component?
+function registry.try_get_text_label(arg1) end
+
+---@param arg1? entity
+---@return triangle_primitive_component?
+function registry.try_get_triangle(arg1) end
+
+---@param arg1? entity
+---@return triangle_collider_component?
+function registry.try_get_triangle_collider(arg1) end
+
+---@param arg1? entity
+---@return ui_anchor_component?
+function registry.try_get_ui_anchor(arg1) end
+
+---@param arg1? entity
+---@return ui_button_component?
+function registry.try_get_ui_button(arg1) end
+
+---@param arg1? entity
+---@return ui_canvas_component?
+function registry.try_get_ui_canvas(arg1) end
+
+---@param arg1? entity
+---@return ui_clip_component?
+function registry.try_get_ui_clip(arg1) end
+
+---@param arg1? entity
+---@return ui_flex_component?
+function registry.try_get_ui_flex(arg1) end
+
+---@param arg1? entity
+---@return ui_focus_component?
+function registry.try_get_ui_focus(arg1) end
+
+---@param arg1? entity
+---@return ui_layout_box_component?
+function registry.try_get_ui_layout_box(arg1) end
+
+---@param arg1? entity
+---@return ui_nine_slice_component?
+function registry.try_get_ui_nine_slice(arg1) end
+
+---@param arg1? entity
+---@return ui_rect_component?
+function registry.try_get_ui_rect(arg1) end
+
+---@param arg1? entity
+---@return ui_scroll_component?
+function registry.try_get_ui_scroll(arg1) end
+
+---@param arg1? entity
+---@return ui_style_state_component?
+function registry.try_get_ui_style_state(arg1) end
+
+---@param arg1? entity
+---@return ui_z_index_component?
+function registry.try_get_ui_z_index(arg1) end
+
+
+---@return boolean
+function reload_scene() end
+
+---@param arg1 entity
+---@param arg2 string
+function remove_tag(arg1, arg2) end
 
 ---@class rigidbody_component
+---@field velocity vec2
 rigidbody_component = {}
 
+---@param ... any
+---@return rigidbody_component
+function rigidbody_component.new(...) end
 
 ---@class rotation_component
+---@field value number
 rotation_component = {}
 
+---@param ... any
+---@return rotation_component
+function rotation_component.new(...) end
 
-function save_user_settings(...) end
+---@return boolean
+function save_user_settings() end
 
 ---@class scale_component
+---@field scale number
+---@field value vec2
+---@field x number
+---@field y number
 scale_component = {}
 
+---@param ... any
+---@return scale_component
+function scale_component.new(...) end
+
+---@return boolean
+function scale_component:is_uniform() end
 
 ---@class script_callback_component
+---@field on_death any
+---@field on_hit any
+---@field script_table any
 script_callback_component = {}
 
+---@param ... any
+---@return script_callback_component
+function script_callback_component.new(...) end
 
 ---@class script_component
+---@field data table
 script_component = {}
 
+---@param ... any
+---@return script_component
+function script_component.new(...) end
 
-function set_audio_muted(...) end
+---@param arg1 string
+---@param arg2 integer
+---@param arg3? number
+function set_audio_clip_limits(arg1, arg2, arg3) end
 
-function set_camera_zoom(...) end
+---@param arg1 string
+---@param arg2 number
+function set_audio_cue_gain(arg1, arg2) end
 
-function set_debug_gui(...) end
+---@param arg1 boolean
+function set_audio_muted(arg1) end
 
-function set_deterministic(...) end
+---@param arg1 number
+function set_camera_zoom(arg1) end
 
-function set_fixed_dt(...) end
+---@param arg1 string
+---@return boolean
+function set_clipboard_text(arg1) end
 
-function set_fps_target(...) end
+---@param arg1 boolean
+function set_debug_gui(arg1) end
 
-function set_fullscreen(...) end
+---@param arg1 boolean
+function set_deterministic(arg1) end
 
-function set_fullscreen_resolution(...) end
+---@param arg1 number
+function set_fixed_dt(arg1) end
 
-function set_game_map_dimensions(...) end
+---@param arg1 integer
+function set_fps_target(arg1) end
 
-function set_headless(...) end
+---@param arg1 boolean
+function set_fullscreen(arg1) end
 
-function set_master_volume(...) end
+---@param arg1 integer
+---@param arg2 integer
+---@param arg3? number
+---@return boolean
+function set_fullscreen_resolution(arg1, arg2, arg3) end
 
-function set_maximized(...) end
+---@param arg1 number
+---@param arg2 number
+function set_game_map_dimensions(arg1, arg2) end
 
-function set_name(...) end
+---@param arg1 boolean
+function set_headless(arg1) end
 
-function set_position(...) end
+---@param arg1 boolean
+---@return boolean
+function set_hot_reload_enabled(arg1) end
 
-function set_presentation_mode(...) end
+---@param arg1 number
+function set_master_volume(arg1) end
 
-function set_rotation(...) end
+---@param arg1 boolean
+function set_maximized(arg1) end
 
-function set_sim_seed(...) end
+---@param arg1 entity
+---@param arg2 string
+function set_name(arg1, arg2) end
 
-function set_sim_substeps(...) end
+---@param arg1 number
+---@param arg2? boolean
+function set_native_sfx_volume(arg1, arg2) end
 
-function set_sprite_src_rect(...) end
+---@param arg1 entity
+---@param arg2 number
+---@param arg3 number
+function set_position(arg1, arg2, arg3) end
 
-function set_texture_scale_mode(...) end
+---@param arg1 string
+---@return boolean
+function set_presentation_mode(arg1) end
 
-function set_user_setting(...) end
+---@param arg1 entity
+---@param arg2 number
+function set_rotation(arg1, arg2) end
 
-function set_vsync(...) end
+---@param arg1 number
+function set_sim_seed(arg1) end
 
-function set_window_display(...) end
+---@param arg1 integer
+function set_sim_substeps(arg1) end
 
-function set_window_mode(...) end
+---@param arg1 entity
+---@param arg2 string
+---@param arg3 number
+---@param arg4 number
+---@param arg5 number
+---@param arg6 number
+function set_sprite_region(arg1, arg2, arg3, arg4, arg5, arg6) end
 
-function set_window_position(...) end
+---@param arg1 entity
+---@param arg2 number
+---@param arg3 number
+function set_sprite_src_rect(arg1, arg2, arg3) end
 
-function set_window_resizable(...) end
+---@param arg1 entity
+---@param arg2 number
+---@param arg3 number
+function set_sprite_world_size(arg1, arg2, arg3) end
 
-function set_window_size(...) end
+---@param arg1 entity
+---@param arg2 string
+function set_text_label_font(arg1, arg2) end
+
+---@param arg1 string
+---@return boolean
+function set_texture_scale_mode(arg1) end
+
+---@param arg1 entity
+---@param arg2 number
+---@param arg3 number
+---@param arg4 number
+---@param arg5 number
+function set_ui_nine_slice(arg1, arg2, arg3, arg4, arg5) end
+
+---@param arg1 string
+---@param arg2 any
+---@return boolean
+function set_user_setting(arg1, arg2) end
+
+---@param arg1 boolean
+---@return boolean
+function set_vsync(arg1) end
+
+---@param arg1 integer
+---@return boolean
+function set_window_display(arg1) end
+
+---@param arg1 string
+---@return boolean
+function set_window_mode(arg1) end
+
+---@param arg1 integer
+---@param arg2 integer
+function set_window_position(arg1, arg2) end
+
+---@param arg1 boolean
+function set_window_resizable(arg1) end
+
+---@param arg1 integer
+---@param arg2 integer
+function set_window_size(arg1, arg2) end
 
 ---@class settings
 settings = {}
 
-function settings.define(...) end
+---@param arg1 any
+---@param arg2 any
+---@return boolean
+function settings.define(arg1, arg2) end
 
-function settings.get(...) end
+---@param arg1 string
+---@param arg2 any
+---@return any
+function settings.get(arg1, arg2) end
 
-function settings.get_all(...) end
+---@return table
+function settings.get_all() end
 
-function settings.get_default(...) end
+---@param arg1 string
+---@return any
+function settings.get_default(arg1) end
 
-function settings.has(...) end
+---@param arg1 string
+---@return boolean
+function settings.has(arg1) end
 
-function settings.reset(...) end
+---@param arg1 string
+---@return any
+function settings.reset(arg1) end
 
-function settings.reset_all(...) end
+function settings.reset_all() end
 
-function settings.save(...) end
+---@return boolean
+function settings.save() end
 
-function settings.set(...) end
+---@param arg1 string
+---@param arg2 any
+---@return boolean
+function settings.set(arg1, arg2) end
 
 
 ---@class sprite_component
+---@field alpha integer
+---@field asset_id string
+---@field blend_mode string
+---@field color_mod color
+---@field height number
+---@field layer integer
+---@field width number
 sprite_component = {}
 
+---@param ... any
+---@return sprite_component
+function sprite_component.new(...) end
 
 ---@class square_primitive_component
+---@field blend_mode string
+---@field border_color color
+---@field border_thickness number
+---@field color color
+---@field corner_radius number
+---@field fill_ratio number
+---@field height number
+---@field is_fixed boolean
+---@field layer integer
+---@field position vec2
+---@field track_color color
+---@field width number
 square_primitive_component = {}
 
+---@param ... any
+---@return square_primitive_component
+function square_primitive_component.new(...) end
 
-function stop_scene(...) end
+function stop_scene() end
 
 ---@class storage
 storage = {}
 
-function storage.exists(...) end
+---@param arg1 string
+---@return boolean
+function storage.exists(arg1) end
 
-function storage.list(...) end
+---@param arg1? string
+---@return table
+function storage.list(arg1) end
 
-function storage.read(...) end
+---@param arg1 string
+---@return string?
+function storage.read(arg1) end
 
-function storage.read_table(...) end
+---@param arg1 string
+---@return table?
+function storage.read_table(arg1) end
 
-function storage.remove(...) end
+---@param arg1 string
+---@return boolean
+function storage.remove(arg1) end
 
-function storage.write(...) end
+---@param arg1 string
+---@param arg2 string
+---@return boolean
+function storage.write(arg1, arg2) end
 
-function storage.write_table(...) end
+---@param arg1 string
+---@param arg2 table
+---@return boolean
+function storage.write_table(arg1, arg2) end
 
 
 ---@class text_label_component
+---@field color color
+---@field font_id string
+---@field h_align integer
+---@field is_fixed boolean
+---@field layer integer
+---@field outline_color color
+---@field outline_thickness number
+---@field outline_width number
+---@field position vec2
+---@field shadow_color color
+---@field shadow_offset vec2
+---@field text string
+---@field v_align integer
+---@field wrap boolean
+---@field wrap_width integer
 text_label_component = {}
 
+---@param ... any
+---@return text_label_component
+function text_label_component.new(...) end
+
+---@param arg1 color|number
+---@param arg2? number
+function text_label_component:set_outline(arg1, arg2) end
 
 ---@class tilemap
----@field MASK_1 any
----@field MASK_2 any
----@field MASK_3 any
----@field MASK_4 any
----@field MASK_5 any
----@field MASK_6 any
----@field MASK_7 any
----@field MASK_CHASM any
----@field MASK_EMPTY any
----@field MASK_GROUND_BLOCKED any
----@field MASK_HAZARD any
----@field MASK_PROJECTILE_BLOCKED any
----@field MASK_SOLID any
----@field MASK_SURFACE any
----@field MASK_WALL any
----@field TILE_1 any
----@field TILE_2 any
----@field TILE_3 any
----@field TILE_4 any
----@field TILE_5 any
----@field TILE_6 any
----@field TILE_7 any
----@field TILE_CHASM any
----@field TILE_EMPTY any
----@field TILE_HAZARD any
----@field TILE_SOLID any
----@field TILE_SURFACE any
----@field TILE_WALL any
+---@field MASK_1 integer
+---@field MASK_2 integer
+---@field MASK_3 integer
+---@field MASK_4 integer
+---@field MASK_5 integer
+---@field MASK_6 integer
+---@field MASK_7 integer
+---@field MASK_CHASM integer
+---@field MASK_EMPTY integer
+---@field MASK_GROUND_BLOCKED integer
+---@field MASK_HAZARD integer
+---@field MASK_PROJECTILE_BLOCKED integer
+---@field MASK_SOLID integer
+---@field MASK_SURFACE integer
+---@field MASK_WALL integer
+---@field TILE_1 integer
+---@field TILE_2 integer
+---@field TILE_3 integer
+---@field TILE_4 integer
+---@field TILE_5 integer
+---@field TILE_6 integer
+---@field TILE_7 integer
+---@field TILE_CHASM integer
+---@field TILE_EMPTY integer
+---@field TILE_HAZARD integer
+---@field TILE_SOLID integer
+---@field TILE_SURFACE integer
+---@field TILE_WALL integer
 tilemap = {}
 
-function tilemap.clear_chunk_overrides(...) end
+function tilemap.clear_chunk_overrides() end
 
-function tilemap.clear_consumed_props(...) end
+function tilemap.clear_consumed_props() end
 
-function tilemap.get_active_chunk_count(...) end
+---@return integer
+function tilemap.get_active_chunk_count() end
 
-function tilemap.get_camera_chunk(...) end
+---@return integer, integer
+function tilemap.get_camera_chunk() end
 
-function tilemap.get_chunk_size(...) end
+---@return integer, integer, integer, integer, integer
+function tilemap.get_chunk_size() end
 
-function tilemap.get_chunk_template_id(...) end
+---@param arg1 integer
+---@param arg2 integer
+---@return string
+function tilemap.get_chunk_template_id(arg1, arg2) end
 
-function tilemap.get_default_masks(...) end
+---@return integer, integer
+function tilemap.get_default_masks() end
 
-function tilemap.get_seed(...) end
+---@return integer
+function tilemap.get_seed() end
 
-function tilemap.get_stitch_mode(...) end
+---@return string
+function tilemap.get_stitch_mode() end
 
-function tilemap.get_templates(...) end
+---@return table
+function tilemap.get_templates() end
 
-function tilemap.get_tile_at(...) end
+---@param arg1 number
+---@param arg2 number
+---@return integer
+function tilemap.get_tile_at(arg1, arg2) end
 
-function tilemap.is_loaded(...) end
+---@return boolean
+function tilemap.is_loaded() end
 
-function tilemap.is_prop_consumed(...) end
+---@param arg1 integer
+---@param arg2 integer
+---@param arg3 integer
+---@return boolean
+function tilemap.is_prop_consumed(arg1, arg2, arg3) end
 
-function tilemap.is_solid_at(...) end
+---@param arg1 number
+---@param arg2 number
+---@param arg3? integer
+---@return boolean
+function tilemap.is_solid_at(arg1, arg2, arg3) end
 
-function tilemap.load(...) end
+---@param arg1 string
+---@param arg2? table
+---@return boolean
+function tilemap.load(arg1, arg2) end
 
-function tilemap.load_data(...) end
+---@param arg1 table
+---@param arg2? table
+---@return boolean
+function tilemap.load_data(arg1, arg2) end
 
-function tilemap.load_json(...) end
+---@param arg1 string
+---@param arg2? table
+---@return boolean
+function tilemap.load_json(arg1, arg2) end
 
-function tilemap.mark_prop_consumed(...) end
+---@param arg1 integer
+---@param arg2 integer
+---@param arg3 integer
+function tilemap.mark_prop_consumed(arg1, arg2, arg3) end
 
-function tilemap.raycast(...) end
+---@param arg1 number
+---@param arg2 number
+---@param arg3 number
+---@param arg4 number
+---@param arg5? integer
+---@return boolean, number, number, number, number, number, integer
+function tilemap.raycast(arg1, arg2, arg3, arg4, arg5) end
 
-function tilemap.reload(...) end
+---@return boolean
+function tilemap.reload() end
 
-function tilemap.resolve_aabb(...) end
+---@param arg1 number
+---@param arg2 number
+---@param arg3 number
+---@param arg4 number
+---@param arg5? integer
+---@return number, number
+function tilemap.resolve_aabb(arg1, arg2, arg3, arg4, arg5) end
 
-function tilemap.resolve_circle(...) end
+---@param arg1 number
+---@param arg2 number
+---@param arg3 number
+---@param arg4? integer
+---@return number, number
+function tilemap.resolve_circle(arg1, arg2, arg3, arg4) end
 
-function tilemap.set_chunk_override(...) end
+---@param arg1 integer
+---@param arg2 integer
+---@param arg3? string
+---@return boolean
+function tilemap.set_chunk_override(arg1, arg2, arg3) end
 
-function tilemap.set_debug_overlay(...) end
+---@param arg1 boolean
+---@param arg2 boolean
+function tilemap.set_debug_overlay(arg1, arg2) end
 
-function tilemap.set_default_masks(...) end
+---@param arg1 integer
+---@param arg2 integer
+function tilemap.set_default_masks(arg1, arg2) end
 
-function tilemap.set_prop_spawner(...) end
+---@param arg1 any
+function tilemap.set_prop_spawner(arg1) end
 
-function tilemap.set_stitch_mode(...) end
+---@param arg1 string
+---@param arg2? integer
+function tilemap.set_stitch_mode(arg1, arg2) end
 
-function tilemap.set_window_radii(...) end
+---@param arg1 integer
+---@param arg2 integer
+function tilemap.set_window_radii(arg1, arg2) end
 
-function tilemap.unload(...) end
+function tilemap.unload() end
 
 
-function toggle_debug_gui(...) end
+---@return boolean
+function toggle_debug_gui() end
 
 ---@class triangle_collider_component
+---@field is_fixed boolean
+---@field p1 vec2
+---@field p2 vec2
+---@field p3 vec2
 triangle_collider_component = {}
 
+---@param ... any
+---@return triangle_collider_component
+function triangle_collider_component.new(...) end
 
 ---@class triangle_primitive_component
+---@field blend_mode string
+---@field color color
+---@field filled boolean
+---@field is_fixed boolean
+---@field layer integer
+---@field p1 vec2
+---@field p2 vec2
+---@field p3 vec2
+---@field thickness number
 triangle_primitive_component = {}
 
+---@param ... any
+---@return triangle_primitive_component
+function triangle_primitive_component.new(...) end
 
 ---@class ui
 ui = {}
 
-function ui.anchor(...) end
+---@param arg1 entity
+---@param arg2 any
+---@param arg3? table
+function ui.anchor(arg1, arg2, arg3) end
 
-function ui.box(...) end
+---@param arg1 entity
+---@param arg2? table
+function ui.box(arg1, arg2) end
 
-function ui.canvas(...) end
+---@param arg1 entity
+---@param arg2? table
+function ui.canvas(arg1, arg2) end
 
-function ui.clip(...) end
+---@param arg1 entity
+---@param arg2? any
+function ui.clip(arg1, arg2) end
 
-function ui.debug_draw(...) end
+---@param arg1? boolean
+---@return boolean
+function ui.debug_draw(arg1) end
 
-function ui.flex(...) end
+---@param arg1 entity
+---@param arg2? table
+function ui.flex(arg1, arg2) end
 
-function ui.focus(...) end
+---@param arg1? entity
+function ui.focus(arg1) end
 
-function ui.get_auto_scale(...) end
+---@return number
+function ui.get_auto_scale() end
 
-function ui.get_focused(...) end
+---@return entity?
+function ui.get_focused() end
 
-function ui.get_scale(...) end
+---@return number
+function ui.get_scale() end
 
-function ui.mount(...) end
+---@param arg1 any
+---@param arg2? table
+---@return any
+function ui.mount(arg1, arg2) end
 
-function ui.nine_slice(...) end
+---@param arg1 entity
+---@param arg2 any
+function ui.nine_slice(arg1, arg2) end
 
-function ui.observable(...) end
+---@param arg1? table
+---@return table
+function ui.observable(arg1) end
 
-function ui.register_widget(...) end
+---@param arg1 string
+---@param arg2 table
+function ui.register_widget(arg1, arg2) end
 
-function ui.scroll(...) end
+---@param arg1 entity
+---@param arg2? table
+function ui.scroll(arg1, arg2) end
 
-function ui.set_scale(...) end
+---@param arg1? number
+---@return number
+function ui.set_scale(arg1) end
 
-function ui.z_index(...) end
+---@param arg1 entity
+---@param arg2 integer
+function ui.z_index(arg1, arg2) end
 
 
 ---@class ui_anchor_component
+---@field anchor_bottom number
+---@field anchor_left number
+---@field anchor_right number
+---@field anchor_top number
+---@field offset_bottom number
+---@field offset_left number
+---@field offset_right number
+---@field offset_top number
 ui_anchor_component = {}
 
+---@param ... any
+---@return ui_anchor_component
+function ui_anchor_component.new(...) end
 
 ---@class ui_button_component
+---@field action string
+---@field click_sound string
+---@field controller_button string
+---@field focus_sound string
+---@field gamepad string
+---@field gamepad_button string
+---@field has_hover_color boolean
+---@field has_press_color boolean
+---@field hover_color color
+---@field hover_sound string
+---@field input_key string
+---@field is_active boolean
+---@field is_fixed boolean
+---@field is_hovered boolean
+---@field is_pressed boolean
+---@field key string
+---@field on_click fun(...)
+---@field on_focus fun(...)
+---@field press_color color
 ui_button_component = {}
 
+---@param ... any
+---@return ui_button_component
+function ui_button_component.new(...) end
+
+---@param arg1? entity
+---@return boolean
+function ui_button_component:trigger(arg1) end
 
 ---@class ui_canvas_component
+---@field base_layer integer
+---@field height number
+---@field is_fixed boolean
+---@field width number
 ui_canvas_component = {}
 
+---@param ... any
+---@return ui_canvas_component
+function ui_canvas_component.new(...) end
 
 ---@class ui_clip_component
+---@field enabled boolean
 ui_clip_component = {}
 
+---@param ... any
+---@return ui_clip_component
+function ui_clip_component.new(...) end
 
 ---@class ui_flex_component
+---@field columns integer
+---@field cross_gap number
+---@field direction string
+---@field gap number
+---@field padding_bottom number
+---@field padding_left number
+---@field padding_right number
+---@field padding_top number
+---@field wrap boolean
 ui_flex_component = {}
 
+---@param ... any
+---@return ui_flex_component
+function ui_flex_component.new(...) end
 
 ---@class ui_focus_component
+---@field checked boolean
+---@field disabled boolean
+---@field focusable boolean
+---@field inert boolean
+---@field is_focused boolean
+---@field nav_down entity
+---@field nav_left entity
+---@field nav_right entity
+---@field nav_up entity
+---@field tab_index integer
 ui_focus_component = {}
 
+---@param ... any
+---@return ui_focus_component
+function ui_focus_component.new(...) end
 
 ---@class ui_layout_box_component
+---@field height number
+---@field margin_bottom number
+---@field margin_left number
+---@field margin_right number
+---@field margin_top number
+---@field max_height number
+---@field max_width number
+---@field min_height number
+---@field min_width number
+---@field visible boolean
+---@field width number
 ui_layout_box_component = {}
 
+---@param ... any
+---@return ui_layout_box_component
+function ui_layout_box_component.new(...) end
 
 ---@class ui_nine_slice_component
+---@field bottom number
+---@field left number
+---@field right number
+---@field top number
 ui_nine_slice_component = {}
 
+---@param ... any
+---@return ui_nine_slice_component
+function ui_nine_slice_component.new(...) end
 
 ---@class ui_rect_component
+---@field blocks_pointer boolean
+---@field bottom number
+---@field center vec2
+---@field height number
+---@field layer integer
+---@field left number
+---@field right number
+---@field top number
+---@field width number
 ui_rect_component = {}
 
+---@param ... any
+---@return ui_rect_component
+function ui_rect_component.new(...) end
 
 ---@class ui_scroll_component
+---@field content_height number
+---@field content_width number
+---@field horizontal boolean
+---@field scroll_x number
+---@field scroll_y number
+---@field vertical boolean
+---@field wheel_step number
 ui_scroll_component = {}
 
+---@param ... any
+---@return ui_scroll_component
+function ui_scroll_component.new(...) end
 
 ---@class ui_style_patch
+---@field bg_color color
+---@field border_color color
+---@field border_width integer
+---@field flags integer
+---@field opacity integer
+---@field text_color color
 ui_style_patch = {}
 
+---@param ... any
+---@return ui_style_patch
+function ui_style_patch.new(...) end
 
 ---@class ui_style_state_component
+---@field checked ui_style_patch
+---@field checked_hover ui_style_patch
+---@field checked_press ui_style_patch
+---@field disabled ui_style_patch
+---@field focus ui_style_patch
+---@field hover ui_style_patch
+---@field press ui_style_patch
 ui_style_state_component = {}
 
+---@param ... any
+---@return ui_style_state_component
+function ui_style_state_component.new(...) end
 
 ---@class ui_z_index_component
+---@field z integer
 ui_z_index_component = {}
 
+---@param ... any
+---@return ui_z_index_component
+function ui_z_index_component.new(...) end
 
 ---@class vec2
+---@field x number
+---@field y number
 vec2 = {}
 
+---@param ... any
+---@return vec2
+function vec2.new(...) end
 
-function write_project_file(...) end
+---@param arg1 string
+---@param arg2 string
+---@return boolean
+function write_project_file(arg1, arg2) end
 
-function write_state_dump(...) end
+---@param arg1 string
+---@return boolean
+function write_state_dump(arg1) end
 

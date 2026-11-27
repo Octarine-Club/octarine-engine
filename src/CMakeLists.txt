@@ -68,9 +68,6 @@ endif ()
 if (OCTARINE_PROTECT_SCRIPTS)
     target_compile_definitions(octarine_core PUBLIC OCTARINE_PROTECT_SCRIPTS)
 endif ()
-if (OCTARINE_PACKAGE_KEY)
-    target_compile_definitions(octarine_core PUBLIC OCTARINE_PACKAGE_KEY="${OCTARINE_PACKAGE_KEY}")
-endif ()
 if (OCTARINE_ALLOW_LOOSE_ASSETS)
     target_compile_definitions(octarine_core PUBLIC OCTARINE_ALLOW_LOOSE_ASSETS)
 endif ()
@@ -111,7 +108,7 @@ target_link_libraries(octarine_assets PUBLIC
 )
 # libs/stb is its own include root so TextureAtlasBaker.cpp / AtlasBaker.cpp / GlyphAtlas.cpp can
 # write `#include "stb_image.h"` (matches the pattern in scripts/octarine-icon-tool/).
-target_include_directories(octarine_assets PRIVATE ${CMAKE_SOURCE_DIR}/libs/stb)
+target_include_directories(octarine_assets PRIVATE "${PROJECT_SOURCE_DIR}/libs/stb")
 if (NOT MSVC)
     target_compile_options(octarine_assets PRIVATE $<$<NOT:$<CONFIG:Debug>>:-Os>)
 endif ()
@@ -274,3 +271,19 @@ endif ()
 if (NOT OCTARINE_SHIPPED AND WIN32)
     target_link_libraries(octarine_engine PUBLIC ws2_32)
 endif ()
+
+# Keep OCTARINE_PACKAGE_KEY strictly PRIVATE to internal engine layers so encryption secrets
+# never leak into downstream consumer targets or external compile_commands.json entries.
+if (OCTARINE_PACKAGE_KEY)
+    foreach (_oct_layer_tgt octarine_core octarine_assets octarine_renderer octarine_systems octarine_lua octarine_engine)
+        target_compile_definitions(${_oct_layer_tgt} PRIVATE OCTARINE_PACKAGE_KEY="${OCTARINE_PACKAGE_KEY}")
+    endforeach ()
+endif ()
+
+# Namespaced ALIAS targets for FetchContent / add_subdirectory consumers.
+add_library(octarine::core ALIAS octarine_core)
+add_library(octarine::assets ALIAS octarine_assets)
+add_library(octarine::renderer ALIAS octarine_renderer)
+add_library(octarine::systems ALIAS octarine_systems)
+add_library(octarine::lua ALIAS octarine_lua)
+add_library(octarine::engine ALIAS octarine_engine)

@@ -94,6 +94,7 @@ DamageOutcome RunDamageScenario(size_t threshold, int hp, int dmg, int k, bool r
     if (reg.IsAlive(p)) ++alive;
   }
   const bool targetAlive = reg.IsAlive(target);
+  reg.ValidateInvariants();
   return {targetAlive ? reg.GetComponent<Health>(target).current_health : 0, targetAlive, alive};
 }
 
@@ -239,6 +240,7 @@ int main() {
         });
     CheckEq(reg.GetComponent<Health>(target).current_health, 1'000'000 - realHits,
             "interleaved no-op pairs: only real hits applied (real system, parallel)");
+    reg.ValidateInvariants();
   }
 
   // Bounce no-dedup parity: even occurrence count is a net no-op, odd negates — serial and parallel.

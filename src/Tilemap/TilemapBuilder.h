@@ -20,6 +20,9 @@ struct TilesetDesc {
   float textureWidth = 256.0f;
   float textureHeight = 256.0f;
   int32_t tileGridSize = kDefaultTileSize;
+  // Optional sub-rectangle within a packed atlas texture; when w > 0 && h > 0, tile source
+  // coordinates are offset by (atlasSlice.x, atlasSlice.y) against the atlas texture dimensions.
+  SDL_FRect atlasSlice{0.0f, 0.0f, 0.0f, 0.0f};
 };
 
 struct TileQuadDesc {
@@ -62,11 +65,14 @@ class TilemapBuilder {
     const float texH = std::max(1.0f, ts.textureHeight);
     const float gridSize = std::max(1.0f, quad.size);
     const float inset = std::min(kUvInsetPx, gridSize * 0.25f);
+    const bool hasSlice = (ts.atlasSlice.w > 0.0f && ts.atlasSlice.h > 0.0f);
+    const float sliceX = hasSlice ? ts.atlasSlice.x : 0.0f;
+    const float sliceY = hasSlice ? ts.atlasSlice.y : 0.0f;
 
-    float u0 = (quad.srcX + inset) / texW;
-    float v0 = (quad.srcY + inset) / texH;
-    float u1 = (quad.srcX + gridSize - inset) / texW;
-    float v1 = (quad.srcY + gridSize - inset) / texH;
+    float u0 = (sliceX + quad.srcX + inset) / texW;
+    float v0 = (sliceY + quad.srcY + inset) / texH;
+    float u1 = (sliceX + quad.srcX + gridSize - inset) / texW;
+    float v1 = (sliceY + quad.srcY + gridSize - inset) / texH;
 
     if (quad.flipX) {
       std::swap(u0, u1);
@@ -96,6 +102,10 @@ class TilemapBuilder {
   static void AppendYSortTile(std::vector<YSortTileCmd>& outTiles, const TilesetDesc& ts, const TileQuadDesc& quad) {
     const float gridSize = std::max(1.0f, quad.size);
     const float inset = std::min(kUvInsetPx, gridSize * 0.25f);
+    const bool hasSlice = (ts.atlasSlice.w > 0.0f && ts.atlasSlice.h > 0.0f);
+    const float sliceX = hasSlice ? ts.atlasSlice.x : 0.0f;
+    const float sliceY = hasSlice ? ts.atlasSlice.y : 0.0f;
+
     YSortTileCmd cmd;
     cmd.tilesetAssetId = ts.assetId;
     cmd.tilesetRelPath = ts.relPath;
@@ -104,7 +114,8 @@ class TilemapBuilder {
     cmd.width = gridSize;
     cmd.height = gridSize;
     cmd.sortLocalY = cmd.localY + gridSize;
-    cmd.srcRect = SDL_FRect{quad.srcX + inset, quad.srcY + inset, gridSize - 2.0f * inset, gridSize - 2.0f * inset};
+    cmd.srcRect = SDL_FRect{sliceX + quad.srcX + inset, sliceY + quad.srcY + inset, gridSize - 2.0f * inset,
+                            gridSize - 2.0f * inset};
 
     int flipVal = SDL_FLIP_NONE;
     if (quad.flipX) flipVal |= SDL_FLIP_HORIZONTAL;
@@ -114,8 +125,25 @@ class TilemapBuilder {
     outTiles.push_back(std::move(cmd));
   }
 
-  // Processes Y-sorted tiles bottom-up (descending localY) so contiguous vertical stacks
-  // (e.g. multi-tile pillars, statues, or trees) share the bottom-most tile's sortLocalY.
+  // Remaps standalone-normalized UVs and YSort srcRects on `tmpl` into `atlasSlice` inside a
+  // `(atlasTexW, atlasTexH)` packed atlas texture when `LoadFromData` receives un-sliced meshes.
+  static void RemapTemplateToAtlasSlice(ChunkTemplate& tmpl, const std::string& assetId, const SDL_FRect& slice,
+                                        const float atlasTexW, const float atlasTexH) {
+    if (slice.w <= 0.0f || slice.h <= 0.0f || atlasTexW <= 0.0f || atlasTexH <= 0.0f) return;
+    for (auto& layer : tmpl.staticLayers) {
+      if (layer.tilesetAssetId != assetId) continue;
+      for (auto& v : layer.MutableVertices()) {
+        v.tex_coord.x = (v.tex_coord.x * slice.w + slice.x) / atlasTexW;
+        v.tex_coord.y = (v.tex_coord.y * slice.h + slice.y) / atlasTexH;
+      }
+    }
+    for (auto& ytile : tmpl.ysortTiles) {
+      if (ytile.tilesetAssetId != assetId) continue;
+      ytile.srcRect.x += slice.x;
+      ytile.srcRect.y += slice.y;
+    }
+  }
+
   static void GroupVerticalYSortTiles(std::vector<YSortTileCmd>& tiles) {
     if (tiles.size() <= 1u) {
       return;

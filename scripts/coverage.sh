@@ -7,8 +7,9 @@
 # Options:
 #   --diff [base]     Run diff-coverage audit against base ref (default: HEAD~1 or PR merge base)
 #   --threshold <N>   Diff coverage minimum threshold percentage (default: 80)
+#   --preset <name>   CMake preset build directory under build/ (default: player-debug)
 #   --summary         Print terminal summary table for all files in src/
-#   --html [dir]      Generate HTML coverage report into directory (default: build/coverage_html)
+#   --html [dir]      Generate HTML coverage report under build/ (default: build/<preset>/coverage_html)
 #   --no-run          Skip ctest execution and reuse existing profile data
 #   -h, --help        Show this help message
 
@@ -19,10 +20,7 @@ repo_root="$(cd "$script_dir/.." && pwd)"
 cd "$repo_root"
 
 preset="player-debug"
-build_dir="$repo_root/build/$preset"
-raw_dir="$build_dir/profraw"
-profdata="$build_dir/coverage.profdata"
-coverage_lcov="$build_dir/coverage.lcov"
+custom_html_dir=""
 
 mode_diff=0
 base_ref=""
@@ -31,7 +29,6 @@ filter_dir="src/"
 exclude_pattern=""
 mode_summary=0
 mode_html=0
-html_dir="$build_dir/coverage_html"
 run_tests=1
 
 while [[ $# -gt 0 ]]; do
@@ -45,6 +42,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --threshold)
       threshold="$2"
+      shift
+      ;;
+    --preset)
+      preset="$2"
       shift
       ;;
     --filter-dir)
@@ -61,7 +62,7 @@ while [[ $# -gt 0 ]]; do
     --html)
       mode_html=1
       if [[ $# -gt 1 && ! "$2" =~ ^-- ]]; then
-        html_dir="$2"
+        custom_html_dir="$2"
         shift
       fi
       ;;
@@ -69,7 +70,7 @@ while [[ $# -gt 0 ]]; do
       run_tests=0
       ;;
     -h|--help)
-      sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -79,6 +80,27 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+build_dir="$repo_root/build/$preset"
+raw_dir="$build_dir/profraw"
+tmp_dir="$build_dir/tmp"
+profdata="$build_dir/coverage.profdata"
+coverage_lcov="$build_dir/coverage.lcov"
+html_dir="$build_dir/coverage_html"
+
+if [[ -n "$custom_html_dir" ]]; then
+  if [[ "$custom_html_dir" = /* ]]; then
+    html_dir="$custom_html_dir"
+  elif [[ "$custom_html_dir" == build/* ]]; then
+    html_dir="$repo_root/$custom_html_dir"
+  else
+    html_dir="$repo_root/build/$custom_html_dir"
+  fi
+fi
+
+mkdir -p "$build_dir" "$raw_dir" "$tmp_dir"
+export TMPDIR="$tmp_dir"
+export LLVM_PROFILE_FILE="$raw_dir/%p-%m.profraw"
 
 # Find llvm-profdata and llvm-cov
 PROFDATA=""
@@ -90,7 +112,7 @@ elif command -v llvm-profdata &>/dev/null && command -v llvm-cov &>/dev/null; th
   PROFDATA="llvm-profdata"
   COV="llvm-cov"
 else
-  for ver in 19 18 17 16 15; do
+  for ver in 21 20 19 18 17 16 15; do
     if command -v "llvm-profdata-$ver" &>/dev/null && command -v "llvm-cov-$ver" &>/dev/null; then
       PROFDATA="llvm-profdata-$ver"
       COV="llvm-cov-$ver"
@@ -105,16 +127,22 @@ if [[ -z "$PROFDATA" || -z "$COV" ]]; then
 fi
 
 if [[ $run_tests -eq 1 ]]; then
+  rm -f "$repo_root/default.profraw"
   rm -rf "$raw_dir"
   mkdir -p "$raw_dir"
-  export LLVM_PROFILE_FILE="$raw_dir/%p-%m.profraw"
 
   echo "== Running test suite under coverage instrumentation =="
   ctest --test-dir "$build_dir" --output-on-failure
 
+  if [[ -f "$repo_root/default.profraw" ]]; then
+    mv "$repo_root/default.profraw" "$raw_dir/relocated-default.profraw"
+  fi
+
   echo "== Merging raw profiles into $profdata =="
   # shellcheck disable=SC2086
   $PROFDATA merge -sparse "$raw_dir"/*.profraw -o "$profdata"
+elif [[ -f "$repo_root/default.profraw" ]]; then
+  mv "$repo_root/default.profraw" "$raw_dir/relocated-default.profraw"
 fi
 
 if [[ ! -f "$profdata" ]]; then

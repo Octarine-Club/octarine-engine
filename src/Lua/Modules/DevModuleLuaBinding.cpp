@@ -8,6 +8,7 @@
 #include "ECS/Registry.h"
 #include "General/Logger.h"
 #include "Lua/LuaBindingContext.h"
+#include "Lua/LuaSchemaRegistry.h"
 #ifndef OCTARINE_SHIPPED
 #include "UI/UIPreviewer.h"
 #include "UI/UIRuntime.h"
@@ -17,6 +18,7 @@ namespace {
 
 using octarine::debug::DebugMenuRegistry;
 using octarine::debug::DebugPanelDescriptor;
+using octarine::lua_schema::LuaSchemaRegistry;
 
 DebugMenuRegistry* GetDebugRegistry(LuaBindingContext& ctx) {
   auto* reg = ctx.GetRegistry();
@@ -28,53 +30,54 @@ DebugMenuRegistry* GetDebugRegistry(LuaBindingContext& ctx) {
 }
 
 void BindPanelFunctions(sol::table& dev, LuaBindingContext& ctx) {
-  dev.set_function("register_panel", [&ctx](const std::string& id, const sol::object& optsOrFn) {
-    auto* debugReg = GetDebugRegistry(ctx);
-    if (!debugReg) return;
+  LuaSchemaRegistry::SetFunction(
+      dev, "dev", "register_panel", [&ctx](const std::string& id, const sol::object& optsOrFn) {
+        auto* debugReg = GetDebugRegistry(ctx);
+        if (!debugReg) return;
 
-    DebugPanelDescriptor desc;
-    desc.id = id;
-    desc.category = "Game";
-    desc.title = id;
-    desc.isLuaOwned = true;
-    desc.autoWindow = true;
+        DebugPanelDescriptor desc;
+        desc.id = id;
+        desc.category = "Game";
+        desc.title = id;
+        desc.isLuaOwned = true;
+        desc.autoWindow = true;
 
-    sol::protected_function drawFn;
-    if (optsOrFn.is<sol::protected_function>()) {
-      drawFn = optsOrFn.as<sol::protected_function>();
-    } else if (optsOrFn.is<sol::table>()) {
-      sol::table opts = optsOrFn.as<sol::table>();
-      desc.title = opts.get_or("title", id);
-      desc.category = opts.get_or("category", std::string("Game"));
-      desc.shortcut = opts.get_or("shortcut", std::string{});
-      desc.autoWindow = opts.get_or("auto_window", true);
-      drawFn = opts.get<sol::protected_function>("draw");
-    }
-
-    if (drawFn.valid()) {
-      desc.drawCallback = [drawFn](Registry&) {
-        auto res = drawFn();
-        if (!res.valid()) {
-          const sol::error err = res;
-          Logger::ErrorLua("dev.register_panel error in '" + std::string(err.what()) + "'");
+        sol::protected_function drawFn;
+        if (optsOrFn.is<sol::protected_function>()) {
+          drawFn = optsOrFn.as<sol::protected_function>();
+        } else if (optsOrFn.is<sol::table>()) {
+          sol::table opts = optsOrFn.as<sol::table>();
+          desc.title = opts.get_or("title", id);
+          desc.category = opts.get_or("category", std::string("Game"));
+          desc.shortcut = opts.get_or("shortcut", std::string{});
+          desc.autoWindow = opts.get_or("auto_window", true);
+          drawFn = opts.get<sol::protected_function>("draw");
         }
-      };
-    }
 
-    debugReg->RegisterPanel(std::move(desc));
-  });
+        if (drawFn.valid()) {
+          desc.drawCallback = [drawFn](Registry&) {
+            auto res = drawFn();
+            if (!res.valid()) {
+              const sol::error err = res;
+              Logger::ErrorLua("dev.register_panel error in '" + std::string(err.what()) + "'");
+            }
+          };
+        }
 
-  dev.set_function("unregister_panel", [&ctx](const std::string& id) -> bool {
+        debugReg->RegisterPanel(std::move(desc));
+      });
+
+  LuaSchemaRegistry::SetFunction(dev, "dev", "unregister_panel", [&ctx](const std::string& id) -> bool {
     auto* debugReg = GetDebugRegistry(ctx);
     return debugReg != nullptr && debugReg->UnregisterPanel(id);
   });
 
-  dev.set_function("is_panel_open", [&ctx](const std::string& id) -> bool {
+  LuaSchemaRegistry::SetFunction(dev, "dev", "is_panel_open", [&ctx](const std::string& id) -> bool {
     auto* debugReg = GetDebugRegistry(ctx);
     return debugReg != nullptr && debugReg->IsPanelOpen(id);
   });
 
-  dev.set_function("set_panel_open", [&ctx](const std::string& id, bool open) {
+  LuaSchemaRegistry::SetFunction(dev, "dev", "set_panel_open", [&ctx](const std::string& id, bool open) {
     if (auto* debugReg = GetDebugRegistry(ctx)) {
       debugReg->SetPanelOpen(id, open);
     }
@@ -82,43 +85,45 @@ void BindPanelFunctions(sol::table& dev, LuaBindingContext& ctx) {
 }
 
 void BindActionAndToggleFunctions(sol::table& dev, LuaBindingContext& ctx) {
-  dev.set_function("register_action", [&ctx](const std::string& menuPath, const sol::protected_function& actionFn,
-                                             const sol::optional<std::string>& shortcut) {
-    auto* debugReg = GetDebugRegistry(ctx);
-    if (!debugReg || !actionFn.valid()) return;
+  LuaSchemaRegistry::SetFunction(dev, "dev", "register_action",
+                                 [&ctx](const std::string& menuPath, const sol::protected_function& actionFn,
+                                        const sol::optional<std::string>& shortcut) {
+                                   auto* debugReg = GetDebugRegistry(ctx);
+                                   if (!debugReg || !actionFn.valid()) return;
 
-    debugReg->RegisterAction(
-        menuPath,
-        [actionFn](Registry&) {
-          auto res = actionFn();
-          if (!res.valid()) {
-            const auto err = res.get<sol::error>();
-            Logger::ErrorLua("dev.register_action error: " + std::string(err.what()));
-          }
-        },
-        shortcut.value_or(""), /*isLuaOwned=*/true);
-  });
+                                   debugReg->RegisterAction(
+                                       menuPath,
+                                       [actionFn](Registry&) {
+                                         auto res = actionFn();
+                                         if (!res.valid()) {
+                                           const auto err = res.get<sol::error>();
+                                           Logger::ErrorLua("dev.register_action error: " + std::string(err.what()));
+                                         }
+                                       },
+                                       shortcut.value_or(""), /*isLuaOwned=*/true);
+                                 });
 
-  dev.set_function("register_toggle", [&ctx](const std::string& menuPath, const sol::protected_function& getter,
-                                             const sol::protected_function& setter) {
-    auto* debugReg = GetDebugRegistry(ctx);
-    if (!debugReg || !getter.valid() || !setter.valid()) return;
+  LuaSchemaRegistry::SetFunction(dev, "dev", "register_toggle",
+                                 [&ctx](const std::string& menuPath, const sol::protected_function& getter,
+                                        const sol::protected_function& setter) {
+                                   auto* debugReg = GetDebugRegistry(ctx);
+                                   if (!debugReg || !getter.valid() || !setter.valid()) return;
 
-    debugReg->RegisterToggle(
-        menuPath,
-        [getter]() -> bool {
-          auto res = getter();
-          return res.valid() && res.get_type() == sol::type::boolean && res.get<bool>();
-        },
-        [setter](bool enabled) {
-          auto res = setter(enabled);
-          if (!res.valid()) {
-            const auto err = res.get<sol::error>();
-            Logger::ErrorLua("dev.register_toggle error: " + std::string(err.what()));
-          }
-        },
-        /*isLuaOwned=*/true);
-  });
+                                   debugReg->RegisterToggle(
+                                       menuPath,
+                                       [getter]() -> bool {
+                                         auto res = getter();
+                                         return res.valid() && res.get_type() == sol::type::boolean && res.get<bool>();
+                                       },
+                                       [setter](bool enabled) {
+                                         auto res = setter(enabled);
+                                         if (!res.valid()) {
+                                           const auto err = res.get<sol::error>();
+                                           Logger::ErrorLua("dev.register_toggle error: " + std::string(err.what()));
+                                         }
+                                       },
+                                       /*isLuaOwned=*/true);
+                                 });
 }
 
 std::string FormatWatchValue(const sol::protected_function& valueFn) {
@@ -139,29 +144,30 @@ std::string FormatWatchValue(const sol::protected_function& valueFn) {
 }
 
 void BindWatchFunctions(sol::table& dev, LuaBindingContext& ctx) {
-  dev.set_function("watch", [&ctx](const std::string& label, const sol::protected_function& valueFn) {
-    auto* debugReg = GetDebugRegistry(ctx);
-    if (!debugReg || !valueFn.valid()) return;
+  LuaSchemaRegistry::SetFunction(dev, "dev", "watch",
+                                 [&ctx](const std::string& label, const sol::protected_function& valueFn) {
+                                   auto* debugReg = GetDebugRegistry(ctx);
+                                   if (!debugReg || !valueFn.valid()) return;
 
-    debugReg->RegisterWatch(
-        label, [valueFn]() -> std::string { return FormatWatchValue(valueFn); },
-        /*isLuaOwned=*/true);
-  });
+                                   debugReg->RegisterWatch(
+                                       label, [valueFn]() -> std::string { return FormatWatchValue(valueFn); },
+                                       /*isLuaOwned=*/true);
+                                 });
 
-  dev.set_function("unwatch", [&ctx](const std::string& label) -> bool {
+  LuaSchemaRegistry::SetFunction(dev, "dev", "unwatch", [&ctx](const std::string& label) -> bool {
     auto* debugReg = GetDebugRegistry(ctx);
     return debugReg != nullptr && debugReg->UnregisterWatch(label);
   });
 }
 
 void BindEntitySelectionFunctions(sol::table& dev, LuaBindingContext& ctx) {
-  dev.set_function("select_entity", [&ctx](sol::optional<Entity> entity) {
+  LuaSchemaRegistry::SetFunction(dev, "dev", "select_entity", [&ctx](sol::optional<Entity> entity) {
     if (auto* debugReg = GetDebugRegistry(ctx)) {
       debugReg->SelectEntity(entity.value_or(Entity{}));
     }
   });
 
-  dev.set_function("get_selected_entity", [&ctx]() -> sol::optional<Entity> {
+  LuaSchemaRegistry::SetFunction(dev, "dev", "get_selected_entity", [&ctx]() -> sol::optional<Entity> {
     auto* debugReg = GetDebugRegistry(ctx);
     if (debugReg == nullptr) return sol::nullopt;
     const Entity ent = debugReg->GetSelectedEntity();
@@ -170,7 +176,7 @@ void BindEntitySelectionFunctions(sol::table& dev, LuaBindingContext& ctx) {
     return sol::nullopt;
   });
 
-  dev.set_function("clear", [&ctx]() {
+  LuaSchemaRegistry::SetFunction(dev, "dev", "clear", [&ctx]() {
     if (auto* debugReg = GetDebugRegistry(ctx)) {
       debugReg->ClearLuaOwned();
     }
@@ -193,7 +199,7 @@ UIPreviewer* GetOrCreateUIPreviewer(LuaBindingContext& ctx) {
   return previewer;
 }
 
-sol::table MakeAuditIssueTable(sol::state& lua, const UILayoutIssue& issue) {
+sol::table MakeAuditIssueTable(sol::state_view lua, const UILayoutIssue& issue) {
   sol::table row = lua.create_table();
   row.set("code", issue.code);
   row.set("severity", issue.severity);
@@ -209,7 +215,7 @@ sol::table MakeAuditIssueTable(sol::state& lua, const UILayoutIssue& issue) {
   return row;
 }
 
-sol::table MakeCatalogViewTable(sol::state& lua, const PreviewCatalogEntry& view) {
+sol::table MakeCatalogViewTable(sol::state_view lua, const PreviewCatalogEntry& view) {
   sol::table row = lua.create_table();
   row.set("id", view.id);
   row.set("path", view.displayPath);
@@ -217,17 +223,19 @@ sol::table MakeCatalogViewTable(sol::state& lua, const PreviewCatalogEntry& view
 }
 
 void BindUIPreviewMountFunctions(sol::table& dev, LuaBindingContext& ctx) {
-  dev.set_function("preview_ui", [&ctx](const std::string& pathOrId, const sol::optional<sol::table>& opts) -> bool {
-    auto* previewer = GetOrCreateUIPreviewer(ctx);
-    return previewer != nullptr && previewer->MountPreview(pathOrId, opts);
-  });
+  LuaSchemaRegistry::SetFunction(dev, "dev", "preview_ui",
+                                 [&ctx](const std::string& pathOrId, const sol::optional<sol::table>& opts) -> bool {
+                                   auto* previewer = GetOrCreateUIPreviewer(ctx);
+                                   return previewer != nullptr && previewer->MountPreview(pathOrId, opts);
+                                 });
 
-  dev.set_function("preview_inline_ui", [&ctx](const std::string& xml, const sol::optional<std::string>& oss) -> bool {
-    auto* previewer = GetOrCreateUIPreviewer(ctx);
-    return previewer != nullptr && previewer->MountInlineXml(xml, oss.value_or(""));
-  });
+  LuaSchemaRegistry::SetFunction(dev, "dev", "preview_inline_ui",
+                                 [&ctx](const std::string& xml, const sol::optional<std::string>& oss) -> bool {
+                                   auto* previewer = GetOrCreateUIPreviewer(ctx);
+                                   return previewer != nullptr && previewer->MountInlineXml(xml, oss.value_or(""));
+                                 });
 
-  dev.set_function("unmount_preview_ui", [&ctx]() {
+  LuaSchemaRegistry::SetFunction(dev, "dev", "unmount_preview_ui", [&ctx]() {
     if (auto* reg = ctx.GetRegistry()) {
       if (auto* previewer = reg->TryGet<UIPreviewer>()) {
         previewer->UnmountPreview();
@@ -235,14 +243,15 @@ void BindUIPreviewMountFunctions(sol::table& dev, LuaBindingContext& ctx) {
     }
   });
 
-  dev.set_function("reload_preview_ui", [&ctx]() -> bool {
+  LuaSchemaRegistry::SetFunction(dev, "dev", "reload_preview_ui", [&ctx]() -> bool {
     auto* previewer = GetOrCreateUIPreviewer(ctx);
     return previewer != nullptr && previewer->ReloadActivePreview();
   });
 }
 
-void BindUIPreviewAuditFunctions(sol::table& dev, sol::state& lua, LuaBindingContext& ctx) {
-  dev.set_function("audit_ui", [&lua, &ctx]() -> sol::table {
+void BindUIPreviewAuditFunctions(sol::table& dev, LuaBindingContext& ctx) {
+  LuaSchemaRegistry::SetFunction(dev, "dev", "audit_ui", [&ctx](const sol::this_state s) -> sol::table {
+    sol::state_view lua(s);
     sol::table arr = lua.create_table();
     auto* previewer = GetOrCreateUIPreviewer(ctx);
     if (previewer == nullptr) return arr;
@@ -253,12 +262,13 @@ void BindUIPreviewAuditFunctions(sol::table& dev, sol::state& lua, LuaBindingCon
     return arr;
   });
 
-  dev.set_function("audit_ui_json", [&ctx]() -> std::string {
+  LuaSchemaRegistry::SetFunction(dev, "dev", "audit_ui_json", [&ctx]() -> std::string {
     auto* previewer = GetOrCreateUIPreviewer(ctx);
     return previewer != nullptr ? previewer->AuditLayoutJson() : "{}";
   });
 
-  dev.set_function("list_ui_views", [&lua, &ctx]() -> sol::table {
+  LuaSchemaRegistry::SetFunction(dev, "dev", "list_ui_views", [&ctx](const sol::this_state s) -> sol::table {
+    sol::state_view lua(s);
     sol::table arr = lua.create_table();
     auto* previewer = GetOrCreateUIPreviewer(ctx);
     if (previewer == nullptr) return arr;
@@ -271,7 +281,7 @@ void BindUIPreviewAuditFunctions(sol::table& dev, sol::state& lua, LuaBindingCon
   });
 }
 
-void AppendContractParamsToLua(sol::state& lua, sol::table& out, const std::vector<MockParamEntry>& params) {
+void AppendContractParamsToLua(sol::state_view lua, sol::table& out, const std::vector<MockParamEntry>& params) {
   sol::table tbl = lua.create_table();
   for (std::size_t i = 0; i < params.size(); ++i) {
     sol::table row = lua.create_table();
@@ -284,7 +294,7 @@ void AppendContractParamsToLua(sol::state& lua, sol::table& out, const std::vect
   out.set("params", tbl);
 }
 
-void AppendContractVarsToLua(sol::state& lua, sol::table& out, const OxmlContract& contract,
+void AppendContractVarsToLua(sol::state_view lua, sol::table& out, const OxmlContract& contract,
                              const std::vector<MockFieldEntry>& fields, const bool staticUnmounted = false) {
   sol::table tbl = lua.create_table();
   for (std::size_t i = 0; i < contract.fields.size(); ++i) {
@@ -301,7 +311,7 @@ void AppendContractVarsToLua(sol::state& lua, sol::table& out, const OxmlContrac
   out.set("vars", tbl);
 }
 
-void AppendContractCallbacksToLua(sol::state& lua, sol::table& out, const std::vector<MockCallbackEntry>& cbs) {
+void AppendContractCallbacksToLua(sol::state_view lua, sol::table& out, const std::vector<MockCallbackEntry>& cbs) {
   sol::table tbl = lua.create_table();
   for (std::size_t i = 0; i < cbs.size(); ++i) {
     sol::table row = lua.create_table();
@@ -314,7 +324,7 @@ void AppendContractCallbacksToLua(sol::state& lua, sol::table& out, const std::v
   out.set("callbacks", tbl);
 }
 
-sol::table InspectStaticOxmlContractToLua(sol::state& lua, UIRuntime* uiRuntime, const std::string& pathOrId) {
+sol::table InspectStaticOxmlContractToLua(sol::state_view lua, UIRuntime* uiRuntime, const std::string& pathOrId) {
   sol::table out = lua.create_table();
   if (uiRuntime == nullptr) return out;
   const auto text = (!pathOrId.empty() && pathOrId.front() == '<') ? std::optional<std::string>(pathOrId)
@@ -351,7 +361,7 @@ sol::table InspectStaticOxmlContractToLua(sol::state& lua, UIRuntime* uiRuntime,
   return out;
 }
 
-sol::table InspectActiveContractToLua(sol::state& lua, LuaBindingContext& ctx) {
+sol::table InspectActiveContractToLua(sol::state_view lua, LuaBindingContext& ctx) {
   sol::table out = lua.create_table();
   auto* previewer = GetOrCreateUIPreviewer(ctx);
   if (previewer == nullptr) return out;
@@ -385,56 +395,64 @@ bool SetUiMockParamFromLua(LuaBindingContext& ctx, const std::string& name, cons
   return previewer->SetMockParam(name, strVal);
 }
 
-void BindUIPreviewContractFunctions(sol::table& dev, sol::state& lua, LuaBindingContext& ctx) {
-  dev.set_function("inspect_ui_contract", [&lua, &ctx](const sol::optional<std::string>& pathOrId) -> sol::table {
-    if (pathOrId.has_value() && !pathOrId->empty()) {
-      auto* reg = ctx.GetRegistry();
-      auto* uiRuntime = reg != nullptr ? reg->TryGet<UIRuntime>() : nullptr;
-      return InspectStaticOxmlContractToLua(lua, uiRuntime, *pathOrId);
-    }
-    return InspectActiveContractToLua(lua, ctx);
-  });
+void BindUIPreviewContractFunctions(sol::table& dev, LuaBindingContext& ctx) {
+  LuaSchemaRegistry::SetFunction(
+      dev, "dev", "inspect_ui_contract",
+      [&ctx](const sol::optional<std::string>& pathOrId, const sol::this_state s) -> sol::table {
+        sol::state_view lua(s);
+        if (pathOrId.has_value() && !pathOrId->empty()) {
+          auto* reg = ctx.GetRegistry();
+          auto* uiRuntime = reg != nullptr ? reg->TryGet<UIRuntime>() : nullptr;
+          return InspectStaticOxmlContractToLua(lua, uiRuntime, *pathOrId);
+        }
+        return InspectActiveContractToLua(lua, ctx);
+      });
 
-  dev.set_function("inspect_ui_contract_json", [&ctx](const sol::optional<std::string>& pathOrId) -> std::string {
-    auto* previewer = GetOrCreateUIPreviewer(ctx);
-    return previewer != nullptr ? previewer->InspectContractJson(pathOrId.value_or("")) : "{}";
-  });
+  LuaSchemaRegistry::SetFunction(
+      dev, "dev", "inspect_ui_contract_json", [&ctx](const sol::optional<std::string>& pathOrId) -> std::string {
+        auto* previewer = GetOrCreateUIPreviewer(ctx);
+        return previewer != nullptr ? previewer->InspectContractJson(pathOrId.value_or("")) : "{}";
+      });
 }
 
-void BindUIPreviewMockFunctions(sol::table& dev, sol::state& lua, LuaBindingContext& ctx) {
-  BindUIPreviewContractFunctions(dev, lua, ctx);
+void BindUIPreviewMockFunctions(sol::table& dev, LuaBindingContext& ctx) {
+  BindUIPreviewContractFunctions(dev, ctx);
 
-  dev.set_function("set_ui_mock_field", [&ctx](const std::string& path, const sol::object& value) -> bool {
-    auto* previewer = GetOrCreateUIPreviewer(ctx);
-    return previewer != nullptr && previewer->SetMockFieldObject(path, value);
-  });
+  LuaSchemaRegistry::SetFunction(dev, "dev", "set_ui_mock_field",
+                                 [&ctx](const std::string& path, const sol::object& value) -> bool {
+                                   auto* previewer = GetOrCreateUIPreviewer(ctx);
+                                   return previewer != nullptr && previewer->SetMockFieldObject(path, value);
+                                 });
 
-  dev.set_function("resize_ui_mock_array", [&ctx](const std::string& path, const int newLen) -> bool {
-    auto* previewer = GetOrCreateUIPreviewer(ctx);
-    return previewer != nullptr && previewer->ResizeMockArray(path, newLen);
-  });
+  LuaSchemaRegistry::SetFunction(dev, "dev", "resize_ui_mock_array",
+                                 [&ctx](const std::string& path, const int newLen) -> bool {
+                                   auto* previewer = GetOrCreateUIPreviewer(ctx);
+                                   return previewer != nullptr && previewer->ResizeMockArray(path, newLen);
+                                 });
 
-  dev.set_function("set_ui_param", [&ctx](const std::string& name, const sol::object& value) -> bool {
-    return SetUiMockParamFromLua(ctx, name, value);
-  });
+  LuaSchemaRegistry::SetFunction(dev, "dev", "set_ui_param",
+                                 [&ctx](const std::string& name, const sol::object& value) -> bool {
+                                   return SetUiMockParamFromLua(ctx, name, value);
+                                 });
 
-  dev.set_function("load_ui_mock", [&ctx](const std::string& path) -> bool {
+  LuaSchemaRegistry::SetFunction(dev, "dev", "load_ui_mock", [&ctx](const std::string& path) -> bool {
     auto* previewer = GetOrCreateUIPreviewer(ctx);
     return previewer != nullptr && previewer->LoadMockScript(path);
   });
 
-  dev.set_function(
-      "save_ui_mock", [&ctx](const sol::optional<std::string>& path, const sol::optional<bool>& force) -> bool {
+  LuaSchemaRegistry::SetFunction(
+      dev, "dev", "save_ui_mock",
+      [&ctx](const sol::optional<std::string>& path, const sol::optional<bool>& force) -> bool {
         auto* previewer = GetOrCreateUIPreviewer(ctx);
         return previewer != nullptr && previewer->SaveMockSidecar(path.value_or(""), force.value_or(false));
       });
 
-  dev.set_function("export_ui_mock_lua", [&ctx]() -> std::string {
+  LuaSchemaRegistry::SetFunction(dev, "dev", "export_ui_mock_lua", [&ctx]() -> std::string {
     auto* previewer = GetOrCreateUIPreviewer(ctx);
     return previewer != nullptr ? previewer->ExportMockLuaScript() : "";
   });
 
-  dev.set_function("seed_ui_mock", [&ctx](const sol::optional<std::string>& path) -> bool {
+  LuaSchemaRegistry::SetFunction(dev, "dev", "seed_ui_mock", [&ctx](const sol::optional<std::string>& path) -> bool {
     auto* previewer = GetOrCreateUIPreviewer(ctx);
     if (previewer == nullptr) return false;
     return path.has_value() ? previewer->SeedSingleContractField(*path) : previewer->SeedMissingContractFields();
@@ -442,26 +460,26 @@ void BindUIPreviewMockFunctions(sol::table& dev, sol::state& lua, LuaBindingCont
 }
 
 void BindUIPreviewViewportFunctions(sol::table& dev, LuaBindingContext& ctx) {
-  dev.set_function("set_ui_viewport", [&ctx](const int width, const int height) -> bool {
+  LuaSchemaRegistry::SetFunction(dev, "dev", "set_ui_viewport", [&ctx](const int width, const int height) -> bool {
     auto* previewer = GetOrCreateUIPreviewer(ctx);
     if (previewer == nullptr) return false;
     previewer->SetSimulatedViewport(width, height);
     return true;
   });
 
-  dev.set_function("get_ui_viewport_json", [&ctx]() -> std::string {
+  LuaSchemaRegistry::SetFunction(dev, "dev", "get_ui_viewport_json", [&ctx]() -> std::string {
     auto* previewer = GetOrCreateUIPreviewer(ctx);
     return previewer != nullptr ? previewer->ViewportInfoJson() : "{}";
   });
 
-  dev.set_function("set_ui_safe_area_guides", [&ctx](const bool enabled) -> bool {
+  LuaSchemaRegistry::SetFunction(dev, "dev", "set_ui_safe_area_guides", [&ctx](const bool enabled) -> bool {
     auto* previewer = GetOrCreateUIPreviewer(ctx);
     if (previewer == nullptr) return false;
     previewer->SetShowSafeAreaGuides(enabled);
     return true;
   });
 
-  dev.set_function("set_ui_integer_zoom", [&ctx](const bool enabled) -> bool {
+  LuaSchemaRegistry::SetFunction(dev, "dev", "set_ui_integer_zoom", [&ctx](const bool enabled) -> bool {
     auto* previewer = GetOrCreateUIPreviewer(ctx);
     if (previewer == nullptr) return false;
     previewer->SetIntegerZoomSimulation(enabled);
@@ -470,48 +488,49 @@ void BindUIPreviewViewportFunctions(sol::table& dev, LuaBindingContext& ctx) {
 }
 
 void BindUIPreviewPresetFunctions(sol::table& dev, LuaBindingContext& ctx) {
-  dev.set_function("list_ui_presets_json", [&ctx]() -> std::string {
+  LuaSchemaRegistry::SetFunction(dev, "dev", "list_ui_presets_json", [&ctx]() -> std::string {
     auto* previewer = GetOrCreateUIPreviewer(ctx);
     return previewer != nullptr ? previewer->ListPresetsJson() : "{}";
   });
 
-  dev.set_function("select_ui_preset", [&ctx](const std::string& name) -> bool {
+  LuaSchemaRegistry::SetFunction(dev, "dev", "select_ui_preset", [&ctx](const std::string& name) -> bool {
     auto* previewer = GetOrCreateUIPreviewer(ctx);
     return previewer != nullptr && previewer->SelectMockPreset(name);
   });
 
-  dev.set_function(
-      "save_ui_preset",
+  LuaSchemaRegistry::SetFunction(
+      dev, "dev", "save_ui_preset",
       [&ctx](const std::string& name, const sol::optional<bool>& setDefault, const sol::optional<bool>& force) -> bool {
         auto* previewer = GetOrCreateUIPreviewer(ctx);
         return previewer != nullptr &&
                previewer->SaveMockPreset(name, setDefault.value_or(false), force.value_or(false));
       });
 
-  dev.set_function("delete_ui_preset", [&ctx](const std::string& name, const sol::optional<bool>& force) -> bool {
-    auto* previewer = GetOrCreateUIPreviewer(ctx);
-    return previewer != nullptr && previewer->DeleteMockPreset(name, force.value_or(false));
-  });
+  LuaSchemaRegistry::SetFunction(
+      dev, "dev", "delete_ui_preset", [&ctx](const std::string& name, const sol::optional<bool>& force) -> bool {
+        auto* previewer = GetOrCreateUIPreviewer(ctx);
+        return previewer != nullptr && previewer->DeleteMockPreset(name, force.value_or(false));
+      });
 
-  dev.set_function("apply_ui_stress_preset", [&ctx](const std::string& kind) -> bool {
+  LuaSchemaRegistry::SetFunction(dev, "dev", "apply_ui_stress_preset", [&ctx](const std::string& kind) -> bool {
     auto* previewer = GetOrCreateUIPreviewer(ctx);
     return previewer != nullptr && previewer->ApplyStressPreset(kind);
   });
 
-  dev.set_function("run_ui_matrix_json",
-                   [&ctx](const std::string& outDir, const sol::optional<std::string>& resolutionsCsv,
-                          const sol::optional<std::string>& presetsCsv) -> std::string {
-                     auto* previewer = GetOrCreateUIPreviewer(ctx);
-                     if (previewer == nullptr) return "{}";
-                     return previewer->RunPreviewMatrixJson(outDir, resolutionsCsv.value_or(""),
-                                                            presetsCsv.value_or(""));
-                   });
+  LuaSchemaRegistry::SetFunction(dev, "dev", "run_ui_matrix_json",
+                                 [&ctx](const std::string& outDir, const sol::optional<std::string>& resolutionsCsv,
+                                        const sol::optional<std::string>& presetsCsv) -> std::string {
+                                   auto* previewer = GetOrCreateUIPreviewer(ctx);
+                                   if (previewer == nullptr) return "{}";
+                                   return previewer->RunPreviewMatrixJson(outDir, resolutionsCsv.value_or(""),
+                                                                          presetsCsv.value_or(""));
+                                 });
 }
 
-void BindUIPreviewFunctions(sol::table& dev, sol::state& lua, LuaBindingContext& ctx) {
+void BindUIPreviewFunctions(sol::table& dev, LuaBindingContext& ctx) {
   BindUIPreviewMountFunctions(dev, ctx);
-  BindUIPreviewAuditFunctions(dev, lua, ctx);
-  BindUIPreviewMockFunctions(dev, lua, ctx);
+  BindUIPreviewAuditFunctions(dev, ctx);
+  BindUIPreviewMockFunctions(dev, ctx);
   BindUIPreviewViewportFunctions(dev, ctx);
   BindUIPreviewPresetFunctions(dev, ctx);
 }
@@ -526,6 +545,6 @@ void LuaModuleBinding<DevModule>::install(sol::state& lua, LuaBindingContext& ct
   BindWatchFunctions(dev, ctx);
   BindEntitySelectionFunctions(dev, ctx);
 #ifndef OCTARINE_SHIPPED
-  BindUIPreviewFunctions(dev, lua, ctx);
+  BindUIPreviewFunctions(dev, ctx);
 #endif
 }

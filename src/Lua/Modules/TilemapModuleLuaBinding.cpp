@@ -11,6 +11,7 @@
 
 #include "ECS/Registry.h"
 #include "Lua/LuaBindingContext.h"
+#include "Lua/LuaSchemaRegistry.h"
 #include "Systems/TilemapSystem.h"
 #include "Tilemap/ChunkTemplate.h"
 #include "Tilemap/TilemapBuilder.h"
@@ -407,96 +408,104 @@ std::optional<TilemapData> BuildTilemapDataFromLuaTable(const sol::table& dataTa
 }
 
 void BindLoadFunctions(sol::table& tm, LuaBindingContext& ctx) {
-  tm.set_function("load", [&ctx](const std::string& path, const sol::optional<sol::table>& opts) -> bool {
-    Registry* r = ctx.GetRegistry();
-    auto* sys = EnsureTilemap(r);
-    return (sys != nullptr) && sys->Load(*r, path, ParseLoadOptions(opts));
-  });
+  using octarine::lua_schema::LuaSchemaRegistry;
+  LuaSchemaRegistry::SetFunction(tm, "tilemap", "load",
+                                 [&ctx](const std::string& path, const sol::optional<sol::table>& opts) -> bool {
+                                   Registry* r = ctx.GetRegistry();
+                                   auto* sys = EnsureTilemap(r);
+                                   return (sys != nullptr) && sys->Load(*r, path, ParseLoadOptions(opts));
+                                 });
 
-  tm.set_function("load_json", [&ctx](const std::string& jsonText, const sol::optional<sol::table>& opts) -> bool {
-    Registry* r = ctx.GetRegistry();
-    auto* sys = EnsureTilemap(r);
-    return (sys != nullptr) && sys->LoadFromJsonString(*r, jsonText, ParseLoadOptions(opts));
-  });
+  LuaSchemaRegistry::SetFunction(
+      tm, "tilemap", "load_json", [&ctx](const std::string& jsonText, const sol::optional<sol::table>& opts) -> bool {
+        Registry* r = ctx.GetRegistry();
+        auto* sys = EnsureTilemap(r);
+        return (sys != nullptr) && sys->LoadFromJsonString(*r, jsonText, ParseLoadOptions(opts));
+      });
 
-  tm.set_function("load_data", [&ctx](const sol::table& dataTable, const sol::optional<sol::table>& opts) -> bool {
-    Registry* r = ctx.GetRegistry();
-    auto* sys = EnsureTilemap(r);
-    if (sys == nullptr) {
-      return false;
-    }
-    auto built = BuildTilemapDataFromLuaTable(dataTable);
-    if (!built.has_value()) {
-      return false;
-    }
-    return sys->LoadFromData(*r, std::move(*built), ParseLoadOptions(opts), "<lua_data>");
-  });
+  LuaSchemaRegistry::SetFunction(
+      tm, "tilemap", "load_data", [&ctx](const sol::table& dataTable, const sol::optional<sol::table>& opts) -> bool {
+        Registry* r = ctx.GetRegistry();
+        auto* sys = EnsureTilemap(r);
+        if (sys == nullptr) {
+          return false;
+        }
+        auto built = BuildTilemapDataFromLuaTable(dataTable);
+        if (!built.has_value()) {
+          return false;
+        }
+        return sys->LoadFromData(*r, std::move(*built), ParseLoadOptions(opts), "<lua_data>");
+      });
 
-  tm.set_function("unload", [&ctx]() {
+  LuaSchemaRegistry::SetFunction(tm, "tilemap", "unload", [&ctx]() {
     Registry* r = ctx.GetRegistry();
     if (auto* sys = EnsureTilemap(r)) sys->Unload(*r);
   });
 
-  tm.set_function("reload", [&ctx]() -> bool {
+  LuaSchemaRegistry::SetFunction(tm, "tilemap", "reload", [&ctx]() -> bool {
     Registry* r = ctx.GetRegistry();
     auto* sys = EnsureTilemap(r);
     return (sys != nullptr) && sys->Reload(*r);
   });
 
-  tm.set_function("is_loaded", [&ctx]() -> bool {
+  LuaSchemaRegistry::SetFunction(tm, "tilemap", "is_loaded", [&ctx]() -> bool {
     const auto* sys = EnsureTilemap(ctx.GetRegistry());
     return (sys != nullptr) && sys->IsLoaded();
   });
 }
 
 void BindStitchFunctions(sol::table& tm, LuaBindingContext& ctx) {
-  tm.set_function("set_stitch_mode",
-                  [&ctx](const std::string& modeStr, const sol::optional<uint32_t>& seedOpt) -> void {
-                    Registry* r = ctx.GetRegistry();
-                    if (auto* sys = EnsureTilemap(r)) {
-                      sys->SetStitchMode(*r, ParseStitchMode(modeStr), seedOpt.value_or(sys->GetSeed()));
-                    }
-                  });
+  using octarine::lua_schema::LuaSchemaRegistry;
+  LuaSchemaRegistry::SetFunction(tm, "tilemap", "set_stitch_mode",
+                                 [&ctx](const std::string& modeStr, const sol::optional<uint32_t>& seedOpt) -> void {
+                                   Registry* r = ctx.GetRegistry();
+                                   if (auto* sys = EnsureTilemap(r)) {
+                                     sys->SetStitchMode(*r, ParseStitchMode(modeStr), seedOpt.value_or(sys->GetSeed()));
+                                   }
+                                 });
 
-  tm.set_function("get_stitch_mode", [&ctx]() -> std::string {
+  LuaSchemaRegistry::SetFunction(tm, "tilemap", "get_stitch_mode", [&ctx]() -> std::string {
     const auto* sys = EnsureTilemap(ctx.GetRegistry());
     return StitchModeToString(sys != nullptr ? sys->GetStitchMode() : StitchMode::Toroidal);
   });
 
-  tm.set_function("get_seed", [&ctx]() -> uint32_t {
+  LuaSchemaRegistry::SetFunction(tm, "tilemap", "get_seed", [&ctx]() -> uint32_t {
     const auto* sys = EnsureTilemap(ctx.GetRegistry());
     return sys != nullptr ? sys->GetSeed() : 0u;
   });
 
-  tm.set_function("set_window_radii", [&ctx](const int32_t loadRadius, const int32_t unloadRadius) {
-    if (auto* sys = EnsureTilemap(ctx.GetRegistry())) {
-      sys->SetWindowRadii(loadRadius, unloadRadius);
-    }
-  });
+  LuaSchemaRegistry::SetFunction(tm, "tilemap", "set_window_radii",
+                                 [&ctx](const int32_t loadRadius, const int32_t unloadRadius) {
+                                   if (auto* sys = EnsureTilemap(ctx.GetRegistry())) {
+                                     sys->SetWindowRadii(loadRadius, unloadRadius);
+                                   }
+                                 });
 
-  tm.set_function(
-      "set_chunk_override",
+  LuaSchemaRegistry::SetFunction(
+      tm, "tilemap", "set_chunk_override",
       [&ctx](const int32_t chunkX, const int32_t chunkY, const sol::optional<std::string>& tmplIdOpt) -> bool {
         Registry* r = ctx.GetRegistry();
         auto* sys = EnsureTilemap(r);
         return (sys != nullptr) && sys->SetChunkOverride(*r, chunkX, chunkY, tmplIdOpt.value_or(std::string{}));
       });
 
-  tm.set_function("clear_chunk_overrides", [&ctx]() {
+  LuaSchemaRegistry::SetFunction(tm, "tilemap", "clear_chunk_overrides", [&ctx]() {
     Registry* r = ctx.GetRegistry();
     if (auto* sys = EnsureTilemap(r)) {
       sys->ClearChunkOverrides(*r);
     }
   });
 
-  tm.set_function("get_chunk_template_id", [&ctx](const int32_t chunkX, const int32_t chunkY) -> std::string {
-    const auto* sys = EnsureTilemap(ctx.GetRegistry());
-    return sys != nullptr ? sys->GetChunkTemplateId(chunkX, chunkY) : std::string{};
-  });
+  LuaSchemaRegistry::SetFunction(tm, "tilemap", "get_chunk_template_id",
+                                 [&ctx](const int32_t chunkX, const int32_t chunkY) -> std::string {
+                                   const auto* sys = EnsureTilemap(ctx.GetRegistry());
+                                   return sys != nullptr ? sys->GetChunkTemplateId(chunkX, chunkY) : std::string{};
+                                 });
 }
 
 void BindPropFunctions(sol::table& tm, LuaBindingContext& ctx) {
-  tm.set_function("set_prop_spawner", [&ctx](const sol::object& fnObj) {
+  using octarine::lua_schema::LuaSchemaRegistry;
+  LuaSchemaRegistry::SetFunction(tm, "tilemap", "set_prop_spawner", [&ctx](const sol::object& fnObj) {
     auto* sys = EnsureTilemap(ctx.GetRegistry());
     if (sys == nullptr) return;
     if (fnObj.is<sol::protected_function>()) {
@@ -506,18 +515,20 @@ void BindPropFunctions(sol::table& tm, LuaBindingContext& ctx) {
     }
   });
 
-  tm.set_function("mark_prop_consumed", [&ctx](const int32_t cx, const int32_t cy, const uint32_t propIdx) {
-    if (auto* sys = EnsureTilemap(ctx.GetRegistry())) {
-      sys->MarkPropConsumed(cx, cy, propIdx);
-    }
-  });
+  LuaSchemaRegistry::SetFunction(tm, "tilemap", "mark_prop_consumed",
+                                 [&ctx](const int32_t cx, const int32_t cy, const uint32_t propIdx) {
+                                   if (auto* sys = EnsureTilemap(ctx.GetRegistry())) {
+                                     sys->MarkPropConsumed(cx, cy, propIdx);
+                                   }
+                                 });
 
-  tm.set_function("is_prop_consumed", [&ctx](const int32_t cx, const int32_t cy, const uint32_t propIdx) -> bool {
-    const auto* sys = EnsureTilemap(ctx.GetRegistry());
-    return (sys != nullptr) && sys->IsPropConsumed(cx, cy, propIdx);
-  });
+  LuaSchemaRegistry::SetFunction(tm, "tilemap", "is_prop_consumed",
+                                 [&ctx](const int32_t cx, const int32_t cy, const uint32_t propIdx) -> bool {
+                                   const auto* sys = EnsureTilemap(ctx.GetRegistry());
+                                   return (sys != nullptr) && sys->IsPropConsumed(cx, cy, propIdx);
+                                 });
 
-  tm.set_function("clear_consumed_props", [&ctx]() {
+  LuaSchemaRegistry::SetFunction(tm, "tilemap", "clear_consumed_props", [&ctx]() {
     if (auto* sys = EnsureTilemap(ctx.GetRegistry())) {
       sys->ClearConsumedProps();
     }
@@ -571,51 +582,56 @@ sol::table BuildTemplatesLuaList(sol::state_view lua, const TilemapSystem* sys) 
 }
 
 void BindInspectionFunctions(sol::table& tm, LuaBindingContext& ctx) {
-  tm.set_function("get_active_chunk_count", [&ctx]() -> size_t {
+  using octarine::lua_schema::LuaSchemaRegistry;
+  LuaSchemaRegistry::SetFunction(tm, "tilemap", "get_active_chunk_count", [&ctx]() -> size_t {
     const auto* sys = EnsureTilemap(ctx.GetRegistry());
     return sys != nullptr ? sys->GetActiveChunkCount() : 0u;
   });
 
-  tm.set_function("get_camera_chunk", [&ctx]() -> std::tuple<int32_t, int32_t> {
+  LuaSchemaRegistry::SetFunction(tm, "tilemap", "get_camera_chunk", [&ctx]() -> std::tuple<int32_t, int32_t> {
     const auto* sys = EnsureTilemap(ctx.GetRegistry());
     if (sys == nullptr) return {0, 0};
     return {sys->GetCameraChunkX(), sys->GetCameraChunkY()};
   });
 
-  tm.set_function("get_chunk_size", [&ctx]() -> std::tuple<int32_t, int32_t, int32_t, int32_t, int32_t> {
-    const auto* sys = EnsureTilemap(ctx.GetRegistry());
-    if (sys == nullptr) return {0, 0, 0, 0, 0};
-    return {sys->GetChunkPixelWidth(), sys->GetChunkPixelHeight(), sys->GetChunkGridWidth(), sys->GetChunkGridHeight(),
-            sys->GetTileSize()};
-  });
+  LuaSchemaRegistry::SetFunction(tm, "tilemap", "get_chunk_size",
+                                 [&ctx]() -> std::tuple<int32_t, int32_t, int32_t, int32_t, int32_t> {
+                                   const auto* sys = EnsureTilemap(ctx.GetRegistry());
+                                   if (sys == nullptr) return {0, 0, 0, 0, 0};
+                                   return {sys->GetChunkPixelWidth(), sys->GetChunkPixelHeight(),
+                                           sys->GetChunkGridWidth(), sys->GetChunkGridHeight(), sys->GetTileSize()};
+                                 });
 
-  tm.set_function("get_templates", [&ctx](sol::this_state s) -> sol::table {
+  LuaSchemaRegistry::SetFunction(tm, "tilemap", "get_templates", [&ctx](sol::this_state s) -> sol::table {
     return BuildTemplatesLuaList(sol::state_view(s), EnsureTilemap(ctx.GetRegistry()));
   });
 
-  tm.set_function("set_debug_overlay", [&ctx](const bool showBounds, const bool showCollisions) {
-    if (auto* sys = EnsureTilemap(ctx.GetRegistry())) {
-      sys->SetShowChunkBounds(showBounds);
-      sys->SetShowCollisionOverlay(showCollisions);
-    }
-  });
+  LuaSchemaRegistry::SetFunction(tm, "tilemap", "set_debug_overlay",
+                                 [&ctx](const bool showBounds, const bool showCollisions) {
+                                   if (auto* sys = EnsureTilemap(ctx.GetRegistry())) {
+                                     sys->SetShowChunkBounds(showBounds);
+                                     sys->SetShowCollisionOverlay(showCollisions);
+                                   }
+                                 });
 }
 
 void BindCollisionQueryFunctions(sol::table& tm, LuaBindingContext& ctx) {
-  tm.set_function("get_tile_at", [&ctx](const float wx, const float wy) -> int {
+  using octarine::lua_schema::LuaSchemaRegistry;
+  LuaSchemaRegistry::SetFunction(tm, "tilemap", "get_tile_at", [&ctx](const float wx, const float wy) -> int {
     const auto* sys = EnsureTilemap(ctx.GetRegistry());
     return static_cast<int>(sys != nullptr ? sys->GetTileAt(wx, wy) : static_cast<uint8_t>(kTileEmpty));
   });
 
-  tm.set_function("is_solid_at", [&ctx](const float wx, const float wy, const sol::optional<uint8_t>& maskOpt) -> bool {
-    const auto* sys = EnsureTilemap(ctx.GetRegistry());
-    if (sys == nullptr) return false;
-    const uint8_t mask = maskOpt.value_or(sys->GetDefaultSolidMask());
-    return sys->IsSolidAt(wx, wy, mask);
-  });
+  LuaSchemaRegistry::SetFunction(tm, "tilemap", "is_solid_at",
+                                 [&ctx](const float wx, const float wy, const sol::optional<uint8_t>& maskOpt) -> bool {
+                                   const auto* sys = EnsureTilemap(ctx.GetRegistry());
+                                   if (sys == nullptr) return false;
+                                   const uint8_t mask = maskOpt.value_or(sys->GetDefaultSolidMask());
+                                   return sys->IsSolidAt(wx, wy, mask);
+                                 });
 
-  tm.set_function(
-      "raycast",
+  LuaSchemaRegistry::SetFunction(
+      tm, "tilemap", "raycast",
       [&ctx](const float x0, const float y0, const float x1, const float y1,
              const sol::optional<uint8_t>& maskOpt) -> std::tuple<bool, float, float, float, float, float, int> {
         const auto* sys = EnsureTilemap(ctx.GetRegistry());
@@ -627,33 +643,34 @@ void BindCollisionQueryFunctions(sol::table& tm, LuaBindingContext& ctx) {
         return {hit.hit, hit.hitX, hit.hitY, hit.normalX, hit.normalY, hit.distance, static_cast<int>(hit.tileValue)};
       });
 
-  tm.set_function("resolve_circle",
-                  [&ctx](const float wx, const float wy, const float radius,
-                         const sol::optional<uint8_t>& maskOpt) -> std::tuple<float, float> {
-                    const auto* sys = EnsureTilemap(ctx.GetRegistry());
-                    if (sys == nullptr) return {wx, wy};
-                    const uint8_t mask = maskOpt.value_or(sys->GetDefaultSolidMask());
-                    const glm::vec2 res = sys->ResolveCircle(wx, wy, radius, mask);
-                    return {res.x, res.y};
-                  });
+  LuaSchemaRegistry::SetFunction(tm, "tilemap", "resolve_circle",
+                                 [&ctx](const float wx, const float wy, const float radius,
+                                        const sol::optional<uint8_t>& maskOpt) -> std::tuple<float, float> {
+                                   const auto* sys = EnsureTilemap(ctx.GetRegistry());
+                                   if (sys == nullptr) return {wx, wy};
+                                   const uint8_t mask = maskOpt.value_or(sys->GetDefaultSolidMask());
+                                   const glm::vec2 res = sys->ResolveCircle(wx, wy, radius, mask);
+                                   return {res.x, res.y};
+                                 });
 
-  tm.set_function("resolve_aabb",
-                  [&ctx](const float wx, const float wy, const float w, const float h,
-                         const sol::optional<uint8_t>& maskOpt) -> std::tuple<float, float> {
-                    const auto* sys = EnsureTilemap(ctx.GetRegistry());
-                    if (sys == nullptr) return {wx, wy};
-                    const uint8_t mask = maskOpt.value_or(sys->GetDefaultSolidMask());
-                    const glm::vec2 res = sys->ResolveAABB(wx, wy, w, h, mask);
-                    return {res.x, res.y};
-                  });
+  LuaSchemaRegistry::SetFunction(tm, "tilemap", "resolve_aabb",
+                                 [&ctx](const float wx, const float wy, const float w, const float h,
+                                        const sol::optional<uint8_t>& maskOpt) -> std::tuple<float, float> {
+                                   const auto* sys = EnsureTilemap(ctx.GetRegistry());
+                                   if (sys == nullptr) return {wx, wy};
+                                   const uint8_t mask = maskOpt.value_or(sys->GetDefaultSolidMask());
+                                   const glm::vec2 res = sys->ResolveAABB(wx, wy, w, h, mask);
+                                   return {res.x, res.y};
+                                 });
 
-  tm.set_function("set_default_masks", [&ctx](const uint8_t solidMask, const uint8_t raycastMask) {
-    if (auto* sys = EnsureTilemap(ctx.GetRegistry())) {
-      sys->SetDefaultMasks(solidMask, raycastMask);
-    }
-  });
+  LuaSchemaRegistry::SetFunction(tm, "tilemap", "set_default_masks",
+                                 [&ctx](const uint8_t solidMask, const uint8_t raycastMask) {
+                                   if (auto* sys = EnsureTilemap(ctx.GetRegistry())) {
+                                     sys->SetDefaultMasks(solidMask, raycastMask);
+                                   }
+                                 });
 
-  tm.set_function("get_default_masks", [&ctx]() -> std::tuple<uint8_t, uint8_t> {
+  LuaSchemaRegistry::SetFunction(tm, "tilemap", "get_default_masks", [&ctx]() -> std::tuple<uint8_t, uint8_t> {
     const auto* sys = EnsureTilemap(ctx.GetRegistry());
     if (sys == nullptr) {
       return {octarine::tilemap::kTileMaskGroundBlocked, octarine::tilemap::kTileMaskProjectileBlocked};

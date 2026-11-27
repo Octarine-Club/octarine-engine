@@ -55,56 +55,64 @@ jobs:
 
       - name: Install Linux build deps (SDL3 / X11 / Wayland)
         uses: ./.github/actions/linux-build-deps
+        with:
+          extras: clang-18 clang-tidy-18
 
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1
         with:
-          key: linux-player-debug-tidy
+          key: linux-lint-tidy
           max-size: 250M
 
-      # Build first so every generated header exists when clang-tidy parses the tree. The
-      # compile_commands.json this emits is what run-clang-tidy consumes.
-      - name: Configure CMake
-        run: cmake --preset player-debug -DOCTARINE_ENABLE_TESTS=ON
+      # Configure and build with the `lint` preset (OCTARINE_ENABLE_PCH=OFF) so compile_commands.json
+      # carries zero PCH flags or GCC-only driver flags when run-clang-tidy walks the tree.
+      - name: Configure CMake (lint preset)
+        env:
+          CC: clang-18
+          CXX: clang++-18
+        run: cmake --preset lint -DOCTARINE_ENABLE_LINTING=OFF -DOCTARINE_ENABLE_TESTS=ON
 
       - name: Build
-        run: cmake --build build/player-debug --parallel
+        run: cmake --build --preset lint --parallel
 
-      # Full-tree sweep over src/ + tests/. clang-diagnostic-* lines are dropped from the
-      # finding count for the same reason as the PR gate: the GCC-built compile_commands carries
-      # flags clang rejects (-fno-fat-lto-objects) and a few sol2+glm instantiations clang
-      # frontends choke on — the GCC -Werror build is the compiler gate, this job is for lint
-      # checks, whose names never start with clang-diagnostic-.
-      - name: clang-tidy (whole tree, non-blocking)
+      # Full-tree sweep over src/ + tests/. Lint check warnings remain non-blocking trend metrics,
+      # while [clang-diagnostic-*] errors are preserved in the report and fail the job if clang-tidy
+      # fails to parse any translation unit.
+      - name: clang-tidy (whole tree, non-blocking lint checks)
         shell: bash
         run: |
-          sudo apt-get update && sudo apt-get install -y clang-tidy-18
           runner="$(command -v run-clang-tidy-18 || find /usr/lib/llvm-18 -name 'run-clang-tidy*' | head -1)"
-          # || true: run-clang-tidy exits non-zero on any diagnostic; findings must not fail the
-          # job, and the file-level clang-diagnostic errors described above are expected noise.
-          "$runner" -p build/player-debug -quiet "^$GITHUB_WORKSPACE/(src|tests)/" \
-            > tidy-report.txt 2>&1 || true
+          "$runner" -p build/lint -quiet "^$GITHUB_WORKSPACE/(src|tests)/" \
+            > build/lint/tidy-report.txt 2>&1 || true
 
-          findings="$(grep -E '^[^ ]+:[0-9]+:[0-9]+: (warning|error):' tidy-report.txt \
-            | grep -v '\[clang-diagnostic-' | sort -u || true)"
+          findings="$(grep -E '^[^ ]+:[0-9]+:[0-9]+: (warning|error):' build/lint/tidy-report.txt \
+            | sort -u || true)"
           count="$(printf '%s' "$findings" | grep -c . || true)"
 
           {
             echo "clang-tidy whole-tree findings: $count"
             echo
             echo "By check:"
-            printf '%s\n' "$findings" | grep -oE '\[[a-z0-9.,-]+\]$' | sort | uniq -c | sort -rn
-          } > tidy-summary.txt || true
+            printf '%s\n' "$findings" | grep -oE '\[[a-z0-9.,*-]+\]$' | sort | uniq -c | sort -rn
+          } > build/lint/tidy-summary.txt || true
 
-          cat tidy-summary.txt
+          cat build/lint/tidy-summary.txt
           echo "::notice::clang-tidy whole-tree findings: $count (report in artifact)"
 
+          diag_errors="$(grep -E 'error:.*\[clang-diagnostic-' build/lint/tidy-report.txt | grep -v '/vcpkg_installed/' || true)"
+          if [ -n "$diag_errors" ]; then
+            echo "::error::clang-tidy hit compiler/parse errors ([clang-diagnostic-*]):"
+            printf '%s\n' "$diag_errors" | head -50
+            exit 1
+          fi
+
       - name: Upload report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: clang-tidy-report
           path: |
-            tidy-report.txt
-            tidy-summary.txt
+            build/lint/tidy-report.txt
+            build/lint/tidy-summary.txt
           if-no-files-found: error
           retention-days: 7

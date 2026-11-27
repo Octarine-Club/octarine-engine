@@ -57,7 +57,7 @@ std::optional<AssetType> ParseAssetType(const std::string& s) {
 // empty root (Android: SDL_IOFromFile resolves against the APK asset root) — there the relative
 // path is kept verbatim so SDL does the resolution.
 std::string ReRootAssetPath(const fs::path& root, const std::string& file) {
-  if (root.empty()) return file;
+  if (root.empty()) return fs::path(file).lexically_normal().generic_string();
   std::error_code ec;
   return fs::absolute(root / file, ec).lexically_normal().string();
 }
@@ -510,6 +510,16 @@ void AssetCatalog::DumpToLog() const {
   }
 }
 
+std::string ResolveManifestRelativePath(const std::string& fullPath, const std::filesystem::path& root) {
+  const std::filesystem::path normFull = std::filesystem::path(fullPath).lexically_normal();
+  std::filesystem::path rel = normFull.lexically_relative(root);
+  std::error_code ec;
+  if (rel.empty() || *rel.begin() == "..") {
+    rel = std::filesystem::relative(normFull, root, ec);
+  }
+  return (ec || rel.empty() || *rel.begin() == "..") ? fullPath : rel.generic_string();
+}
+
 bool AssetCatalog::WriteManifest(const std::string& outPath, const std::string& basePath) const {
   std::ofstream out(outPath, std::ios::binary);
   if (!out.is_open()) {
@@ -525,9 +535,7 @@ bool AssetCatalog::WriteManifest(const std::string& outPath, const std::string& 
 
   // entries_ is a std::map, so iteration is id-sorted and the manifest is deterministic.
   for (const auto& [id, entry] : entries_) {
-    std::error_code ec;
-    const fs::path rel = fs::relative(fs::path(entry.fullPath), root, ec);
-    const std::string file = (ec || rel.empty()) ? entry.fullPath : rel.generic_string();
+    const std::string file = ResolveManifestRelativePath(entry.fullPath, root);
 
     out << "  [\"" << EscapeLua(id) << "\"] = { type = \"" << toAssetTypeString(entry.type) << "\", file = \""
         << EscapeLua(file) << "\"";

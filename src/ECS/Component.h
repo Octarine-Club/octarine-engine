@@ -464,6 +464,16 @@ class Archetype {
     return static_cast<T*>(chunks_[chunkIndex].GetComponentArray(component_offsets_[index]));
   }
 
+  template <typename T>
+  [[nodiscard]] T* TryGetComponentArray(const size_t chunkIndex, const ComponentID componentId) const {
+    assert(chunkIndex < chunks_.size());
+    const auto index = GetComponentIndex(componentId);
+    if (index == kInvalidComponentIndex) {
+      return nullptr;
+    }
+    return static_cast<T*>(chunks_[chunkIndex].GetComponentArray(component_offsets_[index]));
+  }
+
   // Move-constructs shared components between source and destination archetype slots using a
   // linear two-pointer walk over the sorted component ID arrays.
   void CopyComponents(const EntityLocation& sourceLocation, const EntityLocation& destinationLocation) const {

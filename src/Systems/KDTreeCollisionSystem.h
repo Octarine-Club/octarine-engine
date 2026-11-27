@@ -27,12 +27,12 @@
 #include "Events/CollisionBatchEvent.h"
 #include "Events/CollisionExitBatchEvent.h"
 #include "Game/EngineContext.h"
+#include "Game/GameConfig.h"
 #include "General/PerfUtils.h"
 #include "General/Rotation2D.h"
 #include "General/ThreadPool.h"
 
 constexpr int kMaxDimensions = 2;
-// These values can be tuned for better performance.
 constexpr int kMaxRecursionDepth = 64;
 constexpr int kBruteforceCutoff = 32;
 
@@ -391,6 +391,8 @@ class KDTreeCollisionSystem {
 
   void SetSynchronous(bool sync) { synchronous_ = sync; }
   [[nodiscard]] bool IsSynchronous() const { return synchronous_; }
+  void SetActiveSubSteps(int subSteps) noexcept { activeSubSteps_ = std::max(1, subSteps); }
+  [[nodiscard]] int ActiveSubSteps() const noexcept { return activeSubSteps_; }
 
   void WaitForAsync() {
     if (!asyncState_ || !asyncState_->in_flight.load(std::memory_order_acquire)) {
@@ -534,14 +536,21 @@ class KDTreeCollisionSystem {
 
   void operator()(const ContextFacade& ctx) {
     auto* registry = ctx.GetRegistry();
-    auto* eventBus = registry->Get<EngineContext>().eventBus;
-
+    const auto& engineCtx = registry->Get<EngineContext>();
+    auto* eventBus = engineCtx.eventBus;
     EnsureAndUpdateQueries(registry);
-
-    // Deterministic simulation mode (ThreadPool force-serial) also forces synchronous detection:
-    // the async path emits whichever pass has finished by wall-clock time, which varies per run.
-    if (synchronous_ || ThreadPool::IsForceSerial()) {
-      DrainAsync();
+    int subSteps = activeSubSteps_;
+    if (engineCtx.config != nullptr)
+      subSteps = std::max(subSteps, engineCtx.config->GetEngineOptions().simSubSteps);
+    else if (const auto* cfg = registry->TryGet<GameConfig>())
+      subSteps = std::max(subSteps, cfg->GetEngineOptions().simSubSteps);
+    if (synchronous_ || ThreadPool::IsForceSerial() || subSteps > 1) {
+      if (asyncState_ && asyncState_->in_flight.load(std::memory_order_acquire)) {
+        WaitForAsync();
+        ResetAsyncFlags();
+        EmitCollisionEvents(eventBus, asyncState_->pairs);
+        cachedBoxes_.swap(asyncState_->boxes);
+      }
       UpdateSynchronous(eventBus);
     } else {
       UpdateAsynchronous(eventBus);
@@ -699,6 +708,61 @@ class KDTreeCollisionSystem {
     EmitCollisionEvents(eventBus, syncPairsScratch_);
   }
 
+  struct SubmitRollbackGuard {
+    AsyncState* state{nullptr};
+    bool committed{false};
+    explicit SubmitRollbackGuard(AsyncState* s) noexcept : state(s) {}
+    SubmitRollbackGuard(const SubmitRollbackGuard&) = delete;
+    SubmitRollbackGuard& operator=(const SubmitRollbackGuard&) = delete;
+    SubmitRollbackGuard(SubmitRollbackGuard&&) = delete;
+    SubmitRollbackGuard& operator=(SubmitRollbackGuard&&) = delete;
+    ~SubmitRollbackGuard() {
+      if (!committed) {
+        ThreadPool::Instance().NoteAsyncWorkerReleased();
+        state->in_flight.store(false, std::memory_order_release);
+      }
+    }
+  };
+
+  struct WorkerCompletionGuard {
+    AsyncState* s{nullptr};
+    bool released{false};
+    explicit WorkerCompletionGuard(AsyncState* statePtr) noexcept : s(statePtr) {}
+    WorkerCompletionGuard(const WorkerCompletionGuard&) = delete;
+    WorkerCompletionGuard& operator=(const WorkerCompletionGuard&) = delete;
+    WorkerCompletionGuard(WorkerCompletionGuard&&) = delete;
+    WorkerCompletionGuard& operator=(WorkerCompletionGuard&&) = delete;
+    void ReleaseWorker() noexcept {
+      if (!released) {
+        released = true;
+        ThreadPool::Instance().NoteAsyncWorkerReleased();
+      }
+    }
+    ~WorkerCompletionGuard() {
+      ReleaseWorker();
+      std::lock_guard<std::mutex> lk(s->mutex);
+      s->ready.store(true, std::memory_order_release);
+      s->cv.notify_one();
+    }
+  };
+
+  void SubmitAsyncCollisionJob() {
+    asyncState_->boxes.swap(cachedBoxes_);
+    asyncState_->ready.store(false, std::memory_order_release);
+    asyncState_->in_flight.store(true, std::memory_order_release);
+
+    ThreadPool::Instance().NoteAsyncWorkerOccupied();
+    SubmitRollbackGuard submitGuard{asyncState_.get()};
+    ThreadPool::Instance().Submit([state = asyncState_.get()] {
+      WorkerCompletionGuard completionGuard{state};
+      state->pairs.clear();
+      ComputeAsyncCollisions(state->boxes, state->pairs);
+      CanonicalizeAndDeduplicatePairs(state->pairs);
+      completionGuard.ReleaseWorker();
+    });
+    submitGuard.committed = true;
+  }
+
   void ResetAsyncFlags() {
     if (!asyncState_) {
       return;
@@ -768,21 +832,10 @@ class KDTreeCollisionSystem {
       }
       return;
     }
-
-    asyncState_->boxes.swap(cachedBoxes_);
-    asyncState_->ready.store(false, std::memory_order_release);
-    asyncState_->in_flight.store(true, std::memory_order_release);
-
-    ThreadPool::Instance().Submit([state = asyncState_.get()] {
-      state->pairs.clear();
-      ComputeAsyncCollisions(state->boxes, state->pairs);
-      CanonicalizeAndDeduplicatePairs(state->pairs);
-      {
-        std::lock_guard<std::mutex> lk(state->mutex);
-        state->ready.store(true, std::memory_order_release);
-        state->cv.notify_one();
-      }
+    std::sort(cachedBoxes_.begin(), cachedBoxes_.end(), [](const Box& a, const Box& b) {
+      return a.entity.id != b.entity.id ? (a.entity.id < b.entity.id) : (a.shape < b.shape);
     });
+    SubmitAsyncCollisionJob();
   }
 
  public:
@@ -814,17 +867,11 @@ class KDTreeCollisionSystem {
   }
 
   // Diff this frame's overlaps against the previous frame and emit the enter/exit batches.
-  //   - enter: pairs overlapping now but not last frame — first-contact only, so persistent
-  //     overlaps (entity pinned against an obstacle, stacked entities) don't re-fire every frame.
-  //   - exit: pairs that overlapped last frame but no longer do.
   void EmitCollisionEvents(EventBus* eventBus, std::vector<std::pair<Entity, Entity>>& intersectingPairs) {
     PROFILE_COUNTER_SET("Collision: Intersecting pairs", static_cast<long long>(intersectingPairs.size()));
-
     enteringPairs_.clear();
     exitingPairs_.clear();
-
-    size_t i = 0;
-    size_t j = 0;
+    size_t i = 0, j = 0;
     const size_t nCurr = intersectingPairs.size();
     const size_t nPrev = prevPairs_.size();
     while (i < nCurr && j < nPrev) {
@@ -839,15 +886,9 @@ class KDTreeCollisionSystem {
         ++j;
       }
     }
-    while (i < nCurr) {
-      enteringPairs_.push_back(intersectingPairs[i++]);
-    }
-    while (j < nPrev) {
-      exitingPairs_.push_back(prevPairs_[j++]);
-    }
-
+    while (i < nCurr) enteringPairs_.push_back(intersectingPairs[i++]);
+    while (j < nPrev) exitingPairs_.push_back(prevPairs_[j++]);
     prevPairs_.swap(intersectingPairs);
-
     PROFILE_COUNTER_SET("Collision: Entering pairs", static_cast<long long>(enteringPairs_.size()));
     eventBus->EmitEvent<CollisionBatchEvent>(enteringPairs_);
     eventBus->EmitEvent<CollisionExitBatchEvent>(exitingPairs_);
@@ -864,6 +905,7 @@ class KDTreeCollisionSystem {
   std::unique_ptr<ColliderQuery<TriangleColliderComponent>> triangleQuery_;
   std::unique_ptr<ColliderQuery<LineColliderComponent>> lineQuery_;
   bool synchronous_{false};
+  int activeSubSteps_{1};
   size_t lastSubmittedBoxCount_{0};
   std::unique_ptr<AsyncState> asyncState_;
 

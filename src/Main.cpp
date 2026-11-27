@@ -20,6 +20,7 @@ int main(const int argc, char* argv[]) {
   bool useManifest = false;
   bool headless = false;
   bool devMode = false;
+  bool quitOnError = false;
   int devListenPort = 0;  // 0 = disabled; >0 = bind on that TCP port
   Game::UiPreviewCliOptions uiPreviewOpts{};
 
@@ -56,6 +57,9 @@ int main(const int argc, char* argv[]) {
     } else if (currentArg == "--headless") {
       headless = true;
       Logger::Info("Headless mode enabled (--headless).");
+    } else if (currentArg == "--quit-on-error") {
+      quitOnError = true;
+      Logger::Info("Fail-fast Lua error mode enabled (--quit-on-error).");
     } else if (currentArg == "--dev" || currentArg == "-dev") {
 #ifdef OCTARINE_SHIPPED
       Logger::Warn("--dev is disabled in shipped builds; ignoring.");
@@ -136,6 +140,7 @@ int main(const int argc, char* argv[]) {
   game.SetUseManifest(useManifest);
   game.SetHeadless(headless);
   game.SetDevMode(devMode);
+  game.SetQuitOnError(quitOnError);
 #ifndef OCTARINE_SHIPPED
   game.SetDevListen(devListenPort);
   game.SetUiPreviewOptions(uiPreviewOpts);
@@ -147,7 +152,8 @@ int main(const int argc, char* argv[]) {
   if (initOk) {
     game.Run();
   }
+  const bool runOk = initOk && !game.HasFatalError();
   game.Destroy();
 
-  return initOk ? 0 : 1;
+  return runOk ? 0 : 1;
 }

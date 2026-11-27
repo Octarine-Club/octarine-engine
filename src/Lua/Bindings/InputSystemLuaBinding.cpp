@@ -6,13 +6,16 @@
 #include <cctype>
 #include <glm/glm.hpp>
 #include <string>
+#include <tuple>
 
 #include "Components/ViewportInfo.h"
 #include "ECS/Registry.h"
 #include "General/Logger.h"
+#include "Lua/LuaSchemaRegistry.h"
 #include "Systems/InputSystem.h"
 
 namespace {
+using octarine::lua_schema::LuaSchemaRegistry;
 int ToMouseButton(const sol::object& btn) {
   if (btn.is<int>()) return btn.as<int>();
   if (btn.is<std::string>()) {
@@ -104,70 +107,95 @@ void ApplyBindingsTable(InputSystem& system, const sol::object& tblObj, const so
   }
 }
 void BindActionAndGamepadApi(sol::table& input, InputSystem& system) {
-  input.set_function("bind",
-                     [&system](const std::string& action, const std::string& key) { system.Bind(action, key); });
-  input.set_function("unbind", [&system](const std::string& action, sol::optional<std::string> key) {
-    if (key)
-      system.Unbind(action, *key);
-    else
-      system.UnbindAction(action);
+  LuaSchemaRegistry::SetFunction(input, "input", "bind", [&system](const std::string& action, const std::string& key) {
+    system.Bind(action, key);
   });
-  input.set_function("bind_key",
-                     [&system](const std::string& action, const std::string& key) { system.BindKey(action, key); });
-  input.set_function("unbind_key", [&system](const std::string& action, sol::optional<std::string> key) {
-    if (key)
-      system.UnbindKey(action, *key);
-    else
-      system.UnbindActionKeys(action);
-  });
-  input.set_function("bind_gamepad", [&system](const std::string& action, const std::string& button) {
-    system.BindGamepad(action, button);
-  });
-  input.set_function("unbind_gamepad", [&system](const std::string& action, sol::optional<std::string> button) {
-    if (button)
-      system.UnbindGamepad(action, *button);
-    else
-      system.UnbindActionGamepad(action);
-  });
-  input.set_function("set_bindings", [&system](const sol::object& tbl, const sol::optional<sol::table>& opts) {
-    ApplyBindingsTable(system, tbl, opts);
-  });
-  input.set_function("get_bindings", [&system](sol::optional<std::string> action, sol::this_state s) {
-    sol::state_view luaView(s);
-    if (action) return MakeActionBindingsTable(luaView, system, *action);
-    sol::table all = luaView.create_table();
-    for (const auto& name : system.GetBoundActions()) {
-      all[name] = MakeActionBindingsTable(luaView, system, name);
-    }
-    return all;
-  });
-  input.set_function("is_action_down", [&system](const std::string& a) { return system.IsActionDown(a); });
-  input.set_function("is_action_pressed", [&system](const std::string& a) { return system.IsActionPressed(a); });
-  input.set_function("is_action_released", [&system](const std::string& a) { return system.IsActionReleased(a); });
+  LuaSchemaRegistry::SetFunction(input, "input", "unbind",
+                                 [&system](const std::string& action, sol::optional<std::string> key) {
+                                   if (key)
+                                     system.Unbind(action, *key);
+                                   else
+                                     system.UnbindAction(action);
+                                 });
+  LuaSchemaRegistry::SetFunction(
+      input, "input", "bind_key",
+      [&system](const std::string& action, const std::string& key) { system.BindKey(action, key); });
+  LuaSchemaRegistry::SetFunction(input, "input", "unbind_key",
+                                 [&system](const std::string& action, sol::optional<std::string> key) {
+                                   if (key)
+                                     system.UnbindKey(action, *key);
+                                   else
+                                     system.UnbindActionKeys(action);
+                                 });
+  LuaSchemaRegistry::SetFunction(
+      input, "input", "bind_gamepad",
+      [&system](const std::string& action, const std::string& button) { system.BindGamepad(action, button); });
+  LuaSchemaRegistry::SetFunction(input, "input", "unbind_gamepad",
+                                 [&system](const std::string& action, sol::optional<std::string> button) {
+                                   if (button)
+                                     system.UnbindGamepad(action, *button);
+                                   else
+                                     system.UnbindActionGamepad(action);
+                                 });
+  LuaSchemaRegistry::SetFunction(input, "input", "set_bindings",
+                                 [&system](const sol::object& tbl, const sol::optional<sol::table>& opts) {
+                                   ApplyBindingsTable(system, tbl, opts);
+                                 });
+  LuaSchemaRegistry::SetFunction(input, "input", "get_bindings",
+                                 [&system](sol::optional<std::string> action, sol::this_state s) -> sol::table {
+                                   sol::state_view luaView(s);
+                                   if (action) return MakeActionBindingsTable(luaView, system, *action);
+                                   sol::table all = luaView.create_table();
+                                   for (const auto& name : system.GetBoundActions()) {
+                                     all[name] = MakeActionBindingsTable(luaView, system, name);
+                                   }
+                                   return all;
+                                 });
+  LuaSchemaRegistry::SetFunction(input, "input", "is_action_down",
+                                 [&system](const std::string& a) { return system.IsActionDown(a); });
+  LuaSchemaRegistry::SetFunction(input, "input", "is_action_pressed",
+                                 [&system](const std::string& a) { return system.IsActionPressed(a); });
+  LuaSchemaRegistry::SetFunction(input, "input", "is_action_released",
+                                 [&system](const std::string& a) { return system.IsActionReleased(a); });
 }
 
 void BindGamepadAndCallbackApi(sol::table& input, InputSystem& system) {
-  input.set_function("is_gamepad_down", [&system](const std::string& btn) { return system.IsGamepadButtonDown(btn); });
-  input.set_function("is_gamepad_pressed",
-                     [&system](const std::string& btn) { return system.IsGamepadButtonPressed(btn); });
-  input.set_function("is_gamepad_released",
-                     [&system](const std::string& btn) { return system.IsGamepadButtonReleased(btn); });
-  input.set_function("is_gamepad_connected", [&system]() { return system.IsGamepadConnected(); });
-  input.set_function("gamepad_axis", [&system](const std::string& axis, const sol::optional<float> deadzone) {
-    return system.GamepadAxis(axis, deadzone.value_or(0.15f));
-  });
-  input.set_function("gamepad_stick", [&system](const std::string& stick, const sol::optional<float> deadzone) {
-    return system.GamepadStick(stick, deadzone.value_or(0.18f));
-  });
-  input.set_function("on_key_down", [&system](sol::protected_function fn) { system.AddOnKeyDown(std::move(fn)); });
-  input.set_function("on_key_up", [&system](sol::protected_function fn) { system.AddOnKeyUp(std::move(fn)); });
-  input.set_function("on_mouse_down", [&system](sol::protected_function fn) { system.AddOnMouseDown(std::move(fn)); });
-  input.set_function("on_mouse_up", [&system](sol::protected_function fn) { system.AddOnMouseUp(std::move(fn)); });
-  input.set_function("on_mouse_wheel",
-                     [&system](sol::protected_function fn) { system.AddOnMouseWheel(std::move(fn)); });
-  input.set_function("on_gamepad_down",
-                     [&system](sol::protected_function fn) { system.AddOnGamepadDown(std::move(fn)); });
-  input.set_function("on_gamepad_up", [&system](sol::protected_function fn) { system.AddOnGamepadUp(std::move(fn)); });
+  LuaSchemaRegistry::SetFunction(input, "input", "is_gamepad_down",
+                                 [&system](const std::string& btn) { return system.IsGamepadButtonDown(btn); });
+  LuaSchemaRegistry::SetFunction(input, "input", "is_gamepad_pressed",
+                                 [&system](const std::string& btn) { return system.IsGamepadButtonPressed(btn); });
+  LuaSchemaRegistry::SetFunction(input, "input", "is_gamepad_released",
+                                 [&system](const std::string& btn) { return system.IsGamepadButtonReleased(btn); });
+  LuaSchemaRegistry::SetFunction(input, "input", "is_gamepad_connected",
+                                 [&system]() { return system.IsGamepadConnected(); });
+  LuaSchemaRegistry::SetFunction(input, "input", "gamepad_axis",
+                                 [&system](const std::string& axis, const sol::optional<float> deadzone) {
+                                   return system.GamepadAxis(axis, deadzone.value_or(0.15f));
+                                 });
+  LuaSchemaRegistry::SetFunction(input, "input", "gamepad_stick",
+                                 [&system](const std::string& stick, const sol::optional<float> deadzone) {
+                                   return system.GamepadStick(stick, deadzone.value_or(0.18f));
+                                 });
+  LuaSchemaRegistry::SetFunction(
+      input, "input", "gamepad_stick_xy",
+      [&system](const std::string& stick, const sol::optional<float> deadzone) -> std::tuple<float, float> {
+        const glm::vec2 v = system.GamepadStick(stick, deadzone.value_or(0.18f));
+        return {v.x, v.y};
+      });
+  LuaSchemaRegistry::SetFunction(input, "input", "on_key_down",
+                                 [&system](sol::protected_function fn) { system.AddOnKeyDown(std::move(fn)); });
+  LuaSchemaRegistry::SetFunction(input, "input", "on_key_up",
+                                 [&system](sol::protected_function fn) { system.AddOnKeyUp(std::move(fn)); });
+  LuaSchemaRegistry::SetFunction(input, "input", "on_mouse_down",
+                                 [&system](sol::protected_function fn) { system.AddOnMouseDown(std::move(fn)); });
+  LuaSchemaRegistry::SetFunction(input, "input", "on_mouse_up",
+                                 [&system](sol::protected_function fn) { system.AddOnMouseUp(std::move(fn)); });
+  LuaSchemaRegistry::SetFunction(input, "input", "on_mouse_wheel",
+                                 [&system](sol::protected_function fn) { system.AddOnMouseWheel(std::move(fn)); });
+  LuaSchemaRegistry::SetFunction(input, "input", "on_gamepad_down",
+                                 [&system](sol::protected_function fn) { system.AddOnGamepadDown(std::move(fn)); });
+  LuaSchemaRegistry::SetFunction(input, "input", "on_gamepad_up",
+                                 [&system](sol::protected_function fn) { system.AddOnGamepadUp(std::move(fn)); });
 }
 }  // namespace
 
@@ -175,23 +203,36 @@ void LuaSystemBinding<InputSystem>::bind(sol::state& lua, InputSystem& system) {
   lua["input"] = lua.create_table();
   sol::table input = lua["input"];
 
-  input.set_function("is_key_down", [&system](const std::string& name) { return system.IsKeyDown(name); });
-  input.set_function("is_key_pressed", [&system](const std::string& name) { return system.IsKeyPressed(name); });
-  input.set_function("is_key_released", [&system](const std::string& name) { return system.IsKeyReleased(name); });
-  input.set_function("is_mouse_down",
-                     [&system](const sol::object& btn) { return system.IsMouseDown(ToMouseButton(btn)); });
-  input.set_function("is_mouse_pressed",
-                     [&system](const sol::object& btn) { return system.IsMousePressed(ToMouseButton(btn)); });
-  input.set_function("is_mouse_released",
-                     [&system](const sol::object& btn) { return system.IsMouseReleased(ToMouseButton(btn)); });
-  input.set_function("is_hovered", [&system]() {
+  LuaSchemaRegistry::SetFunction(input, "input", "is_key_down",
+                                 [&system](const std::string& name) { return system.IsKeyDown(name); });
+  LuaSchemaRegistry::SetFunction(input, "input", "is_key_pressed",
+                                 [&system](const std::string& name) { return system.IsKeyPressed(name); });
+  LuaSchemaRegistry::SetFunction(input, "input", "is_key_released",
+                                 [&system](const std::string& name) { return system.IsKeyReleased(name); });
+  LuaSchemaRegistry::SetFunction(input, "input", "is_mouse_down",
+                                 [&system](const sol::object& btn) { return system.IsMouseDown(ToMouseButton(btn)); });
+  LuaSchemaRegistry::SetFunction(input, "input", "is_mouse_pressed", [&system](const sol::object& btn) {
+    return system.IsMousePressed(ToMouseButton(btn));
+  });
+  LuaSchemaRegistry::SetFunction(input, "input", "is_mouse_released", [&system](const sol::object& btn) {
+    return system.IsMouseReleased(ToMouseButton(btn));
+  });
+  LuaSchemaRegistry::SetFunction(input, "input", "is_hovered", [&system]() -> bool {
     return system.GetRegistry() ? system.GetRegistry()->Get<ViewportInfo>().isHovered : true;
   });
-  input.set_function("is_focused", [&system]() {
+  LuaSchemaRegistry::SetFunction(input, "input", "is_focused", [&system]() -> bool {
     return system.GetRegistry() ? system.GetRegistry()->Get<ViewportInfo>().isFocused : true;
   });
-  input.set_function("mouse_position", [&system]() { return glm::vec2(system.MouseX(), system.MouseY()); });
-  input.set_function("mouse_wheel", [&system]() { return glm::vec2(system.WheelDx(), system.WheelDy()); });
+  LuaSchemaRegistry::SetFunction(input, "input", "mouse_position",
+                                 [&system]() { return glm::vec2(system.MouseX(), system.MouseY()); });
+  LuaSchemaRegistry::SetFunction(input, "input", "mouse_position_xy", [&system]() -> std::tuple<float, float> {
+    return {system.MouseX(), system.MouseY()};
+  });
+  LuaSchemaRegistry::SetFunction(input, "input", "mouse_wheel",
+                                 [&system]() { return glm::vec2(system.WheelDx(), system.WheelDy()); });
+  LuaSchemaRegistry::SetFunction(input, "input", "mouse_wheel_xy", [&system]() -> std::tuple<float, float> {
+    return {system.WheelDx(), system.WheelDy()};
+  });
 
   BindActionAndGamepadApi(input, system);
   BindGamepadAndCallbackApi(input, system);

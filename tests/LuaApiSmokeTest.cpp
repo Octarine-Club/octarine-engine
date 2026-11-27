@@ -18,6 +18,7 @@
 
 #include "Components/ScriptComponent.h"
 #include "ECS/Registry.h"
+#include "Engine/EngineBootstrap.h"
 #include "Game/Game.h"
 #include "Game/GameConfig.h"
 #include "General/Logger.h"
@@ -63,20 +64,20 @@ int main() {
   // call AVs. Real binary calls this from Main; tests must do it explicitly.
   Logger::Init();
 
-  Game game;  // SDL-free constructor — allocates Registry/EventBus/Renderer, opens no window.
+  Game game;  // SDL-free constructor - allocates Registry/EventBus/Renderer, opens no window.
   sol::state& lua = game.GetLua();
-  lua.open_libraries(sol::lib::base, sol::lib::math, sol::lib::io, sol::lib::string, sol::lib::table);
+  engine_bootstrap::InstallLuaLibraries(lua);
   const auto preBinding = LuaApiManifest::SnapshotGlobals(lua);
 
   // Mirror Game::Setup's binding order: component types, then free-function modules, then
-  // system surfaces. Pass false so catalogs reflect the pure engine API surface.
-  RegisterAllLuaBindings();
+  // system surfaces, then common globals.
+  engine_bootstrap::RegisterAllComponentBindings();
 
   ScriptSystem scriptSystem;
   scriptSystem.CreateLuaBindings(lua);  // primitives + component usertypes
 
   // Install modules one at a time, snapshotting globals around each call so LuaModuleRegistry
-  // ends up with an exact "what globals did each module install" record — fed to modules.json.
+  // ends up with an exact "what globals did each module install" record - fed to modules.json.
   LuaModuleRegistry::clear();
   for (const auto& m : kLuaModules) {
     const auto before = LuaApiManifest::SnapshotGlobals(lua);
@@ -93,6 +94,9 @@ int main() {
   LuaSystemRegistry::clear();
   LuaSystemRegistry::registerSystem(inputSystem);
   LuaSystemRegistry::bindAll(lua);  // system surfaces (input.*)
+
+  GameConfig defaultConfig{};
+  engine_bootstrap::SetCommonLuaGlobals(lua, defaultConfig, /*startupMode=*/"", /*devMode=*/false);
 
   std::cout << "[components] usertypes + registry accessors\n";
   const auto& components = LuaComponentRegistry::all();
@@ -120,6 +124,12 @@ int main() {
   Check(TableHasFunction(lua, "registry", "is_paused"), "registry.is_paused");
   Check(TableHasFunction(lua, "registry", "set_paused"), "registry.set_paused");
   Check(TableHasFunction(lua, "input", "is_key_down"), "input.is_key_down (InputSystem surface)");
+  Check(lua["io"] == sol::lua_nil, "stock io library excluded (InstallLuaLibraries parity)");
+  Check(IsFunction(lua, "dofile"), "sandboxed dofile override installed");
+  Check(lua["game_window_width"].is<int>(), "game_window_width global installed");
+  Check(lua["game_window_height"].is<int>(), "game_window_height global installed");
+  Check(lua["oct_startup_mode"].is<std::string>(), "oct_startup_mode global installed");
+  Check(lua["oct_dev_mode"].is<bool>(), "oct_dev_mode global installed");
 
   std::cout << "[file write surface] storage.*\n";
   for (const auto* fn : {"write", "read", "write_table", "read_table", "exists", "remove", "list"}) {

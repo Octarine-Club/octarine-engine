@@ -9,6 +9,8 @@
 #include <vector>
 
 #include "AssetManager/AssetManager.h"
+#include "AssetManager/AssetPak.h"
+#include "AssetManager/TextureAtlasBaker.h"
 #include "Components/CameraComponents.h"
 #include "Components/ChunkResidentComponent.h"
 #include "ECS/EntityPool.h"
@@ -1538,6 +1540,317 @@ void TestYSortTileFrustumCullingAndChunkBatching() {
   SDL_Quit();
 }
 
+void TestExternalLdtklPakAndAtlasTilesetLifecycle() {
+  std::cout << "[ldtk-ext+atlas+lifecycle] External .ldtkl (loose + pak), GetAtlasSlice UVs, tileset Release, "
+               "prop_spawner contract, and stationary snap cache\n";
+  SDL_Init(SDL_INIT_VIDEO);
+
+  const std::filesystem::path tmpDir = std::filesystem::temp_directory_path() / "octarine_tilemap_ext_atlas_test";
+  std::error_code ec;
+  std::filesystem::remove_all(tmpDir, ec);
+  std::filesystem::create_directories(tmpDir / "maps" / "ext", ec);
+  std::filesystem::create_directories(tmpDir / "textures", ec);
+
+  // Write two 16x16 PNGs into the same atlas group so TextureAtlasBaker packs `crypt` at a non-zero slice or shared
+  // atlas.
+  std::vector<unsigned char> pxA(16 * 16 * 4, 200);
+  std::vector<unsigned char> pxB(32 * 32 * 4, 120);
+  Check(stbi_write_png((tmpDir / "textures" / "pad_big.png").string().c_str(), 32, 32, 4, pxB.data(), 32 * 4) != 0 &&
+            stbi_write_png((tmpDir / "textures" / "crypt.png").string().c_str(), 16, 16, 4, pxA.data(), 16 * 4) != 0,
+        "wrote atlas test PNGs");
+  std::ofstream(tmpDir / "textures" / "pad_big.png.meta") << "return { atlas = \"world\", scale_mode = \"nearest\" }\n";
+  std::ofstream(tmpDir / "textures" / "crypt.png.meta") << "return { atlas = \"world\", scale_mode = \"nearest\" }\n";
+
+  // External .ldtkl file containing collisions, static tile, ysort tile, and a prop entity.
+  std::ofstream(tmpDir / "maps" / "ext" / "Chunk_Ext.ldtkl") << R"JSON({
+    "identifier": "Chunk_Ext",
+    "pxWid": 64,
+    "pxHei": 64,
+    "layerInstances": [
+      {
+        "__identifier": "Entities",
+        "__type": "Entities",
+        "__gridSize": 16,
+        "entityInstances": [
+          { "__identifier": "Torch", "px": [16, 16], "width": 16, "height": 16, "fieldInstances": [] }
+        ]
+      },
+      {
+        "__identifier": "Props_YSort",
+        "__type": "Tiles",
+        "__gridSize": 16,
+        "__tilesetDefUid": 1,
+        "gridTiles": [ { "px": [0, 16], "src": [0, 0], "f": 0 } ]
+      },
+      {
+        "__identifier": "Ground",
+        "__type": "Tiles",
+        "__gridSize": 16,
+        "__tilesetDefUid": 1,
+        "gridTiles": [ { "px": [0, 0], "src": [0, 0], "f": 0 } ]
+      },
+      {
+        "__identifier": "Collisions",
+        "__type": "IntGrid",
+        "__cWid": 4,
+        "__cHei": 4,
+        "__gridSize": 16,
+        "intGridCsv": [
+          1, 0, 0, 0,
+          0, 0, 0, 0,
+          0, 0, 0, 0,
+          0, 0, 0, 0
+        ]
+      }
+    ]
+  })JSON";
+
+  std::ofstream(tmpDir / "maps" / "world_ext.ldtk") << R"JSON({
+    "defaultGridSize": 16,
+    "externalLevels": true,
+    "defs": {
+      "tilesets": [
+        { "uid": 1, "identifier": "crypt", "relPath": "../textures/crypt.png", "pxWid": 16, "pxHei": 16, "tileGridSize": 16 }
+      ]
+    },
+    "levels": [
+      {
+        "identifier": "Chunk_Ext",
+        "worldX": 0,
+        "worldY": 0,
+        "pxWid": 64,
+        "pxHei": 64,
+        "externalRelPath": "ext/Chunk_Ext.ldtkl",
+        "layerInstances": null
+      }
+    ]
+  })JSON";
+
+  // Missing, absolute, or escaping externalRelPath must fail cleanly rather than reading arbitrary files.
+  std::ofstream(tmpDir / "maps" / "broken_ext.ldtk") << R"JSON({
+    "defaultGridSize": 16,
+    "levels": [
+      { "identifier": "Broken", "worldX": 0, "worldY": 0, "pxWid": 64, "pxHei": 64,
+        "externalRelPath": "ext/DoesNotExist.ldtkl", "layerInstances": null }
+    ]
+  })JSON";
+  Check(!LdtkParser::ParseFromFile((tmpDir / "maps" / "broken_ext.ldtk").string(), nullptr).has_value(),
+        "missing external .ldtkl fails LdtkParser::ParseFromFile instead of returning empty chunk");
+
+  const std::filesystem::path outsideLdtkl = tmpDir / "outside_secret.ldtkl";
+  const std::filesystem::path rootOutsideLdtkl = tmpDir.parent_path() / "octarine_tilemap_outside_secret.ldtkl";
+  std::ofstream(outsideLdtkl) << R"JSON({ "layerInstances": [] })JSON";
+  std::ofstream(rootOutsideLdtkl) << R"JSON({ "layerInstances": [] })JSON";
+  std::ofstream(tmpDir / "maps" / "abs_ext.ldtk") << std::string(R"JSON({
+    "defaultGridSize": 16,
+    "levels": [
+      { "identifier": "AbsEscape", "worldX": 0, "worldY": 0, "pxWid": 64, "pxHei": 64,
+        "externalRelPath": ")JSON") + outsideLdtkl.generic_string() +
+                                                         R"JSON(", "layerInstances": null }
+    ]
+  })JSON";
+  Check(!LdtkParser::ParseFromFile((tmpDir / "maps" / "abs_ext.ldtk").string(), nullptr).has_value(),
+        "absolute externalRelPath rejected by LdtkParser::ParseFromFile");
+
+  std::ofstream(tmpDir / "maps" / "traversal_ext.ldtk") << R"JSON({
+    "defaultGridSize": 16,
+    "levels": [
+      { "identifier": "TraversalEscape", "worldX": 0, "worldY": 0, "pxWid": 64, "pxHei": 64,
+        "externalRelPath": "../outside_secret.ldtkl", "layerInstances": null }
+    ]
+  })JSON";
+  Check(!LdtkParser::ParseFromFile((tmpDir / "maps" / "traversal_ext.ldtk").string(), nullptr).has_value(),
+        "escaping ../ externalRelPath rejected without AssetManager");
+
+  std::ofstream(tmpDir / "maps" / "root_traversal_ext.ldtk") << R"JSON({
+    "defaultGridSize": 16,
+    "levels": [
+      { "identifier": "RootTraversalEscape", "worldX": 0, "worldY": 0, "pxWid": 64, "pxHei": 64,
+        "externalRelPath": "../../octarine_tilemap_outside_secret.ldtkl", "layerInstances": null }
+    ]
+  })JSON";
+
+  { std::ofstream(tmpDir / "config.ini") << "Title=ExtTest\nStartupScript=main.lua\n"; }
+
+  {
+    sol::state slashLua;
+    slashLua.open_libraries(sol::lib::base, sol::lib::table);
+    Registry slashReg;
+    auto& slashCfg = slashReg.Set<GameConfig>(GameConfig{});
+    Check(slashCfg.LoadConfigFromFile(tmpDir.string() + "/"), "GameConfig loaded path with trailing slash");
+    AssetManager slashAssets;
+    slashAssets.LoadGameConfig(slashCfg);
+    Check(
+        slashAssets.GetCatalog().Build(tmpDir.string(), slashLua, std::optional<ScaleMode>(ScaleMode::Nearest), false),
+        "catalog built with trailing-slash base_path_");
+    Check(!LdtkParser::ParseFromFile("maps/abs_ext.ldtk", &slashAssets).has_value(),
+          "absolute externalRelPath rejected with AssetManager");
+    Check(!LdtkParser::ParseFromFile("maps/root_traversal_ext.ldtk", &slashAssets).has_value(),
+          "escaping ../../ externalRelPath outside project root rejected with AssetManager");
+    Check(LdtkParser::ParseFromFile("maps/world_ext.ldtk", &slashAssets).has_value(),
+          "trailing slash on base_path_ still resolves relative externalRelPath");
+    Check(LdtkParser::ParseFromFile("world_ext.ldtk", &slashAssets).has_value(),
+          "trailing slash on base_path_ resolves ResolveLdtkDirRelPath via catalog filename lookup");
+  }
+
+  SDL_Surface* surf = SDL_CreateSurface(128, 128, SDL_PIXELFORMAT_RGBA32);
+  SDL_Renderer* sdlRenderer = surf != nullptr ? SDL_CreateSoftwareRenderer(surf) : nullptr;
+  Check(sdlRenderer != nullptr, "software SDL_Renderer created for ext+atlas test");
+
+  if (sdlRenderer != nullptr) {
+    sol::state lua;
+    lua.open_libraries(sol::lib::base, sol::lib::table);
+
+    Registry registry;
+    auto& cfg = registry.Set<GameConfig>(GameConfig{});
+    Check(cfg.LoadConfigFromFile(tmpDir.string()), "GameConfig loaded temp dir");
+    registry.Set<CameraComponent>(CameraComponent{octarine::Rect{0.0f, 0.0f, 128.0f, 128.0f}, 1.0f});
+    registry.Set<RenderQueue>(RenderQueue(256));
+    EngineContext ectx{};
+    ectx.sdlRenderer = sdlRenderer;
+    registry.Set<EngineContext>(ectx);
+
+    auto& assets = registry.Set<AssetManager>(AssetManager{});
+    assets.LoadGameConfig(cfg);
+    Check(assets.GetCatalog().Build(tmpDir.string(), lua, std::optional<ScaleMode>(ScaleMode::Nearest), false),
+          "catalog scanned .ldtk, .ldtkl, and atlas source PNGs");
+    Check(TextureAtlasBaker{}.Run(assets.GetCatalog(), tmpDir.string()), "TextureAtlasBaker packed world atlas");
+
+    const auto sliceOpt = assets.GetAtlasSlice("crypt");
+    Check(sliceOpt.has_value(), "crypt tileset is packed into __atlas_world with an atlasSlice");
+
+    // Pack into AssetPak and delete loose .ldtk / .ldtkl files to prove VFS pak loading works with zero loose files!
+    const std::string pakPath = (tmpDir / "asset_bundle.pak").string();
+    Check(AssetPak::Pack(assets.GetCatalog(), pakPath, tmpDir.string()), "AssetPak::Pack succeeded with .ldtkl");
+    AssetPak pak;
+    Check(pak.Open(pakPath), "AssetPak::Open succeeded");
+    assets.SetAssetPak(&pak);
+    std::filesystem::remove_all(tmpDir / "maps", ec);
+
+    int spawnedProps = 0;
+    lua["on_prop"] = [&](const std::string&, float, float, const sol::table&, int32_t, int32_t, uint32_t) -> Entity {
+      ++spawnedProps;
+      return registry.CreateEntity();
+    };
+
+    TilemapSystem sys;
+    sys.SetPropSpawner(lua["on_prop"].get<sol::protected_function>());
+
+    TilemapLoadOptions loadOpts;
+    loadOpts.loadRadius = 0;
+    loadOpts.unloadRadius = 0;
+    Check(sys.Load(registry, "maps/world_ext.ldtk", loadOpts),
+          "TilemapSystem::Load resolves .ldtk + external .ldtkl from AssetPak after loose files deleted");
+    Check(sys.IsSolidAt(8.0f, 8.0f), "external .ldtkl IntGrid collision cell (0,0) loaded");
+    Check(!sys.IsSolidAt(24.0f, 8.0f), "external .ldtkl empty cell (1,0) open");
+    Check(spawnedProps == 1, "prop_spawner_ preserved across LoadFromData's internal Unload (ENG-LUA-06 contract)");
+    Check(assets.RefCount("crypt") == 1 && assets.GetTexture("crypt") != nullptr,
+          "TilemapSystem acquired tileset texture via AssetManager");
+
+    // Verify atlasSlice UVs were composed onto both static layer vertices and YSortTileCmd::srcRect!
+    const auto* extTmpl = sys.FindTemplateById("Chunk_Ext");
+    Check(extTmpl != nullptr && !extTmpl->staticLayers.empty() && !extTmpl->ysortTiles.empty(),
+          "Chunk_Ext has static and YSort layers");
+    if (extTmpl != nullptr && sliceOpt.has_value() && !extTmpl->staticLayers.empty() && !extTmpl->ysortTiles.empty()) {
+      float atlasW = 1.0f, atlasH = 1.0f;
+      SDL_GetTextureSize(assets.GetTexture("crypt"), &atlasW, &atlasH);
+      const float expectedU0 = (sliceOpt->x + TilemapBuilder::kUvInsetPx) / atlasW;
+      const float expectedV0 = (sliceOpt->y + TilemapBuilder::kUvInsetPx) / atlasH;
+      const auto& v0 = extTmpl->staticLayers[0].Vertices()[0];
+      Check(std::abs(v0.tex_coord.x - expectedU0) < 1e-4f && std::abs(v0.tex_coord.y - expectedV0) < 1e-4f,
+            "static layer UVs offset by GetAtlasSlice and normalized by atlas dimensions");
+      Check(std::abs(extTmpl->ysortTiles[0].srcRect.x - (sliceOpt->x + TilemapBuilder::kUvInsetPx)) < 1e-4f &&
+                std::abs(extTmpl->ysortTiles[0].srcRect.y - (sliceOpt->y + TilemapBuilder::kUvInsetPx)) < 1e-4f,
+            "YSort tile srcRect offset by GetAtlasSlice");
+    }
+
+    // Stationary camera snap cache check:
+    auto& rq = registry.Get<RenderQueue>();
+    rq.Clear();
+    sys.Tick(&registry);
+    const auto chunkIt = sys.GetActiveChunks().begin();
+    Check(chunkIt != sys.GetActiveChunks().end() && chunkIt->second.hasSnappedVertices,
+          "ActiveChunk caches snapped static vertices after first Tick");
+    const float snappedXBefore = chunkIt->second.layerScreenVertices[0][0].position.x;
+    rq.Clear();
+    sys.Tick(&registry);
+    CheckEq(chunkIt->second.layerScreenVertices[0][0].position.x, snappedXBefore,
+            "Stationary camera Tick reuses cached snapped vertices");
+    registry.Get<CameraComponent>().viewport.x = 12.0f;
+    rq.Clear();
+    sys.Tick(&registry);
+    Check(std::abs(chunkIt->second.layerScreenVertices[0][0].position.x - (snappedXBefore - 12.0f)) < 0.01f,
+          "Moving camera invalidates snap cache and re-snaps vertices");
+
+    // Unload releases tileset textures while preserving prop_spawner_; ClearPropSpawner clears it explicitly.
+    sys.Unload(registry);
+    CheckEq(assets.RefCount("crypt"), 0, "TilemapSystem::Unload releases acquired tileset refcount to 0");
+    Check(assets.GetTexture("crypt") == nullptr,
+          "TilemapSystem::Unload unloads backing atlas texture when unreferenced");
+
+    sys.ClearPropSpawner();
+    spawnedProps = 0;
+    Check(sys.Load(registry, "maps/world_ext.ldtk", loadOpts), "re-Load after ClearPropSpawner succeeds");
+    CheckEq(spawnedProps, 0, "ClearPropSpawner prevents stale Lua callback invocation on subsequent Load");
+
+    // Calling LoadFromData directly with un-sliced procedural data after a prior LDtk Load must
+    // still apply atlas slice remapping instead of inheriting data_pre_sliced_for_atlas_ == true.
+    {
+      TilemapData procData;
+      procData.sourceFormat = "procedural_cpp";
+      procData.tileSize = 16;
+      procData.chunkGridWidth = 4;
+      procData.chunkGridHeight = 4;
+      TilesetDesc procTs;
+      procTs.assetId = "crypt";
+      procTs.relPath = "textures/crypt.png";
+      procTs.textureWidth = 16.0f;
+      procTs.textureHeight = 16.0f;
+      procTs.tileGridSize = 16;
+      procData.tilesetAssets.emplace_back(procTs.assetId, procTs.relPath);
+
+      ChunkTemplate procTmpl;
+      procTmpl.identifier = "Proc_0_0";
+      procTmpl.tileSize = 16;
+      procTmpl.gridWidth = 4;
+      procTmpl.gridHeight = 4;
+      TileLayerMesh procMesh;
+      procMesh.layerName = "Floor";
+      procMesh.tilesetAssetId = "crypt";
+      procMesh.tilesetRelPath = "textures/crypt.png";
+      TilemapBuilder::ReserveLayerMesh(procMesh, 1u);
+      TilemapBuilder::AppendStaticTileQuad(procMesh, procTs, TileQuadDesc{0.0f, 0.0f, 0.0f, 0.0f, 16.0f});
+      procTmpl.staticLayers.push_back(std::move(procMesh));
+      TilemapBuilder::AppendYSortTile(procTmpl.ysortTiles, procTs, TileQuadDesc{0.0f, 0.0f, 0.0f, 0.0f, 16.0f});
+      procData.templates.push_back(std::move(procTmpl));
+      TilemapBuilder::FinalizeTilemapData(procData);
+
+      Check(sys.LoadFromData(registry, std::move(procData), loadOpts), "LoadFromData after prior LDtk Load succeeds");
+      const auto* loadedProc = sys.FindTemplateById("Proc_0_0");
+      if (loadedProc != nullptr && sliceOpt.has_value() && !loadedProc->staticLayers.empty() &&
+          !loadedProc->ysortTiles.empty()) {
+        float atlasW = 1.0f, atlasH = 1.0f;
+        SDL_GetTextureSize(assets.GetTexture("crypt"), &atlasW, &atlasH);
+        const float expectedU0 = (sliceOpt->x + TilemapBuilder::kUvInsetPx) / atlasW;
+        const float expectedV0 = (sliceOpt->y + TilemapBuilder::kUvInsetPx) / atlasH;
+        const auto& pv0 = loadedProc->staticLayers[0].Vertices()[0];
+        Check(std::abs(pv0.tex_coord.x - expectedU0) < 1e-4f && std::abs(pv0.tex_coord.y - expectedV0) < 1e-4f,
+              "LoadFromData after Load remaps un-sliced static layer UVs onto atlas");
+        Check(std::abs(loadedProc->ysortTiles[0].srcRect.x - (sliceOpt->x + TilemapBuilder::kUvInsetPx)) < 1e-4f,
+              "LoadFromData after Load remaps un-sliced YSort tile srcRect onto atlas");
+      }
+    }
+    sys.Unload(registry);
+
+    assets.SetAssetPak(nullptr);
+    SDL_DestroyRenderer(sdlRenderer);
+  }
+  SDL_DestroySurface(surf);
+  std::filesystem::remove(rootOutsideLdtkl, ec);
+  std::filesystem::remove_all(tmpDir, ec);
+  SDL_Quit();
+}
+
 }  // namespace
 
 int main() {
@@ -1558,6 +1871,7 @@ int main() {
   TestExpandSubpixelTargetPixelSnapping();
   TestCachedTemplateLookupAndOverrides();
   TestYSortTileFrustumCullingAndChunkBatching();
+  TestExternalLdtklPakAndAtlasTilesetLifecycle();
 
   return octarine::test::ReportSummary("TilemapSystemTest");
 }

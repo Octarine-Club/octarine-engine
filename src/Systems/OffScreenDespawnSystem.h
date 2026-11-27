@@ -31,17 +31,15 @@ class OffScreenDespawnSystem {
     return true;
   }
 
-  void operator()(const Entity entity, const PositionComponent& position, const SpriteComponent& sprite) const {
-    if (registry_->HasComponent<CameraFollowComponent>(entity)) return;
+  void operator()(const Entity entity, const PositionComponent& position, const SpriteComponent& sprite,
+                  const GlobalTransformComponent* globalTransform, const ScaleComponent* scaleComp,
+                  const CameraFollowComponent* cameraFollow) const {
+    if (cameraFollow != nullptr) return;
 
-    const glm::vec2 globalPos = registry_->HasComponent<GlobalTransformComponent>(entity)
-                                    ? registry_->GetComponent<GlobalTransformComponent>(entity).position
-                                    : position.value;
-    const glm::vec2 globalScale = registry_->HasComponent<GlobalTransformComponent>(entity)
-                                      ? registry_->GetComponent<GlobalTransformComponent>(entity).scale
-                                  : registry_->HasComponent<ScaleComponent>(entity)
-                                      ? registry_->GetComponent<ScaleComponent>(entity).value
-                                      : glm::vec2(1.0f, 1.0f);
+    const glm::vec2 globalPos = globalTransform != nullptr ? globalTransform->position : position.value;
+    const glm::vec2 globalScale = globalTransform != nullptr ? globalTransform->scale
+                                  : scaleComp != nullptr     ? scaleComp->value
+                                                             : glm::vec2(1.0f, 1.0f);
 
     const float extentX = sprite.width * globalScale.x;
     const float extentY = sprite.height * globalScale.y;
@@ -54,7 +52,31 @@ class OffScreenDespawnSystem {
     }
   }
 
+  /// Fallback overload for legacy callers registering `<PositionComponent, SpriteComponent>`
+  /// without `Opt<GlobalTransformComponent>, Opt<ScaleComponent>, Opt<CameraFollowComponent>`.
+  void operator()(const Entity entity, const PositionComponent& position, const SpriteComponent& sprite) const {
+    if (!registry_) {
+      (*this)(entity, position, sprite, nullptr, nullptr, nullptr);
+      return;
+    }
+    const auto [archetype, chunkIdx, indexInChunk] = registry_->GetEntityLocation(entity);
+    if (!archetype) return;
+    (*this)(entity, position, sprite,
+            ResolveOptionalComponent<GlobalTransformComponent>(*registry_, archetype, chunkIdx, indexInChunk),
+            ResolveOptionalComponent<ScaleComponent>(*registry_, archetype, chunkIdx, indexInChunk),
+            ResolveOptionalComponent<CameraFollowComponent>(*registry_, archetype, chunkIdx, indexInChunk));
+  }
+
  private:
+  template <typename T>
+  static const T* ResolveOptionalComponent(const Registry& registry, const Archetype* archetype, const size_t chunkIdx,
+                                           const size_t indexInChunk) {
+    const auto opt = registry.TryComponent<T>();
+    if (!opt.has_value()) return nullptr;
+    const auto* arr = archetype->TryGetComponentArray<T>(chunkIdx, opt->GetId());
+    return arr ? &arr[indexInChunk] : nullptr;
+  }
+
   Registry* registry_ = nullptr;
   CommandBuffer cmd_buffer_;
   float playableAreaWidth_ = 0.0f;

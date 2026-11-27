@@ -203,11 +203,12 @@ class UIButtonSystem {
       return;
     }
     if (registry_->HasComponent<UIButtonComponent>(target)) {
-      auto btn = registry_->GetComponent<UIButtonComponent>(target);
+      const auto& btn = registry_->GetComponent<UIButtonComponent>(target);
       EmitButtonSound(btn.focusSound);
       if (fireFocusCallback && btn.focusFunction != sol::lua_nil) {
-        sol::object btnTable = btn.buttonTable ? sol::object(*btn.buttonTable) : sol::object(sol::lua_nil);
-        auto result = btn.focusFunction(btnTable, target);
+        const sol::protected_function focusFn = btn.focusFunction;
+        const sol::object btnTable = btn.buttonTable ? sol::object(*btn.buttonTable) : sol::object(sol::lua_nil);
+        auto result = focusFn(btnTable, target);
         if (!result.valid()) {
           const sol::error err = result;
           Logger::ErrorLua(std::string(err.what()));

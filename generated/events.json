@@ -14,22 +14,31 @@
         {
           "type": "float",
           "name": "volume"
+        },
+        {
+          "type": "bool",
+          "name": "applyMasterSfxVolume"
         }
       ],
       "emit_sites": [
         {
           "file": "src/Lua/Modules/AudioModuleLuaBinding.cpp",
-          "line": 19
+          "line": 48
         },
         {
           "file": "src/Systems/UIButtonSystem.h",
-          "line": 379
+          "line": 380
         }
       ],
       "subscribe_sites": [
         {
+          "file": "src/Audio/AudioGainRegistry.h",
+          "line": 36,
+          "owner": "AudioGainRegistry"
+        },
+        {
           "file": "src/Systems/AudioSystem.cpp",
-          "line": 65,
+          "line": 66,
           "owner": "AudioSystem"
         }
       ]
@@ -42,7 +51,7 @@
       "emit_sites": [
         {
           "file": "src/Systems/KDTreeCollisionSystem.h",
-          "line": 852
+          "line": 893
         }
       ],
       "subscribe_sites": [
@@ -61,7 +70,7 @@
       "emit_sites": [
         {
           "file": "src/Systems/KDTreeCollisionSystem.h",
-          "line": 853
+          "line": 894
         }
       ],
       "subscribe_sites": [
@@ -97,7 +106,7 @@
       "emit_sites": [
         {
           "file": "src/Engine/FrameLoop.cpp",
-          "line": 472
+          "line": 473
         },
         {
           "file": "src/Systems/InputSystem.cpp",
@@ -138,7 +147,7 @@
       "emit_sites": [
         {
           "file": "src/Engine/FrameLoop.cpp",
-          "line": 292
+          "line": 293
         }
       ],
       "subscribe_sites": [
@@ -167,11 +176,11 @@
       "emit_sites": [
         {
           "file": "src/Engine/FrameLoop.cpp",
-          "line": 298
+          "line": 299
         },
         {
           "file": "src/Engine/FrameLoop.cpp",
-          "line": 306
+          "line": 307
         }
       ],
       "subscribe_sites": [
@@ -204,7 +213,7 @@
       "emit_sites": [
         {
           "file": "src/Engine/FrameLoop.cpp",
-          "line": 310
+          "line": 311
         }
       ],
       "subscribe_sites": [

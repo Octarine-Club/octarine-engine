@@ -165,7 +165,7 @@ readability-use-anyofallof'
 # that exact verdict locally with `scripts/lint-diff.sh` before pushing. See CONTRIBUTING.md § Lint.
 WarningsAsErrors: ''
 
-HeaderFilterRegex: 'src/.*'
+HeaderFilterRegex: '(src|native)/.*'
 
 CheckOptions:
   - key: readability-identifier-naming.ClassCase

@@ -200,7 +200,8 @@ int main() {
     config.playableAreaHeight = 600;
     registry.Set<GameConfig>(config);
 
-    registry.RegisterParallelSystem<PositionComponent, SpriteComponent>(OffScreenDespawnSystem());
+    registry.RegisterParallelSystem<PositionComponent, SpriteComponent, Opt<GlobalTransformComponent>,
+                                    Opt<ScaleComponent>, Opt<CameraFollowComponent>>(OffScreenDespawnSystem());
 
     // Entity near left edge (x = 20), width = 64, mirrored scale x = -1.0.
     // Screen bounds [0, 800]. Sprite occupies x in [-44, 20]. Partially visible on screen!
@@ -223,6 +224,32 @@ int main() {
 
     Check(registry.IsAlive(mirroredOnScreen), "partially visible mirrored sprite at x=20 is NOT despawned");
     Check(!registry.IsAlive(mirroredOffScreen), "fully offscreen mirrored sprite at x=-10 IS despawned");
+    registry.ValidateInvariants();
+  }
+
+  // Part 6 - RegisterParallelSystem with Opt<T> and custom serialBelowEntities threshold.
+  {
+    Registry registry;
+    const Entity withScale = registry.CreateEntityWithBundle(PositionComponent(glm::vec2(1.0f, 2.0f)),
+                                                             ScaleComponent(glm::vec2(3.0f, 4.0f)));
+    const Entity withoutScale = registry.CreateEntityWithBundle(PositionComponent(glm::vec2(5.0f, 6.0f)));
+
+    registry.RegisterParallelSystem<PositionComponent, Opt<ScaleComponent>>(
+        [](PositionComponent& pos, const ScaleComponent* scale) {
+          if (scale != nullptr) {
+            pos.value.x *= scale->value.x;
+            pos.value.y *= scale->value.y;
+          } else {
+            pos.value.x += 10.0f;
+          }
+        },
+        1024);
+
+    registry.Update(0.016f);
+    CheckEq(registry.GetComponent<PositionComponent>(withScale).value.x, 3.0f,
+            "RegisterParallelSystem Opt<T> yields non-null pointer when component present");
+    CheckEq(registry.GetComponent<PositionComponent>(withoutScale).value.x, 15.0f,
+            "RegisterParallelSystem Opt<T> yields nullptr when component absent");
   }
 
   // ThreadPool ring-buffer resize and Logger Lua coverage

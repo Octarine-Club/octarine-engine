@@ -34,11 +34,20 @@ SDL_IOStream* AssetManager::OpenAssetIO(const std::string& fullPath) const {
         return io;
       }
     }
+    const std::filesystem::path normFullPath = std::filesystem::path(fullPath).lexically_normal();
+    const std::string normFullStr = normFullPath.generic_string();
+    if (normFullStr != fullPath && asset_pak_->Contains(normFullStr)) {
+      if (SDL_IOStream* io = asset_pak_->OpenIO(normFullStr); io != nullptr) {
+        return io;
+      }
+    }
     if (!base_path_.empty()) {
-      std::error_code ec;
-      const std::filesystem::path rel =
-          std::filesystem::relative(std::filesystem::path(fullPath), std::filesystem::path(base_path_), ec);
-      if (!ec && !rel.empty()) {
+      std::filesystem::path normBase = std::filesystem::path(base_path_).lexically_normal();
+      while (normBase.filename().empty() && normBase.has_parent_path() && normBase != normBase.root_path()) {
+        normBase = normBase.parent_path();
+      }
+      const std::filesystem::path rel = normFullPath.lexically_relative(normBase);
+      if (!rel.empty() && rel != "." && *rel.begin() != "..") {
         const std::string relStr = rel.generic_string();
         if (asset_pak_->Contains(relStr)) {
           if (SDL_IOStream* io = asset_pak_->OpenIO(relStr); io != nullptr) {
@@ -157,13 +166,17 @@ void AssetManager::ReleaseAll(const std::vector<std::string>& assetIds) {
   for (const auto& id : assetIds) Release(id);
 }
 
+// NOLINTNEXTLINE(misc-no-recursion)
 bool AssetManager::Reload(const std::string& assetId, SDL_Renderer* renderer, MIX_Mixer* mixer) {
   const CatalogEntry* entry = catalog_.Find(assetId);
   if (entry == nullptr) {
     Logger::Warn("AssetManager::Reload: id not in catalog: " + assetId);
     return false;
   }
-  // Only refresh assets that are actually resident — nothing to reload otherwise, and we must
+  if (entry->type == AssetType::Texture && entry->atlasId.has_value()) {
+    return Reload(*entry->atlasId, renderer, mixer);
+  }
+  // Only refresh assets that are actually resident - nothing to reload otherwise, and we must
   // not pull in something no scene currently references.
   const bool resident =
       texture_store_.Contains(assetId) || font_store_.Contains(assetId) || audio_store_.Contains(assetId);
@@ -370,7 +383,10 @@ std::string AssetManager::GetFullPath(const std::string& relativePath) const {
   if (inputPath.is_absolute()) {
     return relativePath;
   }
-  const std::filesystem::path basePath = std::filesystem::path(base_path_).lexically_normal();
+  std::filesystem::path basePath = std::filesystem::path(base_path_).lexically_normal();
+  while (basePath.filename().empty() && basePath.has_parent_path() && basePath != basePath.root_path()) {
+    basePath = basePath.parent_path();
+  }
   const std::filesystem::path assetPath = (basePath / inputPath).lexically_normal();
   const auto rel = assetPath.lexically_relative(basePath);
   if (rel.empty() || *rel.begin() == "..") {
@@ -381,7 +397,14 @@ std::string AssetManager::GetFullPath(const std::string& relativePath) const {
 }
 
 bool AssetManager::SetTextureScaleMode(const std::string& assetId, const ScaleMode scaleMode) {
-  return texture_store_.SetExplicitScaleMode(assetId, ToSdlScaleMode(scaleMode));
+  const SDL_ScaleMode sdlMode = ToSdlScaleMode(scaleMode);
+  if (texture_store_.SetExplicitScaleMode(assetId, sdlMode)) {
+    return true;
+  }
+  if (const CatalogEntry* e = catalog_.Find(assetId); e != nullptr && e->atlasId.has_value()) {
+    return texture_store_.SetExplicitScaleMode(*e->atlasId, sdlMode);
+  }
+  return false;
 }
 
 void AssetManager::SetDefaultScaleMode(const std::string& scaleMode) {

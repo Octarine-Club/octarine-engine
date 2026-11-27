@@ -21,23 +21,21 @@ class AudioTrackCache {
     std::uint32_t generation = 0;
   };
 
-  void Store(Entity entity, MIX_Track* track, std::uint32_t generation) {
-    entries_[entity.GetId()] = {track, generation};
-  }
+  void Store(Entity entity, MIX_Track* track, std::uint32_t generation) { entries_[entity.id] = {track, generation}; }
 
   // The live MIX_Track* cached for this entity, or nullptr if none.
   [[nodiscard]] MIX_Track* Track(Entity entity) const {
-    const auto it = entries_.find(entity.GetId());
+    const auto it = entries_.find(entity.id);
     return it != entries_.end() ? it->second.track : nullptr;
   }
 
-  // The full (track, generation) entry, or nullptr if absent — used for the pool-ownership check.
+  // The full (track, generation) entry, or nullptr if absent - used for the pool-ownership check.
   [[nodiscard]] const Entry* Lookup(Entity entity) const {
-    const auto it = entries_.find(entity.GetId());
+    const auto it = entries_.find(entity.id);
     return it != entries_.end() ? &it->second : nullptr;
   }
 
-  void Forget(Entity entity) { entries_.erase(entity.GetId()); }
+  void Forget(Entity entity) { entries_.erase(entity.id); }
 
   void Clear() { entries_.clear(); }
 

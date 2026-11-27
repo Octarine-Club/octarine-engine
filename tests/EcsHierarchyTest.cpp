@@ -8,6 +8,7 @@
 #include "Components/PivotComponent.h"
 #include "Components/SpriteComponent.h"
 #include "Components/SquarePrimitiveComponent.h"
+#include "ECS/EntityPool.h"
 #include "ECS/Registry.h"
 #include "Systems/TransformSystem.h"
 #include "TestHarness.h"
@@ -459,6 +460,59 @@ int main() {
     Check(!warnedBlam, "ClearUserEntities does not double-blam cascade-destroyed hierarchy descendants");
     Check(registry.GetUserEntityCount() == 0, "ClearUserEntities leaves zero user entities");
     registry.ValidateInvariants();
+  }
+
+  // ENG-ECS-05: Dead entities rejected by SetParent / AddPair, EntityPoolManager::Park detaches
+  // hierarchy links and pairs, and TransformSystem::UpdateHierarchical skips deactivated children.
+  {
+    Registry registry;
+    registry.RegisterBulkSystem<GlobalTransformComponent>(TransformSystem());
+
+    const Entity liveParent =
+        registry.CreateEntityWithBundle(GlobalTransformComponent{}, PositionComponent{{50.0f, 0.0f}});
+    const Entity deadEntity = registry.CreateEntity();
+    registry.BlamEntity(deadEntity);
+
+    registry.SetParent(deadEntity, liveParent);
+    Check(!registry.GetParent(deadEntity).has_value(), "SetParent rejects dead child");
+    Check(registry.GetChildren(liveParent).empty(), "SetParent with dead child does not add to parent children");
+
+    registry.SetParent(liveParent, deadEntity);
+    Check(!registry.GetParent(liveParent).has_value(), "SetParent rejects dead parent");
+
+    const Entity rel = registry.TagId("rel_tag");
+    registry.AddPair(deadEntity, rel, liveParent);
+    Check(!registry.HasPair(deadEntity, rel, liveParent), "AddPair rejects dead author entity");
+    registry.AddPair(liveParent, rel, deadEntity);
+    Check(!registry.HasPair(liveParent, rel, deadEntity), "AddPair rejects dead target entity");
+
+    // Deactivated child is not mutated by TransformSystem::UpdateHierarchical
+    const Entity inactiveChild =
+        registry.CreateEntityWithBundle(GlobalTransformComponent{}, PositionComponent{{5.0f, 0.0f}});
+    registry.SetParent(inactiveChild, liveParent);
+    registry.GetComponent<GlobalTransformComponent>(inactiveChild).position = glm::vec2(-99.0f, -99.0f);
+    registry.Deactivate(inactiveChild);
+    registry.Update(1.0f / 60.0f);
+    Check(registry.GetComponent<GlobalTransformComponent>(inactiveChild).position == glm::vec2(-99.0f, -99.0f),
+          "TransformSystem::UpdateHierarchical skips deactivated child");
+
+    // EntityPoolManager::Park detaches hierarchy links and pairs
+    EntityPoolManager pool;
+    const ArchetypeID poolId = pool.RegisterPool<PositionComponent>(registry, [](Registry& reg) {
+      const Entity e = reg.CreateEntityWithBundle(GlobalTransformComponent{}, PositionComponent{{1.0f, 1.0f}});
+      reg.AddTag<PoolableTag>(e);
+      return e;
+    });
+    const Entity pooledChild = pool.Spawn(registry, poolId);
+    registry.SetParent(pooledChild, liveParent);
+    registry.AddPair(pooledChild, rel, liveParent);
+    Check(registry.GetParent(pooledChild).has_value(), "pooled child has parent before Park");
+    Check(registry.HasPair(pooledChild, rel, liveParent), "pooled child has pair before Park");
+
+    pool.Park(registry, pooledChild);
+    Check(!registry.GetParent(pooledChild).has_value(), "Park detaches pooled child from parent");
+    Check(!ChildrenContain(registry.GetChildren(liveParent), pooledChild), "Park removes pooled child from parent");
+    Check(!registry.HasPair(pooledChild, rel, liveParent), "Park clears authored pairs on pooled entity");
   }
 
   return octarine::test::Result();

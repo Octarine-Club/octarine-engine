@@ -600,9 +600,24 @@ Archetype* Registry::GetOrCreateArchetypeFromSet(std::vector<ComponentID> compon
 }
 
 void Registry::AddPair(const Entity entity, const Entity relationship, const Entity target) {
+  if (!IsAlive(entity)) {
+    Logger::Warn("Registry::AddPair: entity " + std::to_string(entity.id) + " is not alive");
+    return;
+  }
   const std::uint32_t targetId = target.GetId();
-  const EcsId pairId =
-      (static_cast<EcsId>(relationship.GetId()) << kPairRelationshipOffset) | static_cast<EcsId>(targetId);
+  const bool targetValid = internal_entity_ids_.contains(targetId) ? entity_manager_->IsValid(target) : IsAlive(target);
+  if (!targetValid) {
+    Logger::Warn("Registry::AddPair: target " + std::to_string(target.id) + " is not alive");
+    return;
+  }
+  const std::uint32_t relId = relationship.GetId();
+  const bool relValid =
+      internal_entity_ids_.contains(relId) ? entity_manager_->IsValid(relationship) : IsAlive(relationship);
+  if (!relValid) {
+    Logger::Warn("Registry::AddPair: relationship " + std::to_string(relationship.id) + " is not valid");
+    return;
+  }
+  const EcsId pairId = (static_cast<EcsId>(relId) << kPairRelationshipOffset) | static_cast<EcsId>(targetId);
   if (pairs_[entity.id].insert(pairId).second) {
     target_to_pair_authors_[targetId].insert(entity.id);
   }
@@ -652,6 +667,11 @@ bool Registry::WouldCreateHierarchyCycle(const Entity child, const Entity parent
 }
 
 void Registry::SetParent(const Entity child, const Entity parent) {
+  if (!IsAlive(child) || !IsAlive(parent)) {
+    Logger::Warn("Registry::SetParent: child " + std::to_string(child.id) + " or parent " + std::to_string(parent.id) +
+                 " is not alive");
+    return;
+  }
   if (WouldCreateHierarchyCycle(child, parent)) {
     Logger::Warn("Registry::SetParent: cycle detected between child " + std::to_string(child.id) + " and parent " +
                  std::to_string(parent.id));
@@ -676,6 +696,23 @@ void Registry::SetParent(const Entity child, const Entity parent) {
 
   // Also insert relationship pair for generic pair queries.
   AddPair(child, childOf, parent);
+}
+
+void Registry::DetachRelationshipsForPool(const Entity entity) {
+  if (!IsAlive(entity)) return;
+  bool hierarchyChanged = DetachFromParent(entity);
+  if (const auto childIt = parent_to_children_.find(entity.id); childIt != parent_to_children_.end()) {
+    for (const EntityID childId : childIt->second) {
+      child_to_parent_.erase(childId);
+    }
+    parent_to_children_.erase(childIt);
+    hierarchyChanged = true;
+  }
+  if (hierarchyChanged) {
+    ++hierarchy_generation_;
+  }
+  CleanupAuthoredPairs(entity);
+  CleanupTargetedPairs(entity);
 }
 
 void Registry::ReorderChildren(const Entity parent, const std::span<const Entity> orderedChildren) {
@@ -726,30 +763,55 @@ void CommandBuffer::Playback(Registry* registry) const {
   PROFILE_NAMED_SCOPE("CommandBuffer::Playback");
   auto& chan = state_->commands;
   const size_t total = std::min(chan.count.load(std::memory_order_acquire), chan.buffer.size());
+  auto& cmdScratch = state_->commands_scratch;
+  cmdScratch.clear();
+  cmdScratch.reserve(total + chan.overflow_buffer.size());
   for (size_t i = 0; i < total; ++i) {
-    if (chan.buffer[i].type == CommandType::Blam) {
-      registry->QueueBlamEntity(chan.buffer[i].entity);
-    } else {
-      registry->QueueDespawnEntity(chan.buffer[i].entity);
-    }
+    cmdScratch.push_back(chan.buffer[i]);
   }
   for (const EntityCommand& cmd : chan.overflow_buffer) {
+    cmdScratch.push_back(cmd);
+  }
+  chan.Clear();
+
+  std::sort(cmdScratch.begin(), cmdScratch.end(), [](const EntityCommand& a, const EntityCommand& b) {
+    if (a.entity.id != b.entity.id) return a.entity.id < b.entity.id;
+    return a.sequence < b.sequence;
+  });
+  for (const EntityCommand& cmd : cmdScratch) {
     if (cmd.type == CommandType::Blam) {
       registry->QueueBlamEntity(cmd.entity);
     } else {
       registry->QueueDespawnEntity(cmd.entity);
     }
   }
-  chan.Clear();
+  cmdScratch.clear();
 
   auto& deferred = state_->deferred;
   const size_t deferredTotal = std::min(deferred.count.load(std::memory_order_acquire), deferred.buffer.size());
+  auto& defScratch = state_->deferred_scratch;
+  defScratch.clear();
+  defScratch.reserve(deferredTotal + deferred.overflow_buffer.size());
   for (size_t i = 0; i < deferredTotal; ++i) {
-    deferred.buffer[i](registry);
-    deferred.buffer[i] = nullptr;
+    defScratch.push_back(std::move(deferred.buffer[i]));
+    deferred.buffer[i] = DeferredCommand{};
   }
-  for (const auto& fn : deferred.overflow_buffer) fn(registry);
+  for (auto& cmd : deferred.overflow_buffer) {
+    defScratch.push_back(std::move(cmd));
+  }
   deferred.Clear();
+
+  std::sort(defScratch.begin(), defScratch.end(), [](const DeferredCommand& a, const DeferredCommand& b) {
+    if (a.entity.id != b.entity.id) return a.entity.id < b.entity.id;
+    return a.sequence < b.sequence;
+  });
+  for (auto& cmd : defScratch) {
+    if (cmd.fn) {
+      cmd.fn(registry);
+    }
+  }
+  defScratch.clear();
+  state_->next_sequence.store(0, std::memory_order_relaxed);
 }
 
 namespace {

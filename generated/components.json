@@ -5,235 +5,352 @@
       "lua_key": "animation",
       "usertype": "animation_component",
       "has_accessor": "registry.has_animation",
-      "get_accessor": "registry.get_animation"
+      "get_accessor": "registry.get_animation",
+      "try_get_accessor": "registry.try_get_animation",
+      "add_accessor": "registry.add_animation",
+      "remove_accessor": "registry.remove_animation"
     },
     {
       "lua_key": "audio_listener",
       "usertype": "audio_listener_component",
       "has_accessor": "registry.has_audio_listener",
-      "get_accessor": "registry.get_audio_listener"
+      "get_accessor": "registry.get_audio_listener",
+      "try_get_accessor": "registry.try_get_audio_listener",
+      "add_accessor": "registry.add_audio_listener",
+      "remove_accessor": "registry.remove_audio_listener"
     },
     {
       "lua_key": "audio_source",
       "usertype": "audio_source_component",
       "has_accessor": "registry.has_audio_source",
-      "get_accessor": "registry.get_audio_source"
+      "get_accessor": "registry.get_audio_source",
+      "try_get_accessor": "registry.try_get_audio_source",
+      "add_accessor": "registry.add_audio_source",
+      "remove_accessor": "registry.remove_audio_source"
     },
     {
       "lua_key": "box_collider",
       "usertype": "box_collider_component",
       "has_accessor": "registry.has_box_collider",
-      "get_accessor": "registry.get_box_collider"
+      "get_accessor": "registry.get_box_collider",
+      "try_get_accessor": "registry.try_get_box_collider",
+      "add_accessor": "registry.add_box_collider",
+      "remove_accessor": "registry.remove_box_collider"
     },
     {
       "lua_key": "camera_follow",
       "usertype": "camera_follow_component",
       "has_accessor": "registry.has_camera_follow",
-      "get_accessor": "registry.get_camera_follow"
+      "get_accessor": "registry.get_camera_follow",
+      "try_get_accessor": "registry.try_get_camera_follow",
+      "add_accessor": "registry.add_camera_follow",
+      "remove_accessor": "registry.remove_camera_follow"
     },
     {
       "lua_key": "capsule",
       "usertype": "capsule_primitive_component",
       "has_accessor": "registry.has_capsule",
-      "get_accessor": "registry.get_capsule"
+      "get_accessor": "registry.get_capsule",
+      "try_get_accessor": "registry.try_get_capsule",
+      "add_accessor": "registry.add_capsule",
+      "remove_accessor": "registry.remove_capsule"
     },
     {
       "lua_key": "capsule_collider",
       "usertype": "capsule_collider_component",
       "has_accessor": "registry.has_capsule_collider",
-      "get_accessor": "registry.get_capsule_collider"
+      "get_accessor": "registry.get_capsule_collider",
+      "try_get_accessor": "registry.try_get_capsule_collider",
+      "add_accessor": "registry.add_capsule_collider",
+      "remove_accessor": "registry.remove_capsule_collider"
     },
     {
       "lua_key": "chunk_resident",
       "usertype": "chunk_resident_component",
       "has_accessor": "registry.has_chunk_resident",
-      "get_accessor": "registry.get_chunk_resident"
+      "get_accessor": "registry.get_chunk_resident",
+      "try_get_accessor": "registry.try_get_chunk_resident",
+      "add_accessor": "registry.add_chunk_resident",
+      "remove_accessor": "registry.remove_chunk_resident"
     },
     {
       "lua_key": "circle",
       "usertype": "circle_primitive_component",
       "has_accessor": "registry.has_circle",
-      "get_accessor": "registry.get_circle"
+      "get_accessor": "registry.get_circle",
+      "try_get_accessor": "registry.try_get_circle",
+      "add_accessor": "registry.add_circle",
+      "remove_accessor": "registry.remove_circle"
     },
     {
       "lua_key": "circle_collider",
       "usertype": "circle_collider_component",
       "has_accessor": "registry.has_circle_collider",
-      "get_accessor": "registry.get_circle_collider"
+      "get_accessor": "registry.get_circle_collider",
+      "try_get_accessor": "registry.try_get_circle_collider",
+      "add_accessor": "registry.add_circle_collider",
+      "remove_accessor": "registry.remove_circle_collider"
     },
     {
       "lua_key": "color_grid",
       "usertype": "color_grid_component",
       "has_accessor": "registry.has_color_grid",
-      "get_accessor": "registry.get_color_grid"
+      "get_accessor": "registry.get_color_grid",
+      "try_get_accessor": "registry.try_get_color_grid",
+      "add_accessor": "registry.add_color_grid",
+      "remove_accessor": "registry.remove_color_grid"
     },
     {
       "lua_key": "lifetime",
       "usertype": "lifetime_component",
       "has_accessor": "registry.has_lifetime",
-      "get_accessor": "registry.get_lifetime"
+      "get_accessor": "registry.get_lifetime",
+      "try_get_accessor": "registry.try_get_lifetime",
+      "add_accessor": "registry.add_lifetime",
+      "remove_accessor": "registry.remove_lifetime"
     },
     {
       "lua_key": "line",
       "usertype": "line_primitive_component",
       "has_accessor": "registry.has_line",
-      "get_accessor": "registry.get_line"
+      "get_accessor": "registry.get_line",
+      "try_get_accessor": "registry.try_get_line",
+      "add_accessor": "registry.add_line",
+      "remove_accessor": "registry.remove_line"
     },
     {
       "lua_key": "line_collider",
       "usertype": "line_collider_component",
       "has_accessor": "registry.has_line_collider",
-      "get_accessor": "registry.get_line_collider"
+      "get_accessor": "registry.get_line_collider",
+      "try_get_accessor": "registry.try_get_line_collider",
+      "add_accessor": "registry.add_line_collider",
+      "remove_accessor": "registry.remove_line_collider"
     },
     {
       "lua_key": "name",
       "usertype": "name_component",
       "has_accessor": "registry.has_name",
-      "get_accessor": "registry.get_name"
+      "get_accessor": "registry.get_name",
+      "try_get_accessor": "registry.try_get_name",
+      "add_accessor": "registry.add_name",
+      "remove_accessor": "registry.remove_name"
     },
     {
       "lua_key": "pivot",
       "usertype": "pivot_component",
       "has_accessor": "registry.has_pivot",
-      "get_accessor": "registry.get_pivot"
+      "get_accessor": "registry.get_pivot",
+      "try_get_accessor": "registry.try_get_pivot",
+      "add_accessor": "registry.add_pivot",
+      "remove_accessor": "registry.remove_pivot"
     },
     {
       "lua_key": "position",
       "usertype": "position_component",
       "has_accessor": "registry.has_position",
-      "get_accessor": "registry.get_position"
+      "get_accessor": "registry.get_position",
+      "try_get_accessor": "registry.try_get_position",
+      "add_accessor": "registry.add_position",
+      "remove_accessor": "registry.remove_position"
     },
     {
       "lua_key": "rigidbody",
       "usertype": "rigidbody_component",
       "has_accessor": "registry.has_rigidbody",
-      "get_accessor": "registry.get_rigidbody"
+      "get_accessor": "registry.get_rigidbody",
+      "try_get_accessor": "registry.try_get_rigidbody",
+      "add_accessor": "registry.add_rigidbody",
+      "remove_accessor": "registry.remove_rigidbody"
     },
     {
       "lua_key": "rotation",
       "usertype": "rotation_component",
       "has_accessor": "registry.has_rotation",
-      "get_accessor": "registry.get_rotation"
+      "get_accessor": "registry.get_rotation",
+      "try_get_accessor": "registry.try_get_rotation",
+      "add_accessor": "registry.add_rotation",
+      "remove_accessor": "registry.remove_rotation"
     },
     {
       "lua_key": "scale",
       "usertype": "scale_component",
       "has_accessor": "registry.has_scale",
-      "get_accessor": "registry.get_scale"
+      "get_accessor": "registry.get_scale",
+      "try_get_accessor": "registry.try_get_scale",
+      "add_accessor": "registry.add_scale",
+      "remove_accessor": "registry.remove_scale"
     },
     {
       "lua_key": "script",
       "usertype": "script_component",
       "has_accessor": "registry.has_script",
-      "get_accessor": "registry.get_script"
+      "get_accessor": "registry.get_script",
+      "try_get_accessor": "registry.try_get_script",
+      "add_accessor": "registry.add_script",
+      "remove_accessor": "registry.remove_script"
     },
     {
       "lua_key": "script_callbacks",
       "usertype": "script_callback_component",
       "has_accessor": "registry.has_script_callbacks",
-      "get_accessor": "registry.get_script_callbacks"
+      "get_accessor": "registry.get_script_callbacks",
+      "try_get_accessor": "registry.try_get_script_callbacks",
+      "add_accessor": "registry.add_script_callbacks",
+      "remove_accessor": "registry.remove_script_callbacks"
     },
     {
       "lua_key": "sprite",
       "usertype": "sprite_component",
       "has_accessor": "registry.has_sprite",
-      "get_accessor": "registry.get_sprite"
+      "get_accessor": "registry.get_sprite",
+      "try_get_accessor": "registry.try_get_sprite",
+      "add_accessor": "registry.add_sprite",
+      "remove_accessor": "registry.remove_sprite"
     },
     {
       "lua_key": "square",
       "usertype": "square_primitive_component",
       "has_accessor": "registry.has_square",
-      "get_accessor": "registry.get_square"
+      "get_accessor": "registry.get_square",
+      "try_get_accessor": "registry.try_get_square",
+      "add_accessor": "registry.add_square",
+      "remove_accessor": "registry.remove_square"
     },
     {
       "lua_key": "text_label",
       "usertype": "text_label_component",
       "has_accessor": "registry.has_text_label",
-      "get_accessor": "registry.get_text_label"
+      "get_accessor": "registry.get_text_label",
+      "try_get_accessor": "registry.try_get_text_label",
+      "add_accessor": "registry.add_text_label",
+      "remove_accessor": "registry.remove_text_label"
     },
     {
       "lua_key": "triangle",
       "usertype": "triangle_primitive_component",
       "has_accessor": "registry.has_triangle",
-      "get_accessor": "registry.get_triangle"
+      "get_accessor": "registry.get_triangle",
+      "try_get_accessor": "registry.try_get_triangle",
+      "add_accessor": "registry.add_triangle",
+      "remove_accessor": "registry.remove_triangle"
     },
     {
       "lua_key": "triangle_collider",
       "usertype": "triangle_collider_component",
       "has_accessor": "registry.has_triangle_collider",
-      "get_accessor": "registry.get_triangle_collider"
+      "get_accessor": "registry.get_triangle_collider",
+      "try_get_accessor": "registry.try_get_triangle_collider",
+      "add_accessor": "registry.add_triangle_collider",
+      "remove_accessor": "registry.remove_triangle_collider"
     },
     {
       "lua_key": "ui_anchor",
       "usertype": "ui_anchor_component",
       "has_accessor": "registry.has_ui_anchor",
-      "get_accessor": "registry.get_ui_anchor"
+      "get_accessor": "registry.get_ui_anchor",
+      "try_get_accessor": "registry.try_get_ui_anchor",
+      "add_accessor": "registry.add_ui_anchor",
+      "remove_accessor": "registry.remove_ui_anchor"
     },
     {
       "lua_key": "ui_button",
       "usertype": "ui_button_component",
       "has_accessor": "registry.has_ui_button",
-      "get_accessor": "registry.get_ui_button"
+      "get_accessor": "registry.get_ui_button",
+      "try_get_accessor": "registry.try_get_ui_button",
+      "add_accessor": "registry.add_ui_button",
+      "remove_accessor": "registry.remove_ui_button"
     },
     {
       "lua_key": "ui_canvas",
       "usertype": "ui_canvas_component",
       "has_accessor": "registry.has_ui_canvas",
-      "get_accessor": "registry.get_ui_canvas"
+      "get_accessor": "registry.get_ui_canvas",
+      "try_get_accessor": "registry.try_get_ui_canvas",
+      "add_accessor": "registry.add_ui_canvas",
+      "remove_accessor": "registry.remove_ui_canvas"
     },
     {
       "lua_key": "ui_clip",
       "usertype": "ui_clip_component",
       "has_accessor": "registry.has_ui_clip",
-      "get_accessor": "registry.get_ui_clip"
+      "get_accessor": "registry.get_ui_clip",
+      "try_get_accessor": "registry.try_get_ui_clip",
+      "add_accessor": "registry.add_ui_clip",
+      "remove_accessor": "registry.remove_ui_clip"
     },
     {
       "lua_key": "ui_flex",
       "usertype": "ui_flex_component",
       "has_accessor": "registry.has_ui_flex",
-      "get_accessor": "registry.get_ui_flex"
+      "get_accessor": "registry.get_ui_flex",
+      "try_get_accessor": "registry.try_get_ui_flex",
+      "add_accessor": "registry.add_ui_flex",
+      "remove_accessor": "registry.remove_ui_flex"
     },
     {
       "lua_key": "ui_focus",
       "usertype": "ui_focus_component",
       "has_accessor": "registry.has_ui_focus",
-      "get_accessor": "registry.get_ui_focus"
+      "get_accessor": "registry.get_ui_focus",
+      "try_get_accessor": "registry.try_get_ui_focus",
+      "add_accessor": "registry.add_ui_focus",
+      "remove_accessor": "registry.remove_ui_focus"
     },
     {
       "lua_key": "ui_layout_box",
       "usertype": "ui_layout_box_component",
       "has_accessor": "registry.has_ui_layout_box",
-      "get_accessor": "registry.get_ui_layout_box"
+      "get_accessor": "registry.get_ui_layout_box",
+      "try_get_accessor": "registry.try_get_ui_layout_box",
+      "add_accessor": "registry.add_ui_layout_box",
+      "remove_accessor": "registry.remove_ui_layout_box"
     },
     {
       "lua_key": "ui_nine_slice",
       "usertype": "ui_nine_slice_component",
       "has_accessor": "registry.has_ui_nine_slice",
-      "get_accessor": "registry.get_ui_nine_slice"
+      "get_accessor": "registry.get_ui_nine_slice",
+      "try_get_accessor": "registry.try_get_ui_nine_slice",
+      "add_accessor": "registry.add_ui_nine_slice",
+      "remove_accessor": "registry.remove_ui_nine_slice"
     },
     {
       "lua_key": "ui_rect",
       "usertype": "ui_rect_component",
       "has_accessor": "registry.has_ui_rect",
-      "get_accessor": "registry.get_ui_rect"
+      "get_accessor": "registry.get_ui_rect",
+      "try_get_accessor": "registry.try_get_ui_rect",
+      "add_accessor": "registry.add_ui_rect",
+      "remove_accessor": "registry.remove_ui_rect"
     },
     {
       "lua_key": "ui_scroll",
       "usertype": "ui_scroll_component",
       "has_accessor": "registry.has_ui_scroll",
-      "get_accessor": "registry.get_ui_scroll"
+      "get_accessor": "registry.get_ui_scroll",
+      "try_get_accessor": "registry.try_get_ui_scroll",
+      "add_accessor": "registry.add_ui_scroll",
+      "remove_accessor": "registry.remove_ui_scroll"
     },
     {
       "lua_key": "ui_style_state",
       "usertype": "ui_style_state_component",
       "has_accessor": "registry.has_ui_style_state",
-      "get_accessor": "registry.get_ui_style_state"
+      "get_accessor": "registry.get_ui_style_state",
+      "try_get_accessor": "registry.try_get_ui_style_state",
+      "add_accessor": "registry.add_ui_style_state",
+      "remove_accessor": "registry.remove_ui_style_state"
     },
     {
       "lua_key": "ui_z_index",
       "usertype": "ui_z_index_component",
       "has_accessor": "registry.has_ui_z_index",
-      "get_accessor": "registry.get_ui_z_index"
+      "get_accessor": "registry.get_ui_z_index",
+      "try_get_accessor": "registry.try_get_ui_z_index",
+      "add_accessor": "registry.add_ui_z_index",
+      "remove_accessor": "registry.remove_ui_z_index"
     }
   ]
 }

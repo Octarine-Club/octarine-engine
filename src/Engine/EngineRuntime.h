@@ -19,7 +19,11 @@ class EngineRuntime {
   EngineRuntime(EngineRuntime&&) = delete;
   EngineRuntime& operator=(EngineRuntime&&) = delete;
 
-  ~EngineRuntime() = default;
+  ~EngineRuntime() {
+    if (sdl_renderer_ != nullptr || window_ != nullptr) {
+      Shutdown();
+    }
+  }
 
   // SDL_Init(video/audio/events/gamepad) + TTF_Init. Returns false (logging the SDL error) on
   // failure so Game::Initialize can abort. When `headless` is true, sets SDL dummy video/audio hints.

@@ -4385,6 +4385,246 @@ void TestImageSrcAndProgressBarFillColorAliases() {
   CheckEq(static_cast<int>(sq.trackColor.b), 0x33, "<ProgressBar track-color> blue channel");
 }
 
+void TestBatchDUIRuntimeLifecycleExprAndSelectiveRefresh() {
+  std::cout << "[batch-d] quote-safe NormalizeLuaExpr, selective observable refresh, 64-bit IDs, UnmountAllViews & "
+               "coroutines\n";
+  Game game;
+  Registry& reg = *game.GetRegistry();
+  reg.Set<GameConfig>(GameConfig{});
+  reg.RegisterBulkSystem(UILayoutSystem());
+  auto eventBus = std::make_unique<EventBus>();
+  auto& btnSys = reg.Set<UIButtonSystem>(UIButtonSystem{});
+  btnSys.Init(&reg, eventBus);
+
+  sol::state& lua = game.GetLua();
+  lua.open_libraries(sol::lib::base, sol::lib::coroutine, sol::lib::math, sol::lib::string, sol::lib::table);
+  LuaModuleBinding<UIModule>::install(lua, game);
+#ifndef OCTARINE_SHIPPED
+  LuaModuleBinding<DevModule>::install(lua, game);
+#endif
+  auto* uiRuntime = reg.TryGet<UIRuntime>();
+  Check(uiRuntime != nullptr, "UIModule installs UIRuntime on Registry");
+
+  // Recycle initial entity slots so mounted UI widgets receive generation > 0 EntityIDs (ENG-ECS-04).
+  {
+    std::vector<Entity> recycled;
+    for (int i = 0; i < 16; ++i) {
+      recycled.push_back(reg.CreateEntity());
+    }
+    for (const Entity e : recycled) {
+      reg.BlamEntity(e);
+    }
+  }
+
+  const auto mountRes = lua.safe_script(R"(
+    _G.unmount_hits = 0
+    _G.tog_changes = 0
+    _G.sld_changes = 0
+    _G.hud_vm = ui.observable({
+      hp = 20,
+      max_hp = 100,
+      items = {
+        { title = "Alpha" },
+        { title = "Beta" }
+      }
+    })
+    _G.leaked_hud_view = ui.mount([[
+      <OXML>
+        <Use name="StatBadge" src="&lt;OXML&gt;&lt;Param name='val' default='0' /&gt;&lt;Label text='Badge:{val}' /&gt;&lt;/OXML&gt;" />
+        <Canvas width="600" height="400">
+          <Column width="400" gap="6">
+            <Label ref="status_lbl" text="{hp &lt;= 25 &amp;&amp; 'CRITICAL! A &amp;&amp; B != C || D' || 'OK!'}" />
+            <Label ref="hp_lbl" text="{hp}/{max_hp}" />
+            <StatBadge ref="badge_node" val="{hp}" />
+            <Toggle ref="gen_tog" text="Mute" />
+            <Slider ref="gen_sld" min="0" max="10" value="2" width="120" height="16" />
+            <Column ref="rep_col">
+              <Label each="item in {items}" text="{item.title}" />
+            </Column>
+          </Column>
+        </Canvas>
+      </OXML>
+    ]], {
+      context = _G.hud_vm,
+      controller = {
+        on_unmount = function() _G.unmount_hits = _G.unmount_hits + 1 end
+      }
+    })
+    _G.leaked_hud_view.refs.gen_tog:on("change", function() _G.tog_changes = _G.tog_changes + 1 end)
+    _G.leaked_hud_view.refs.gen_sld:on("change", function() _G.sld_changes = _G.sld_changes + 1 end)
+  )",
+                                        sol::script_pass_on_error);
+  Check(mountRes.valid(), "Batch D HUD view mounts cleanly");
+
+  const Entity statusEnt = lua["leaked_hud_view"]["refs"]["status_lbl"]["entity"].get<Entity>();
+  const Entity hpEnt = lua["leaked_hud_view"]["refs"]["hp_lbl"]["entity"].get<Entity>();
+  const Entity badgeEnt = lua["leaked_hud_view"]["refs"]["badge_node"]["entity"].get<Entity>();
+  const Entity togEnt = lua["leaked_hud_view"]["refs"]["gen_tog"]["entity"].get<Entity>();
+  const Entity sldEnt = lua["leaked_hud_view"]["refs"]["gen_sld"]["entity"].get<Entity>();
+  const Entity repColEnt = lua["leaked_hud_view"]["refs"]["rep_col"]["entity"].get<Entity>();
+
+  Check(togEnt.GetGeneration() > 0 && sldEnt.GetGeneration() > 0, "Toggle and Slider have generation > 0 EntityIDs");
+  CheckEq(reg.GetComponent<TextLabelComponent>(statusEnt).text, std::string("CRITICAL! A && B != C || D"),
+          "NormalizeLuaExpr preserves !, &&, !=, and || inside quoted string literals");
+  CheckEq(reg.GetComponent<TextLabelComponent>(badgeEnt).text, std::string("Badge:20"),
+          "<Use> badge renders initial bound prop");
+
+  const auto initialRepKids = reg.GetChildren(repColEnt);
+  CheckEq(initialRepKids.size(), static_cast<std::size_t>(2), "Repeater initially spawns 2 items");
+
+  // Scalar writes to vm.hp must update status/hp/badge WITHOUT blamming or respawning repeater items.
+  lua.safe_script("_G.hud_vm.hp = 85");
+  CheckEq(reg.GetComponent<TextLabelComponent>(statusEnt).text, std::string("OK!"),
+          "Status label updates on scalar vm.hp write");
+  CheckEq(reg.GetComponent<TextLabelComponent>(hpEnt).text, std::string("85/100"),
+          "HP label updates on scalar vm.hp write");
+  CheckEq(reg.GetComponent<TextLabelComponent>(badgeEnt).text, std::string("Badge:85"),
+          "<Use> badge updates when bound prop key changes");
+
+  const auto afterHpRepKids = reg.GetChildren(repColEnt);
+  CheckEq(afterHpRepKids.size(), static_cast<std::size_t>(2), "Repeater still has 2 items after vm.hp write");
+  if (initialRepKids.size() == 2 && afterHpRepKids.size() == 2) {
+    CheckEq(afterHpRepKids[0].id, initialRepKids[0].id, "Repeater item 0 EntityID preserved across vm.hp write");
+    CheckEq(afterHpRepKids[1].id, initialRepKids[1].id, "Repeater item 1 EntityID preserved across vm.hp write");
+  }
+
+  // Nested item field mutation updates item label in-place without respawning repeater entities.
+  lua.safe_script("_G.hud_vm.items[1].title = 'AlphaPlus'");
+  const auto afterItemFieldKids = reg.GetChildren(repColEnt);
+  if (afterItemFieldKids.size() == 2 && initialRepKids.size() == 2) {
+    CheckEq(afterItemFieldKids[0].id, initialRepKids[0].id, "Item field edit updates in place without entity respawn");
+    CheckEq(reg.GetComponent<TextLabelComponent>(afterItemFieldKids[0]).text, std::string("AlphaPlus"),
+            "Repeater item label text updated in place");
+  }
+
+  // Replacing vm.items rebuilds repeater AND must NOT erase generation > 0 Toggle/Slider callbacks (ENG-ECS-04).
+  lua.safe_script("_G.hud_vm.items = { { title = 'One' }, { title = 'Two' }, { title = 'Three' } }");
+  CheckEq(reg.GetChildren(repColEnt).size(), static_cast<std::size_t>(3), "Replacing vm.items rebuilds repeater to 3");
+
+  btnSys.TriggerButton(togEnt, reg.GetComponent<UIButtonComponent>(togEnt));
+  CheckEq(lua["tog_changes"].get<int>(), 1, "Generation > 0 Toggle on('change') survives ClearRepeaterSpawnedItems");
+  lua.safe_script("_G.leaked_hud_view.refs.gen_sld:set_value(7.5)");
+  Check(std::abs(lua.script("return _G.leaked_hud_view.refs.gen_sld:get_value()").get<float>() - 7.5F) < 1e-3F,
+        "Generation > 0 Slider state survives ClearRepeaterSpawnedItems");
+
+  // ENG-LUA-08: Verify coroutine safety for ui.observable, expression evaluation, and dev.* preview bindings.
+  const auto coRes = lua.safe_script(R"(
+    local co = coroutine.create(function()
+      local local_obs = ui.observable({ v = 10 })
+      local_obs.v = 20
+      _G.hud_vm.hp = 15
+      if dev and dev.audit_ui then
+        local a = dev.audit_ui()
+        local b = dev.list_ui_views()
+        local c = dev.inspect_ui_contract("<Canvas><Label text='{foo}'/></Canvas>")
+        assert(type(a) == "table" and type(b) == "table" and type(c) == "table")
+      end
+      return local_obs.v
+    end)
+    local ok, val = coroutine.resume(co)
+    assert(ok and val == 20, tostring(val))
+  )",
+                                     sol::script_pass_on_error);
+  Check(coRes.valid(), "ui.observable, EvalBindingExpr, and dev.* bindings execute safely inside a Lua coroutine");
+  CheckEq(reg.GetComponent<TextLabelComponent>(statusEnt).text, std::string("CRITICAL! A && B != C || D"),
+          "Coroutine mutation updated reactive status label");
+
+  // ENG-LUA-05: UnmountAllViews fires on_unmount, clears mounted views, and tolerates retained Lua view tables.
+  uiRuntime->UnmountAllViews();
+  CheckEq(lua["unmount_hits"].get<int>(), 1, "UIRuntime::UnmountAllViews invokes controller:on_unmount");
+  Check(!lua.script("return _G.leaked_hud_view:is_mounted()").get<bool>(),
+        "Retained Lua view table reports is_mounted() == false after UnmountAllViews");
+  CheckEq(uiRuntime->GetMountedViewsDebugInfo().size(), static_cast<std::size_t>(0),
+          "UnmountAllViews clears mounted_views_ list");
+  Check(
+      lua.safe_script("_G.leaked_hud_view:refresh(); _G.leaked_hud_view:unmount()", sol::script_pass_on_error).valid(),
+      "Calling methods on unmounted retained Lua view table is a safe no-op");
+
+  // Mid-refresh unmount + multiple change listeners + Lua error logging in UI callbacks.
+  const auto errCountBefore = Logger::RecentScriptErrors().size();
+  const uint64_t errSeqBefore = Logger::RecentScriptErrors().empty() ? 0 : Logger::RecentScriptErrors().back().sequence;
+  const auto midUnmountRes = lua.safe_script(R"(
+    _G.mid_vm = ui.observable({ x = 1 })
+    _G.prop_hits = 0
+    _G.change_hits = 0
+    ui.register_widget("UnmountTriggerWidget", {
+      props = { val = "0" },
+      template = "<Panel><Label text='{val}'/></Panel>",
+      on_prop_changed = function(ctx, k, v)
+        _G.prop_hits = _G.prop_hits + 1
+        if tostring(v) == "2" and _G.mid_view then
+          _G.mid_view:unmount()
+          error("ui_prop_boom")
+        end
+      end
+    })
+    _G.mid_view = ui.mount([[
+      <OXML>
+        <Canvas width="400" height="300">
+          <Column>
+            <UnmountTriggerWidget val="{x}" />
+            <Label ref="after_lbl" text="after:{x}" />
+            <Button ref="err_btn" text="Go" />
+            <Toggle ref="unmount_tog" text="T" />
+          </Column>
+        </Canvas>
+      </OXML>
+    ]], { context = _G.mid_vm })
+    _G.mid_view.refs.err_btn:on("click", function() error("ui_click_boom") end)
+    _G.mid_view.refs.unmount_tog:on("change", function()
+      _G.change_hits = _G.change_hits + 1
+      _G.mid_view:unmount()
+    end)
+    _G.mid_view.refs.unmount_tog:on("change", function()
+      _G.change_hits = _G.change_hits + 100
+    end)
+  )",
+                                             sol::script_pass_on_error);
+  Check(midUnmountRes.valid(), "mid-refresh unmount fixture mounts cleanly");
+  const Entity afterLblEnt = lua["mid_view"]["refs"]["after_lbl"]["entity"].get<Entity>();
+  const Entity errBtnEnt = lua["mid_view"]["refs"]["err_btn"]["entity"].get<Entity>();
+  const Entity unmountTogEnt = lua["mid_view"]["refs"]["unmount_tog"]["entity"].get<Entity>();
+
+  btnSys.TriggerButton(errBtnEnt, reg.GetComponent<UIButtonComponent>(errBtnEnt));
+  const auto errsAfterClick = Logger::RecentScriptErrors();
+  const uint64_t errSeqAfterClick = errsAfterClick.empty() ? 0 : errsAfterClick.back().sequence;
+  Check(errSeqAfterClick > errSeqBefore || errsAfterClick.size() > errCountBefore,
+        "UI ref click callback Lua error is logged via Logger::ErrorLua");
+
+  lua.safe_script("_G.mid_vm.x = 2");
+  Check(!reg.IsAlive(afterLblEnt), "mid-refresh unmount destroyed trailing label entity");
+  CheckEq(lua["prop_hits"].get<int>(), 1, "on_prop_changed ran once before unmounting mid-refresh");
+  const auto errsAfterProp = Logger::RecentScriptErrors();
+  const uint64_t errSeqAfterProp = errsAfterProp.empty() ? 0 : errsAfterProp.back().sequence;
+  Check(errSeqAfterProp > errSeqAfterClick, "on_prop_changed Lua error is logged via Logger::ErrorLua");
+
+  // Re-mount for toggle change listener unmount test (must not UAF or fire listener #2 after unmount).
+  Check(lua.safe_script(R"(
+    _G.change_hits = 0
+    _G.obs_err = ui.observable({ k = 1 })
+    _G.obs_err.__subscribe(_G.obs_err, function() error("ui_obs_boom") end)
+    _G.obs_err.k = 2
+    _G.tog_view = ui.mount("<Canvas width='200' height='100'><Toggle ref='t' text='T'/></Canvas>")
+    _G.tog_view.refs.t:on("change", function()
+      _G.change_hits = _G.change_hits + 1
+      _G.tog_view:unmount()
+    end)
+    _G.tog_view.refs.t:on("change", function()
+      _G.change_hits = _G.change_hits + 100
+    end)
+  )",
+                        sol::script_pass_on_error)
+            .valid(),
+        "observable error & toggle unmount fixture setup");
+  const auto errsAfterObs = Logger::RecentScriptErrors();
+  const uint64_t errSeqAfterObs = errsAfterObs.empty() ? 0 : errsAfterObs.back().sequence;
+  Check(errSeqAfterObs > errSeqAfterProp, "observable listener Lua error is logged via Logger::ErrorLua");
+
+  const Entity togUnmountEnt = lua["tog_view"]["refs"]["t"]["entity"].get<Entity>();
+  btnSys.TriggerButton(togUnmountEnt, reg.GetComponent<UIButtonComponent>(togUnmountEnt));
+  CheckEq(lua["change_hits"].get<int>(), 1, "Toggle change listener stops after first listener unmounts view");
+}
+
 }  // namespace
 
 int main() {
@@ -4436,5 +4676,6 @@ int main() {
   TestPreviewerPreservesControllerOnSidecarAndPresetSaves();
 #endif
   TestImageSrcAndProgressBarFillColorAliases();
+  TestBatchDUIRuntimeLifecycleExprAndSelectiveRefresh();
   return octarine::test::ReportSummary("UILayoutTest");
 }

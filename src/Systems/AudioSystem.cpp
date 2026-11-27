@@ -6,6 +6,7 @@
 #include <string>
 
 #include "AssetManager/AssetManager.h"
+#include "Audio/AudioGainRegistry.h"
 #include "Components/AudioActiveTag.h"
 #include "Game/GameConfig.h"
 #include "General/Logger.h"
@@ -100,6 +101,26 @@ AudioSystem::Acquired AudioSystem::AcquireTrack() {
   return {};
 }
 
+namespace {
+template <typename TrackPool>
+int CountActiveVoicesAndPrune(const TrackPool& trackPool, octarine::AudioGainRegistry& gainReg,
+                              const std::string& clipId) {
+  int activeVoices = 0;
+  for (const auto& slot : trackPool) {
+    if (!slot.track) continue;
+    if (!MIX_TrackPlaying(slot.track)) {
+      gainReg.active_track_clips.erase(slot.track);
+      continue;
+    }
+    const auto it = gainReg.active_track_clips.find(slot.track);
+    if (it != gainReg.active_track_clips.end() && it->second == clipId) {
+      ++activeVoices;
+    }
+  }
+  return activeVoices;
+}
+}  // namespace
+
 void AudioSystem::OnAudioPlay(const AudioPlayEvent& event) {
   if (!state_ || !registry_) return;
 
@@ -109,6 +130,15 @@ void AudioSystem::OnAudioPlay(const AudioPlayEvent& event) {
   auto& assetManager = registry_->Get<AssetManager>();
   MIX_Audio* clip = assetManager.GetAudioClip(event.clipId);
   if (!clip) return;
+
+  auto* gainReg = registry_->TryGet<octarine::AudioGainRegistry>();
+  const std::uint64_t nowNs = SDL_GetTicksNS();
+  if (gainReg != nullptr) {
+    const int activeVoices = CountActiveVoicesAndPrune(state_->track_pool, *gainReg, event.clipId);
+    if (gainReg->ShouldThrottleClip(event.clipId, nowNs, activeVoices)) {
+      return;
+    }
+  }
 
   // Per-track gain carries only this clip's own volume. Master volume + mute are applied at the
   // mixer level (MIX_SetMixerGain, synced each frame in Game::Update) so they affect live tracks.
@@ -128,6 +158,10 @@ void AudioSystem::OnAudioPlay(const AudioPlayEvent& event) {
   MIX_SetTrackGain(acquired.track, gain);
   if (!MIX_PlayTrack(acquired.track, 0)) {
     Logger::Warn("MIX_PlayTrack failed for " + event.clipId + ": " + std::string(SDL_GetError()));
+    return;
+  }
+  if (gainReg != nullptr) {
+    gainReg->RecordClipPlayed(acquired.track, event.clipId, nowNs);
   }
 }
 
@@ -223,6 +257,9 @@ void AudioSystem::SpawnSinkForSource(Entity entity, AudioSourceComponent& source
   if (resumingFromCull) {
     MIX_SetTrackPlaybackPosition(acquired.track, source.playbackOffsetFrames);
     source.playbackOffsetFrames = -1;
+  }
+  if (auto* gainReg = registry_->TryGet<octarine::AudioGainRegistry>()) {
+    gainReg->active_track_clips.erase(acquired.track);
   }
   // The MIX_Track* lives in AudioTrackCache (keyed by entity), not on the POD sink component.
   track_cache_->Store(entity, acquired.track, acquired.generation);

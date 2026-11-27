@@ -122,6 +122,19 @@ void TestCameraFollowSystem() {
   auto& camZoom = registry.Get<CameraComponent>();
   CheckEq(camZoom.viewport.w, 400.0f, "Viewport width halves at 2x zoom");
   CheckEq(camZoom.viewport.h, 300.0f, "Viewport height halves at 2x zoom");
+
+  // CameraFollowSystem prefers GlobalTransformComponent when present on the followed entity
+  camZoom.zoom = 1.0f;
+  const Entity followed = registry.CreateEntityWithBundle(
+      PositionComponent{glm::vec2(100.0f, 100.0f)},
+      GlobalTransformComponent{glm::vec2(1000.0f, 750.0f), glm::vec2(1.0f, 1.0f), 0.0f}, CameraFollowComponent{});
+  ctx.SetEntity(followed);
+  followSystem(ctx, registry.GetComponent<PositionComponent>(followed),
+               registry.GetComponent<CameraFollowComponent>(followed));
+  CheckEq(registry.Get<CameraComponent>().viewport.x, 600.0f,
+          "CameraFollowSystem uses GlobalTransformComponent.position.x when available");
+  CheckEq(registry.Get<CameraComponent>().viewport.y, 450.0f,
+          "CameraFollowSystem uses GlobalTransformComponent.position.y when available");
 }
 
 void TestLifetimeSystem() {

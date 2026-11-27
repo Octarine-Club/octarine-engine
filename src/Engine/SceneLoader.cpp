@@ -18,10 +18,14 @@
 #include "Game/EngineContext.h"
 #include "Game/GameConfig.h"
 #include "General/Logger.h"
+#include "Lua/HotReload/ScriptHotReload.h"
 #include "Lua/LuaEntityLoader.h"
+#include "Renderer/RenderQueue.h"
 #include "Renderer/SpriteRenderCache.h"
 #include "Systems/InputSystem.h"
+#include "Systems/RenderTextSystem.h"
 #include "Systems/TilemapSystem.h"
+#include "UI/UIRuntime.h"
 
 void SceneLoader::RequestLoadScene(const std::string& scenePath) {
   if (scenePath.empty()) {
@@ -32,6 +36,7 @@ void SceneLoader::RequestLoadScene(const std::string& scenePath) {
   // flushes it before systems run (FlushPendingSceneLoad). Last request within a frame wins.
   // Before deferral is armed (bake and initial startup), the swap runs immediately.
   if (deferred_swaps_) {
+    has_pending_stop_ = false;
     pending_scene_path_ = scenePath;
     has_pending_scene_ = true;
     return;
@@ -42,8 +47,12 @@ void SceneLoader::RequestLoadScene(const std::string& scenePath) {
 void SceneLoader::FlushPendingSceneLoad() {
   // First flush also arms deferral: the startup script's initial load ran before any frame
   // (deferred_swaps_ still false) so it took effect immediately; from here, in-frame load_scene
-  // calls queue instead. Bake never reaches a frame loop, so its loads stay immediate.
+  // and stop_scene calls queue instead. Bake never reaches a frame loop, so its loads stay immediate.
   deferred_swaps_ = true;
+  if (has_pending_stop_) {
+    has_pending_stop_ = false;
+    stopSceneImmediate();
+  }
   if (!has_pending_scene_) return;
   has_pending_scene_ = false;
   const std::string path = std::move(pending_scene_path_);
@@ -59,6 +68,9 @@ void SceneLoader::LoadScene(const std::string& scenePath) {
     return;
   }
 
+  has_pending_stop_ = false;
+  last_load_failed_ = false;
+
   auto& assetManager = registry_->Get<AssetManager>();
   SDL_Renderer* renderer = registry_->Get<EngineContext>().sdlRenderer;
 
@@ -69,7 +81,7 @@ void SceneLoader::LoadScene(const std::string& scenePath) {
 
   // Acquire-before-release: stash the previous scene's tracked assets but defer releasing them
   // until the new scene's assets are resident, so any id shared by both scenes never
-  // unloads/reloads across the swap. Entities are a different story — a scene script may spawn
+  // unloads/reloads across the swap. Entities are a different story - a scene script may spawn
   // entities as a side effect while it runs (the no-table path), so the old entities are cleared
   // up front, before the script executes, rather than after (which would wipe the new ones).
   std::vector<std::string> previousSceneAssets = std::move(current_scene_assets_);
@@ -89,24 +101,35 @@ void SceneLoader::LoadScene(const std::string& scenePath) {
   } const loadingScope(loading_scene_);
 
   auto sceneBytes = ReadFileViaSDL(fullPath, &assetManager);
+  bool decryptOk = false;
   sol::protected_function_result result;
   if (sceneBytes) {
     const bool requireProtected = (assetManager.GetAssetPak() != nullptr);
-    if (DecryptLuaBytes(*sceneBytes, requireProtected)) {
+    decryptOk = DecryptLuaBytes(*sceneBytes, requireProtected);
+    if (decryptOk) {
       result = lua_.safe_script(*sceneBytes, sol::script_pass_on_error, "@" + fullPath);
     }
     std::fill(sceneBytes->begin(), sceneBytes->end(), '\0');
     sceneBytes->clear();
   }
-  if (!sceneBytes || !result.valid()) {
+  if (!sceneBytes || !decryptOk || !result.valid()) {
     if (!sceneBytes) {
-      Logger::Error("Failed to read scene '" + fullPath + "'");
+      Logger::ErrorLua("Failed to read scene '" + fullPath + "'");
+    } else if (!decryptOk) {
+      Logger::ErrorLua("Failed to decrypt or verify scene '" + fullPath + "'");
     } else {
       const sol::error err = result;
-      Logger::Error("Failed to load scene '" + fullPath + "': " + std::string(err.what()));
+      Logger::ErrorLua("Failed to load scene '" + fullPath + "': " + std::string(err.what()));
     }
     releasePrevious();
-  } else if (result.return_count() > 0) {
+    scene_running_ = false;
+    current_scene_path_.clear();
+    last_load_failed_ = true;
+    return;
+  }
+
+  bool entryFuncFailed = false;
+  if (result.return_count() > 0) {
     if (result[0].is<sol::table>()) {
       Logger::Info("Scene script returned a table. Attempting to load assets and entities...");
       sol::table sceneTable = result[0];
@@ -148,8 +171,11 @@ void SceneLoader::LoadScene(const std::string& scenePath) {
         if (const int failures = am.Validate(refs); failures > 0) {
           Logger::Error("Scene '" + fullPath + "' has " + std::to_string(failures) + " unresolved asset reference(s).");
           if (registry_->Get<GameConfig>().GetEngineOptions().assetValidationFatal) {
-            Logger::Error("assetValidationFatal is set — aborting scene load.");
+            Logger::ErrorLua("assetValidationFatal is set - aborting scene load for '" + fullPath + "'.");
             releasePrevious();
+            scene_running_ = false;
+            current_scene_path_.clear();
+            last_load_failed_ = true;
             return;
           }
         }
@@ -158,7 +184,7 @@ void SceneLoader::LoadScene(const std::string& scenePath) {
         Logger::Info("Scene scan acquired " + std::to_string(acquired) + " required asset(s).");
 
         // New scene's assets are now resident. Track them, then release the previous
-        // scene's set — ids shared by both stay loaded thanks to refcounting.
+        // scene's set - ids shared by both stay loaded thanks to refcounting.
         std::vector<std::string> newSceneAssets;
         std::set<std::string> seen;
         for (const auto& ref : refs) {
@@ -191,19 +217,21 @@ void SceneLoader::LoadScene(const std::string& scenePath) {
         auto funcResult = (*runFunc)(sceneTable);
         if (!funcResult.valid()) {
           sol::error err = funcResult;
-          Logger::Error("Failed to run scene function: " + std::string(err.what()));
+          Logger::ErrorLua("Failed to run scene function: " + std::string(err.what()));
+          entryFuncFailed = true;
         }
       }
     } else if (result[0].is<sol::function>()) {
       // No scene table to scan up front. The returned function spawns the scene (and may
       // call acquire_scene_assets, which tracks its ids via TrackSceneAssets). Run it, then
-      // release the previous scene's assets — shared ids it already re-acquired survive.
+      // release the previous scene's assets - shared ids it already re-acquired survive.
       Logger::Info("Scene script returned a function. Calling it...");
       sol::function sceneFunc = result[0].as<sol::function>();
       auto funcResult = sceneFunc();
       if (!funcResult.valid()) {
         sol::error err = funcResult;
-        Logger::Error("Failed to run scene function: " + std::string(err.what()));
+        Logger::ErrorLua("Failed to run scene function: " + std::string(err.what()));
+        entryFuncFailed = true;
       }
       releasePrevious();
     } else {
@@ -213,6 +241,13 @@ void SceneLoader::LoadScene(const std::string& scenePath) {
     // No return value: the script built the scene as a side effect while it ran (entities +
     // any acquire_scene_assets call). Those are already in place; just release the old set.
     releasePrevious();
+  }
+
+  if (entryFuncFailed) {
+    scene_running_ = false;
+    current_scene_path_.clear();
+    last_load_failed_ = true;
+    return;
   }
 
   scene_running_ = true;
@@ -228,30 +263,50 @@ void SceneLoader::ReloadScene() {
 }
 
 void SceneLoader::clearSceneEntities() {
+  if (registry_ == nullptr) {
+    return;
+  }
   // Stop every playing track before the emitter entities vanish. AudioTrackCache.Clear() below only
-  // drops the entity->track map — it does not halt playback, so a looping source (loop=true) would
+  // drops the entity->track map - it does not halt playback, so a looping source (loop=true) would
   // keep sounding into the next scene and, because AcquireTrack only reuses !MIX_TrackPlaying slots,
   // its pool track would never be reclaimed. MIX_StopAllTracks frees them on both counts.
-  if (MIX_Mixer* mixer = registry_->Get<EngineContext>().mixer) {
-    MIX_StopAllTracks(mixer, 0);
+  if (const auto* ctx = registry_->TryGet<EngineContext>(); ctx != nullptr && ctx->mixer != nullptr) {
+    MIX_StopAllTracks(ctx->mixer, 0);
+  }
+
+  // Unmount all active OXML UI views before wiping user entities so controller:on_unmount runs and
+  // view-acquired catalog assets release their refcounts cleanly (ENG-LUA-05).
+  if (auto* uiRuntime = registry_->TryGet<UIRuntime>()) {
+    uiRuntime->UnmountAllViews();
   }
 
   registry_->ClearUserEntities();
   if (auto* inputSystem = registry_->TryGet<InputSystem>()) {
     inputSystem->ResetLuaState();
   }
+  if (auto* renderQueue = registry_->TryGet<RenderQueue>()) {
+    renderQueue->Clear();
+  }
   // Drop cached SDL_Texture* lookups for entities that were just cleared; the next sprite-emit
   // pass repopulates as entities are recreated.
   if (auto* spriteCache = registry_->TryGet<SpriteRenderCache>()) {
     spriteCache->Clear();
   }
-  // Same for cached MIX_Track* handles — emitters were cleared; AudioSystem
+  RenderTextSystem::ClearRegistryCache(*registry_);
+  // Same for cached MIX_Track* handles - emitters were cleared; AudioSystem
   // re-acquires and caches tracks for newly spawned emitters.
   if (auto* trackCache = registry_->TryGet<AudioTrackCache>()) {
     trackCache->Clear();
   }
   if (auto* tilemap = registry_->TryGet<TilemapSystem>()) {
     tilemap->Unload(*registry_);
+    tilemap->ClearPropSpawner();
+  }
+  if (auto* debugReg = registry_->TryGet<octarine::debug::DebugMenuRegistry>()) {
+    debugReg->ClearLuaOwned();
+  }
+  if (auto* hotReloadTracker = registry_->TryGet<octarine::LuaScriptHotReloadTracker>()) {
+    *hotReloadTracker = octarine::LuaScriptHotReloadTracker{};
   }
 }
 
@@ -269,6 +324,16 @@ void SceneLoader::TrackSceneAssets(const std::vector<std::string>& assetIds) {
 }
 
 void SceneLoader::StopScene() {
+  if (deferred_swaps_) {
+    has_pending_scene_ = false;
+    pending_scene_path_.clear();
+    has_pending_stop_ = true;
+    return;
+  }
+  stopSceneImmediate();
+}
+
+void SceneLoader::stopSceneImmediate() {
   Logger::Info("Stopping current scene (clearing entities).");
   clearSceneEntities();
 
@@ -283,7 +348,4 @@ void SceneLoader::StopScene() {
 
   current_scene_path_.clear();
   scene_running_ = false;
-  if (auto* debugReg = registry_->TryGet<octarine::debug::DebugMenuRegistry>()) {
-    debugReg->ClearLuaOwned();
-  }
 }

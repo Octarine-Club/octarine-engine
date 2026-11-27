@@ -1,10 +1,7 @@
 // Integration tests for KDTreeCollisionSystem's enter/exit filtering (W2.2).
 //
-// KDTreeCollisionSystem is async: operator() on call N gathers the current entity positions and
-// starts BVH detection; call N+1 consumes that result and emits CollisionBatchEvent. A 20 ms
-// sleep between Update() calls gives the async work time to complete (it finishes in µs for
-// 2-3 entities). Because the detection result is one frame behind the gather, each scenario
-// requires an extra tick to flush the pipeline.
+// Most scenarios run KDTreeCollisionSystem(true) in synchronous mode for deterministic assertions;
+// async coverage explicitly invokes WaitForAsync() between ticks and checks worker-occupancy balance.
 //
 // gtest-free; exit code = failed-check count. Links the ECS core only.
 
@@ -449,17 +446,24 @@ int main() {
     reg.AddComponent(e2, EntityMaskComponent{});
 
     // Step 1: gathers boxes and launches async detection
+    const size_t availBefore = ThreadPool::Instance().AvailableConcurrency();
     reg.Update(1.0f / 60.0f);
     collision.Func().WaitForAsync();
-    // Step 2: consumes async result and updates prevPairs_
+    CheckEq(ThreadPool::Instance().AvailableConcurrency(), availBefore,
+            "ThreadPool AvailableConcurrency restored after async collision pass 1");
+    // Step 2: consumes async result and updates prevPairs_ (and launches pass 2)
     reg.Update(1.0f / 60.0f);
+    collision.Func().WaitForAsync();
 
     Check(collision.Func().IsOverlapping(e1, e2), "e1 and e2 are overlapping");
+    CheckEq(ThreadPool::Instance().AvailableConcurrency(), availBefore,
+            "ThreadPool AvailableConcurrency restored after async collision pass 2");
 
     // Despawn to exercise empty box path with prior pairs
     reg.BlamEntity(e1);
     reg.BlamEntity(e2);
     reg.Update(1.0f / 60.0f);
+    reg.ValidateInvariants();
   }
 
   TestAsyncTeardownLifecycle();
@@ -530,6 +534,47 @@ int main() {
     reg.Update(1.0f / 60.0f);
     CheckEq(collision.Func().LastSubmittedBoxCount(), static_cast<size_t>(0),
             "async active-mask pre-scan: zero seekers yields zero submitted boxes");
+  }
+
+  // --- Multi-sub-step (simSubSteps > 1) forces synchronous detection so sub-steps are never dropped.
+  {
+    Registry reg;
+    auto bus = std::make_unique<EventBus>();
+    GameConfig cfg;
+    cfg.GetEngineOptions().simSubSteps = 4;
+    reg.Set<GameConfig>(cfg);
+    EngineContext ctx;
+    ctx.eventBus = bus.get();
+    ctx.config = &reg.Get<GameConfig>();
+    reg.Set<EngineContext>(ctx);
+
+    CollisionCapture cap;
+    cap.subscription = bus->SubscribeEvent<CollisionCapture, CollisionBatchEvent>(&cap, &CollisionCapture::OnBatch);
+
+    // Configured asynchronous (synchronous = false), but simSubSteps = 4 > 1
+    auto collision = reg.RegisterBulkSystem(KDTreeCollisionSystem(false));
+
+    const Entity e1 = reg.CreateEntity();
+    reg.AddComponent(e1, GlobalTransformComponent{glm::vec2(0.0f, 0.0f), glm::vec2(1.0f, 1.0f), 0.0f});
+    reg.AddComponent(e1, BoxColliderComponent{32, 32});
+    reg.AddComponent(e1, EntityMaskComponent{});
+
+    const Entity e2 = reg.CreateEntity();
+    reg.AddComponent(e2, GlobalTransformComponent{glm::vec2(100.0f, 0.0f), glm::vec2(1.0f, 1.0f), 0.0f});
+    reg.AddComponent(e2, BoxColliderComponent{32, 32});
+    reg.AddComponent(e2, EntityMaskComponent{});
+
+    // Sub-step 0: disjoint; Sub-step 1: move e2 to overlap e1; Sub-step 2: move e2 past e1.
+    // Without synchronous sub-step enforcement, sub-step 1 would see in_flight and skip detection!
+    reg.Update(1.0f / 60.0f);  // sub-step 0
+    reg.GetComponent<GlobalTransformComponent>(e2).position = glm::vec2(8.0f, 0.0f);
+    reg.Update(1.0f / 60.0f);  // sub-step 1: must detect overlap synchronously in same step
+    reg.GetComponent<GlobalTransformComponent>(e2).position = glm::vec2(200.0f, 0.0f);
+    reg.Update(1.0f / 60.0f);  // sub-step 2
+
+    CheckEq(cap.TotalPairs(), 1, "simSubSteps > 1 detects transient sub-step overlap without dropping sub-steps");
+    Check(cap.Contains(e1, e2), "simSubSteps > 1 emitted transient (e1, e2) overlap");
+    reg.ValidateInvariants();
   }
 
   return octarine::test::Result();

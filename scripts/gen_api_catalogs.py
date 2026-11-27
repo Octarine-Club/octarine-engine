@@ -35,7 +35,7 @@ SRC = REPO / "src"
 # <...> holds the queried components (no nested templates in practice), and the
 # constructor or getter call names the system. \s* spans the multi-line DopplerSystem case.
 REG_RE = re.compile(
-    r"Register(Parallel|Bulk)?System\s*(?:<([^>]*)>)?\s*\(\s*(?:std::ref\s*\(\s*)?(?:[A-Za-z_]\w*(?:->|\.)(?:Get|TryGet)<\s*([A-Za-z_]\w+)\s*>\(\)|([A-Za-z_]\w+)\s*\()"
+    r"Register(Parallel|Bulk)?System\s*(?:<((?:[^<>]|<[^<>]*>)+)>)?\s*\(\s*(?:std::ref\s*\(\s*)?(?:[A-Za-z_]\w*(?:->|\.)(?:Get|TryGet)<\s*([A-Za-z_]\w+)\s*>\(\)|([A-Za-z_]\w+)\s*\()"
 )
 CREATE_QUERY_RE = re.compile(r"CreateQuery<((?:[^<>]|<[^<>]*>)+)>")
 EMIT_RE = re.compile(r"EmitEvent\s*<\s*([A-Za-z_]\w*)\s*>")
@@ -100,7 +100,7 @@ def parse_registrations():
             out[name] = {
                 "tier": TIER[kind],
                 "order": order,
-                "queried_components": [c.strip() for c in comps.split(",")] if comps and comps.strip() else [],
+                "queried_components": split_template_args(comps) if comps and comps.strip() else [],
             }
             order += 1
     return out

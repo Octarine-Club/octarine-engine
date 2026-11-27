@@ -12,14 +12,31 @@
 #include <sol/sol.hpp>
 #include <string>
 
+#include "AssetManager/AssetManager.h"
 #include "AssetManager/AssetPak.h"
 #include "AssetManager/AssetReference.h"
 #include "AssetManager/SceneAssetScanner.h"
+#include "Components/GlobalTransformComponent.h"
+#include "Components/PositionComponent.h"
+#include "Components/ScaleComponent.h"
+#include "Components/SpriteComponent.h"
+#include "Debug/DebugMenuRegistry.h"
 #include "ECS/Registry.h"
+#include "Engine/EngineBootstrap.h"
+#include "Engine/SceneLoader.h"
 #include "EventBus/EventBus.h"
+#include "Game/EngineContext.h"
 #include "Game/Game.h"
+#include "Game/GameConfig.h"
 #include "General/Logger.h"
+#include "Lua/HotReload/ScriptHotReload.h"
+#include "Lua/LuaEntityLoader.h"
+#include "Renderer/RenderQueue.h"
+#include "Systems/RenderTextSystem.h"
+#include "Systems/ScriptSystem.h"
+#include "Systems/TilemapSystem.h"
 #include "TestHarness.h"
+#include "UI/UIRuntime.h"
 
 using octarine::test::Check;
 using octarine::test::CheckEq;
@@ -208,6 +225,161 @@ int main() {
     Check(pak.Contains("main.lua"), "temp pak contains main.lua");
     Check(!pak.Contains("root_ignored.preview.lua"), "asset_bundle.pak excludes root *.preview.lua");
     Check(!pak.Contains("scripts/hud.preview.lua"), "asset_bundle.pak excludes scripts/**/*.preview.lua");
+    std::filesystem::remove_all(tempProj, ec);
+  }
+
+  std::cout << "[bake: recursively packs non-scripts/ Lua dirs, package_include, and fails on entry script error]\n";
+  {
+    const std::filesystem::path fixtureDir = BAKE_FIXTURE_DIR;
+    const std::filesystem::path tempProj = std::filesystem::temp_directory_path() / "octarine_bake_batch_b_test";
+    std::error_code ec;
+    std::filesystem::remove_all(tempProj, ec);
+    std::filesystem::copy(fixtureDir, tempProj, std::filesystem::copy_options::recursive, ec);
+    std::filesystem::create_directories(tempProj / "scenes", ec);
+    std::filesystem::create_directories(tempProj / "ui", ec);
+    std::filesystem::create_directories(tempProj / "data", ec);
+    std::filesystem::create_directories(tempProj / "types", ec);
+    std::filesystem::create_directories(tempProj / "build", ec);
+    {
+      std::ofstream(tempProj / "scenes" / "level1.lua") << "return { entities = {} }\n";
+      std::ofstream(tempProj / "ui" / "hud_ctrl.lua") << "return {}\n";
+      std::ofstream(tempProj / "data" / "waves.json") << "{ \"waves\": [1, 2, 3] }\n";
+      std::ofstream(tempProj / "types" / "octarine_api.lua") << "---@meta\n";
+      std::ofstream(tempProj / "build" / "stray.lua") << "error('should not pack')\n";
+      std::ofstream(tempProj / "project.ini") << "name=BakeTest\npackage_id=com.test.bake\nversion_name=1.0.0\n"
+                                              << "package_include=data/waves.json\n";
+    }
+    Check(Game::Bake(tempProj.string()), "Game::Bake succeeds with nested Lua dirs and package_include");
+    AssetPak pak;
+    Check(pak.Open((tempProj / "asset_bundle.pak").string()), "opens baked pak for recursive Lua + package_include");
+    Check(pak.Contains("scenes/level1.lua"), "asset_bundle.pak packs scenes/level1.lua (ENG-RND-07)");
+    Check(pak.Contains("ui/hud_ctrl.lua"), "asset_bundle.pak packs ui/hud_ctrl.lua (ENG-RND-07)");
+    Check(pak.Contains("data/waves.json"), "asset_bundle.pak packs package_include data/waves.json (ENG-RND-07)");
+    Check(!pak.Contains("types/octarine_api.lua"), "asset_bundle.pak excludes types/octarine_api.lua");
+    Check(!pak.Contains("build/stray.lua"), "asset_bundle.pak excludes build/stray.lua");
+
+    // Verify Bake fails immediately when the startup script throws a Lua error (ENG-LUA-01).
+    { std::ofstream(tempProj / "main.lua") << "error('simulated startup script failure')\n"; }
+    Check(!Game::Bake(tempProj.string()), "Game::Bake returns false when startup script errors (ENG-LUA-01)");
+    std::filesystem::remove_all(tempProj, ec);
+  }
+
+  std::cout << "[batch-b: mid-frame load_entity GlobalTransform, deferred StopScene, and clearSceneEntities]\n";
+  {
+    const std::filesystem::path tempProj = std::filesystem::temp_directory_path() / "octarine_scene_lifecycle_b_test";
+    std::error_code ec;
+    std::filesystem::remove_all(tempProj, ec);
+    std::filesystem::create_directories(tempProj, ec);
+    {
+      std::ofstream(tempProj / "config.ini") << "Title=BatchBTest\nStartupScript=good_scene.lua\n";
+      std::ofstream(tempProj / "good_scene.lua") << R"lua(
+        return {
+          entities = {
+            {
+              components = {
+                transform = { position = { x = 42.0, y = 84.0 }, scale = { x = 2.0, y = 3.0 } },
+                sprite = { texture_asset_id = "dummy", width = 16, height = 16 },
+              },
+            },
+          },
+        }
+      )lua";
+      std::ofstream(tempProj / "bad_scene.lua") << "error('scene syntax/runtime failure')\n";
+    }
+
+    Game game;
+    Registry* reg = game.GetRegistry();
+    sol::state& lua = game.GetLua();
+    GameConfig cfg;
+    Check(cfg.LoadConfigFromFile(tempProj.string()), "loaded temp config.ini");
+    reg->Set<GameConfig>(cfg);
+    EngineContext ctx{};
+    ctx.config = &reg->Get<GameConfig>();
+    reg->Set<EngineContext>(ctx);
+    engine_bootstrap::InstallCoreSingletons(*reg, reg->Get<EngineContext>(), 320, 240, true, &lua);
+    engine_bootstrap::InstallPoolAndSingletons(*reg);
+    engine_bootstrap::RegisterAllComponentBindings();
+    engine_bootstrap::InstallLuaLibraries(lua);
+    ScriptSystem scriptSys;
+    scriptSys.CreateLuaBindings(lua);
+    engine_bootstrap::InstallLuaModules(lua, game);
+    reg->Get<AssetManager>().LoadGameConfig(reg->Get<GameConfig>());
+
+    // 1. Mid-frame LuaEntityLoader initializes GlobalTransformComponent from local transform (ENG-ECS-08).
+    {
+      sol::table entTbl = lua.script(R"lua(
+        return {
+          components = {
+            transform = { position = { x = 120.0, y = 240.0 } },
+            sprite = { texture_asset_id = "dummy", width = 16, height = 16 },
+          },
+        }
+      )lua");
+      const auto spawned = LuaEntityLoader::LoadEntityFromLua(reg, entTbl);
+      Check(spawned.has_value() && reg->HasComponent<GlobalTransformComponent>(*spawned),
+            "LoadEntityFromLua attaches GlobalTransformComponent");
+      if (spawned.has_value()) {
+        const auto& gt = reg->GetComponent<GlobalTransformComponent>(*spawned);
+        CheckEq(gt.position.x, 120.0F, "mid-frame spawned entity GlobalTransform.position.x initialized immediately");
+        CheckEq(gt.position.y, 240.0F, "mid-frame spawned entity GlobalTransform.position.y initialized immediately");
+      }
+    }
+
+    // 2. SceneLoader::LoadScene failure does not set scene_running_ = true and logs to RecentScriptErrors (ENG-LUA-01).
+    SceneLoader loader(reg, lua);
+    const std::size_t errsBefore = Logger::RecentScriptErrors().size();
+    loader.LoadScene("bad_scene.lua");
+    Check(!loader.IsSceneRunning(), "failed LoadScene leaves IsSceneRunning() == false (ENG-LUA-01)");
+    Check(loader.LastLoadFailed(), "failed LoadScene sets LastLoadFailed() == true");
+    Check(Logger::RecentScriptErrors().size() > errsBefore,
+          "failed LoadScene routes error to Logger::ErrorLua / RecentScriptErrors (ENG-LUA-01)");
+
+    // 3. Immediate StopScene when !deferred_swaps_ vs deferred StopScene when deferred_swaps_ (ENG-RND-01).
+    loader.LoadScene("good_scene.lua");
+    Check(loader.IsSceneRunning(), "good_scene.lua sets IsSceneRunning() == true");
+    CheckEq(reg->GetUserEntityCount(), 1ULL, "good_scene.lua spawned 1 user entity");
+
+    // Seed singletons that clearSceneEntities must clean up (ENG-LUA-05, ENG-LUA-06, ENG-RND-04).
+    reg->Get<TilemapSystem>().SetPropSpawner(lua.script("return function() end").get<sol::protected_function>());
+    reg->Get<octarine::debug::DebugMenuRegistry>().RegisterAction("Game/Test", [](Registry&) {}, "", true);
+    reg->Get<octarine::LuaScriptHotReloadTracker>().watcher.Track((tempProj / "good_scene.lua").string());
+    reg->Get<RenderQueue>().EmplaceSquare(0, 0.0F);
+    auto& uiRuntime = reg->Get<UIRuntime>();
+    {
+      const sol::object viewObj =
+          uiRuntime.Mount(sol::make_object(lua, "<Canvas><Label text='hi'/></Canvas>"), sol::nullopt);
+      Check(viewObj.is<sol::table>(), "mounted inline OXML view before scene stop");
+      CheckEq(uiRuntime.GetMountedViewsDebugInfo().size(), size_t{1}, "1 mounted UI view active");
+    }
+
+    // Before FlushPendingSceneLoad arms deferral, StopScene is immediate.
+    loader.StopScene();
+    Check(!loader.IsSceneRunning(), "StopScene is immediate when !deferred_swaps_ (ENG-RND-01)");
+    CheckEq(reg->GetUserEntityCount(), 0ULL, "immediate StopScene cleared user entities");
+    Check(uiRuntime.GetMountedViewsDebugInfo().empty(),
+          "clearSceneEntities unmounted all UIRuntime views (ENG-LUA-05)");
+    Check(reg->Get<octarine::debug::DebugMenuRegistry>().Actions().empty(),
+          "clearSceneEntities cleared Lua-owned DebugMenuRegistry actions (ENG-LUA-06)");
+    CheckEq(reg->Get<octarine::LuaScriptHotReloadTracker>().watcher.TrackedCount(), size_t{0},
+            "clearSceneEntities cleared LuaScriptHotReloadTracker (ENG-LUA-06)");
+    Check(reg->Get<RenderQueue>().IsEmpty(), "clearSceneEntities cleared RenderQueue (ENG-RND-01)");
+
+    // Arm deferral via FlushPendingSceneLoad, then verify StopScene defers until next FlushPendingSceneLoad.
+    loader.LoadScene("good_scene.lua");
+    Check(loader.IsSceneRunning() && reg->GetUserEntityCount() == 1ULL, "reloaded good_scene.lua");
+    loader.FlushPendingSceneLoad();  // arms deferred_swaps_ = true
+    loader.StopScene();
+    Check(loader.IsSceneRunning() && reg->GetUserEntityCount() == 1ULL,
+          "StopScene is deferred while deferred_swaps_ is active (ENG-RND-01)");
+    loader.FlushPendingSceneLoad();
+    Check(!loader.IsSceneRunning() && reg->GetUserEntityCount() == 0ULL,
+          "FlushPendingSceneLoad executes pending deferred StopScene (ENG-RND-01)");
+
+    // 4. Game::Destroy is idempotent and safely closes lua before registry reset (ENG-ECS-01).
+    game.Destroy();
+    game.Destroy();
+    Check(game.GetRegistry() == nullptr, "Game::Destroy resets registry_ after closing lua (ENG-ECS-01)");
+
     std::filesystem::remove_all(tempProj, ec);
   }
 #else

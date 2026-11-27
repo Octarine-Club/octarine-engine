@@ -40,6 +40,7 @@ option(OCTARINE_ALLOW_LOOSE_ASSETS "Allow loose config/manifest/asset overrides 
 # Compiler & performance tuning
 option(OCTARINE_USE_CCACHE "Use ccache or sccache as compiler launcher when available" ON)
 option(OCTARINE_ENABLE_PCH "Use precompiled headers for engine and native game module targets" ON)
+option(OCTARINE_DISABLE_GAME_MODULE_PCH "Disable precompiled headers for octarine_game_module (for standalone clang-tidy)" OFF)
 option(OCTARINE_ENABLE_LTO "Enable Link-Time Optimization (ThinLTO / IPO) for non-Debug engine and benchmark targets" ON)
 option(OCTARINE_NATIVE_ARCH "Tune optimized builds for host CPU (-march=native; not portable, keep off for distribution)" OFF)
 set(OCTARINE_SANITIZE "OFF" CACHE STRING "Sanitizer instrumentation: OFF, asan (ASan+UBSan), or tsan")
@@ -100,7 +101,7 @@ if (OCTARINE_USE_CCACHE AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
 endif ()
 
 # Precompiled Header & ccache interoperability
-if (OCTARINE_ENABLE_PCH)
+if (OCTARINE_ENABLE_PCH AND NOT OCTARINE_ENABLE_LINTING)
     message(STATUS "Octarine: Precompiled Headers ENABLED")
     if (OCTARINE_COMPILER_CACHE AND (CMAKE_CXX_COMPILER_ID MATCHES "Clang|AppleClang|GNU"))
         add_compile_options(-fpch-preprocess)
@@ -321,19 +322,88 @@ endif ()
 # Code Quality & Formatting
 # =============================================================================
 
+find_program(CLANG_TIDY_EXE NAMES clang-tidy-18 clang-tidy)
+find_program(RUN_CLANG_TIDY_EXE NAMES run-clang-tidy-18 run-clang-tidy)
+
+set(_game_module_tidy_args "")
+if (TARGET octarine_game_module AND OCTARINE_GAME_MODULE_DIR)
+    get_filename_component(_game_module_parent "${OCTARINE_GAME_MODULE_DIR}/.." ABSOLUTE)
+    if (EXISTS "${OCTARINE_GAME_MODULE_DIR}/.clang-tidy")
+        list(APPEND _game_module_tidy_args "--config-file=${OCTARINE_GAME_MODULE_DIR}/.clang-tidy")
+    elseif (EXISTS "${_game_module_parent}/.clang-tidy")
+        list(APPEND _game_module_tidy_args "--config-file=${_game_module_parent}/.clang-tidy")
+    else ()
+        list(APPEND _game_module_tidy_args
+                "--config-file=${CMAKE_CURRENT_SOURCE_DIR}/.clang-tidy"
+                "--header-filter=(src|native|examples)/.*")
+    endif ()
+endif ()
+
 if (OCTARINE_ENABLE_LINTING)
-    find_program(CLANG_TIDY_EXE NAMES "clang-tidy")
     if (CLANG_TIDY_EXE)
         foreach (_tgt octarine_core octarine_assets octarine_renderer octarine_lua octarine_systems
-                octarine_engine ${PROJECT_NAME})
+                octarine_engine octarine_game_module ${PROJECT_NAME})
             if (TARGET ${_tgt})
-                set_target_properties(${_tgt} PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_EXE}")
+                if (_tgt STREQUAL "octarine_game_module")
+                    set(_game_module_tidy "${CLANG_TIDY_EXE}" ${_game_module_tidy_args})
+                    set_target_properties(${_tgt} PROPERTIES CXX_CLANG_TIDY "${_game_module_tidy}")
+                else ()
+                    set_target_properties(${_tgt} PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_EXE}")
+                endif ()
             endif ()
         endforeach ()
         message(STATUS "Octarine: clang-tidy ENABLED (reading from .clang-tidy)")
     else ()
         message(WARNING "Octarine: Linting enabled but clang-tidy executable not found!")
     endif ()
+endif ()
+
+if (CLANG_TIDY_EXE)
+    file(GLOB_RECURSE _octarine_lint_engine_sources CONFIGURE_DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
+    )
+    if (OCTARINE_ENABLE_TESTS)
+        file(GLOB _octarine_lint_test_sources CONFIGURE_DEPENDS
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp"
+        )
+        list(APPEND _octarine_lint_engine_sources ${_octarine_lint_test_sources})
+    endif ()
+
+    set(_octarine_lint_commands "")
+    if (RUN_CLANG_TIDY_EXE)
+        set(_engine_lint_regex "^${CMAKE_CURRENT_SOURCE_DIR}/src/")
+        if (OCTARINE_ENABLE_TESTS)
+            set(_engine_lint_regex "^${CMAKE_CURRENT_SOURCE_DIR}/(src|tests)/")
+        endif ()
+        list(APPEND _octarine_lint_commands
+                COMMAND "${RUN_CLANG_TIDY_EXE}" -clang-tidy-binary "${CLANG_TIDY_EXE}"
+                        -p "${CMAKE_BINARY_DIR}" -quiet "${_engine_lint_regex}"
+        )
+    else ()
+        list(APPEND _octarine_lint_commands
+                COMMAND "${CLANG_TIDY_EXE}" -p "${CMAKE_BINARY_DIR}" --quiet ${_octarine_lint_engine_sources}
+        )
+    endif ()
+
+    if (TARGET octarine_game_module AND OCTARINE_GAME_MODULE_DIR)
+        file(GLOB_RECURSE _octarine_lint_module_sources CONFIGURE_DEPENDS
+                "${OCTARINE_GAME_MODULE_DIR}/*.cpp"
+        )
+        if (_octarine_lint_module_sources)
+            list(APPEND _octarine_lint_commands
+                    COMMAND "${CLANG_TIDY_EXE}" -p "${CMAKE_BINARY_DIR}" --quiet
+                            ${_game_module_tidy_args} ${_octarine_lint_module_sources}
+            )
+        endif ()
+    endif ()
+
+    add_custom_target(octarine_lint
+            ${_octarine_lint_commands}
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+            COMMENT "Running standalone clang-tidy over engine (and configured octarine_game_module) sources"
+            USES_TERMINAL
+    )
+    message(STATUS "Octarine: octarine_lint target ADDED (${CLANG_TIDY_EXE})")
 endif ()
 
 find_program(CLANG_FORMAT_EXE NAMES "clang-format")
@@ -344,6 +414,8 @@ if (CLANG_FORMAT_EXE)
             "${CMAKE_CURRENT_SOURCE_DIR}/src/*.hpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/examples/*.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/examples/*.h"
     )
     add_custom_target(format
             COMMAND ${CLANG_FORMAT_EXE} -i -style=file ${FORMAT_SOURCES}

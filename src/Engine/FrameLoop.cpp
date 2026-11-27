@@ -34,6 +34,7 @@
 #include "Renderer/Renderer.h"
 #include "Systems/DrawColliderSystem.h"
 #include "Systems/InputSystem.h"
+#include "Systems/KDTreeCollisionSystem.h"
 #include "Systems/TilemapSystem.h"
 #include "Systems/UIButtonSystem.h"
 #include "UI/UIRuntime.h"
@@ -51,7 +52,7 @@
 
 namespace {
 // Portable env read. MSVC deprecates std::getenv (C4996) and the build treats warnings as errors,
-// so use _dupenv_s there — mirrors the split in Lua/LuaApiManifest.cpp. Returns "" when unset.
+// so use _dupenv_s there - mirrors the split in Lua/LuaApiManifest.cpp. Returns "" when unset.
 std::string GetEnvVar(const char* name) {
 #ifdef _MSC_VER
   char* value = nullptr;
@@ -528,6 +529,15 @@ void FrameLoop::PollHotReload([[maybe_unused]] const EngineOptions& options, [[m
 #endif
 }
 
+namespace {
+float ComputeStepDt(const float deltaTime, const EngineOptions& options, const int subSteps) {
+  constexpr float kDefaultFixedStepDt = 1.0F / 60.0F;
+  if (options.fixedStepDt > 0.0F) return options.fixedStepDt;
+  if (subSteps > 1) return kDefaultFixedStepDt;
+  return deltaTime * options.timeScale;
+}
+}  // namespace
+
 int FrameLoop::ExecuteSimulationSteps(const float deltaTime, EngineOptions& options, InputSystem* inputSystem) {
   if (options.isPaused && !options.stepFrame) {
     MaybeRenderPausedUiPreview(registry_);
@@ -536,15 +546,12 @@ int FrameLoop::ExecuteSimulationSteps(const float deltaTime, EngineOptions& opti
 
   // dt precedence: an explicit fixedStepDt wins; otherwise sub-stepping implies the default
   // 1/60s fixed step; otherwise variable frame dt scaled by timeScale. timeScale is ignored
-  // whenever a fixed step is in effect — fast-forward is expressed through simSubSteps instead.
-  constexpr float kDefaultFixedStepDt = 1.0F / 60.0F;
+  // whenever a fixed step is in effect - fast-forward is expressed through simSubSteps instead.
   const int subSteps = std::max(1, options.simSubSteps);
-  float stepDt = deltaTime * options.timeScale;
-  if (options.fixedStepDt > 0.0F) {
-    stepDt = options.fixedStepDt;
-  } else if (subSteps > 1) {
-    stepDt = kDefaultFixedStepDt;
+  if (auto* collisionPtr = registry_->TryGet<KDTreeCollisionSystem*>(); collisionPtr && *collisionPtr) {
+    (*collisionPtr)->SetActiveSubSteps(subSteps);
   }
+  const float stepDt = ComputeStepDt(deltaTime, options, subSteps);
 
   auto& renderQueue = registry_->Get<RenderQueue>();
   int stepsExecuted = 0;

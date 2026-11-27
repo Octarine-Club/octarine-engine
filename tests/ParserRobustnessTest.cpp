@@ -195,6 +195,57 @@ void TestLdtkParserRobustness() {
 
   auto resValid = octarine::tilemap::LdtkParser::ParseFromJsonString(minimalLdtk);
   Check(resValid.has_value(), "Minimal valid LDtk JSON parses cleanly");
+
+  // 3. Schema-invalid / type-mismatched LDtk JSON must not throw uncaught nlohmann::json exceptions
+  const std::string schemaMismatchedLdtk = R"({
+    "defaultGridSize": "bad_size",
+    "defs": {
+      "tilesets": [
+        { "uid": "bad_uid", "identifier": 123, "relPath": 456, "pxWid": "w", "pxHei": null, "tileGridSize": "g" }
+      ]
+    },
+    "levels": [
+      {
+        "identifier": 999,
+        "worldX": "x",
+        "worldY": null,
+        "pxWid": "bad",
+        "pxHei": true,
+        "fieldInstances": [
+          { "__identifier": "weight" },
+          { "__identifier": 42, "__value": "ignored" }
+        ],
+        "layerInstances": [
+          {
+            "__identifier": "Entities",
+            "__type": "Entities",
+            "entityInstances": [
+              { "__identifier": 7, "px": ["x", 2], "width": "w", "height": null, "__pivot": [0.5, "y"] }
+            ]
+          },
+          {
+            "__identifier": "Collisions",
+            "__type": "IntGrid",
+            "__cWid": "4",
+            "__cHei": 4,
+            "intGridCsv": [1, "bad", 2, null]
+          },
+          {
+            "__identifier": "Ground",
+            "__type": "Tiles",
+            "__gridSize": "16",
+            "__opacity": "1.0",
+            "__tilesetDefUid": "bad",
+            "gridTiles": [
+              { "px": ["0", 0], "src": [0, "0"], "f": "bad", "a": "1.0" }
+            ]
+          }
+        ]
+      }
+    ]
+  })";
+  auto resMismatchedLdtk = octarine::tilemap::LdtkParser::ParseFromJsonString(schemaMismatchedLdtk);
+  Check(resMismatchedLdtk.has_value(), "Schema-mismatched LDtk JSON degrades cleanly without throwing");
 }
 
 }  // namespace

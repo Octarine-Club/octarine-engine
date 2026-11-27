@@ -4,11 +4,23 @@
 
 #include <algorithm>
 #include <array>
+#ifndef OCTARINE_SHIPPED
+#include <atomic>
+#endif
+#include <chrono>
 #include <cmath>
 #include <cstdint>
+#ifndef OCTARINE_SHIPPED
+#include <cstdio>
+#endif
 #include <cstdlib>
+#include <ctime>
+#include <filesystem>
 #include <glm/glm.hpp>
 #include <iomanip>
+#ifndef OCTARINE_SHIPPED
+#include <mutex>
+#endif
 #include <optional>
 #include <set>
 #include <sstream>
@@ -30,12 +42,16 @@
 #include "General/PerformanceTracker.h"
 #include "General/SimRandom.h"
 #include "General/ThreadPool.h"
+#include "Lua/HotReload/ScriptHotReload.h"
 #include "Lua/LuaBindingContext.h"
+#include "Lua/LuaSchemaRegistry.h"
 #include "Renderer/Renderer.h"
 
 namespace {
+using octarine::lua_schema::LuaSchemaRegistry;
 constexpr size_t kDefaultMaxDepth = 5;
 
+#ifndef OCTARINE_SHIPPED
 bool IsAllowedEnvVar(const std::string_view name) {
   constexpr std::array<std::string_view, 4> kAllowedPrefixes = {"OCT_", "OCTARINE_", "GAME_", "BOT_"};
   return std::any_of(kAllowedPrefixes.begin(), kAllowedPrefixes.end(),
@@ -55,6 +71,7 @@ std::string ReadEnvVar(const std::string& name) {
   return value ? std::string(value) : std::string();
 #endif
 }
+#endif
 
 octarine::UserSettings* GetOrCreateUserSettings(LuaBindingContext& ctx) {
   auto* registry = ctx.GetRegistry();
@@ -163,6 +180,7 @@ sol::table GetPerfStatsTable(sol::this_state ts, LuaBindingContext& ctx) {
   return t;
 }
 
+#ifndef OCTARINE_SHIPPED
 void SetDebugGuiState(LuaBindingContext& ctx, const bool enabled) {
   auto& options = ctx.GetRegistry()->Get<GameConfig>().GetEngineOptions();
   options.showDebugGUI = enabled;
@@ -185,51 +203,61 @@ bool ToggleDebugGuiState(LuaBindingContext& ctx) {
   }
   return options.showDebugGUI;
 }
+#endif
 
 void BindDiagnostics(sol::state& lua, LuaBindingContext& ctx) {
-  lua.set_function("log_table", [](const sol::table& table, const sol::optional<std::string>& message) {
-    std::string prefix = message.has_value() ? (message.value() + ": ") : "";
-    Logger::InfoLua(prefix + FormatLuaTable(table));
-  });
+  LuaSchemaRegistry::SetFunction(lua, "log_table",
+                                 [](const sol::table& table, const sol::optional<std::string>& message) {
+                                   std::string prefix = message.has_value() ? (message.value() + ": ") : "";
+                                   Logger::InfoLua(prefix + FormatLuaTable(table));
+                                 });
 
-  lua.set_function("quit_game", [&ctx]() { ctx.RequestQuit(); });
-  lua.set_function("get_fps", [&ctx]() -> float { return GetFpsState(ctx); });
-  lua.set_function("get_avg_fps", [&ctx]() -> float { return GetAvgFpsState(ctx); });
-  lua.set_function("get_frame_time", [&ctx]() -> float { return GetFrameTimeState(ctx); });
-  lua.set_function("get_entity_count", [&ctx]() -> std::size_t { return GetEntityCountState(ctx); });
-  lua.set_function("get_memory_usage", [&ctx]() -> std::uint64_t { return GetMemoryUsageState(ctx); });
-  lua.set_function("get_perf_stats", [&ctx](sol::this_state ts) -> sol::table { return GetPerfStatsTable(ts, ctx); });
-  lua.set_function("set_debug_gui", [&ctx](const bool enabled) { SetDebugGuiState(ctx, enabled); });
-  lua.set_function("toggle_debug_gui", [&ctx]() -> bool { return ToggleDebugGuiState(ctx); });
+  LuaSchemaRegistry::SetFunction(lua, "quit_game", [&ctx]() { ctx.RequestQuit(); });
+  LuaSchemaRegistry::SetFunction(lua, "get_fps", [&ctx]() -> float { return GetFpsState(ctx); });
+  LuaSchemaRegistry::SetFunction(lua, "get_avg_fps", [&ctx]() -> float { return GetAvgFpsState(ctx); });
+  LuaSchemaRegistry::SetFunction(lua, "get_frame_time", [&ctx]() -> float { return GetFrameTimeState(ctx); });
+  LuaSchemaRegistry::SetFunction(lua, "get_entity_count", [&ctx]() -> std::size_t { return GetEntityCountState(ctx); });
+  LuaSchemaRegistry::SetFunction(lua, "get_memory_usage",
+                                 [&ctx]() -> std::uint64_t { return GetMemoryUsageState(ctx); });
+  LuaSchemaRegistry::SetFunction(lua, "get_perf_stats",
+                                 [&ctx](sol::this_state ts) -> sol::table { return GetPerfStatsTable(ts, ctx); });
+#ifdef OCTARINE_SHIPPED
+  LuaSchemaRegistry::SetFunction(lua, "set_debug_gui", [](const bool) -> bool { return false; });
+  LuaSchemaRegistry::SetFunction(lua, "toggle_debug_gui", []() -> bool { return false; });
+#else
+  LuaSchemaRegistry::SetFunction(lua, "set_debug_gui", [&ctx](const bool enabled) { SetDebugGuiState(ctx, enabled); });
+  LuaSchemaRegistry::SetFunction(lua, "toggle_debug_gui", [&ctx]() -> bool { return ToggleDebugGuiState(ctx); });
+#endif
 }
 
 void BindSubsteppingAndDt(sol::state& lua, LuaBindingContext& ctx) {
-  lua.set_function("set_sim_substeps", [&ctx](const int substeps) {
+  LuaSchemaRegistry::SetFunction(lua, "set_sim_substeps", [&ctx](const int substeps) {
     auto* gameConfig = ctx.GetRegistry()->TryGet<GameConfig>();
     if (!gameConfig) return;
     gameConfig->GetEngineOptions().simSubSteps = std::clamp(substeps, 1, 64);
   });
 
-  lua.set_function("get_sim_substeps", [&ctx]() -> int {
+  LuaSchemaRegistry::SetFunction(lua, "get_sim_substeps", [&ctx]() -> int {
     const auto* gameConfig = ctx.GetRegistry()->TryGet<GameConfig>();
     if (!gameConfig) return 1;
     return gameConfig->GetEngineOptions().simSubSteps;
   });
 
-  lua.set_function("set_fixed_dt", [&ctx](const double dt) {
+  LuaSchemaRegistry::SetFunction(lua, "set_fixed_dt", [&ctx](const double dt) {
     auto* gameConfig = ctx.GetRegistry()->TryGet<GameConfig>();
     if (!gameConfig) return;
     gameConfig->GetEngineOptions().fixedStepDt = std::max(0.0F, static_cast<float>(dt));
   });
 
-  lua.set_function("get_fixed_dt", [&ctx]() -> double {
+  LuaSchemaRegistry::SetFunction(lua, "get_fixed_dt", [&ctx]() -> double {
     const auto* gameConfig = ctx.GetRegistry()->TryGet<GameConfig>();
     if (!gameConfig) return 0.0;
     return static_cast<double>(gameConfig->GetEngineOptions().fixedStepDt);
   });
 
-  lua.set_function("set_sim_seed",
-                   [](const double seed) { sim_random::Seed(static_cast<uint32_t>(static_cast<int64_t>(seed))); });
+  LuaSchemaRegistry::SetFunction(lua, "set_sim_seed", [](const double seed) {
+    sim_random::Seed(static_cast<uint32_t>(static_cast<int64_t>(seed)));
+  });
 }
 
 void SetFpsTargetValue(LuaBindingContext& ctx, const int fps) {
@@ -243,18 +271,18 @@ void SetFpsTargetValue(LuaBindingContext& ctx, const int fps) {
 }
 
 void BindExecutionEnvironment(sol::state& lua, LuaBindingContext& ctx) {
-  lua.set_function("set_deterministic", [&ctx](const bool enabled) {
+  LuaSchemaRegistry::SetFunction(lua, "set_deterministic", [&ctx](const bool enabled) {
     ThreadPool::SetForceSerial(enabled);
     if (auto* gameConfig = ctx.GetRegistry()->TryGet<GameConfig>()) {
       gameConfig->GetEngineOptions().deterministic = enabled;
     }
   });
 
-  lua.set_function("is_deterministic", []() -> bool { return ThreadPool::IsForceSerial(); });
+  LuaSchemaRegistry::SetFunction(lua, "is_deterministic", []() -> bool { return ThreadPool::IsForceSerial(); });
 
-  lua.set_function("set_fps_target", [&ctx](const int fps) { SetFpsTargetValue(ctx, fps); });
+  LuaSchemaRegistry::SetFunction(lua, "set_fps_target", [&ctx](const int fps) { SetFpsTargetValue(ctx, fps); });
 
-  lua.set_function("get_fps_target", [&ctx]() -> int {
+  LuaSchemaRegistry::SetFunction(lua, "get_fps_target", [&ctx]() -> int {
     if (const auto* gameConfig = ctx.GetRegistry()->TryGet<GameConfig>()) {
       return gameConfig->GetEngineOptions().fpsTarget;
     }
@@ -264,7 +292,7 @@ void BindExecutionEnvironment(sol::state& lua, LuaBindingContext& ctx) {
     return 0;
   });
 
-  lua.set_function("set_headless", [&ctx](const bool enabled) {
+  LuaSchemaRegistry::SetFunction(lua, "set_headless", [&ctx](const bool enabled) {
     if (auto* gameConfig = ctx.GetRegistry()->TryGet<GameConfig>()) {
       auto& opts = gameConfig->GetEngineOptions();
       opts.headless = enabled;
@@ -275,7 +303,7 @@ void BindExecutionEnvironment(sol::state& lua, LuaBindingContext& ctx) {
     }
   });
 
-  lua.set_function("is_headless", [&ctx]() -> bool {
+  LuaSchemaRegistry::SetFunction(lua, "is_headless", [&ctx]() -> bool {
     const auto* gameConfig = ctx.GetRegistry()->TryGet<GameConfig>();
     if (!gameConfig) return false;
     return gameConfig->GetEngineOptions().headless;
@@ -283,14 +311,21 @@ void BindExecutionEnvironment(sol::state& lua, LuaBindingContext& ctx) {
 }
 
 void BindStateInspection(sol::state& lua, LuaBindingContext& ctx) {
-  lua.set_function("get_state_hash", [&ctx]() -> std::string {
+  LuaSchemaRegistry::SetFunction(lua, "get_state_hash", [&ctx]() -> std::string {
     const uint64_t hash = octarine::inspect::StateInspector::ComputeStateHash(*ctx.GetRegistry());
     std::ostringstream out;
     out << std::hex << std::setw(16) << std::setfill('0') << hash;
     return out.str();
   });
 
-  lua.set_function("write_state_dump", [&ctx](const std::string& relativePath) -> bool {
+#ifdef OCTARINE_SHIPPED
+  LuaSchemaRegistry::SetFunction(lua, "write_state_dump", [](const std::string&) -> bool { return false; });
+  LuaSchemaRegistry::SetFunction(lua, "get_env",
+                                 [](const std::string&) -> sol::optional<std::string> { return sol::nullopt; });
+  LuaSchemaRegistry::SetFunction(lua, "write_project_file",
+                                 [](const std::string&, const std::string&) -> bool { return false; });
+#else
+  LuaSchemaRegistry::SetFunction(lua, "write_state_dump", [&ctx](const std::string& relativePath) -> bool {
     const std::string root = ctx.GetProjectPath();
     if (root.empty()) return false;
     const std::string fullPath = file_sandbox::Resolve(root, relativePath);
@@ -299,7 +334,7 @@ void BindStateInspection(sol::state& lua, LuaBindingContext& ctx) {
                                          octarine::inspect::StateInspector::DumpCanonicalState(*ctx.GetRegistry()));
   });
 
-  lua.set_function("get_env", [](const std::string& name) -> sol::optional<std::string> {
+  LuaSchemaRegistry::SetFunction(lua, "get_env", [](const std::string& name) -> sol::optional<std::string> {
     if (!IsAllowedEnvVar(name)) {
       Logger::Warn("get_env: '" + name + "' rejected (allowed prefixes: OCT_, OCTARINE_, GAME_, BOT_)");
       return sol::nullopt;
@@ -309,13 +344,15 @@ void BindStateInspection(sol::state& lua, LuaBindingContext& ctx) {
     return val;
   });
 
-  lua.set_function("write_project_file", [&ctx](const std::string& relativePath, const std::string& contents) -> bool {
-    const std::string root = ctx.GetProjectPath();
-    if (root.empty()) return false;
-    const std::string fullPath = file_sandbox::Resolve(root, relativePath);
-    if (fullPath.empty()) return false;
-    return file_sandbox::WriteFileAtomic(fullPath, contents);
-  });
+  LuaSchemaRegistry::SetFunction(lua, "write_project_file",
+                                 [&ctx](const std::string& relativePath, const std::string& contents) -> bool {
+                                   const std::string root = ctx.GetProjectPath();
+                                   if (root.empty()) return false;
+                                   const std::string fullPath = file_sandbox::Resolve(root, relativePath);
+                                   if (fullPath.empty()) return false;
+                                   return file_sandbox::WriteFileAtomic(fullPath, contents);
+                                 });
+#endif
 }
 
 void UpdateCameraViewportOnResize(CameraComponent* camera, const GameConfig& config, const int logicalW,
@@ -337,23 +374,33 @@ void UpdateCameraViewportOnResize(CameraComponent* camera, const GameConfig& con
 }
 
 void BindWorldAndCamera(sol::state& lua, LuaBindingContext& ctx) {
-  lua.set_function("set_game_map_dimensions", [&ctx](const double width, const double height) {
+  LuaSchemaRegistry::SetFunction(lua, "set_game_map_dimensions", [&ctx](const double width, const double height) {
     auto& gameConfig = ctx.GetRegistry()->Get<GameConfig>();
     gameConfig.playableAreaHeight = static_cast<float>(height);
     gameConfig.playableAreaWidth = static_cast<float>(width);
   });
 
-  lua.set_function("get_game_map_dimensions", [&ctx]() {
+  LuaSchemaRegistry::SetFunction(lua, "get_game_map_dimensions", [&ctx]() {
     const auto& gameConfig = ctx.GetRegistry()->Get<GameConfig>();
     return glm::vec2(gameConfig.playableAreaWidth, gameConfig.playableAreaHeight);
   });
 
-  lua.set_function("get_camera_position", [&ctx]() {
+  LuaSchemaRegistry::SetFunction(lua, "get_game_map_dimensions_xy", [&ctx]() -> std::tuple<float, float> {
+    const auto& gameConfig = ctx.GetRegistry()->Get<GameConfig>();
+    return {gameConfig.playableAreaWidth, gameConfig.playableAreaHeight};
+  });
+
+  LuaSchemaRegistry::SetFunction(lua, "get_camera_position", [&ctx]() {
     const auto& camera = ctx.GetRegistry()->Get<CameraComponent>();
     return glm::vec2(camera.viewport.x, camera.viewport.y);
   });
 
-  lua.set_function("set_camera_zoom", [&ctx](const double zoom) {
+  LuaSchemaRegistry::SetFunction(lua, "get_camera_position_xy", [&ctx]() -> std::tuple<float, float> {
+    const auto& camera = ctx.GetRegistry()->Get<CameraComponent>();
+    return {camera.viewport.x, camera.viewport.y};
+  });
+
+  LuaSchemaRegistry::SetFunction(lua, "set_camera_zoom", [&ctx](const double zoom) {
     auto* registry = ctx.GetRegistry();
     auto* camera = registry->TryGet<CameraComponent>();
     if (!camera) return;
@@ -363,7 +410,7 @@ void BindWorldAndCamera(sol::state& lua, LuaBindingContext& ctx) {
     }
   });
 
-  lua.set_function("get_camera_zoom", [&ctx]() {
+  LuaSchemaRegistry::SetFunction(lua, "get_camera_zoom", [&ctx]() -> double {
     const auto* camera = ctx.GetRegistry()->TryGet<CameraComponent>();
     if (!camera) return 1.0;
     return static_cast<double>(camera->zoom);
@@ -1459,62 +1506,68 @@ sol::object HandleSettingsGetDefault(LuaBindingContext& ctx, const std::string& 
 void BindUserSettings(sol::state& lua, LuaBindingContext& ctx) {
   sol::table settingsTbl = lua.create_table();
 
-  settingsTbl.set_function("define", [&ctx](const sol::object& keyOrTable, const sol::object& defaultVal) -> bool {
-    return HandleSettingsDefine(ctx, keyOrTable, defaultVal);
-  });
+  LuaSchemaRegistry::SetFunction(settingsTbl, "settings", "define",
+                                 [&ctx](const sol::object& keyOrTable, const sol::object& defaultVal) -> bool {
+                                   return HandleSettingsDefine(ctx, keyOrTable, defaultVal);
+                                 });
 
-  settingsTbl.set_function(
-      "get", [&ctx](const std::string& key, const sol::object& fallback, sol::this_state s) -> sol::object {
+  LuaSchemaRegistry::SetFunction(
+      settingsTbl, "settings", "get",
+      [&ctx](const std::string& key, const sol::object& fallback, sol::this_state s) -> sol::object {
         return HandleSettingsGet(ctx, key, fallback, s);
       });
 
-  settingsTbl.set_function("set", [&ctx](const std::string& key, const sol::object& value) -> bool {
-    return HandleSettingsSet(ctx, key, value);
-  });
+  LuaSchemaRegistry::SetFunction(
+      settingsTbl, "settings", "set",
+      [&ctx](const std::string& key, const sol::object& value) -> bool { return HandleSettingsSet(ctx, key, value); });
 
-  settingsTbl.set_function("has", [&ctx](const std::string& key) -> bool {
+  LuaSchemaRegistry::SetFunction(settingsTbl, "settings", "has", [&ctx](const std::string& key) -> bool {
     if (IsBuiltInSettingKey(key)) return true;
     const auto* settings = GetOrCreateUserSettings(ctx);
     return settings != nullptr && settings->HasSetting(key);
   });
 
-  settingsTbl.set_function("get_default", [&ctx](const std::string& key, sol::this_state s) -> sol::object {
-    return HandleSettingsGetDefault(ctx, key, s);
-  });
+  LuaSchemaRegistry::SetFunction(settingsTbl, "settings", "get_default",
+                                 [&ctx](const std::string& key, sol::this_state s) -> sol::object {
+                                   return HandleSettingsGetDefault(ctx, key, s);
+                                 });
 
-  settingsTbl.set_function("reset", [&ctx](const std::string& key, sol::this_state s) -> sol::object {
-    if (auto* settings = GetOrCreateUserSettings(ctx)) {
-      static_cast<void>(settings->ResetSetting(key));
-      SyncEngineOptionsFromSettings(ctx);
-    }
-    return HandleSettingsGet(ctx, key, sol::lua_nil, s);
-  });
+  LuaSchemaRegistry::SetFunction(settingsTbl, "settings", "reset",
+                                 [&ctx](const std::string& key, sol::this_state s) -> sol::object {
+                                   if (auto* settings = GetOrCreateUserSettings(ctx)) {
+                                     static_cast<void>(settings->ResetSetting(key));
+                                     SyncEngineOptionsFromSettings(ctx);
+                                   }
+                                   return HandleSettingsGet(ctx, key, sol::lua_nil, s);
+                                 });
 
-  settingsTbl.set_function("reset_all", [&ctx]() {
+  LuaSchemaRegistry::SetFunction(settingsTbl, "settings", "reset_all", [&ctx]() {
     if (auto* settings = GetOrCreateUserSettings(ctx)) {
       settings->ResetAllSettings();
       SyncEngineOptionsFromSettings(ctx);
     }
   });
 
-  settingsTbl.set_function("get_all", [&ctx](sol::this_state s) -> sol::table { return HandleSettingsGetAll(ctx, s); });
+  LuaSchemaRegistry::SetFunction(settingsTbl, "settings", "get_all",
+                                 [&ctx](sol::this_state s) -> sol::table { return HandleSettingsGetAll(ctx, s); });
 
-  settingsTbl.set_function("save", [&ctx]() -> bool { return SaveSettingsToDisk(ctx); });
+  LuaSchemaRegistry::SetFunction(settingsTbl, "settings", "save", [&ctx]() -> bool { return SaveSettingsToDisk(ctx); });
 
   lua["settings"] = settingsTbl;
 
-  lua.set_function("get_user_setting",
-                   [&ctx](const std::string& key, const sol::optional<std::string>& defaultValue) -> std::string {
-                     const auto* settings = GetOrCreateUserSettings(ctx);
-                     if (settings == nullptr) return defaultValue.value_or("");
-                     return settings->GetCustomSetting(key, defaultValue.value_or(""));
-                   });
+  LuaSchemaRegistry::SetFunction(
+      lua, "get_user_setting",
+      [&ctx](const std::string& key, const sol::optional<std::string>& defaultValue) -> std::string {
+        const auto* settings = GetOrCreateUserSettings(ctx);
+        if (settings == nullptr) return defaultValue.value_or("");
+        return settings->GetCustomSetting(key, defaultValue.value_or(""));
+      });
 
-  lua.set_function("set_user_setting", [&ctx](const std::string& key, const sol::object& value) -> bool {
-    return HandleSettingsSet(ctx, key, value);
-  });
+  LuaSchemaRegistry::SetFunction(
+      lua, "set_user_setting",
+      [&ctx](const std::string& key, const sol::object& value) -> bool { return HandleSettingsSet(ctx, key, value); });
 
-  lua.set_function("save_user_settings", [&ctx]() -> bool { return SaveSettingsToDisk(ctx); });
+  LuaSchemaRegistry::SetFunction(lua, "save_user_settings", [&ctx]() -> bool { return SaveSettingsToDisk(ctx); });
 }
 
 sol::table BuildDisplayEntryTable(sol::state_view& lua, const SDL_DisplayID dispID, const int index,
@@ -1655,43 +1708,59 @@ sol::table GetDisplayModesLuaTable(LuaBindingContext& ctx, const sol::optional<i
 }
 
 void BindWindowAndDisplay(sol::state& lua, LuaBindingContext& ctx) {
-  lua.set_function("is_fullscreen", [&ctx]() -> bool { return GetFullscreenState(ctx); });
-  lua.set_function("set_fullscreen", [&ctx](const bool enabled) { SetFullscreenState(ctx, enabled); });
-  lua.set_function("get_window_mode",
-                   [&ctx]() -> std::string { return std::string(WindowModeToString(GetWindowModeState(ctx))); });
-  lua.set_function("set_window_mode",
-                   [&ctx](const std::string& mode) -> bool { return SetWindowModeState(ctx, mode); });
-  lua.set_function("get_fullscreen_resolution",
-                   [&ctx]() -> std::tuple<int, int, double> { return GetFullscreenResolutionState(ctx); });
-  lua.set_function("set_fullscreen_resolution",
-                   [&ctx](const int w, const int h, const sol::optional<double>& refreshRate) -> bool {
-                     return SetFullscreenResolutionState(ctx, w, h, static_cast<float>(refreshRate.value_or(0.0)));
-                   });
-  lua.set_function("get_presentation_mode", [&ctx]() -> std::string {
+  LuaSchemaRegistry::SetFunction(lua, "is_fullscreen", [&ctx]() -> bool { return GetFullscreenState(ctx); });
+  LuaSchemaRegistry::SetFunction(lua, "set_fullscreen",
+                                 [&ctx](const bool enabled) { SetFullscreenState(ctx, enabled); });
+  LuaSchemaRegistry::SetFunction(lua, "get_window_mode", [&ctx]() -> std::string {
+    return std::string(WindowModeToString(GetWindowModeState(ctx)));
+  });
+  LuaSchemaRegistry::SetFunction(lua, "set_window_mode",
+                                 [&ctx](const std::string& mode) -> bool { return SetWindowModeState(ctx, mode); });
+  LuaSchemaRegistry::SetFunction(lua, "get_fullscreen_resolution", [&ctx]() -> std::tuple<int, int, double> {
+    return GetFullscreenResolutionState(ctx);
+  });
+  LuaSchemaRegistry::SetFunction(lua, "set_fullscreen_resolution",
+                                 [&ctx](const int w, const int h, const sol::optional<double>& refreshRate) -> bool {
+                                   return SetFullscreenResolutionState(ctx, w, h,
+                                                                       static_cast<float>(refreshRate.value_or(0.0)));
+                                 });
+  LuaSchemaRegistry::SetFunction(lua, "get_presentation_mode", [&ctx]() -> std::string {
     return std::string(PresentationModeToString(GetPresentationModeState(ctx)));
   });
-  lua.set_function("set_presentation_mode",
-                   [&ctx](const std::string& mode) -> bool { return SetPresentationModeState(ctx, mode); });
-  lua.set_function("get_texture_scale_mode", [&ctx]() -> std::string { return GetTextureScaleModeState(ctx); });
-  lua.set_function("set_texture_scale_mode",
-                   [&ctx](const std::string& mode) -> bool { return SetTextureScaleModeState(ctx, mode); });
-  lua.set_function("get_vsync", [&ctx]() -> bool { return GetVSyncState(ctx); });
-  lua.set_function("set_vsync", [&ctx](const bool enabled) -> bool { return SetVSyncState(ctx, enabled); });
-  lua.set_function("is_window_resizable", [&ctx]() -> bool { return GetWindowResizableState(ctx); });
-  lua.set_function("set_window_resizable", [&ctx](const bool resizable) { SetWindowResizableState(ctx, resizable); });
-  lua.set_function("is_maximized", [&ctx]() -> bool { return GetMaximizedState(ctx); });
-  lua.set_function("set_maximized", [&ctx](const bool enabled) { SetMaximizedState(ctx, enabled); });
-  lua.set_function("get_window_size", [&ctx]() -> std::tuple<int, int> { return GetWindowSizeState(ctx); });
-  lua.set_function("set_window_size", [&ctx](const int w, const int h) { SetWindowSizeState(ctx, w, h); });
-  lua.set_function("get_base_resolution", [&ctx]() -> std::tuple<int, int> { return GetBaseResolutionState(ctx); });
-  lua.set_function("get_logical_size", [&ctx]() -> std::tuple<int, int> { return GetLogicalSizeState(ctx); });
-  lua.set_function("get_display_size", [&ctx](const sol::optional<int>& displayIndex) -> std::tuple<int, int> {
-    return GetDisplaySizeState(ctx, displayIndex);
+  LuaSchemaRegistry::SetFunction(lua, "set_presentation_mode", [&ctx](const std::string& mode) -> bool {
+    return SetPresentationModeState(ctx, mode);
   });
-  lua.set_function("get_window_position", [&ctx]() -> std::tuple<int, int> { return GetWindowPositionState(ctx); });
-  lua.set_function("set_window_position", [&ctx](const int x, const int y) { SetWindowPositionState(ctx, x, y); });
+  LuaSchemaRegistry::SetFunction(lua, "get_texture_scale_mode",
+                                 [&ctx]() -> std::string { return GetTextureScaleModeState(ctx); });
+  LuaSchemaRegistry::SetFunction(lua, "set_texture_scale_mode", [&ctx](const std::string& mode) -> bool {
+    return SetTextureScaleModeState(ctx, mode);
+  });
+  LuaSchemaRegistry::SetFunction(lua, "get_vsync", [&ctx]() -> bool { return GetVSyncState(ctx); });
+  LuaSchemaRegistry::SetFunction(lua, "set_vsync",
+                                 [&ctx](const bool enabled) -> bool { return SetVSyncState(ctx, enabled); });
+  LuaSchemaRegistry::SetFunction(lua, "is_window_resizable", [&ctx]() -> bool { return GetWindowResizableState(ctx); });
+  LuaSchemaRegistry::SetFunction(lua, "set_window_resizable",
+                                 [&ctx](const bool resizable) { SetWindowResizableState(ctx, resizable); });
+  LuaSchemaRegistry::SetFunction(lua, "is_maximized", [&ctx]() -> bool { return GetMaximizedState(ctx); });
+  LuaSchemaRegistry::SetFunction(lua, "set_maximized", [&ctx](const bool enabled) { SetMaximizedState(ctx, enabled); });
+  LuaSchemaRegistry::SetFunction(lua, "get_window_size",
+                                 [&ctx]() -> std::tuple<int, int> { return GetWindowSizeState(ctx); });
+  LuaSchemaRegistry::SetFunction(lua, "set_window_size",
+                                 [&ctx](const int w, const int h) { SetWindowSizeState(ctx, w, h); });
+  LuaSchemaRegistry::SetFunction(lua, "get_base_resolution",
+                                 [&ctx]() -> std::tuple<int, int> { return GetBaseResolutionState(ctx); });
+  LuaSchemaRegistry::SetFunction(lua, "get_logical_size",
+                                 [&ctx]() -> std::tuple<int, int> { return GetLogicalSizeState(ctx); });
+  LuaSchemaRegistry::SetFunction(lua, "get_display_size",
+                                 [&ctx](const sol::optional<int>& displayIndex) -> std::tuple<int, int> {
+                                   return GetDisplaySizeState(ctx, displayIndex);
+                                 });
+  LuaSchemaRegistry::SetFunction(lua, "get_window_position",
+                                 [&ctx]() -> std::tuple<int, int> { return GetWindowPositionState(ctx); });
+  LuaSchemaRegistry::SetFunction(lua, "set_window_position",
+                                 [&ctx](const int x, const int y) { SetWindowPositionState(ctx, x, y); });
 
-  lua.set_function("get_display_count", []() -> int {
+  LuaSchemaRegistry::SetFunction(lua, "get_display_count", []() -> int {
     int count = 0;
     if (SDL_DisplayID* displays = SDL_GetDisplays(&count)) {
       SDL_free(displays);
@@ -1700,22 +1769,260 @@ void BindWindowAndDisplay(sol::state& lua, LuaBindingContext& ctx) {
     return 0;
   });
 
-  lua.set_function("get_displays", [](sol::this_state s) -> sol::table { return GetDisplaysLuaTable(s); });
-  lua.set_function("get_display_modes",
-                   [&ctx](const sol::optional<int>& displayIndex, sol::this_state s) -> sol::table {
-                     return GetDisplayModesLuaTable(ctx, displayIndex, s);
-                   });
-  lua.set_function("get_current_display_index", [&ctx]() -> int { return GetCurrentDisplayIndexState(ctx); });
-  lua.set_function("get_current_display_name", [&ctx]() -> std::string { return GetCurrentDisplayNameState(ctx); });
-  lua.set_function("set_window_display",
-                   [&ctx](const int displayIndex) -> bool { return SetWindowDisplayState(ctx, displayIndex); });
+  LuaSchemaRegistry::SetFunction(lua, "get_displays",
+                                 [](sol::this_state s) -> sol::table { return GetDisplaysLuaTable(s); });
+  LuaSchemaRegistry::SetFunction(lua, "get_display_modes",
+                                 [&ctx](const sol::optional<int>& displayIndex, sol::this_state s) -> sol::table {
+                                   return GetDisplayModesLuaTable(ctx, displayIndex, s);
+                                 });
+  LuaSchemaRegistry::SetFunction(lua, "get_current_display_index",
+                                 [&ctx]() -> int { return GetCurrentDisplayIndexState(ctx); });
+  LuaSchemaRegistry::SetFunction(lua, "get_current_display_name",
+                                 [&ctx]() -> std::string { return GetCurrentDisplayNameState(ctx); });
+  LuaSchemaRegistry::SetFunction(lua, "set_window_display", [&ctx](const int displayIndex) -> bool {
+    return SetWindowDisplayState(ctx, displayIndex);
+  });
 }
 
 void BindAudioSettings(sol::state& lua, LuaBindingContext& ctx) {
-  lua.set_function("get_master_volume", [&ctx]() -> float { return GetMasterVolumeState(ctx); });
-  lua.set_function("set_master_volume", [&ctx](const float volume) { SetMasterVolumeState(ctx, volume); });
-  lua.set_function("is_audio_muted", [&ctx]() -> bool { return GetAudioMutedState(ctx); });
-  lua.set_function("set_audio_muted", [&ctx](const bool muted) { SetAudioMutedState(ctx, muted); });
+  LuaSchemaRegistry::SetFunction(lua, "get_master_volume", [&ctx]() -> float { return GetMasterVolumeState(ctx); });
+  LuaSchemaRegistry::SetFunction(lua, "set_master_volume",
+                                 [&ctx](const float volume) { SetMasterVolumeState(ctx, volume); });
+  LuaSchemaRegistry::SetFunction(lua, "is_audio_muted", [&ctx]() -> bool { return GetAudioMutedState(ctx); });
+  LuaSchemaRegistry::SetFunction(lua, "set_audio_muted", [&ctx](const bool muted) { SetAudioMutedState(ctx, muted); });
+}
+
+bool IsSafeHttpsUrl(const std::string& url) {
+  if (url.size() < 10 || url.size() > 2048) return false;
+  if (url.rfind("https://", 0) != 0) return false;
+  return std::none_of(url.begin(), url.end(), [](const char ch) {
+    const auto byte = static_cast<unsigned char>(ch);
+    return byte <= 0x20 || ch == 0x7f;
+  });
+}
+
+bool IsHeadlessMode(const LuaBindingContext& ctx) {
+  auto* registry = ctx.GetRegistry();
+  if (registry == nullptr) return false;
+  const auto* config = registry->TryGet<GameConfig>();
+  return config != nullptr && config->GetEngineOptions().headless;
+}
+
+#ifndef OCTARINE_SHIPPED
+std::atomic<bool> g_verifyFailed{false};
+std::once_flag g_verifyExitHandlerOnce;
+
+void VerifyFailedExitHandler() {
+  if (g_verifyFailed.load(std::memory_order_relaxed)) {
+    std::fflush(stdout);
+    std::fflush(stderr);
+    std::_Exit(1);
+  }
+}
+
+void RegisterVerifyExitHandler() {
+  std::call_once(g_verifyExitHandlerOnce, []() { std::atexit(VerifyFailedExitHandler); });
+}
+
+void InstallVerifyBindings(sol::state& lua, LuaBindingContext& ctx) {
+  RegisterVerifyExitHandler();
+  g_verifyFailed.store(false, std::memory_order_relaxed);
+  LuaSchemaRegistry::SetFunction(lua, "mark_verify_failed", [&ctx](const std::string& reason) {
+    RegisterVerifyExitHandler();
+    g_verifyFailed.store(true, std::memory_order_relaxed);
+    Logger::Error("[VERIFY_FAILED] " + reason);
+    ctx.RequestQuit();
+  });
+  LuaSchemaRegistry::SetFunction(lua, "has_verify_failed",
+                                 []() -> bool { return g_verifyFailed.load(std::memory_order_relaxed); });
+}
+#endif
+
+void BindPlatformAndBuild(sol::state& lua, LuaBindingContext& ctx) {
+  LuaSchemaRegistry::SetFunction(lua, "get_system_time", []() -> double {
+    const auto now = std::chrono::system_clock::now();
+    return std::chrono::duration<double>(now.time_since_epoch()).count();
+  });
+
+  LuaSchemaRegistry::SetFunction(lua, "get_timestamp_string", []() -> std::string {
+    const auto now = std::chrono::system_clock::now();
+    const std::time_t tt = std::chrono::system_clock::to_time_t(now);
+    std::tm tmBuf{};
+#if defined(_WIN32)
+    localtime_s(&tmBuf, &tt);
+#else
+    localtime_r(&tt, &tmBuf);
+#endif
+    char buf[64];
+    std::strftime(buf, sizeof(buf), "%Y%m%d_%H%M%S", &tmBuf);
+    return {buf};
+  });
+
+  LuaSchemaRegistry::SetFunction(lua, "open_external_url", [&ctx](const std::string& url) -> bool {
+    if (!IsSafeHttpsUrl(url) || IsHeadlessMode(ctx)) return false;
+    return SDL_OpenURL(url.c_str());
+  });
+
+  LuaSchemaRegistry::SetFunction(lua, "set_clipboard_text", [&ctx](const std::string& text) -> bool {
+    if (text.empty() || text.size() > 1024 || IsHeadlessMode(ctx)) return false;
+    return SDL_SetClipboardText(text.c_str());
+  });
+
+#ifdef OCTARINE_SHIPPED
+  lua["oct_shipped"] = true;
+  LuaSchemaRegistry::SetFunction(lua, "is_shipped_build", []() -> bool { return true; });
+#else
+  lua["oct_shipped"] = false;
+  LuaSchemaRegistry::SetFunction(lua, "is_shipped_build", []() -> bool { return false; });
+  InstallVerifyBindings(lua, ctx);
+#endif
+}
+
+#ifndef OCTARINE_SHIPPED
+octarine::LuaScriptHotReloadTracker* EnsureHotReloadTracker(LuaBindingContext& ctx) {
+  auto* registry = ctx.GetRegistry();
+  if (registry == nullptr) return nullptr;
+  if (auto* tracker = registry->TryGet<octarine::LuaScriptHotReloadTracker>()) {
+    return tracker;
+  }
+  return &registry->Set<octarine::LuaScriptHotReloadTracker>(octarine::LuaScriptHotReloadTracker{});
+}
+
+void EvictImportCacheForChangedPath(sol::state_view& luaView, const std::string& changedPath) {
+  sol::object cacheObj = luaView.registry().get<sol::object>("__octarine_import_cache");
+  if (!cacheObj.is<sol::table>()) return;
+  sol::table cache = cacheObj.as<sol::table>();
+  cache.raw_set(changedPath, sol::lua_nil);
+  const std::string norm = std::filesystem::path(changedPath).lexically_normal().string();
+  cache.raw_set(norm, sol::lua_nil);
+
+  std::error_code ec;
+  const auto changedCanon = std::filesystem::weakly_canonical(changedPath, ec);
+  if (ec) return;
+  std::vector<std::string> matchingKeys;
+  for (const auto& [k, _] : cache) {
+    if (!k.is<std::string>()) continue;
+    const std::string keyStr = k.as<std::string>();
+    std::error_code kEc;
+    if (std::filesystem::weakly_canonical(keyStr, kEc) == changedCanon && !kEc) {
+      matchingKeys.push_back(keyStr);
+    }
+  }
+  for (const auto& keyStr : matchingKeys) {
+    cache.raw_set(keyStr, sol::lua_nil);
+  }
+}
+
+sol::table PollTrackedScripts(sol::this_state s, LuaBindingContext& ctx, const sol::optional<double> dtOpt) {
+  sol::state_view luaView(s);
+  sol::table out = luaView.create_table();
+  auto* registry = ctx.GetRegistry();
+  if (registry == nullptr) return out;
+  const auto* config = registry->TryGet<GameConfig>();
+  if (config == nullptr || !config->GetEngineOptions().hotReloadEnabled) return out;
+  auto* tracker = EnsureHotReloadTracker(ctx);
+  if (tracker == nullptr || tracker->watcher.Empty()) return out;
+  const auto dt = static_cast<float>(dtOpt.value_or(0.0));
+  const float pollInterval = config->GetEngineOptions().hotReloadPollSeconds;
+  if (dt > 0.0F) {
+    tracker->accum += dt;
+    if (tracker->accum < pollInterval) return out;
+    tracker->accum = 0.0F;
+  } else {
+    tracker->accum = 0.0F;
+  }
+  const auto changed = tracker->watcher.Poll();
+  for (std::size_t i = 0; i < changed.size(); ++i) {
+    EvictImportCacheForChangedPath(luaView, changed[i]);
+    out[i + 1] = changed[i];
+  }
+  return out;
+}
+#endif
+
+bool SetHotReloadEnabled(LuaBindingContext& ctx, const bool enabled) {
+#ifdef OCTARINE_SHIPPED
+  (void)ctx;
+  (void)enabled;
+  return false;
+#else
+  auto* registry = ctx.GetRegistry();
+  auto* config = registry != nullptr ? registry->TryGet<GameConfig>() : nullptr;
+  if (config == nullptr) return false;
+  config->GetEngineOptions().hotReloadEnabled = enabled;
+  return config->GetEngineOptions().hotReloadEnabled;
+#endif
+}
+
+bool IsHotReloadEnabled(LuaBindingContext& ctx) {
+#ifdef OCTARINE_SHIPPED
+  (void)ctx;
+  return false;
+#else
+  auto* registry = ctx.GetRegistry();
+  const auto* config = registry != nullptr ? registry->TryGet<GameConfig>() : nullptr;
+  return config != nullptr && config->GetEngineOptions().hotReloadEnabled;
+#endif
+}
+
+void TrackHotReloadScript(LuaBindingContext& ctx, const std::string& absPath) {
+#ifdef OCTARINE_SHIPPED
+  (void)ctx;
+  (void)absPath;
+#else
+  if (absPath.empty()) return;
+  if (auto* tracker = EnsureHotReloadTracker(ctx)) {
+    tracker->watcher.Track(absPath);
+  }
+#endif
+}
+
+void UntrackHotReloadScript(LuaBindingContext& ctx, const std::string& absPath) {
+#ifdef OCTARINE_SHIPPED
+  (void)ctx;
+  (void)absPath;
+#else
+  if (absPath.empty()) return;
+  if (auto* tracker = EnsureHotReloadTracker(ctx)) {
+    tracker->watcher.Untrack(absPath);
+  }
+#endif
+}
+
+std::size_t GetTrackedHotReloadCount(LuaBindingContext& ctx) {
+#ifdef OCTARINE_SHIPPED
+  (void)ctx;
+  return 0;
+#else
+  if (const auto* tracker = EnsureHotReloadTracker(ctx)) {
+    return tracker->watcher.TrackedCount();
+  }
+  return 0;
+#endif
+}
+
+void BindHotReload(sol::state& lua, LuaBindingContext& ctx) {
+  LuaSchemaRegistry::SetFunction(lua, "set_hot_reload_enabled",
+                                 [&ctx](const bool enabled) -> bool { return SetHotReloadEnabled(ctx, enabled); });
+  LuaSchemaRegistry::SetFunction(lua, "is_hot_reload_enabled", [&ctx]() -> bool { return IsHotReloadEnabled(ctx); });
+
+  sol::table hotReloadTable = lua.create_named_table("hot_reload");
+  LuaSchemaRegistry::SetFunction(hotReloadTable, "hot_reload", "track_script",
+                                 [&ctx](const std::string& absPath) { TrackHotReloadScript(ctx, absPath); });
+  LuaSchemaRegistry::SetFunction(hotReloadTable, "hot_reload", "untrack_script",
+                                 [&ctx](const std::string& absPath) { UntrackHotReloadScript(ctx, absPath); });
+  LuaSchemaRegistry::SetFunction(hotReloadTable, "hot_reload", "get_tracked_count",
+                                 [&ctx]() -> std::size_t { return GetTrackedHotReloadCount(ctx); });
+  LuaSchemaRegistry::SetFunction(hotReloadTable, "hot_reload", "poll_scripts",
+                                 [&ctx](sol::this_state s, const sol::optional<double> dtOpt) -> sol::table {
+#ifdef OCTARINE_SHIPPED
+                                   (void)ctx;
+                                   (void)dtOpt;
+                                   return sol::state_view(s).create_table();
+#else
+                                   return PollTrackedScripts(s, ctx, dtOpt);
+#endif
+                                 });
 }
 }  // namespace
 
@@ -1728,4 +2035,6 @@ void LuaModuleBinding<GameModule>::install(sol::state& lua, LuaBindingContext& c
   BindUserSettings(lua, ctx);
   BindWindowAndDisplay(lua, ctx);
   BindAudioSettings(lua, ctx);
+  BindPlatformAndBuild(lua, ctx);
+  BindHotReload(lua, ctx);
 }

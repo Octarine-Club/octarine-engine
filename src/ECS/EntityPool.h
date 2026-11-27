@@ -71,6 +71,7 @@ class EntityPoolManager {
   void Park(Registry& registry, const Entity entity) {
     if (!registry.IsAlive(entity)) return;
     const ArchetypeID arch_id = registry.GetArchetypeID(entity);
+    registry.DetachRelationshipsForPool(entity);
     registry.Deactivate(entity);
     free_lists_[arch_id].push_back(entity);
     PROFILE_COUNTER_ADD("Pool: Park", 1);

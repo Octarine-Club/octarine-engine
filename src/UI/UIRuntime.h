@@ -65,6 +65,8 @@ class UIRuntime {
   [[nodiscard]] bool IsViewMounted(uint64_t id) const;
   [[nodiscard]] Entity GetViewRoot(uint64_t id) const;
   void UnmountView(uint64_t id);
+  void UnmountAllViews();
+  void ClearCustomWidgets();
   [[nodiscard]] std::vector<std::pair<uint64_t, bool>> SetNonPreviewViewsInert(uint64_t previewViewId, bool inert);
   void RestoreViewsInert(const std::vector<std::pair<uint64_t, bool>>& prevStates);
 

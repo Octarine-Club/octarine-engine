@@ -3,6 +3,7 @@
 #include <SDL3_image/SDL_image.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cctype>
 #include <cmath>
@@ -300,9 +301,6 @@ bool Renderer::CaptureScene(SDL_Renderer* sdlRenderer, const std::string& path) 
     Logger::Error("Renderer::CaptureScene: no scene texture to capture");
     return false;
   }
-  // Read back from the scene target (the off-screen texture the frame was drawn into). In bench
-  // mode the window backbuffer is never composited, so the scene texture is the only place the
-  // rendered frame lives.
   SDL_SetRenderTarget(sdlRenderer, scene_texture_);
   SDL_Surface* surface = SDL_RenderReadPixels(sdlRenderer, nullptr);
   SDL_SetRenderTarget(sdlRenderer, nullptr);
@@ -322,6 +320,8 @@ bool Renderer::CaptureScene(SDL_Renderer* sdlRenderer, const std::string& path) 
 
 namespace {
 
+// 4-way set-associative texture state cache (16 sets x 4 ways = 64 active textures) so multi-atlas
+// scenes avoid linear scans and premature clock eviction thrashing.
 struct DrawStateCache {
   struct TexEntry {
     SDL_Texture* tex = nullptr;
@@ -332,53 +332,65 @@ struct DrawStateCache {
     SDL_BlendMode blend = SDL_BLENDMODE_INVALID;
   };
 
-  static constexpr size_t kMaxTexCache = 8;
-  TexEntry texCache[kMaxTexCache]{};
-  size_t texCount = 0;
-  size_t texClock = 0;
+  static constexpr size_t kNumSets = 16;
+  static constexpr size_t kWaysPerSet = 4;
+  static constexpr size_t kMaxTexCache = kNumSets * kWaysPerSet;
+  static_assert(kMaxTexCache == 64);
+
+  struct CacheSet {
+    std::array<TexEntry, kWaysPerSet> ways{};
+    uint8_t clock = 0;
+  };
+
+  std::array<CacheSet, kNumSets> sets{};
   SDL_BlendMode drawBlend = SDL_BLENDMODE_INVALID;
   bool hasDrawColor = false;
   SDL_Color drawColor{};
 
+  static size_t HashTexSet(const SDL_Texture* tex) noexcept {
+    const auto ptr = reinterpret_cast<std::uintptr_t>(tex);
+    return static_cast<size_t>(((ptr >> 4) ^ (ptr >> 12)) & (kNumSets - 1));
+  }
+
   void ApplyTextureState(SDL_Renderer* /*renderer*/, SDL_Texture* tex, const SDL_Color& col,
                          const SDL_BlendMode blend) {
-    TexEntry* slot = nullptr;
-    for (size_t i = 0; i < texCount; ++i) {
-      if (texCache[i].tex == tex) {
-        slot = &texCache[i];
-        break;
+    auto& set = sets[HashTexSet(tex)];
+    TexEntry* emptySlot = nullptr;
+    for (auto& way : set.ways) {
+      if (way.tex == tex) {
+        UpdateHitSlot(way, tex, col, blend);
+        return;
+      }
+      if (emptySlot == nullptr && way.tex == nullptr) {
+        emptySlot = &way;
       }
     }
-    if (slot == nullptr) {
-      if (texCount < kMaxTexCache) {
-        slot = &texCache[texCount++];
-      } else {
-        slot = &texCache[(texClock++) % kMaxTexCache];
-      }
-      slot->tex = tex;
+    TexEntry& target = (emptySlot != nullptr) ? *emptySlot : set.ways[(set.clock++) & (kWaysPerSet - 1)];
+    target.tex = tex;
+    SDL_SetTextureColorMod(tex, col.r, col.g, col.b);
+    SDL_SetTextureAlphaMod(tex, col.a);
+    SDL_SetTextureBlendMode(tex, blend);
+    target.r = col.r;
+    target.g = col.g;
+    target.b = col.b;
+    target.a = col.a;
+    target.blend = blend;
+  }
+
+  static void UpdateHitSlot(TexEntry& slot, SDL_Texture* tex, const SDL_Color& col, const SDL_BlendMode blend) {
+    if (slot.r != col.r || slot.g != col.g || slot.b != col.b) {
       SDL_SetTextureColorMod(tex, col.r, col.g, col.b);
+      slot.r = col.r;
+      slot.g = col.g;
+      slot.b = col.b;
+    }
+    if (slot.a != col.a) {
       SDL_SetTextureAlphaMod(tex, col.a);
+      slot.a = col.a;
+    }
+    if (slot.blend != blend) {
       SDL_SetTextureBlendMode(tex, blend);
-      slot->r = col.r;
-      slot->g = col.g;
-      slot->b = col.b;
-      slot->a = col.a;
-      slot->blend = blend;
-      return;
-    }
-    if (slot->r != col.r || slot->g != col.g || slot->b != col.b) {
-      SDL_SetTextureColorMod(tex, col.r, col.g, col.b);
-      slot->r = col.r;
-      slot->g = col.g;
-      slot->b = col.b;
-    }
-    if (slot->a != col.a) {
-      SDL_SetTextureAlphaMod(tex, col.a);
-      slot->a = col.a;
-    }
-    if (slot->blend != blend) {
-      SDL_SetTextureBlendMode(tex, blend);
-      slot->blend = blend;
+      slot.blend = blend;
     }
   }
 
@@ -407,6 +419,15 @@ inline SDL_FColor ToSdlFColor(const SDL_Color& c) {
   };
 }
 
+inline std::array<SDL_FColor, 4> UniformCornerColors(const SDL_Color& c) {
+  const SDL_FColor fc = ToSdlFColor(c);
+  return {fc, fc, fc, fc};
+}
+
+inline std::array<SDL_FColor, 4> ToCornerFColors(const QuadGradient& g) {
+  return {ToSdlFColor(g.topLeft), ToSdlFColor(g.topRight), ToSdlFColor(g.bottomRight), ToSdlFColor(g.bottomLeft)};
+}
+
 void DrawSprite(SDL_Renderer* renderer, DrawStateCache& state, const SpriteCommand& cmd) {
   const SDL_FRect destRect = {cmd.destX, cmd.destY, cmd.destW, cmd.destH};
   const SDL_FRect* srcRectPtr = (cmd.srcRect.w > 0.0f && cmd.srcRect.h > 0.0f) ? &cmd.srcRect : nullptr;
@@ -420,6 +441,7 @@ void DrawSprite(SDL_Renderer* renderer, DrawStateCache& state, const SpriteComma
 }
 
 void DrawText(SDL_Renderer* renderer, DrawStateCache& state, const TextCommand& cmd) {
+  if (cmd.texture == nullptr) return;
   state.ApplyTextureState(renderer, cmd.texture, cmd.colorMod, SDL_BLENDMODE_BLEND);
   SDL_RenderTexture(renderer, cmd.texture, nullptr, &cmd.destRect);
 }
@@ -460,7 +482,14 @@ class GeometryBatcher {
     indices_.clear();
   }
 
-  void PushSprite(SDL_Renderer* renderer, const SpriteCommand& cmd) {
+  void SetMaterial(SDL_Renderer* renderer, const std::uint8_t materialId) {
+    if (materialId != batch_material_) {
+      Flush(renderer);
+      batch_material_ = materialId;
+    }
+  }
+
+  void PushSprite(SDL_Renderer* renderer, const SpriteCommand& cmd, const QuadGradient* gradient = nullptr) {
     if (cmd.texture == nullptr) return;
     if (kind_ != BatchKind::Sprite || batch_tex_ != cmd.texture || batch_blend_ != cmd.blendMode ||
         verts_.size() + 4 > kMaxBatchVerts) {
@@ -488,14 +517,40 @@ class GeometryBatcher {
     if ((flipBits & static_cast<unsigned int>(SDL_FLIP_HORIZONTAL)) != 0U) std::swap(u0, u1);
     if ((flipBits & static_cast<unsigned int>(SDL_FLIP_VERTICAL)) != 0U) std::swap(v0, v1);
 
+    const std::array<SDL_FColor, 4> cols =
+        (gradient != nullptr) ? ToCornerFColors(*gradient) : UniformCornerColors(cmd.colorMod);
+    AppendTransformedQuad(cmd.destX, cmd.destY, cmd.destW, cmd.destH, cmd.pivot, cmd.rotation, cols, u0, v0, u1, v1);
+  }
+
+  void PushText(SDL_Renderer* renderer, const TextCommand& cmd) {
+    if (cmd.texture == nullptr) return;
+    if (kind_ != BatchKind::Sprite || batch_tex_ != cmd.texture || batch_blend_ != SDL_BLENDMODE_BLEND ||
+        verts_.size() + 4 > kMaxBatchVerts) {
+      Flush(renderer);
+      if (!ResolveTextureInvSize(cmd.texture)) {
+        DrawText(renderer, state_, cmd);
+        return;
+      }
+      kind_ = BatchKind::Sprite;
+      batch_tex_ = cmd.texture;
+      batch_blend_ = SDL_BLENDMODE_BLEND;
+    }
     const SDL_FColor fcol = ToSdlFColor(cmd.colorMod);
-    AppendTransformedQuad(cmd.destX, cmd.destY, cmd.destW, cmd.destH, cmd.pivot, cmd.rotation, fcol, u0, v0, u1, v1);
+    const float x0 = cmd.destRect.x;
+    const float y0 = cmd.destRect.y;
+    const float x1 = x0 + cmd.destRect.w;
+    const float y1 = y0 + cmd.destRect.h;
+    AppendQuad({x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}, fcol, 0.0f, 0.0f, 1.0f, 1.0f);
   }
 
   void PushSquare(SDL_Renderer* renderer, const SquareCommand& cmd) {
     EnsureUntextured(renderer, cmd.blendMode, 4);
-    const SDL_FColor fcol = ToSdlFColor(cmd.color);
-    AppendTransformedQuad(cmd.destRect.x, cmd.destRect.y, cmd.destRect.w, cmd.destRect.h, cmd.pivot, cmd.rotation, fcol,
+    const std::array<SDL_FColor, 4> cols =
+        cmd.hasCornerColors
+            ? std::array<SDL_FColor, 4>{ToSdlFColor(cmd.cornerColors[0]), ToSdlFColor(cmd.cornerColors[1]),
+                                        ToSdlFColor(cmd.cornerColors[2]), ToSdlFColor(cmd.cornerColors[3])}
+            : UniformCornerColors(cmd.color);
+    AppendTransformedQuad(cmd.destRect.x, cmd.destRect.y, cmd.destRect.w, cmd.destRect.h, cmd.pivot, cmd.rotation, cols,
                           0.0f, 0.0f, 0.0f, 0.0f);
   }
 
@@ -576,7 +631,6 @@ class GeometryBatcher {
     SDL_FPoint innerPts[3];
     for (int i = 0; i < 3; ++i) {
       const glm::vec2 b = normals[(i + 2) % 3] + normals[i];
-      // For unit edge normals, dot(b, n_i) == 0.5 * dot(b, b); clamping dot(b, b) >= 0.5 caps sharp miters.
       const glm::vec2 miter = b * (effectiveThickness / std::max(0.5f, glm::dot(b, b)));
       outerPts[i] = {v[i].x + miter.x, v[i].y + miter.y};
       innerPts[i] = {v[i].x - miter.x, v[i].y - miter.y};
@@ -688,12 +742,13 @@ class GeometryBatcher {
   }
 
   void AppendTransformedQuad(const float destX, const float destY, const float destW, const float destH,
-                             const SDL_FPoint& pivot, const float rotation, const SDL_FColor& fcol, const float u0,
-                             const float v0, const float u1, const float v1) {
+                             const SDL_FPoint& pivot, const float rotation, const std::array<SDL_FColor, 4>& cols,
+                             const float u0, const float v0, const float u1, const float v1) {
     if (rotation == 0.0F) {
       const float x1 = destX + destW;
       const float y1 = destY + destH;
-      AppendQuad({destX, destY}, {x1, destY}, {x1, y1}, {destX, y1}, fcol, u0, v0, u1, v1);
+      AppendQuad({destX, destY}, {x1, destY}, {x1, y1}, {destX, y1}, cols[0], cols[1], cols[2], cols[3], u0, v0, u1,
+                 v1);
       return;
     }
 
@@ -707,7 +762,8 @@ class GeometryBatcher {
     const glm::vec2 p1 = centre + octarine::Rotate(glm::vec2{lx1, ly0}, rot);
     const glm::vec2 p2 = centre + octarine::Rotate(glm::vec2{lx1, ly1}, rot);
     const glm::vec2 p3 = centre + octarine::Rotate(glm::vec2{lx0, ly1}, rot);
-    AppendQuad({p0.x, p0.y}, {p1.x, p1.y}, {p2.x, p2.y}, {p3.x, p3.y}, fcol, u0, v0, u1, v1);
+    AppendQuad({p0.x, p0.y}, {p1.x, p1.y}, {p2.x, p2.y}, {p3.x, p3.y}, cols[0], cols[1], cols[2], cols[3], u0, v0, u1,
+               v1);
   }
 
   void EnsureUntextured(SDL_Renderer* renderer, const SDL_BlendMode blend, const size_t neededVerts) {
@@ -825,18 +881,24 @@ class GeometryBatcher {
   }
 
   void AppendQuad(const SDL_FPoint p0, const SDL_FPoint p1, const SDL_FPoint p2, const SDL_FPoint p3,
-                  const SDL_FColor& col, const float u0, const float v0, const float u1, const float v1) {
+                  const SDL_FColor& c0, const SDL_FColor& c1, const SDL_FColor& c2, const SDL_FColor& c3,
+                  const float u0, const float v0, const float u1, const float v1) {
     const int base = static_cast<int>(verts_.size());
-    verts_.push_back({p0, col, {u0, v0}});
-    verts_.push_back({p1, col, {u1, v0}});
-    verts_.push_back({p2, col, {u1, v1}});
-    verts_.push_back({p3, col, {u0, v1}});
+    verts_.push_back({p0, c0, {u0, v0}});
+    verts_.push_back({p1, c1, {u1, v0}});
+    verts_.push_back({p2, c2, {u1, v1}});
+    verts_.push_back({p3, c3, {u0, v1}});
     indices_.push_back(base);
     indices_.push_back(base + 1);
     indices_.push_back(base + 2);
     indices_.push_back(base);
     indices_.push_back(base + 2);
     indices_.push_back(base + 3);
+  }
+
+  void AppendQuad(const SDL_FPoint p0, const SDL_FPoint p1, const SDL_FPoint p2, const SDL_FPoint p3,
+                  const SDL_FColor& col, const float u0, const float v0, const float u1, const float v1) {
+    AppendQuad(p0, p1, p2, p3, col, col, col, col, u0, v0, u1, v1);
   }
 
   void AppendFan(const SDL_FColor& col, const SDL_FPoint center, const SDL_FPoint* ringPts, const int count) {
@@ -871,6 +933,7 @@ class GeometryBatcher {
   std::vector<int>& indices_;
   DrawStateCache& state_;
   BatchKind kind_ = BatchKind::None;
+  std::uint8_t batch_material_ = 0;
   SDL_Texture* batch_tex_ = nullptr;
   SDL_BlendMode batch_blend_ = SDL_BLENDMODE_NONE;
   float inv_tex_w_ = 0.0f;
@@ -879,6 +942,40 @@ class GeometryBatcher {
   float cached_inv_w_ = 0.0f;
   float cached_inv_h_ = 0.0f;
 };
+
+void DispatchRenderCommand(SDL_Renderer* renderer, const RenderQueue& renderQueue, const RenderKey& key,
+                           GeometryBatcher& batcher, const float renderScale) {
+  switch (key.type) {
+    case SPRITE:
+      batcher.PushSprite(renderer, key.payload.sprite, renderQueue.GetGradient(key.gradientId));
+      break;
+    case SQUARE_PRIMITIVE:
+      batcher.PushSquare(renderer, key.payload.square);
+      break;
+    case TEXT:
+      batcher.PushText(renderer, key.payload.text);
+      break;
+    case CIRCLE_PRIMITIVE:
+      batcher.PushCircle(renderer, key.payload.circle, renderScale);
+      break;
+    case LINE_PRIMITIVE:
+      batcher.PushLine(renderer, key.payload.line, renderScale);
+      break;
+    case TRIANGLE_PRIMITIVE:
+      batcher.PushTriangle(renderer, key.payload.triangle, renderScale);
+      break;
+    case CAPSULE_PRIMITIVE:
+      batcher.PushCapsule(renderer, key.payload.capsule, renderScale);
+      break;
+    case TILE_CHUNK:
+      batcher.PushTileChunk(renderer, key.payload.tileChunk);
+      break;
+    default:
+      batcher.Flush(renderer);
+      Logger::Error("Unknown renderable type");
+      break;
+  }
+}
 
 }  // namespace
 
@@ -893,45 +990,20 @@ void Renderer::DrawQueue(const RenderQueue& renderQueue, SDL_Renderer* renderer)
       activeClipId = key.clipId;
       SDL_SetRenderClipRect(renderer, renderQueue.GetClipRect(activeClipId));
     }
-    switch (key.type) {
-      case SPRITE:
-        batcher.PushSprite(renderer, key.payload.sprite);
-        break;
-      case SQUARE_PRIMITIVE:
-        batcher.PushSquare(renderer, key.payload.square);
-        break;
-      case TEXT:
-        batcher.Flush(renderer);
-        DrawText(renderer, state, key.payload.text);
-        break;
-      case CIRCLE_PRIMITIVE:
-        batcher.PushCircle(renderer, key.payload.circle, renderScale);
-        break;
-      case LINE_PRIMITIVE:
-        batcher.PushLine(renderer, key.payload.line, renderScale);
-        break;
-      case TRIANGLE_PRIMITIVE:
-        batcher.PushTriangle(renderer, key.payload.triangle, renderScale);
-        break;
-      case CAPSULE_PRIMITIVE:
-        batcher.PushCapsule(renderer, key.payload.capsule, renderScale);
-        break;
-      case TILE_CHUNK:
-        if (key.payload.tileChunk.vertexCount <= 256) {
-          batcher.PushTileChunk(renderer, key.payload.tileChunk);
-        } else {
-          batcher.Flush(renderer);
-          DrawTileChunk(renderer, state, key.payload.tileChunk);
-        }
-        break;
-      default:
-        batcher.Flush(renderer);
-        Logger::Error("Unknown renderable type");
-        break;
-    }
+    batcher.SetMaterial(renderer, key.materialId);
+    DispatchRenderCommand(renderer, renderQueue, key, batcher, renderScale);
   }
   batcher.Flush(renderer);
   if (activeClipId != 0) {
     SDL_SetRenderClipRect(renderer, nullptr);
+  }
+  if (!post_scene_passes_.empty()) {
+    const RenderPassContext passCtx{renderer,      scene_texture_, logical_width_,  logical_height_,
+                                    target_width_, target_height_, render_scale_x_, render_scale_y_};
+    for (const auto& pass : post_scene_passes_) {
+      pass(passCtx);
+    }
+    SDL_SetRenderTarget(renderer, scene_texture_);
+    SDL_SetRenderScale(renderer, render_scale_x_, render_scale_y_);
   }
 }

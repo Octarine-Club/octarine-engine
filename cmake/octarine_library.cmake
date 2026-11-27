@@ -5,10 +5,10 @@
 # Usage:
 #   octarine_library(<name> <source> [<source> ...])
 #
-# Public include directory defaults to ${CMAKE_SOURCE_DIR}/src so consumers can
-# reach any header under src/. Feature defines (OCTARINE_WITH_IMGUI etc.) come
-# from octarine_core's PUBLIC compile_definitions; consumers pick them up
-# transitively, so per-target plumbing isn't needed here.
+# Public include directory defaults to $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/src> so consumers
+# can reach any header under src/ without polluting install interfaces or breaking FetchContent /
+# add_subdirectory builds. Feature defines (OCTARINE_WITH_IMGUI etc.) come from octarine_core's
+# PUBLIC compile_definitions; consumers pick them up transitively.
 
 function(octarine_library NAME)
     set(_sources ${ARGN})
@@ -20,15 +20,16 @@ function(octarine_library NAME)
             POSITION_INDEPENDENT_CODE ON
     )
     target_include_directories(${NAME} PUBLIC
-            "${CMAKE_SOURCE_DIR}/src"
-            "${CMAKE_SOURCE_DIR}/libs"
+            "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/src>"
+            "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/libs>"
     )
     if (LUA_INCLUDE_DIR)
-        target_include_directories(${NAME} PUBLIC "${LUA_INCLUDE_DIR}")
+        target_include_directories(${NAME} PUBLIC "$<BUILD_INTERFACE:${LUA_INCLUDE_DIR}>")
     endif ()
 
-    if (OCTARINE_ENABLE_PCH AND NOT OCTARINE_ENABLE_LINTING)
-        target_precompile_headers(${NAME} PRIVATE "${CMAKE_SOURCE_DIR}/src/General/OctarinePch.h")
+    if (OCTARINE_ENABLE_PCH AND NOT OCTARINE_ENABLE_LINTING
+            AND NOT (OCTARINE_DISABLE_GAME_MODULE_PCH AND NAME STREQUAL "octarine_game_module"))
+        target_precompile_headers(${NAME} PRIVATE "${PROJECT_SOURCE_DIR}/src/General/OctarinePch.h")
     endif ()
 
     if (MSVC)

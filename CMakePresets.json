@@ -21,6 +21,30 @@
       }
     },
     {
+      "name": "lint",
+      "inherits": "player-debug",
+      "displayName": "Lint (No PCH)",
+      "description": "Debug build with PCH disabled and clang-tidy enabled, producing a non-PCH compile_commands.json for standalone clang-tidy.",
+      "cacheVariables": {
+        "CMAKE_CXX_SCAN_FOR_MODULES": "OFF",
+        "OCTARINE_ENABLE_PCH": "OFF",
+        "OCTARINE_ENABLE_LINTING": "ON"
+      }
+    },
+    {
+      "name": "asan-ubsan",
+      "inherits": "player-debug",
+      "displayName": "ASan + UBSan (Debug)",
+      "description": "Debug build with AddressSanitizer and UndefinedBehaviorSanitizer (-fsanitize=address,undefined -fno-omit-frame-pointer), PCH/LTO disabled, and tests enabled.",
+      "cacheVariables": {
+        "OCTARINE_SANITIZE": "asan",
+        "OCTARINE_ENABLE_PCH": "OFF",
+        "OCTARINE_ENABLE_LTO": "OFF",
+        "OCTARINE_ENABLE_TESTS": "ON",
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer"
+      }
+    },
+    {
       "name": "player-release",
       "inherits": "base",
       "displayName": "Release",
@@ -73,6 +97,8 @@
   ],
   "buildPresets": [
     { "name": "player-debug", "configurePreset": "player-debug" },
+    { "name": "lint", "configurePreset": "lint" },
+    { "name": "asan-ubsan", "configurePreset": "asan-ubsan" },
     { "name": "player-release", "configurePreset": "player-release" },
     { "name": "player-profile", "configurePreset": "player-profile" },
     { "name": "ship-release", "configurePreset": "ship-release" },
