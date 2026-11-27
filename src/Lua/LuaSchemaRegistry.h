@@ -119,9 +119,9 @@ struct LuaParamSchema {
 };
 
 struct LuaFunctionSchema {
-  std::vector<LuaParamSchema> params;
-  std::vector<std::string> returns;
-  std::vector<LuaFunctionSchema> overloads;
+  std::vector<LuaParamSchema> params{};
+  std::vector<std::string> returns{};
+  std::vector<LuaFunctionSchema> overloads{};
   bool isMethod = false;
 };
 
