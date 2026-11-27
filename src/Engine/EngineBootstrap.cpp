@@ -2,6 +2,8 @@
 
 #include <SDL3/SDL.h>
 
+#include <cstring>
+#include <filesystem>
 #include <optional>
 #include <string>
 
@@ -31,19 +33,37 @@
 #include "Systems/TilemapSystem.h"
 
 namespace {
+std::string ResolveDofilePath(const std::string& rawPath, const AssetManager* assets) {
+  if (rawPath.empty()) return {};
+  if (assets != nullptr && (!assets->GetBasePath().empty() || assets->GetAssetPak() != nullptr)) {
+    return assets->GetFullPath(rawPath);
+  }
+  const std::filesystem::path p(rawPath);
+  if (p.is_absolute()) return rawPath;
+  const std::filesystem::path norm = p.lexically_normal();
+  if (norm.empty() || *norm.begin() == "..") return {};
+  return norm.string();
+}
+
 int LuaDofileViaSDL(lua_State* L) {
   std::size_t plen = 0;
   const char* p = luaL_checklstring(L, 1, &plen);
-  const std::string path(p, plen);
+  const std::string rawPath(p, plen);
 
   lua_getfield(L, LUA_REGISTRYINDEX, "octarine_assets");
   const auto* assets = static_cast<const AssetManager*>(lua_touserdata(L, -1));
   lua_pop(L, 1);
 
+  const std::string path = ResolveDofilePath(rawPath, assets);
+  if (path.empty()) {
+    return luaL_error(L, "dofile: rejected path '%s'", rawPath.c_str());
+  }
+
   auto bytes = ReadFileViaSDL(path, assets);
   if (!bytes) {
     return luaL_error(L, "dofile: cannot open '%s'", path.c_str());
   }
+  const bool wasScrambledOct = bytes->size() >= 4 && std::memcmp(bytes->data(), "\x1bOCT", 4) == 0;
   const bool requireProtected = (assets != nullptr && assets->GetAssetPak() != nullptr);
   if (!DecryptLuaBytes(*bytes, requireProtected)) {
     return luaL_error(L, "dofile: rejected unprotected or corrupted script '%s'", path.c_str());
@@ -52,7 +72,8 @@ int LuaDofileViaSDL(lua_State* L) {
   lua_settop(L, 0);
   const int topBefore = lua_gettop(L);
   const std::string chunkname = "@" + path;
-  const int loadRc = luaL_loadbuffer(L, bytes->data(), bytes->size(), chunkname.c_str());
+  const char* loadMode = wasScrambledOct ? "b" : "t";
+  const int loadRc = luaL_loadbufferx(L, bytes->data(), bytes->size(), chunkname.c_str(), loadMode);
   std::fill(bytes->begin(), bytes->end(), '\0');
   bytes->clear();
   if (loadRc != 0) {

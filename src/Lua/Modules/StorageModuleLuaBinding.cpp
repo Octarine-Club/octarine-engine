@@ -11,6 +11,7 @@
 #include "General/FileSandbox.h"
 #include "General/Logger.h"
 #include "Lua/LuaBindingContext.h"
+#include "Lua/LuaSchemaRegistry.h"
 #include "Lua/LuaTableSerializer.h"
 
 namespace {
@@ -125,23 +126,29 @@ sol::table List(LuaBindingContext& ctx, const std::string& relativePath, sol::th
 }  // namespace
 
 void LuaModuleBinding<StorageModule>::install(sol::state& lua, LuaBindingContext& ctx) {
+  using octarine::lua_schema::LuaSchemaRegistry;
   sol::table storage = lua.create_table();
-  storage.set_function("write", [&ctx](const std::string& path, const std::string& contents) -> bool {
-    return Write(ctx, path, contents);
-  });
-  storage.set_function("read",
-                       [&ctx](const std::string& path) -> sol::optional<std::string> { return Read(ctx, path); });
-  storage.set_function("write_table", [&ctx](const std::string& path, const sol::table& value) -> bool {
-    return WriteTable(ctx, path, value);
-  });
-  storage.set_function("read_table", [&ctx](const std::string& path, sol::this_state s) -> sol::optional<sol::table> {
-    return ReadTable(ctx, path, s);
-  });
-  storage.set_function("exists", [&ctx](const std::string& path) -> bool { return Exists(ctx, path); });
-  storage.set_function("remove", [&ctx](const std::string& path) -> bool { return Remove(ctx, path); });
+  LuaSchemaRegistry::SetFunction(
+      storage, "storage", "write",
+      [&ctx](const std::string& path, const std::string& contents) -> bool { return Write(ctx, path, contents); });
+  LuaSchemaRegistry::SetFunction(
+      storage, "storage", "read",
+      [&ctx](const std::string& path) -> sol::optional<std::string> { return Read(ctx, path); });
+  LuaSchemaRegistry::SetFunction(
+      storage, "storage", "write_table",
+      [&ctx](const std::string& path, const sol::table& value) -> bool { return WriteTable(ctx, path, value); });
+  LuaSchemaRegistry::SetFunction(storage, "storage", "read_table",
+                                 [&ctx](const std::string& path, sol::this_state s) -> sol::optional<sol::table> {
+                                   return ReadTable(ctx, path, s);
+                                 });
+  LuaSchemaRegistry::SetFunction(storage, "storage", "exists",
+                                 [&ctx](const std::string& path) -> bool { return Exists(ctx, path); });
+  LuaSchemaRegistry::SetFunction(storage, "storage", "remove",
+                                 [&ctx](const std::string& path) -> bool { return Remove(ctx, path); });
   // Path optional: storage.list() lists the save-data root itself.
-  storage.set_function("list", [&ctx](const sol::optional<std::string>& path, sol::this_state s) -> sol::table {
-    return List(ctx, path.value_or(""), s);
-  });
+  LuaSchemaRegistry::SetFunction(storage, "storage", "list",
+                                 [&ctx](const sol::optional<std::string>& path, sol::this_state s) -> sol::table {
+                                   return List(ctx, path.value_or(""), s);
+                                 });
   lua["storage"] = storage;
 }

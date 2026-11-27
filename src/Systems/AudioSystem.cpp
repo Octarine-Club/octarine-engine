@@ -6,6 +6,7 @@
 #include <string>
 
 #include "AssetManager/AssetManager.h"
+#include "Audio/AudioGainRegistry.h"
 #include "Components/AudioActiveTag.h"
 #include "Game/GameConfig.h"
 #include "General/Logger.h"
@@ -110,6 +111,26 @@ void AudioSystem::OnAudioPlay(const AudioPlayEvent& event) {
   MIX_Audio* clip = assetManager.GetAudioClip(event.clipId);
   if (!clip) return;
 
+  auto* gainReg = registry_->TryGet<octarine::AudioGainRegistry>();
+  const std::uint64_t nowNs = SDL_GetTicksNS();
+  if (gainReg != nullptr) {
+    int activeVoices = 0;
+    for (const TrackSlot& slot : state_->track_pool) {
+      if (!slot.track) continue;
+      if (!MIX_TrackPlaying(slot.track)) {
+        gainReg->active_track_clips.erase(slot.track);
+        continue;
+      }
+      const auto it = gainReg->active_track_clips.find(slot.track);
+      if (it != gainReg->active_track_clips.end() && it->second == event.clipId) {
+        ++activeVoices;
+      }
+    }
+    if (gainReg->ShouldThrottleClip(event.clipId, nowNs, activeVoices)) {
+      return;
+    }
+  }
+
   // Per-track gain carries only this clip's own volume. Master volume + mute are applied at the
   // mixer level (MIX_SetMixerGain, synced each frame in Game::Update) so they affect live tracks.
   const float gain = std::max(0.0F, event.volume);
@@ -128,6 +149,10 @@ void AudioSystem::OnAudioPlay(const AudioPlayEvent& event) {
   MIX_SetTrackGain(acquired.track, gain);
   if (!MIX_PlayTrack(acquired.track, 0)) {
     Logger::Warn("MIX_PlayTrack failed for " + event.clipId + ": " + std::string(SDL_GetError()));
+    return;
+  }
+  if (gainReg != nullptr) {
+    gainReg->RecordClipPlayed(acquired.track, event.clipId, nowNs);
   }
 }
 
@@ -223,6 +248,9 @@ void AudioSystem::SpawnSinkForSource(Entity entity, AudioSourceComponent& source
   if (resumingFromCull) {
     MIX_SetTrackPlaybackPosition(acquired.track, source.playbackOffsetFrames);
     source.playbackOffsetFrames = -1;
+  }
+  if (auto* gainReg = registry_->TryGet<octarine::AudioGainRegistry>()) {
+    gainReg->active_track_clips.erase(acquired.track);
   }
   // The MIX_Track* lives in AudioTrackCache (keyed by entity), not on the POD sink component.
   track_cache_->Store(entity, acquired.track, acquired.generation);

@@ -2,6 +2,7 @@
 #include <glm/glm.hpp>
 #include <string>
 
+#include "Audio/AudioGainRegistry.h"
 #include "Audio/AudioTrackCache.h"
 #include "Components/AudioActiveTag.h"
 #include "Components/AudioListenerComponent.h"
@@ -182,6 +183,50 @@ void TestDopplerPhysics() {
   CheckEq(ratioDisabled, 1.0f, "Disabled doppler always produces ratio 1.0");
 }
 
+void TestAudioTrackCacheGenerationAndVoiceLimits() {
+  Registry registry;
+  AudioTrackCache trackCache;
+
+  const Entity gen0 = registry.CreateEntity();
+  auto* trackA = reinterpret_cast<MIX_Track*>(static_cast<std::uintptr_t>(0xCAFE));
+  auto* trackB = reinterpret_cast<MIX_Track*>(static_cast<std::uintptr_t>(0xBEEF));
+  trackCache.Store(gen0, trackA, 1U);
+  Check(trackCache.Track(gen0) == trackA, "AudioTrackCache finds track stored for generation-0 entity");
+
+  registry.BlamEntity(gen0);
+  const Entity gen1 = registry.CreateEntity();
+  CheckEq(gen0.GetId(), gen1.GetId(), "Recycled entity reuses 32-bit slot index");
+  Check(gen0.GetGeneration() != gen1.GetGeneration(), "Recycled entity increments generation");
+  Check(trackCache.Lookup(gen1) == nullptr,
+        "AudioTrackCache does not alias stale generation-0 entry onto generation-1");
+
+  trackCache.Store(gen1, trackB, 2U);
+  Check(trackCache.Track(gen1) == trackB, "AudioTrackCache stores generation-1 entry independently");
+  Check(trackCache.Track(gen0) == trackA, "Generation-0 and generation-1 keys remain distinct in AudioTrackCache");
+  trackCache.Forget(gen0);
+  Check(trackCache.Track(gen1) == trackB, "Forgetting stale generation-0 entity preserves live generation-1 track");
+
+  octarine::AudioGainRegistry gainReg;
+  gainReg.clip_limits["sfx_laser"] = octarine::AudioClipLimit{2, 0.10F};
+  constexpr std::uint64_t kT0 = 1'000'000'000ULL;
+  Check(!gainReg.ShouldThrottleClip("sfx_laser", kT0, 0), "First voice allowed when under cap and no prior play");
+  gainReg.RecordClipPlayed(trackA, "sfx_laser", kT0);
+  Check(gainReg.ShouldThrottleClip("sfx_laser", kT0 + 40'000'000ULL, 1),
+        "Second voice within minIntervalSec cooldown is throttled");
+  Check(!gainReg.ShouldThrottleClip("sfx_laser", kT0 + 150'000'000ULL, 1),
+        "Second voice after minIntervalSec cooldown is allowed");
+  gainReg.RecordClipPlayed(trackB, "sfx_laser", kT0 + 150'000'000ULL);
+  Check(gainReg.ShouldThrottleClip("sfx_laser", kT0 + 300'000'000ULL, 2),
+        "Third concurrent voice at maxVoices cap is throttled");
+
+  gainReg.default_max_voices = 1;
+  gainReg.default_min_interval_sec = 0.0F;
+  Check(!gainReg.ShouldThrottleClip("unconfigured_clip", kT0 + 500'000'000ULL, 0),
+        "Wildcard default limit allows 1st active voice");
+  Check(gainReg.ShouldThrottleClip("unconfigured_clip", kT0 + 500'000'000ULL, 1),
+        "Wildcard default limit throttles 2nd active voice");
+}
+
 }  // namespace
 
 int main() {
@@ -189,5 +234,6 @@ int main() {
   TestSpatialAudioMath();
   TestAudioCullingSystem();
   TestDopplerPhysics();
+  TestAudioTrackCacheGenerationAndVoiceLimits();
   return octarine::test::ReportSummary("OctarineAudioSystemsTest");
 }

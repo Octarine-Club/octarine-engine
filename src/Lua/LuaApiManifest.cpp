@@ -5,11 +5,16 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <glm/glm.hpp>
 #include <utility>
 #include <vector>
 
+#include "Components/UIStyleStateComponent.h"
+#include "ECS/Entity.h"
+#include "General/Color.h"
 #include "General/Logger.h"
 #include "Lua/Bindings/LuaComponentRegistry.h"
+#include "Lua/LuaSchemaRegistry.h"
 #include "Lua/Modules/LuaModuleRegistry.h"
 
 namespace {
@@ -18,17 +23,16 @@ struct NamedObject {
   sol::object value;
 };
 
-// Sol2 leaks internal metatable bookkeeping entries (the ♻ recycle marker, and class names that
-// contain raw typeid strings like `glm::vec<2, float, glm::packed_highp>`) into the global table.
-// Those mangled names are platform-specific (MSVC vs libstdc++ stringify templates differently)
-// and would cause endless CI drift; they are also not real Lua surface. Skip anything that is
-// obviously not a valid Lua identifier path.
+using octarine::lua_schema::LuaClassSchema;
+using octarine::lua_schema::LuaFunctionSchema;
+using octarine::lua_schema::LuaParamSchema;
+using octarine::lua_schema::LuaSchemaRegistry;
+
 bool IsSolInternalName(const std::string& name) {
-  return name.find("\xe2\x99\xbb") != std::string::npos  // ♻ U+267B
+  return name.find("\xe2\x99\xbb") != std::string::npos  // U+267B recycle symbol
          || name.find("::") != std::string::npos || name.find('<') != std::string::npos;
 }
 
-// Collect string-keyed entries of a table, sorted by name for stable output.
 std::vector<NamedObject> SortedEntries(const sol::table& table) {
   std::vector<NamedObject> entries;
   for (const auto& [key, value] : table) {
@@ -39,11 +43,37 @@ std::vector<NamedObject> SortedEntries(const sol::table& table) {
   return entries;
 }
 
-void EmitScalar(std::ofstream& out, const std::string& name, const sol::object& value) {
+std::string InferObjectScalarType(lua_State* L, const sol::object& value) {
+#ifndef OCTARINE_SHIPPED
+  const int top = lua_gettop(L);
+  value.push(L);
+  std::string t = LuaSchemaRegistry::InferLuaValueType(L, -1);
+  lua_settop(L, top);
+  return t;
+#else
+  (void)L;
   switch (value.get_type()) {
+    case sol::type::boolean:
+      return "boolean";
     case sol::type::number:
-      out << "---@type number\n" << name << " = 0\n\n";
+      return "number";
+    case sol::type::string:
+      return "string";
+    case sol::type::table:
+      return "table";
+    default:
+      return "any";
+  }
+#endif
+}
+
+void EmitScalar(std::ofstream& out, lua_State* L, const std::string& name, const sol::object& value) {
+  switch (value.get_type()) {
+    case sol::type::number: {
+      const std::string numType = InferObjectScalarType(L, value);
+      out << "---@type " << numType << "\n" << name << " = 0\n\n";
       break;
+    }
     case sol::type::boolean:
       out << "---@type boolean\n" << name << " = " << (value.as<bool>() ? "true" : "false") << "\n\n";
       break;
@@ -56,26 +86,161 @@ void EmitScalar(std::ofstream& out, const std::string& name, const sol::object& 
   }
 }
 
-// Functions bound from C++ carry no Lua type info, so parameters are emitted as `...`.
-void EmitFunction(std::ofstream& out, const std::string& qualifiedName) {
-  out << "function " << qualifiedName << "(...) end\n\n";
+#ifndef OCTARINE_SHIPPED
+std::string FormatOverloadType(const LuaFunctionSchema& ov) {
+  std::string s = "fun(";
+  for (std::size_t i = 0; i < ov.params.size(); ++i) {
+    if (i > 0) s += ", ";
+    const auto& p = ov.params[i];
+    if (p.variadic) {
+      s += "...: " + p.type;
+    } else {
+      s += p.name + (p.optional ? "?: " : ": ") + p.type;
+    }
+  }
+  s += ")";
+  if (!ov.returns.empty()) {
+    s += ": ";
+    for (std::size_t i = 0; i < ov.returns.size(); ++i) {
+      if (i > 0) s += ", ";
+      s += ov.returns[i];
+    }
+  }
+  return s;
 }
 
-// A table or usertype: emit it as a namespace, then its function members as `table.fn`.
-// One level deep — engine tables (registry, input) and usertypes are flat.
-// LuaLS requires every ---@field to sit between the ---@class line and the table
-// statement; a field after any statement triggers doc-field-no-class. So: class line,
-// all fields, `name = {}`, then the functions.
-void EmitTable(std::ofstream& out, const std::string& name, const sol::table& table) {
+void EmitFunctionWithSchema(std::ofstream& out, const std::string& headerName, const LuaFunctionSchema* schema) {
+  if (schema == nullptr) {
+    out << "function " << headerName << "(...) end\n\n";
+    return;
+  }
+  for (const auto& ov : schema->overloads) {
+    out << "---@overload " << FormatOverloadType(ov) << "\n";
+  }
+  std::string argList;
+  for (std::size_t i = 0; i < schema->params.size(); ++i) {
+    const auto& p = schema->params[i];
+    if (p.variadic) {
+      out << "---@param ... " << p.type << "\n";
+    } else {
+      out << "---@param " << p.name << (p.optional ? "? " : " ") << p.type << "\n";
+    }
+    if (i > 0) argList += ", ";
+    argList += p.name;
+  }
+  if (!schema->returns.empty()) {
+    out << "---@return ";
+    for (std::size_t i = 0; i < schema->returns.size(); ++i) {
+      if (i > 0) out << ", ";
+      out << schema->returns[i];
+    }
+    out << "\n";
+  }
+  out << "function " << headerName << "(" << argList << ") end\n\n";
+}
+
+void EmitClass(std::ofstream& out, const LuaClassSchema& cls) {
+  out << "---@class " << cls.name << "\n";
+  for (const auto& [fieldName, fieldType] : cls.fields) {
+    out << "---@field " << fieldName << " " << fieldType << "\n";
+  }
+  out << cls.name << " = {}\n\n";
+  for (const auto& [fnName, fnSchema] : cls.staticFunctions) {
+    EmitFunctionWithSchema(out, cls.name + "." + fnName, &fnSchema);
+  }
+  for (const auto& [methodName, methodSchema] : cls.methods) {
+    EmitFunctionWithSchema(out, cls.name + ":" + methodName, &methodSchema);
+  }
+}
+
+void SeedKnownSchemas() {
+  LuaSchemaRegistry::QueueUsertypeIntrospection<Entity>("entity");
+  LuaSchemaRegistry::QueueUsertypeIntrospection<glm::vec2>("vec2");
+  LuaSchemaRegistry::QueueUsertypeIntrospection<octarine::Color>("color");
+  LuaSchemaRegistry::QueueUsertypeIntrospection<UIStylePatch>("ui_style_patch");
+
+  auto registerFallbackFn = [](const std::string& name, std::vector<LuaParamSchema> params,
+                               std::vector<std::string> returns) {
+    if (LuaSchemaRegistry::FindFunction(name) == nullptr) {
+      LuaSchemaRegistry::RegisterFunctionSchema(
+          name, LuaFunctionSchema{.params = std::move(params), .returns = std::move(returns)});
+    }
+  };
+
+  registerFallbackFn("dofile", {{.name = "path", .type = "string"}}, {"any"});
+  registerFallbackFn("load_scene", {{.name = "scene_path", .type = "string"}}, {"boolean"});
+  registerFallbackFn("reload_scene", {}, {"boolean"});
+  registerFallbackFn("stop_scene", {}, {});
+  registerFallbackFn("clear_scene", {}, {});
+  registerFallbackFn("load_entity", {{.name = "entity_path", .type = "string"}}, {"entity"});
+  registerFallbackFn("load_asset", {{.name = "descriptor", .type = "table"}}, {"boolean"});
+  registerFallbackFn("acquire_scene_assets", {{.name = "scene_path", .type = "string", .optional = true}}, {"integer"});
+
+  for (const auto& comp : LuaComponentRegistry::all()) {
+    registerFallbackFn("registry.has_" + comp.luaKey, {{.name = "arg1", .type = "entity"}}, {"boolean"});
+    registerFallbackFn("registry.get_" + comp.luaKey, {{.name = "arg1", .type = "entity"}}, {comp.usertypeName});
+    registerFallbackFn("registry.try_get_" + comp.luaKey, {{.name = "arg1", .type = "entity", .optional = true}},
+                       {comp.usertypeName + "?"});
+    registerFallbackFn("registry.add_" + comp.luaKey,
+                       {{.name = "arg1", .type = "entity"}, {.name = "arg2", .type = "any", .optional = true}},
+                       {comp.usertypeName + "?"});
+    registerFallbackFn("registry.remove_" + comp.luaKey, {{.name = "arg1", .type = "entity", .optional = true}},
+                       {"boolean"});
+  }
+}
+
+void EnrichIntrospectedComponentSchemas() {
+  if (auto* entCls =
+          LuaSchemaRegistry::FindClass("entity") != nullptr ? &LuaSchemaRegistry::EnsureClass("entity") : nullptr) {
+    entCls->methods["get_id"] = LuaFunctionSchema{.returns = {"integer"}, .isMethod = true};
+  }
+  if (LuaSchemaRegistry::FindClass("script_component") != nullptr) {
+    LuaSchemaRegistry::EnsureClass("script_component").fields["data"] = "table";
+  }
+  if (LuaSchemaRegistry::FindClass("ui_button_component") != nullptr) {
+    auto& btn = LuaSchemaRegistry::EnsureClass("ui_button_component");
+    btn.fields["on_click"] = "fun(...)";
+    btn.fields["on_focus"] = "fun(...)";
+    btn.methods["trigger"] = LuaFunctionSchema{
+        .params = {{.name = "arg1", .type = "entity", .optional = true}}, .returns = {"boolean"}, .isMethod = true};
+  }
+  if (LuaSchemaRegistry::FindClass("lifetime_component") != nullptr) {
+    auto& lt = LuaSchemaRegistry::EnsureClass("lifetime_component");
+    lt.methods["extend"] = LuaFunctionSchema{.params = {{.name = "arg1", .type = "number"}}, .isMethod = true};
+    lt.methods["is_alive"] = LuaFunctionSchema{.returns = {"boolean"}, .isMethod = true};
+    lt.methods["reset"] = LuaFunctionSchema{.isMethod = true};
+  }
+  if (LuaSchemaRegistry::FindClass("scale_component") != nullptr) {
+    LuaSchemaRegistry::EnsureClass("scale_component").methods["is_uniform"] =
+        LuaFunctionSchema{.returns = {"boolean"}, .isMethod = true};
+  }
+  if (LuaSchemaRegistry::FindClass("text_label_component") != nullptr) {
+    LuaSchemaRegistry::EnsureClass("text_label_component").methods["set_outline"] = LuaFunctionSchema{
+        .params = {{.name = "arg1", .type = "color|number"}, {.name = "arg2", .type = "number", .optional = true}},
+        .isMethod = true};
+  }
+}
+#endif
+
+void EmitFunction(std::ofstream& out, const std::string& qualifiedName) {
+#ifndef OCTARINE_SHIPPED
+  EmitFunctionWithSchema(out, qualifiedName, LuaSchemaRegistry::FindFunction(qualifiedName));
+#else
+  out << "function " << qualifiedName << "(...) end\n\n";
+#endif
+}
+
+// Emits a namespace table and its member fields/functions.
+// LuaLS requires every ---@field to sit between ---@class and the table statement.
+void EmitTable(std::ofstream& out, lua_State* L, const std::string& name, const sol::table& table) {
   const auto entries = SortedEntries(table);
   const auto skip = [](const NamedObject& member) {
-    return member.name.rfind("__", 0) == 0  // skip metamethods (__index, ...)
-           || IsSolInternalName(member.name);
+    return member.name.rfind("__", 0) == 0 || IsSolInternalName(member.name);
   };
   out << "---@class " << name << "\n";
   for (const auto& member : entries) {
     if (skip(member) || member.value.get_type() == sol::type::function) continue;
-    out << "---@field " << member.name << " any\n";
+    out << "---@field " << member.name << " " << InferObjectScalarType(L, member.value) << "\n";
   }
   out << name << " = {}\n\n";
   for (const auto& member : entries) {
@@ -108,8 +273,12 @@ bool Write(sol::state& lua, const std::unordered_set<std::string>& before, const
     return false;
   }
 
-  // Everything the engine added since the snapshot — the standard library is filtered out
-  // because those names were already present in `before`.
+#ifndef OCTARINE_SHIPPED
+  SeedKnownSchemas();
+  LuaSchemaRegistry::RunPendingIntrospection(lua);
+  EnrichIntrospectedComponentSchemas();
+#endif
+
   std::vector<NamedObject> added;
   for (const auto& [key, value] : lua.globals()) {
     if (key.get_type() != sol::type::string) continue;
@@ -124,24 +293,31 @@ bool Write(sol::state& lua, const std::unordered_set<std::string>& before, const
       << "-- Introspected from the live sol::state after all bindings install.\n"
       << "-- Refreshed automatically on every dev launch (types/octarine_api.lua);\n"
       << "-- OCTARINE_DUMP_LUA_API=<path> overrides the destination.\n"
+      << "-- NOTE: registry.get_<key>(e) and registry.try_get_<key>(e) return zero-copy\n"
+      << "-- borrows into SoA archetype chunks; re-fetch after structural ECS mutations.\n"
       << "---@meta\n"
       << "---@diagnostic disable: lowercase-global, missing-return\n\n";
 
+  lua_State* L = lua.lua_state();
   for (const auto& entry : added) {
+#ifndef OCTARINE_SHIPPED
+    if (const LuaClassSchema* cls = LuaSchemaRegistry::FindClass(entry.name); cls != nullptr) {
+      EmitClass(out, *cls);
+      continue;
+    }
+#endif
     switch (entry.value.get_type()) {
       case sol::type::function:
         EmitFunction(out, entry.name);
         break;
       case sol::type::table:
-        // Named usertypes register as iterable tables of their members.
-        EmitTable(out, entry.name, entry.value.as<sol::table>());
+        EmitTable(out, L, entry.name, entry.value.as<sol::table>());
         break;
       case sol::type::userdata:
-        // A bound instance/handle — members aren't safely iterable; emit a bare class.
         out << "---@class " << entry.name << "\n" << entry.name << " = {}\n\n";
         break;
       default:
-        EmitScalar(out, entry.name, entry.value);
+        EmitScalar(out, L, entry.name, entry.value);
         break;
     }
   }
@@ -243,6 +419,12 @@ bool WriteComponentsJson(const std::string& outPath) {
     WriteJsonString(out, "registry.has_" + e.luaKey);
     out << ",\n      \"get_accessor\": ";
     WriteJsonString(out, "registry.get_" + e.luaKey);
+    out << ",\n      \"try_get_accessor\": ";
+    WriteJsonString(out, "registry.try_get_" + e.luaKey);
+    out << ",\n      \"add_accessor\": ";
+    WriteJsonString(out, "registry.add_" + e.luaKey);
+    out << ",\n      \"remove_accessor\": ";
+    WriteJsonString(out, "registry.remove_" + e.luaKey);
     out << "\n    }";
     if (i + 1 < entries.size()) out << ",";
     out << "\n";

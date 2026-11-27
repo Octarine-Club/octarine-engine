@@ -6,6 +6,8 @@
 // Headless Game (constructor allocates Registry/EventBus/Lua, opens no SDL window/renderer).
 
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <sol/sol.hpp>
 #include <string>
 
@@ -38,13 +40,16 @@
 #include "General/AngleUnit.h"
 #include "General/Logger.h"
 #include "General/PerformanceTracker.h"
+#include "Lua/Bindings/InputSystemLuaBinding.h"
 #include "Lua/Bindings/LuaBinding.h"
 #include "Lua/Bindings/LuaComponentRegistry.h"
 #include "Lua/Bindings/RegisterAllBindings.h"
 #include "Lua/Bindings/RotationComponentLuaBinding.h"
+#include "Lua/LuaApiManifest.h"
 #include "Lua/Modules/RegisterAllModules.h"
 #include "Systems/InputSystem.h"
 #include "Systems/RenderDebugGUISystem.h"
+#include "Systems/ScriptCollisionSystem.h"
 #include "Systems/ScriptSystem.h"
 #include "Systems/TransformSystem.h"
 #include "Systems/UIButtonSystem.h"
@@ -428,6 +433,114 @@ void TestLua55RuntimeAndDeterminism() {
   CheckEq(orderA, orderB, "pairs() iteration order is deterministic across fresh sol::state instances");
   CheckEq(randA, randB, "initial math.random() output is deterministic across fresh sol::state instances");
 }
+
+void TestComponentAccessorsInputXyCollisionCacheAndTypedManifest(sol::state& lua, Registry* reg,
+                                                                 const std::unordered_set<std::string>& preBinding) {
+  std::cout << "[component try_get/add/remove, input.*_xy, collision userdata cache & typed manifest]\n";
+
+  InputSystem inputSys;
+  LuaSystemBinding<InputSystem>::bind(lua, inputSys);
+
+  const Entity ent = reg->CreateEntity();
+  lua["acc_ent"] = ent;
+  Check(RunLua(lua, R"LUA(
+    tg_missing = registry.try_get_position(acc_ent)
+    tg_nil = registry.try_get_position(nil)
+    added_pos = registry.add_position(acc_ent, { value = { x = 42.5, y = -18.0 } })
+    tg_present = registry.try_get_position(acc_ent)
+    tg_present_x = tg_present and tg_present.x or 0
+    rem_first = registry.remove_position(acc_ent)
+    has_after_rem = registry.has_position(acc_ent)
+    tg_after_rem = registry.try_get_position(acc_ent)
+    rem_second = registry.remove_position(acc_ent)
+
+    mx, my = input.mouse_position_xy()
+    wx, wy = input.mouse_wheel_xy()
+    gx, gy = input.gamepad_stick_xy("left")
+  )LUA"),
+        "try_get_*/add_*/remove_* and input.*_xy execute");
+
+  Check(lua["tg_missing"] == sol::lua_nil, "try_get_position returns nil when component missing");
+  Check(lua["tg_nil"] == sol::lua_nil, "try_get_position(nil) returns nil safely");
+  Check(lua["added_pos"] != sol::lua_nil, "add_position returns newly attached component");
+  CheckEq(lua["tg_present_x"].get<float>(), 42.5F, "try_get_position reads added component field");
+  CheckEq(lua["rem_first"].get<bool>(), true, "remove_position returns true when component removed");
+  CheckEq(lua["has_after_rem"].get<bool>(), false, "has_position false after remove_position");
+  Check(lua["tg_after_rem"] == sol::lua_nil, "try_get_position nil after remove_position");
+  CheckEq(lua["rem_second"].get<bool>(), false, "remove_position returns false when already absent");
+  Check(lua["mx"].is<float>() && lua["my"].is<float>(), "input.mouse_position_xy returns two numbers");
+  Check(lua["wx"].is<float>() && lua["wy"].is<float>(), "input.mouse_wheel_xy returns two numbers");
+  Check(lua["gx"].is<float>() && lua["gy"].is<float>(), "input.gamepad_stick_xy returns two numbers");
+
+  reg->AddComponent<PositionComponent>(ent, PositionComponent(glm::vec2(1.0F, 2.0F)));
+  reg->BlamEntity(ent);
+  reg->Update(0.016F);
+  Check(RunLua(lua, "tg_dead = registry.try_get_position(acc_ent)"), "try_get_position on dead entity does not throw");
+  Check(lua["tg_dead"] == sol::lua_nil, "try_get_position returns nil on destroyed entity");
+
+  // ENG-LUA-09: ScriptCollisionSystem caches non-script entity userdata across repeated hits.
+  auto colBus = std::make_unique<EventBus>();
+  ScriptCollisionSystem colSys;
+  colSys.Init(reg, colBus);
+  const Entity scriptEnt = reg->CreateEntity();
+  const Entity wallEnt = reg->CreateEntity();
+  Check(RunLua(lua, R"LUA(
+    col_seen = {}
+    col_tbl = {
+      on_collision = function(self, me, other)
+        col_seen[#col_seen + 1] = other
+      end
+    }
+  )LUA"),
+        "prepare collision script table");
+  sol::table colTbl = lua["col_tbl"];
+  sol::protected_function onColFn = colTbl["on_collision"];
+  reg->AddComponent(
+      scriptEnt, ScriptComponent(colTbl, sol::protected_function(sol::lua_nil), sol::protected_function(sol::lua_nil),
+                                 onColFn, sol::protected_function(sol::lua_nil)));
+  const std::vector<std::pair<Entity, Entity>> colPairs{{scriptEnt, wallEnt}};
+  colBus->EmitEvent<CollisionBatchEvent>(colPairs);
+  colBus->EmitEvent<CollisionBatchEvent>(colPairs);
+  lua["wall_expected_id"] = wallEnt.GetId();
+  Check(RunLua(lua, R"LUA(
+    col_count = #col_seen
+    col_same_ud = (col_count == 2) and rawequal(col_seen[1], col_seen[2])
+    col_id_ok = (col_count == 2) and (col_seen[1]:get_id() == wall_expected_id)
+  )LUA"),
+        "verify collision callback results");
+  CheckEq(lua["col_count"].get<int>(), 2, "ScriptCollisionSystem fired twice");
+  CheckEq(lua["col_same_ud"].get<bool>(), true, "Non-script Entity userdata cached and reused across collision hits");
+  CheckEq(lua["col_id_ok"].get<bool>(), true, "Cached non-script Entity userdata preserves entity ID");
+
+#ifndef OCTARINE_SHIPPED
+  // ENG-LUA-03: Verify LuaApiManifest::Write emits typed fields, methods, params, returns, and scalar constants.
+  const auto manifestPath = std::filesystem::temp_directory_path() / "octarine_typed_manifest_test.lua";
+  Check(LuaApiManifest::Write(lua, preBinding, manifestPath.string()), "LuaApiManifest::Write succeeds");
+  std::ifstream mf(manifestPath);
+  const std::string content((std::istreambuf_iterator<char>(mf)), std::istreambuf_iterator<char>());
+  mf.close();
+  std::error_code ec;
+  std::filesystem::remove(manifestPath, ec);
+
+  Check(content.find("---@class position_component\n---@field value vec2\n---@field x number\n---@field y number") !=
+            std::string::npos,
+        "Manifest emits typed ---@field annotations on position_component");
+  Check(content.find("function lifetime_component:extend(arg1) end") != std::string::npos,
+        "Manifest emits colon method lifetime_component:extend");
+  Check(content.find("function entity:get_id() end") != std::string::npos, "Manifest emits entity:get_id method");
+  Check(content.find("---@return position_component\nfunction registry.get_position(arg1) end") != std::string::npos,
+        "Manifest emits typed return on registry.get_position");
+  Check(
+      content.find("---@return position_component?\nfunction registry.try_get_position(arg1) end") != std::string::npos,
+      "Manifest emits nullable return on registry.try_get_position");
+  Check(content.find("---@return number, number\nfunction get_camera_position_xy() end") != std::string::npos,
+        "Manifest emits multi-return signature on get_camera_position_xy");
+  Check(content.find("---@field TILE_SOLID integer") != std::string::npos,
+        "Manifest infers integer type for tilemap.TILE_SOLID constant");
+#else
+  (void)preBinding;
+#endif
+}
 }  // namespace
 
 int main() {
@@ -438,6 +551,7 @@ int main() {
   Game game;  // SDL-free constructor.
   sol::state& lua = game.GetLua();
   lua.open_libraries(sol::lib::base, sol::lib::math, sol::lib::io, sol::lib::string, sol::lib::table);
+  const auto preBinding = LuaApiManifest::SnapshotGlobals(lua);
 
   RegisterAllLuaBindings();
 #ifdef OCTARINE_HAS_GAME_MODULE
@@ -1161,6 +1275,7 @@ int main() {
   TestUIButtonShapes(lua, reg);
   TestPerformanceTelemetryBindings(lua, reg);
   TestLua55RuntimeAndDeterminism();
+  TestComponentAccessorsInputXyCollisionCacheAndTypedManifest(lua, reg, preBinding);
 
   return octarine::test::ReportSummary("Lua behavior test");
 }

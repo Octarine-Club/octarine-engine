@@ -34,6 +34,34 @@ class ScriptCollisionSystem {
   }
 
  private:
+  static sol::object GetOrCacheNonScriptEntity(lua_State* L, const Entity entity) {
+    constexpr const char* kCacheKey = "__octarine_collision_entity_cache";
+    constexpr int kMaxCachedEntities = 8192;
+    sol::state_view sv(L);
+    sol::table reg = sv.registry();
+    sol::object tblObj = reg.raw_get<sol::object>(kCacheKey);
+    sol::table cache = tblObj.is<sol::table>() ? tblObj.as<sol::table>() : sv.create_table();
+    if (!tblObj.is<sol::table>()) {
+      cache.raw_set("__count", 0);
+      reg.raw_set(kCacheKey, cache);
+    }
+    const auto key = static_cast<lua_Integer>(entity.id);
+    sol::object cached = cache.raw_get<sol::object>(key);
+    if (cached.valid() && cached != sol::lua_nil) {
+      return cached;
+    }
+    int count = cache.raw_get_or("__count", 0);
+    if (count >= kMaxCachedEntities) {
+      cache = sv.create_table();
+      count = 0;
+      reg.raw_set(kCacheKey, cache);
+    }
+    sol::object created = sol::make_object(sv, entity);
+    cache.raw_set(key, created);
+    cache.raw_set("__count", count + 1);
+    return created;
+  }
+
   void DispatchCollisionCallback(const sol::protected_function& callback, ScriptComponent& script, const Entity self,
                                  const Entity other) const {
     if (callback == sol::lua_nil) {
@@ -41,18 +69,12 @@ class ScriptCollisionSystem {
     }
     lua_State* L = callback.lua_state();
     sol::object selfObj = script.GetOrCacheEntity(L, self);
-    if (registry_->HasComponent<ScriptComponent>(other)) {
-      auto& otherScript = registry_->GetComponent<ScriptComponent>(other);
-      sol::object otherObj = otherScript.GetOrCacheEntity(L, other);
-      if (auto result = callback(script.script_table, selfObj, otherObj); !result.valid()) {
-        const sol::error err = result;
-        Logger::ErrorLua(std::string(err.what()));
-      }
-    } else {
-      if (auto result = callback(script.script_table, selfObj, other); !result.valid()) {
-        const sol::error err = result;
-        Logger::ErrorLua(std::string(err.what()));
-      }
+    sol::object otherObj = registry_->HasComponent<ScriptComponent>(other)
+                               ? registry_->GetComponent<ScriptComponent>(other).GetOrCacheEntity(L, other)
+                               : GetOrCacheNonScriptEntity(L, other);
+    if (auto result = callback(script.script_table, selfObj, otherObj); !result.valid()) {
+      const sol::error err = result;
+      Logger::ErrorLua(std::string(err.what()));
     }
   }
 

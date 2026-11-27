@@ -7,10 +7,12 @@
 
 #include "AssetManager/AssetManager.h"
 #include "Audio/AudioGainRegistry.h"
+#include "Components/CameraComponents.h"
 #include "Components/SpriteComponent.h"
 #include "Components/TextLabelComponent.h"
 #include "Components/UINineSliceComponent.h"
 #include "ECS/Registry.h"
+#include "Engine/EngineBootstrap.h"
 #include "EventBus/EventBus.h"
 #include "Events/AudioPlayEvent.h"
 #include "Game/EngineContext.h"
@@ -393,6 +395,176 @@ void TestAudioGainRegistryBindings(sol::state& lua, Game& game) {
   Check(RunLua(lua, "set_native_sfx_volume(0.8, true)"), "set_native_sfx_volume(muted=true) executes");
   bus.EmitEvent<AudioPlayEvent>("ui_click", 1.0F);
   Check(std::abs(observer.lastVolume - 0.0F) < 1e-4F, "AudioGainRegistry zeroes volume when muted");
+
+  // ENG-LUA-11: Unregistered cues and explicit-volume Lua play_sound honor sfx_volume when unmuted.
+  Check(RunLua(lua, "set_native_sfx_volume(0.5, false)"), "set_native_sfx_volume(0.5, false) executes");
+  bus.EmitEvent<AudioPlayEvent>("unregistered_cue", 1.0F, true);
+  Check(std::abs(observer.lastVolume - 0.5F) < 1e-4F, "Unregistered cue honors master sfx_volume");
+
+  bus.EmitEvent<AudioPlayEvent>("ui_click", 0.6F, true);
+  Check(std::abs(observer.lastVolume - 0.15F) < 1e-4F, "Explicit Lua volume scales by cue_gain * sfx_volume");
+
+  bus.EmitEvent<AudioPlayEvent>("unregistered_cue", 0.6F, true);
+  Check(std::abs(observer.lastVolume - 0.30F) < 1e-4F, "Explicit Lua volume on unregistered cue scales by sfx_volume");
+
+  // Also verify Lua play_sound() directly through EngineContext.eventBus + AudioGainRegistry.
+  {
+    EngineContext ectx{};
+    ectx.eventBus = &bus;
+    reg->Set<EngineContext>(ectx);
+    Check(RunLua(lua, R"LUA(
+      set_native_sfx_volume(0.5, false)
+      play_sound("unregistered_lua_sfx", 0.4)
+      set_audio_clip_limits("sfx_rapid", 3, 0.08)
+    )LUA"),
+          "play_sound and set_audio_clip_limits execute");
+    Check(std::abs(observer.lastVolume - 0.20F) < 1e-4F, "Lua play_sound(id, 0.4) scales by sfx_volume (0.5) -> 0.20");
+    CheckEq(gainReg.clip_limits["sfx_rapid"].maxVoices, 3, "set_audio_clip_limits sets maxVoices");
+    Check(std::abs(gainReg.clip_limits["sfx_rapid"].minIntervalSec - 0.08) < 1e-6,
+          "set_audio_clip_limits sets minIntervalSec");
+  }
+}
+
+void TestSandboxedIoDofileImportTagsAndXy(sol::state& lua, Game& game) {
+  std::cout << "[Lua: sandboxed read_file_lines, dofile text-mode, import cache, tags & _xy getters]\n";
+  const auto tempProj = std::filesystem::temp_directory_path() / "octarine_lua_batch_d_proj";
+  const auto outsideFile = std::filesystem::temp_directory_path() / "octarine_outside_secret.lua";
+  std::error_code ec;
+  std::filesystem::remove_all(tempProj, ec);
+  std::filesystem::create_directories(tempProj / "data", ec);
+  std::filesystem::create_directories(tempProj / "scripts", ec);
+
+  {
+    std::ofstream f(tempProj / "config.ini", std::ios::trunc);
+    f << "[Game]\nTitle = TestProj\nStartupScript = scripts/mod_counter.lua\n";
+  }
+  {
+    std::ofstream f(tempProj / "data" / "lines.txt", std::ios::binary | std::ios::trunc);
+    f << "alpha\nbeta\r\ngamma\n";
+  }
+  {
+    std::ofstream f(tempProj / "scripts" / "mod_counter.lua", std::ios::trunc);
+    f << "_G.mod_load_count = (_G.mod_load_count or 0) + 1\nreturn { version = _G.mod_load_count }\n";
+  }
+  {
+    std::ofstream f(tempProj / "scripts" / "cyc_a.lua", std::ios::trunc);
+    f << "return import('scripts/cyc_b')\n";
+  }
+  {
+    std::ofstream f(tempProj / "scripts" / "cyc_b.lua", std::ios::trunc);
+    f << "return import('scripts/cyc_a')\n";
+  }
+  {
+    std::ofstream f(tempProj / "scripts" / "evil_bytecode.lua", std::ios::binary | std::ios::trunc);
+    f.write("\x1bLua\x55\x00\x01\x02", 8);
+  }
+  {
+    std::ofstream f(outsideFile, std::ios::trunc);
+    f << "return 'escaped'\n";
+  }
+
+  auto* reg = game.GetRegistry();
+  if (reg->TryGet<EngineContext>() == nullptr) {
+    reg->Set<EngineContext>(EngineContext{});
+  }
+  engine_bootstrap::InstallLuaLibraries(lua);
+  engine_bootstrap::InstallCoreSingletons(*reg, reg->Get<EngineContext>(), 800, 600, false, &lua);
+  GameConfig projCfg;
+  projCfg.LoadConfigFromFile(tempProj.string());
+  reg->Set<GameConfig>(projCfg);
+  reg->Get<AssetManager>().LoadGameConfig(projCfg);
+  reg->Get<CameraComponent>().viewport.x = 320.0F;
+  reg->Get<CameraComponent>().viewport.y = 180.0F;
+
+  Check(RunLua(lua, R"LUA(
+    ok_lines = read_file_lines("data/lines.txt")
+    prefixed_lines = read_file_lines(get_asset_path("data/lines.txt"))
+    escaped_rel = read_file_lines("../octarine_outside_secret.lua")
+    escaped_abs = read_file_lines("/etc/hosts")
+
+    df_res = dofile("scripts/mod_counter.lua")
+    df_escape_ok = pcall(dofile, "../octarine_outside_secret.lua")
+    df_bin_ok = pcall(dofile, "scripts/evil_bytecode.lua")
+
+    _G.mod_load_count = 0
+    m1 = import("scripts/mod_counter")
+    m2 = import("scripts/mod_counter.lua")
+    imp_same = rawequal(m1, m2)
+    imp_count_after_cached = _G.mod_load_count
+    imp_cyc_ok, imp_cyc_err = pcall(import, "scripts/cyc_a")
+    imp_bin_ok = pcall(import, "scripts/evil_bytecode.lua")
+    clear_import_cache("scripts/mod_counter")
+    m3 = import("scripts/mod_counter")
+    imp_count_after_clear = _G.mod_load_count
+
+    t_ent = load_entity({ name = "UniqueLookupTarget" })
+    found_ent = find_entity_by_name("UniqueLookupTarget")
+    found_matches = (found_ent ~= nil and found_ent:get_id() == t_ent:get_id())
+
+    tag_before = has_tag(t_ent, "elite_unit")
+    add_tag(t_ent, "elite_unit")
+    tag_during = has_tag(t_ent, "elite_unit") and registry.has_tag(t_ent, "elite_unit")
+    remove_tag(t_ent, "elite_unit")
+    tag_after = has_tag(t_ent, "elite_unit")
+
+    cam_x, cam_y = get_camera_position_xy()
+    map_w, map_h = get_game_map_dimensions_xy()
+
+    print(setmetatable({}, { __tostring = function() return "safe_custom_tostring" end }))
+    bad_print_ok = pcall(function()
+      print(setmetatable({}, { __tostring = function() error("tostring_boom") end }))
+    end)
+  )LUA"),
+        "sandboxed IO, dofile, import, tags, _xy getters, and safe print execute");
+
+  sol::table okLines = lua["ok_lines"];
+  sol::table prefLines = lua["prefixed_lines"];
+  CheckEq(okLines.size(), static_cast<std::size_t>(3), "read_file_lines reads 3 lines from project-relative file");
+  CheckEq(okLines[2].get<std::string>(), std::string("beta"), "read_file_lines strips CRLF cleanly");
+  CheckEq(prefLines.size(), static_cast<std::size_t>(3), "read_file_lines accepts get_asset_path(...) path");
+  CheckEq(lua["escaped_rel"].get<sol::table>().size(), static_cast<std::size_t>(0),
+          "read_file_lines rejects ../ path traversal");
+  CheckEq(lua["escaped_abs"].get<sol::table>().size(), static_cast<std::size_t>(0),
+          "read_file_lines rejects host absolute paths outside project root");
+
+  CheckEq(lua["df_escape_ok"].get<bool>(), false, "dofile rejects ../ path traversal");
+  CheckEq(lua["df_bin_ok"].get<bool>(), false, "dofile rejects unscrambled binary bytecode in text mode");
+
+  CheckEq(lua["imp_same"].get<bool>(), true, "import caches module across extension-less and .lua paths");
+  CheckEq(lua["imp_count_after_cached"].get<int>(), 1, "cached import executes chunk once");
+  CheckEq(lua["imp_cyc_ok"].get<bool>(), false, "circular import fails cleanly without stack overflow");
+  Check(lua["imp_cyc_err"].get<std::string>().find("circular") != std::string::npos,
+        "circular import reports circular dependency");
+  CheckEq(lua["imp_bin_ok"].get<bool>(), false, "import rejects binary bytecode");
+  CheckEq(lua["imp_count_after_clear"].get<int>(), 2, "clear_import_cache evicts cached module");
+
+  // Verify hot_reload.poll_scripts evicts modified scripts from import cache automatically.
+  const auto modScript = tempProj / "scripts" / "mod_counter.lua";
+  reg->Get<GameConfig>().GetEngineOptions().hotReloadPollSeconds = 0.05F;
+  lua["mod_disk_path"] = modScript.string();
+  Check(RunLua(lua, "set_hot_reload_enabled(true); hot_reload.track_script(mod_disk_path)"), "track mod_counter.lua");
+  const auto prevMtime = std::filesystem::last_write_time(modScript, ec);
+  std::filesystem::last_write_time(modScript, prevMtime + std::chrono::seconds(3), ec);
+  Check(RunLua(lua, R"LUA(
+    hot_reload.poll_scripts(0.2)
+    m4 = import("scripts/mod_counter")
+    imp_count_after_hot_reload = _G.mod_load_count
+    set_hot_reload_enabled(false)
+  )LUA"),
+        "poll_scripts evicts import cache entry on mtime change");
+  CheckEq(lua["imp_count_after_hot_reload"].get<int>(), 3, "import reloads module after hot_reload.poll_scripts");
+
+  CheckEq(lua["found_matches"].get<bool>(), true, "find_entity_by_name locates entity without GetUserEntities copy");
+  CheckEq(lua["tag_before"].get<bool>(), false, "has_tag initially false");
+  CheckEq(lua["tag_during"].get<bool>(), true, "add_tag attaches dynamic tag visible to global and registry.has_tag");
+  CheckEq(lua["tag_after"].get<bool>(), false, "remove_tag removes dynamic tag");
+  Check(std::abs(lua["cam_x"].get<float>() - 320.0F) < 1e-3F && std::abs(lua["cam_y"].get<float>() - 180.0F) < 1e-3F,
+        "get_camera_position_xy returns camera x, y without vec2 allocation");
+  Check(lua["map_w"].is<float>() && lua["map_h"].is<float>(), "get_game_map_dimensions_xy returns numeric pair");
+  CheckEq(lua["bad_print_ok"].get<bool>(), true, "print survives throwing __tostring metamethod");
+
+  std::filesystem::remove(outsideFile, ec);
+  std::filesystem::remove_all(tempProj, ec);
 }
 
 }  // namespace
@@ -428,6 +600,7 @@ int main() {
   TestPlatformAndUrlValidation(lua, game);
   TestHotReloadTrackerBindings(lua, game);
   TestAudioGainRegistryBindings(lua, game);
+  TestSandboxedIoDofileImportTagsAndXy(lua, game);
 
   std::filesystem::remove_all(testSaveDir);
   return octarine::test::ReportSummary("OctarineLuaModulesTest");

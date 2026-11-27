@@ -8,6 +8,7 @@
 #include <cmath>
 #include <filesystem>
 #include <sstream>
+#include <unordered_set>
 
 #include "AssetManager/AssetManager.h"
 #include "Components/CapsulePrimitiveComponent.h"
@@ -33,6 +34,7 @@
 #include "Game/GameConfig.h"
 #include "General/Logger.h"
 #include "Lua/Bindings/TextLabelComponentLuaBinding.h"
+#include "Lua/LuaSchemaRegistry.h"
 #include "Renderer/SpriteRenderCache.h"
 #include "Systems/UIButtonSystem.h"
 #ifndef OCTARINE_SHIPPED
@@ -112,26 +114,176 @@ void SetPathValue(sol::table& root, std::string_view path, const sol::object& va
   }
 }
 
+void CopyQuotedLiteral(std::string_view expr, std::size_t& i, std::string& out) {
+  const char quote = expr[i];
+  out.push_back(quote);
+  ++i;
+  while (i < expr.size()) {
+    const char c = expr[i];
+    out.push_back(c);
+    if (c == '\\' && i + 1 < expr.size()) {
+      out.push_back(expr[++i]);
+    } else if (c == quote) {
+      break;
+    }
+    ++i;
+  }
+}
+
 std::string NormalizeLuaExpr(std::string_view expr) {
   std::string out;
   out.reserve(expr.size() + 4);
   for (std::size_t i = 0; i < expr.size(); ++i) {
-    if (expr[i] == '!' && (i + 1 >= expr.size() || expr[i + 1] != '=')) {
+    const char c = expr[i];
+    if (c == '\'' || c == '"') {
+      CopyQuotedLiteral(expr, i, out);
+    } else if (c == '!' && (i + 1 >= expr.size() || expr[i + 1] != '=')) {
       out += "not ";
-    } else if (i + 1 < expr.size() && expr[i] == '!' && expr[i + 1] == '=') {
+    } else if (i + 1 < expr.size() && c == '!' && expr[i + 1] == '=') {
       out += "~=";
       ++i;
-    } else if (i + 1 < expr.size() && expr[i] == '&' && expr[i + 1] == '&') {
+    } else if (i + 1 < expr.size() && c == '&' && expr[i + 1] == '&') {
       out += " and ";
       ++i;
-    } else if (i + 1 < expr.size() && expr[i] == '|' && expr[i + 1] == '|') {
+    } else if (i + 1 < expr.size() && c == '|' && expr[i + 1] == '|') {
       out += " or ";
       ++i;
     } else {
-      out.push_back(expr[i]);
+      out.push_back(c);
     }
   }
   return out;
+}
+
+bool IsIdentStart(const char c) {
+  const auto uc = static_cast<unsigned char>(c);
+  return std::isalpha(uc) != 0 || c == '_';
+}
+
+bool IsIdentCont(const char c) {
+  const auto uc = static_cast<unsigned char>(c);
+  return std::isalnum(uc) != 0 || c == '_';
+}
+
+bool IsLuaExprKeyword(std::string_view tok) {
+  return tok == "and" || tok == "or" || tok == "not" || tok == "true" || tok == "false" || tok == "nil";
+}
+
+void SkipQuotedSpan(std::string_view expr, std::size_t& i) {
+  const char quote = expr[i++];
+  while (i < expr.size()) {
+    if (expr[i] == '\\' && i + 1 < expr.size()) {
+      i += 2;
+      continue;
+    }
+    if (expr[i] == quote) break;
+    ++i;
+  }
+}
+
+void ExtractExprIdentifiers(std::string_view expr, std::unordered_set<std::string>& out) {
+  for (std::size_t i = 0; i < expr.size(); ++i) {
+    const char c = expr[i];
+    if (c == '\'' || c == '"') {
+      SkipQuotedSpan(expr, i);
+      continue;
+    }
+    if (!IsIdentStart(c)) continue;
+    const std::size_t start = i;
+    while (i + 1 < expr.size() && IsIdentCont(expr[i + 1])) {
+      ++i;
+    }
+    const std::string_view tok = expr.substr(start, i - start + 1);
+    if (!IsLuaExprKeyword(tok)) {
+      out.emplace(tok);
+    }
+  }
+}
+
+void ExtractInterpolatedIdentifiers(std::string_view raw, std::unordered_set<std::string>& out) {
+  std::size_t i = 0;
+  while (i < raw.size()) {
+    const std::size_t open = raw.find('{', i);
+    if (open == std::string_view::npos) break;
+    const std::size_t close = raw.find('}', open + 1);
+    if (close == std::string_view::npos) break;
+    ExtractExprIdentifiers(raw.substr(open + 1, close - open - 1), out);
+    i = close + 1;
+  }
+}
+
+std::string LastDotPathSegment(std::string_view path) {
+  const std::size_t dot = path.rfind('.');
+  return std::string(dot == std::string_view::npos ? path : path.substr(dot + 1));
+}
+
+constexpr const char* kUiExprStateRegKey = "__octarine_ui_expr_state";
+constexpr const char* kMountedViewsRegKey = "__octarine_mounted_views";
+constexpr std::size_t kMaxCachedUiExpressions = 4096;
+
+sol::table GetOrInitUiExprState(sol::state& lua) {
+  sol::table reg = lua.registry();
+  sol::object existing = reg.raw_get<sol::object>(kUiExprStateRegKey);
+  if (existing.is<sol::table>()) {
+    return existing.as<sol::table>();
+  }
+
+  sol::table state = lua.create_table();
+  sol::table cache = lua.create_table();
+  sol::table env = lua.create_table();
+  sol::table meta = lua.create_table();
+  meta.set_function("__index",
+                    [state](const sol::table&, const std::string& key, const sol::this_state s) -> sol::object {
+                      const sol::object activeScope = state.raw_get<sol::object>("scope");
+                      if (activeScope.is<sol::table>()) {
+                        const sol::object v = activeScope.as<sol::table>().get<sol::object>(key);
+                        if (v.valid() && v != sol::lua_nil) return v;
+                      }
+                      sol::state_view sv(s);
+                      return sv.globals().get<sol::object>(key);
+                    });
+  env[sol::metatable_key] = meta;
+  state.raw_set("cache", cache);
+  state.raw_set("env", env);
+  state.raw_set("count", 0);
+  reg.raw_set(kUiExprStateRegKey, state);
+  return state;
+}
+
+sol::object CompileOrGetCachedUiExpr(sol::state& lua, sol::table& state, std::string_view trimmed) {
+  sol::table cache = state.raw_get<sol::table>("cache");
+  const std::string normExpr = NormalizeLuaExpr(trimmed);
+  sol::object cached = cache.raw_get<sol::object>(normExpr);
+  if (cached.valid() && cached != sol::lua_nil) {
+    return cached;
+  }
+
+  const int count = state.raw_get_or("count", 0);
+  if (static_cast<std::size_t>(count) >= kMaxCachedUiExpressions) {
+    cache = lua.create_table();
+    state.raw_set("cache", cache);
+    state.raw_set("count", 0);
+  }
+
+  lua_State* L = lua.lua_state();
+  const std::string code = "return (" + normExpr + ")";
+  if (luaL_loadbufferx(L, code.data(), code.size(), "=oxml_expr", "t") != LUA_OK) {
+    lua_pop(L, 1);
+    cache.raw_set(normExpr, false);
+    state.raw_set("count", state.raw_get_or("count", 0) + 1);
+    return sol::make_object(lua, false);
+  }
+
+  sol::table env = state.raw_get<sol::table>("env");
+  env.push(L);
+  lua_setupvalue(L, -2, 1);
+  sol::protected_function fn(L, -1);
+  lua_pop(L, 1);
+
+  sol::object fnObj = sol::make_object(lua, fn);
+  cache.raw_set(normExpr, fnObj);
+  state.raw_set("count", state.raw_get_or("count", 0) + 1);
+  return fnObj;
 }
 
 sol::object EvalBindingExpr(sol::state& lua, std::string_view rawExpr, const sol::table& scope) {
@@ -141,25 +293,18 @@ sol::object EvalBindingExpr(sol::state& lua, std::string_view rawExpr, const sol
     return GetPathValue(scope, trimmed);
   }
 
-  const std::string luaExpr = "return (" + NormalizeLuaExpr(trimmed) + ")";
-  sol::load_result chunk = lua.load(luaExpr);
-  if (!chunk.valid()) {
+  sol::table state = GetOrInitUiExprState(lua);
+  const sol::object fnObj = CompileOrGetCachedUiExpr(lua, state, trimmed);
+  if (!fnObj.is<sol::protected_function>()) {
     return sol::lua_nil;
   }
-  auto fn = chunk.get<sol::protected_function>();
-  sol::environment env(lua, sol::create);
-  sol::table meta = lua.create_table();
-  meta.set_function("__index", [scope, &lua](const sol::table&, const std::string& key) -> sol::object {
-    if (scope.valid()) {
-      sol::object v = scope.get<sol::object>(key);
-      if (v.valid() && v != sol::lua_nil) return v;
-    }
-    return lua.get<sol::object>(key);
-  });
-  env[sol::metatable_key] = meta;
-  sol::set_environment(env, fn);
 
+  const sol::object prevScope = state.raw_get<sol::object>("scope");
+  state.raw_set("scope", scope);
+  const sol::protected_function fn = fnObj.as<sol::protected_function>();
   const sol::protected_function_result res = fn();
+  state.raw_set("scope", prevScope);
+
   if (!res.valid() || res.return_count() == 0) {
     return sol::lua_nil;
   }
@@ -490,12 +635,38 @@ struct SliderState {
   std::vector<sol::protected_function> changeListeners{};
 };
 
+struct RefreshEntry {
+  std::unordered_set<std::string> deps{};
+  std::string producesKey{};
+  std::function<void(std::unordered_set<std::string>*)> fn{};
+};
+
+bool MatchesAnyDep(const std::unordered_set<std::string>& deps, const std::unordered_set<std::string>& dirtyKeys) {
+  for (const auto& k : dirtyKeys) {
+    if (deps.contains(k)) return true;
+  }
+  return false;
+}
+
+void RunRefreshEntries(const std::vector<RefreshEntry>& entries, std::unordered_set<std::string>* dirtyKeys) {
+  for (const auto& entry : entries) {
+    if (dirtyKeys != nullptr && !entry.deps.empty() && !MatchesAnyDep(entry.deps, *dirtyKeys)) {
+      continue;
+    }
+    entry.fn(dirtyKeys);
+    if (dirtyKeys != nullptr && !entry.producesKey.empty()) {
+      dirtyKeys->insert(entry.producesKey);
+    }
+  }
+}
+
 struct RepeaterRecord {
   Entity parentEntity{};
   OxmlNode itemTemplate{};
   OxmlEachClause clause{};
+  std::unordered_set<std::string> listDeps{};
   std::vector<Entity> spawnedEntities{};
-  std::vector<std::function<void()>> itemRefreshFns{};
+  std::vector<RefreshEntry> itemRefreshEntries{};
 };
 
 struct ChildOrderSlot {
@@ -510,8 +681,14 @@ sol::object LookupKeyInTable(const sol::table& tbl, const std::string& key) {
   return (v.valid() && v != sol::lua_nil) ? v : sol::object(sol::lua_nil);
 }
 
+struct UIViewInstance;
+
+void PinMountedView(sol::state* lua, uint64_t viewId, const std::shared_ptr<UIViewInstance>& view);
+void UnpinMountedView(sol::state* lua, uint64_t viewId);
+
 struct UIViewInstance : std::enable_shared_from_this<UIViewInstance> {
   UIRuntime* runtime{nullptr};
+  uint64_t viewId{0};
   Entity rootEntity{};
   sol::table context{};
   sol::table params{};
@@ -525,11 +702,11 @@ struct UIViewInstance : std::enable_shared_from_this<UIViewInstance> {
 #ifndef OCTARINE_SHIPPED
   OxmlDocument document{};
 #endif
-  std::vector<std::function<void()>> refreshFns{};
-  std::vector<std::function<void()>>* activeRefreshSink{nullptr};
+  std::vector<RefreshEntry> refreshEntries{};
+  std::vector<RefreshEntry>* activeRefreshSink{nullptr};
   std::vector<std::function<void()>> unmountFns{};
-  std::unordered_map<uint32_t, std::shared_ptr<SliderState>> sliders{};
-  std::unordered_map<uint32_t, std::vector<sol::protected_function>> changeCallbacks{};
+  std::unordered_map<EntityID, std::shared_ptr<SliderState>> sliders{};
+  std::unordered_map<EntityID, std::vector<sol::protected_function>> changeCallbacks{};
   std::unordered_map<EntityID, std::vector<ChildOrderSlot>> parentChildSlots{};
   std::vector<Entity> inertSubtreeRoots{};
   std::vector<std::string> acquiredAssetIds{};
@@ -561,19 +738,31 @@ struct UIViewInstance : std::enable_shared_from_this<UIViewInstance> {
     SetSubtreeInert(runtime->GetRegistry(), entity, inert || isInert);
   }
 
-  void AddRefreshFn(std::function<void()> fn) {
-    auto& target = (activeRefreshSink != nullptr) ? *activeRefreshSink : refreshFns;
-    target.push_back(std::move(fn));
+  void AddRefreshFn(std::function<void()> fn, std::unordered_set<std::string> deps = {}, std::string producesKey = {}) {
+    auto& target = (activeRefreshSink != nullptr) ? *activeRefreshSink : refreshEntries;
+    target.push_back(RefreshEntry{
+        .deps = std::move(deps),
+        .producesKey = std::move(producesKey),
+        .fn = [cb = std::move(fn)](std::unordered_set<std::string>*) { cb(); },
+    });
+  }
+
+  void AddRefreshEntry(RefreshEntry entry) {
+    auto& target = (activeRefreshSink != nullptr) ? *activeRefreshSink : refreshEntries;
+    target.push_back(std::move(entry));
   }
 
   [[nodiscard]] sol::table MakeScope(const sol::table& localVars = sol::lua_nil) const {
     sol::state& lua = *runtime->GetLua();
     sol::table scope = lua.create_table();
     sol::table meta = lua.create_table();
-    meta.set_function("__index", [this, localVars](const sol::table&, const std::string& key) -> sol::object {
+    const std::weak_ptr<const UIViewInstance> weakSelf = weak_from_this();
+    meta.set_function("__index", [weakSelf, localVars](const sol::table&, const std::string& key) -> sol::object {
       if (const sol::object v = LookupKeyInTable(localVars, key); v != sol::lua_nil) return v;
-      if (const sol::object v = LookupKeyInTable(context, key); v != sol::lua_nil) return v;
-      return LookupKeyInTable(params, key);
+      const auto self = weakSelf.lock();
+      if (!self) return sol::lua_nil;
+      if (const sol::object v = LookupKeyInTable(self->context, key); v != sol::lua_nil) return v;
+      return LookupKeyInTable(self->params, key);
     });
     scope[sol::metatable_key] = meta;
     return scope;
@@ -605,16 +794,7 @@ struct UIViewInstance : std::enable_shared_from_this<UIViewInstance> {
     return reg != nullptr && reg->IsAlive(rootEntity);
   }
 
-  void Refresh() {
-    if (!IsCurrentlyMounted() || isRefreshing) {
-      if (!IsCurrentlyMounted()) isMounted = false;
-      return;
-    }
-    isRefreshing = true;
-    const auto fns = refreshFns;
-    for (const auto& fn : fns) {
-      fn();
-    }
+  void SyncInertAfterRefresh() {
     if (isInert) {
       SetSubtreeInert(runtime->GetRegistry(), rootEntity, true);
     } else if (!inertSubtreeRoots.empty()) {
@@ -624,21 +804,41 @@ struct UIViewInstance : std::enable_shared_from_this<UIViewInstance> {
         SetSubtreeInert(reg, subRoot, true);
       }
     }
+  }
+
+  void RefreshKey(const std::string& changedKey) {
+    if (!IsCurrentlyMounted() || isRefreshing) {
+      if (!IsCurrentlyMounted()) isMounted = false;
+      return;
+    }
+    isRefreshing = true;
+    const auto entries = refreshEntries;
+    if (changedKey.empty()) {
+      RunRefreshEntries(entries, nullptr);
+    } else {
+      std::unordered_set<std::string> dirtyKeys{changedKey};
+      RunRefreshEntries(entries, &dirtyKeys);
+    }
+    SyncInertAfterRefresh();
     isRefreshing = false;
   }
 
+  void Refresh() { RefreshKey(""); }
+
   void Unmount() {
     if (!isMounted) return;
+    const auto self = shared_from_this();
     isMounted = false;
     InvokeController("on_unmount");
     for (auto& fn : unmountFns) {
       fn();
     }
     unmountFns.clear();
-    refreshFns.clear();
+    refreshEntries.clear();
     sliders.clear();
     changeCallbacks.clear();
     parentChildSlots.clear();
+    inertSubtreeRoots.clear();
     if (runtime != nullptr && !acquiredAssetIds.empty()) {
       if (AssetManager* am = runtime->GetAssetManager()) {
         am->ReleaseAll(acquiredAssetIds);
@@ -649,8 +849,37 @@ struct UIViewInstance : std::enable_shared_from_this<UIViewInstance> {
     if (reg != nullptr && reg->IsAlive(rootEntity)) {
       reg->BlamEntity(rootEntity);
     }
+    if (runtime != nullptr) {
+      UnpinMountedView(runtime->GetLua(), viewId);
+    }
+    context = sol::lua_nil;
+    params = sol::lua_nil;
+    controller = sol::lua_nil;
+    refsTable = sol::lua_nil;
+    viewTable = sol::lua_nil;
+    paramOverrides = sol::lua_nil;
   }
 };
+
+void PinMountedView(sol::state* lua, const uint64_t viewId, const std::shared_ptr<UIViewInstance>& view) {
+  if (lua == nullptr || viewId == 0) return;
+  sol::table reg = lua->registry();
+  sol::object tblObj = reg.raw_get<sol::object>(kMountedViewsRegKey);
+  sol::table tbl = tblObj.is<sol::table>() ? tblObj.as<sol::table>() : lua->create_table();
+  if (!tblObj.is<sol::table>()) {
+    reg.raw_set(kMountedViewsRegKey, tbl);
+  }
+  tbl.raw_set(viewId, view);
+}
+
+void UnpinMountedView(sol::state* lua, const uint64_t viewId) {
+  if (lua == nullptr || viewId == 0) return;
+  sol::table reg = lua->registry();
+  sol::object tblObj = reg.raw_get<sol::object>(kMountedViewsRegKey);
+  if (tblObj.is<sol::table>()) {
+    tblObj.as<sol::table>().raw_set(viewId, sol::lua_nil);
+  }
+}
 
 constexpr const char* kStyleAttrs[] = {
     "width",
@@ -1224,10 +1453,10 @@ void HandleToggleClick(const std::shared_ptr<UIViewInstance>& v, Entity entity, 
   sol::object valObj = sol::make_object(*v->runtime->GetLua(), nextChecked);
   if (!bindPath.empty() && v->context.valid()) {
     SetPathValue(v->context, bindPath, valObj);
-    v->Refresh();
+    v->RefreshKey(LastDotPathSegment(bindPath));
   }
   v->InvokeController(onChangeMethod, valObj);
-  if (const auto it = v->changeCallbacks.find(entity.GetId()); it != v->changeCallbacks.end()) {
+  if (const auto it = v->changeCallbacks.find(entity.id); it != v->changeCallbacks.end()) {
     for (const auto& cb : it->second) {
       cb(nextChecked);
     }
@@ -1263,11 +1492,15 @@ void ConfigureToggleEntity(const std::shared_ptr<UIViewInstance>& view, Entity e
   SetEntityDisabled(reg, entity, isDisabled);
 
   if (!bindPath.empty()) {
-    view->AddRefreshFn([weakView, entity, bindPath]() {
-      auto v = weakView.lock();
-      if (!v || !v->context.valid()) return;
-      SetEntityChecked(v->runtime->GetRegistry(), entity, ObjectToBool(GetPathValue(v->context, bindPath)));
-    });
+    std::unordered_set<std::string> deps;
+    ExtractExprIdentifiers(bindPath, deps);
+    view->AddRefreshFn(
+        [weakView, entity, bindPath]() {
+          auto v = weakView.lock();
+          if (!v || !v->context.valid()) return;
+          SetEntityChecked(v->runtime->GetRegistry(), entity, ObjectToBool(GetPathValue(v->context, bindPath)));
+        },
+        std::move(deps));
   }
 }
 
@@ -1283,7 +1516,7 @@ void HandleRadioButtonClick(const std::shared_ptr<UIViewInstance>& v, Entity ent
     }
     if (!radioGroup->bindPath.empty() && v->context.valid()) {
       SetPathValue(v->context, radioGroup->bindPath, valObj);
-      v->Refresh();
+      v->RefreshKey(LastDotPathSegment(radioGroup->bindPath));
     }
     v->InvokeController(radioGroup->onChangeMethod, valObj);
   } else {
@@ -1291,7 +1524,7 @@ void HandleRadioButtonClick(const std::shared_ptr<UIViewInstance>& v, Entity ent
   }
 
   v->InvokeController(onClickMethod, valObj);
-  if (const auto it = v->changeCallbacks.find(entity.GetId()); it != v->changeCallbacks.end()) {
+  if (const auto it = v->changeCallbacks.find(entity.id); it != v->changeCallbacks.end()) {
     for (const auto& cb : it->second) {
       cb(optionValue);
     }
@@ -1354,7 +1587,7 @@ void SetSliderValue(const std::shared_ptr<UIViewInstance>& view, const std::shar
   sol::object valObj = sol::make_object(*view->runtime->GetLua(), st->value);
   if (!st->bindPath.empty() && view->context.valid()) {
     SetPathValue(view->context, st->bindPath, valObj);
-    view->Refresh();
+    view->RefreshKey(LastDotPathSegment(st->bindPath));
   }
   view->InvokeController(st->onChangeMethod, valObj);
   for (const auto& cb : st->changeListeners) {
@@ -1436,7 +1669,7 @@ void ConfigureSliderEntity(const std::shared_ptr<UIViewInstance>& view, Entity e
   reg->AddComponent(entity, sq);
   UpdateSliderVisuals(reg, *st);
 
-  view->sliders[entity.GetId()] = st;
+  view->sliders[entity.id] = st;
 
   const bool isDisabled = ParseBoolStr(node.GetAttr("disabled", resolved.Get("disabled", "false")), false);
   UIButtonComponent btn;
@@ -1467,12 +1700,16 @@ void ConfigureSliderEntity(const std::shared_ptr<UIViewInstance>& view, Entity e
   SetEntityDisabled(reg, entity, isDisabled);
 
   if (!st->bindPath.empty()) {
-    view->AddRefreshFn([weakView, st]() {
-      auto v = weakView.lock();
-      if (!v || !v->context.valid()) return;
-      const float boundVal = ObjectToFloat(GetPathValue(v->context, st->bindPath), st->value);
-      SetSliderValue(v, st, boundVal, false);
-    });
+    std::unordered_set<std::string> deps;
+    ExtractExprIdentifiers(st->bindPath, deps);
+    view->AddRefreshFn(
+        [weakView, st]() {
+          auto v = weakView.lock();
+          if (!v || !v->context.valid()) return;
+          const float boundVal = ObjectToFloat(GetPathValue(v->context, st->bindPath), st->value);
+          SetSliderValue(v, st, boundVal, false);
+        },
+        std::move(deps));
   }
 }
 
@@ -1502,6 +1739,8 @@ std::string UnwrapBindingOrRaw(std::string rawAttr) {
 void BindVisibilityAttribute(const std::shared_ptr<UIViewInstance>& view, Entity entity, const std::string& rawAttr,
                              const sol::table& scope) {
   const std::string expr = UnwrapBindingOrRaw(rawAttr);
+  std::unordered_set<std::string> deps;
+  ExtractExprIdentifiers(expr, deps);
   std::weak_ptr<UIViewInstance> weakView = view;
   auto applyVis = [weakView, entity, expr, scope]() {
     auto v = weakView.lock();
@@ -1510,12 +1749,14 @@ void BindVisibilityAttribute(const std::shared_ptr<UIViewInstance>& view, Entity
     SetEntityVisibility(v->runtime->GetRegistry(), entity, vis);
   };
   applyVis();
-  view->AddRefreshFn(applyVis);
+  view->AddRefreshFn(applyVis, std::move(deps));
 }
 
 void BindDisabledAttribute(const std::shared_ptr<UIViewInstance>& view, Entity entity, const std::string& rawAttr,
                            const sol::table& scope) {
   const std::string expr = UnwrapBindingOrRaw(rawAttr);
+  std::unordered_set<std::string> deps;
+  ExtractExprIdentifiers(expr, deps);
   std::weak_ptr<UIViewInstance> weakView = view;
   auto applyDis = [weakView, entity, expr, scope]() {
     auto v = weakView.lock();
@@ -1524,11 +1765,13 @@ void BindDisabledAttribute(const std::shared_ptr<UIViewInstance>& view, Entity e
     SetEntityDisabled(v->runtime->GetRegistry(), entity, dis);
   };
   applyDis();
-  view->AddRefreshFn(applyDis);
+  view->AddRefreshFn(applyDis, std::move(deps));
 }
 
 void BindSpriteAttribute(const std::shared_ptr<UIViewInstance>& view, Entity entity, const std::string& rawSprite,
                          const sol::table& scope) {
+  std::unordered_set<std::string> deps;
+  ExtractInterpolatedIdentifiers(rawSprite, deps);
   std::weak_ptr<UIViewInstance> weakView = view;
   auto applySprite = [weakView, entity, rawSprite, scope]() {
     auto v = weakView.lock();
@@ -1549,7 +1792,7 @@ void BindSpriteAttribute(const std::shared_ptr<UIViewInstance>& view, Entity ent
     }
   };
   applySprite();
-  view->AddRefreshFn(applySprite);
+  view->AddRefreshFn(applySprite, std::move(deps));
 }
 
 void ApplyResolvedBoxAndFlexUpdate(Registry* r, Entity entity, const OxmlNode& node, const OssResolvedStyle& resolved) {
@@ -1633,22 +1876,38 @@ void ApplyResolvedVisualUpdate(Registry* r, Entity entity, const OxmlNode& node,
   }
 }
 
+std::unordered_set<std::string> CollectDynamicStyleDeps(const OxmlNode& node) {
+  std::unordered_set<std::string> deps;
+  ExtractInterpolatedIdentifiers(node.GetAttr("class"), deps);
+  ExtractInterpolatedIdentifiers(node.GetAttr("style"), deps);
+  for (const char* key : kStyleAttrs) {
+    const auto it = node.attributes.find(key);
+    if (it != node.attributes.end() && OxmlParser::ContainsBinding(it->second)) {
+      ExtractInterpolatedIdentifiers(it->second, deps);
+    }
+  }
+  return deps;
+}
+
 void BindDynamicStyleAttributes(const std::shared_ptr<UIViewInstance>& view, Entity entity, const OxmlNode& node,
                                 const sol::table& scope) {
   if (!HasDynamicStyleOrClassBinding(node)) return;
+  std::unordered_set<std::string> deps = CollectDynamicStyleDeps(node);
   std::weak_ptr<UIViewInstance> weakView = view;
-  view->AddRefreshFn([weakView, entity, node, scope]() {
-    auto v = weakView.lock();
-    if (!v) return;
-    Registry* r = v->runtime->GetRegistry();
-    if (!r->IsAlive(entity)) return;
-    sol::state& l = *v->runtime->GetLua();
-    const auto classes = ResolveNodeClasses(node, scope, l);
-    const auto inlineProps = CollectInlineStyleProps(node, scope, l);
-    const OssResolvedStyle resolved = v->stylesheet.Resolve(node.tag, classes, node.GetAttr("id"), inlineProps);
-    ApplyResolvedBoxAndFlexUpdate(r, entity, node, resolved);
-    ApplyResolvedVisualUpdate(r, entity, node, resolved);
-  });
+  view->AddRefreshFn(
+      [weakView, entity, node, scope]() {
+        auto v = weakView.lock();
+        if (!v) return;
+        Registry* r = v->runtime->GetRegistry();
+        if (!r->IsAlive(entity)) return;
+        sol::state& l = *v->runtime->GetLua();
+        const auto classes = ResolveNodeClasses(node, scope, l);
+        const auto inlineProps = CollectInlineStyleProps(node, scope, l);
+        const OssResolvedStyle resolved = v->stylesheet.Resolve(node.tag, classes, node.GetAttr("id"), inlineProps);
+        ApplyResolvedBoxAndFlexUpdate(r, entity, node, resolved);
+        ApplyResolvedVisualUpdate(r, entity, node, resolved);
+      },
+      std::move(deps));
 }
 
 void BindTextAttribute(const std::shared_ptr<UIViewInstance>& view, Entity entity, const OxmlNode& node,
@@ -1657,14 +1916,19 @@ void BindTextAttribute(const std::shared_ptr<UIViewInstance>& view, Entity entit
     return;
   }
   const std::string rawText = node.GetAttr("text");
+  std::unordered_set<std::string> deps;
+  ExtractInterpolatedIdentifiers(rawText, deps);
   std::weak_ptr<UIViewInstance> weakView = view;
-  view->AddRefreshFn([weakView, entity, rawText, scope]() {
-    auto v = weakView.lock();
-    if (!v) return;
-    Registry* r = v->runtime->GetRegistry();
-    if (!r->IsAlive(entity) || !r->HasComponent<TextLabelComponent>(entity)) return;
-    r->GetComponent<TextLabelComponent>(entity).text = EvalInterpolatedString(*v->runtime->GetLua(), rawText, scope);
-  });
+  view->AddRefreshFn(
+      [weakView, entity, rawText, scope]() {
+        auto v = weakView.lock();
+        if (!v) return;
+        Registry* r = v->runtime->GetRegistry();
+        if (!r->IsAlive(entity) || !r->HasComponent<TextLabelComponent>(entity)) return;
+        r->GetComponent<TextLabelComponent>(entity).text =
+            EvalInterpolatedString(*v->runtime->GetLua(), rawText, scope);
+      },
+      std::move(deps));
 }
 
 void BindProgressValueAttribute(const std::shared_ptr<UIViewInstance>& view, Entity entity, const OxmlNode& node,
@@ -1673,15 +1937,20 @@ void BindProgressValueAttribute(const std::shared_ptr<UIViewInstance>& view, Ent
     return;
   }
   const std::string valExpr = UnwrapBindingOrRaw(node.GetAttr("value"));
+  std::unordered_set<std::string> deps;
+  ExtractExprIdentifiers(valExpr, deps);
   std::weak_ptr<UIViewInstance> weakView = view;
-  view->AddRefreshFn([weakView, entity, valExpr, scope]() {
-    auto v = weakView.lock();
-    if (!v) return;
-    Registry* r = v->runtime->GetRegistry();
-    if (!r->IsAlive(entity) || !r->HasComponent<SquarePrimitiveComponent>(entity)) return;
-    const float p = std::clamp(ObjectToFloat(EvalBindingExpr(*v->runtime->GetLua(), valExpr, scope), 0.0f), 0.0f, 1.0f);
-    r->GetComponent<SquarePrimitiveComponent>(entity).fillRatio = p;
-  });
+  view->AddRefreshFn(
+      [weakView, entity, valExpr, scope]() {
+        auto v = weakView.lock();
+        if (!v) return;
+        Registry* r = v->runtime->GetRegistry();
+        if (!r->IsAlive(entity) || !r->HasComponent<SquarePrimitiveComponent>(entity)) return;
+        const float p =
+            std::clamp(ObjectToFloat(EvalBindingExpr(*v->runtime->GetLua(), valExpr, scope), 0.0f), 0.0f, 1.0f);
+        r->GetComponent<SquarePrimitiveComponent>(entity).fillRatio = p;
+      },
+      std::move(deps));
 }
 
 void RegisterAttributeBindings(const std::shared_ptr<UIViewInstance>& view, Entity entity, const OxmlNode& node,
@@ -1748,7 +2017,7 @@ void AttachRefValueMethods(sol::table& h, const std::weak_ptr<UIViewInstance>& w
   h.set_function("set_value", [weakView, entity](const sol::table&, const float val) {
     auto v = weakView.lock();
     if (!v) return;
-    if (const auto sIt = v->sliders.find(entity.GetId()); sIt != v->sliders.end()) {
+    if (const auto sIt = v->sliders.find(entity.id); sIt != v->sliders.end()) {
       SetSliderValue(v, sIt->second, val, false);
       return;
     }
@@ -1761,7 +2030,7 @@ void AttachRefValueMethods(sol::table& h, const std::weak_ptr<UIViewInstance>& w
   h.set_function("get_value", [weakView, entity](const sol::table&) -> float {
     auto v = weakView.lock();
     if (!v) return 0.0f;
-    if (const auto sIt = v->sliders.find(entity.GetId()); sIt != v->sliders.end()) {
+    if (const auto sIt = v->sliders.find(entity.id); sIt != v->sliders.end()) {
       return sIt->second->value;
     }
     Registry* r = v->runtime->GetRegistry();
@@ -1826,10 +2095,10 @@ void RegisterRefEventHandler(const std::shared_ptr<UIViewInstance>& v, Entity en
                                                 })
                             .get<sol::protected_function>("fn");
   } else if (eventName == "change") {
-    if (const auto sIt = v->sliders.find(entity.GetId()); sIt != v->sliders.end()) {
+    if (const auto sIt = v->sliders.find(entity.id); sIt != v->sliders.end()) {
       sIt->second->changeListeners.push_back(fn);
     } else {
-      v->changeCallbacks[entity.GetId()].push_back(fn);
+      v->changeCallbacks[entity.id].push_back(fn);
     }
   }
 }
@@ -1885,7 +2154,7 @@ void ClearRepeaterSpawnedItems(const std::shared_ptr<UIViewInstance>& v, const s
     }
   }
   rec->spawnedEntities.clear();
-  rec->itemRefreshFns.clear();
+  rec->itemRefreshEntries.clear();
   std::erase_if(v->sliders, [r](const auto& kv) { return !r->IsAlive(kv.second->entity); });
   std::erase_if(v->changeCallbacks, [r](const auto& kv) { return !r->IsAlive(Entity(kv.first)); });
 }
@@ -1918,9 +2187,7 @@ std::optional<std::size_t> FindFocusedRepeaterIndex(Registry* r, const std::vect
 void FinalizeRepeaterItems(Registry* r, const std::shared_ptr<UIViewInstance>& v,
                            const std::shared_ptr<RepeaterRecord>& rec,
                            const std::optional<std::size_t> prevFocusedIdx) {
-  for (const auto& fn : rec->itemRefreshFns) {
-    fn();
-  }
+  RunRefreshEntries(rec->itemRefreshEntries, nullptr);
   if (v->isInert || IsEntityInert(r, rec->parentEntity)) {
     for (const Entity e : rec->spawnedEntities) {
       SetSubtreeInert(r, e, true);
@@ -1950,7 +2217,7 @@ void RebuildRepeaterItems(const std::shared_ptr<UIViewInstance>& v, const std::s
   if (!listObj.is<sol::table>()) return;
 
   auto* prevSink = v->activeRefreshSink;
-  v->activeRefreshSink = &rec->itemRefreshFns;
+  v->activeRefreshSink = &rec->itemRefreshEntries;
   const sol::table listTbl = listObj.as<sol::table>();
   const std::size_t len = listTbl.size();
   for (std::size_t idx = 1; idx <= len; ++idx) {
@@ -1991,6 +2258,7 @@ void MountRepeaterNode(const std::shared_ptr<UIViewInstance>& view, const OxmlNo
   rec->parentEntity = parentEntity;
   rec->itemTemplate = std::move(cleanTemplate);
   rec->clause = clause;
+  ExtractExprIdentifiers(clause.listExpr, rec->listDeps);
   view->parentChildSlots[parentEntity.id].push_back(ChildOrderSlot{.isRepeater = true, .repeater = rec});
 
   std::weak_ptr<UIViewInstance> weakView = view;
@@ -2010,7 +2278,19 @@ void MountRepeaterNode(const std::shared_ptr<UIViewInstance>& view, const OxmlNo
   };
 
   rebuild();
-  view->AddRefreshFn(rebuild);
+  view->AddRefreshEntry(RefreshEntry{
+      .deps = {},
+      .producesKey = {},
+      // NOLINTNEXTLINE(misc-no-recursion)
+      .fn =
+          [rec, rebuild](std::unordered_set<std::string>* dirtyKeys) {
+            if (dirtyKeys == nullptr || rec->listDeps.empty() || MatchesAnyDep(rec->listDeps, *dirtyKeys)) {
+              rebuild();
+            } else {
+              RunRefreshEntries(rec->itemRefreshEntries, dirtyKeys);
+            }
+          },
+  });
 }
 
 bool IsReservedCallSiteAttr(const std::string& key) {
@@ -2060,11 +2340,15 @@ Entity InstantiateImportedUse(const std::shared_ptr<UIViewInstance>& view, const
       paramVars[k] = EvalBoundAttrValue(lua, rawVal, scope);
       const std::string key = k;
       const std::string valStr = rawVal;
-      view->AddRefreshFn([weakView, paramVars, key, valStr, scope]() mutable {
-        auto v = weakView.lock();
-        if (!v) return;
-        paramVars[key] = EvalBoundAttrValue(*v->runtime->GetLua(), valStr, scope);
-      });
+      std::unordered_set<std::string> deps;
+      ExtractInterpolatedIdentifiers(valStr, deps);
+      view->AddRefreshFn(
+          [weakView, paramVars, key, valStr, scope]() mutable {
+            auto v = weakView.lock();
+            if (!v) return;
+            paramVars[key] = EvalBoundAttrValue(*v->runtime->GetLua(), valStr, scope);
+          },
+          std::move(deps), key);
     } else {
       paramVars[k] = rawVal;
     }
@@ -2102,15 +2386,19 @@ void BindCustomWidgetAttributes(const std::shared_ptr<UIViewInstance>& view, con
     props[k] = EvalBoundAttrValue(lua, rawVal, scope);
     const std::string key = k;
     const std::string valStr = rawVal;
-    view->AddRefreshFn([weakView, instanceCtx, props, key, valStr, scope, onPropChanged]() mutable {
-      auto v = weakView.lock();
-      if (!v) return;
-      sol::object nextVal = EvalBoundAttrValue(*v->runtime->GetLua(), valStr, scope);
-      props[key] = nextVal;
-      if (onPropChanged.has_value()) {
-        (*onPropChanged)(instanceCtx, key, nextVal);
-      }
-    });
+    std::unordered_set<std::string> deps;
+    ExtractInterpolatedIdentifiers(valStr, deps);
+    view->AddRefreshFn(
+        [weakView, instanceCtx, props, key, valStr, scope, onPropChanged]() mutable {
+          auto v = weakView.lock();
+          if (!v) return;
+          sol::object nextVal = EvalBoundAttrValue(*v->runtime->GetLua(), valStr, scope);
+          props[key] = nextVal;
+          if (onPropChanged.has_value()) {
+            (*onPropChanged)(instanceCtx, key, nextVal);
+          }
+        },
+        std::move(deps), key);
   }
 }
 
@@ -2180,16 +2468,20 @@ std::shared_ptr<RadioGroupState> CreateRadioGroupState(const std::shared_ptr<UIV
   rg->onChangeMethod = node.GetAttr("on-change");
   rg->currentValue = ResolveInitialRadioValue(view, node, rg->bindPath, scope, lua);
   if (!rg->bindPath.empty()) {
+    std::unordered_set<std::string> deps;
+    ExtractExprIdentifiers(rg->bindPath, deps);
     std::weak_ptr<UIViewInstance> weakView = view;
-    view->AddRefreshFn([weakView, rg]() {
-      auto v = weakView.lock();
-      if (!v || !v->context.valid()) return;
-      Registry* r = v->runtime->GetRegistry();
-      rg->currentValue = ObjectToString(GetPathValue(v->context, rg->bindPath));
-      for (const auto& [btnEnt, btnVal] : rg->buttons) {
-        SetEntityChecked(r, btnEnt, btnVal == rg->currentValue);
-      }
-    });
+    view->AddRefreshFn(
+        [weakView, rg]() {
+          auto v = weakView.lock();
+          if (!v || !v->context.valid()) return;
+          Registry* r = v->runtime->GetRegistry();
+          rg->currentValue = ObjectToString(GetPathValue(v->context, rg->bindPath));
+          for (const auto& [btnEnt, btnVal] : rg->buttons) {
+            SetEntityChecked(r, btnEnt, btnVal == rg->currentValue);
+          }
+        },
+        std::move(deps));
   }
   return rg;
 }
@@ -2587,47 +2879,68 @@ void ApplyMountOptions(const sol::optional<sol::table>& opts, const std::shared_
 }
 
 void PopulateMountViewTable(const std::shared_ptr<UIViewInstance>& view) {
-  auto bindContextObservable = [view]() {
-    if (IsTableObservable(view->context)) {
-      std::weak_ptr<UIViewInstance> weakView = view;
-      SubscribeObservableTable(view->context, [weakView](const std::string&) {
-        if (auto v = weakView.lock()) {
-          v->Refresh();
-        }
-      });
-    }
+  const std::weak_ptr<UIViewInstance> weakView = view;
+  auto bindContextObservable = [weakView]() {
+    auto v = weakView.lock();
+    if (!v || !IsTableObservable(v->context)) return;
+    SubscribeObservableTable(v->context, [weakView](const std::string& changedKey) {
+      if (auto locked = weakView.lock()) {
+        locked->RefreshKey(changedKey);
+      }
+    });
   };
   bindContextObservable();
 
   sol::table vt = view->viewTable;
   vt.set("root", view->rootEntity);
   vt.set("refs", view->refsTable);
-  vt.set_function("refresh", [view](const sol::table&) { view->Refresh(); });
-  vt.set_function("set_context", [view, bindContextObservable](const sol::table&, const sol::table& newCtx) {
-    view->context = newCtx;
-    bindContextObservable();
-    view->Refresh();
+  vt.set_function("refresh", [weakView](const sol::table&) {
+    if (auto v = weakView.lock()) v->Refresh();
   });
-  vt.set_function("get_context", [view](const sol::table&) -> sol::object { return view->context; });
-  vt.set_function(
-      "show", [view](const sol::table&) { SetEntityVisibility(view->runtime->GetRegistry(), view->rootEntity, true); });
-  vt.set_function("hide", [view](const sol::table&) {
-    SetEntityVisibility(view->runtime->GetRegistry(), view->rootEntity, false);
+  vt.set_function("set_context", [weakView, bindContextObservable](const sol::table&, const sol::table& newCtx) {
+    if (auto v = weakView.lock()) {
+      v->context = newCtx;
+      bindContextObservable();
+      v->Refresh();
+    }
   });
-  vt.set_function("set_inert", [view](const sol::table&, const bool inert) { view->SetInert(inert); });
-  vt.set_function("is_inert", [view](const sol::table&) -> bool { return view->isInert; });
-  vt.set_function("is_mounted", [view](const sol::table&) -> bool { return view->IsCurrentlyMounted(); });
-  vt.set_function("focus_first", [view](const sol::table&) -> sol::optional<Entity> {
-    if (!view || !view->IsCurrentlyMounted()) return sol::nullopt;
-    Registry* r = view->runtime->GetRegistry();
-    if (const auto target = FindFirstFocusableInSubtree(r, view->rootEntity)) {
+  vt.set_function("get_context", [weakView](const sol::table&) -> sol::object {
+    const auto v = weakView.lock();
+    return v ? sol::object(v->context) : sol::object(sol::lua_nil);
+  });
+  vt.set_function("show", [weakView](const sol::table&) {
+    if (auto v = weakView.lock()) SetEntityVisibility(v->runtime->GetRegistry(), v->rootEntity, true);
+  });
+  vt.set_function("hide", [weakView](const sol::table&) {
+    if (auto v = weakView.lock()) SetEntityVisibility(v->runtime->GetRegistry(), v->rootEntity, false);
+  });
+  vt.set_function("set_inert", [weakView](const sol::table&, const bool inert) {
+    if (auto v = weakView.lock()) v->SetInert(inert);
+  });
+  vt.set_function("is_inert", [weakView](const sol::table&) -> bool {
+    const auto v = weakView.lock();
+    return v ? v->isInert : false;
+  });
+  vt.set_function("is_mounted", [weakView](const sol::table&) -> bool {
+    const auto v = weakView.lock();
+    return v ? v->IsCurrentlyMounted() : false;
+  });
+  vt.set_function("focus_first", [weakView](const sol::table&) -> sol::optional<Entity> {
+    const auto v = weakView.lock();
+    if (!v || !v->IsCurrentlyMounted()) return sol::nullopt;
+    Registry* r = v->runtime->GetRegistry();
+    if (const auto target = FindFirstFocusableInSubtree(r, v->rootEntity)) {
       FocusEntitySafe(r, *target);
       return *target;
     }
     return sol::nullopt;
   });
-  vt.set("unmount", [view](const sol::table&) { view->Unmount(); });
-  vt.set("destroy", [view](const sol::table&) { view->Unmount(); });
+  vt.set_function("unmount", [weakView](const sol::table&) {
+    if (auto v = weakView.lock()) v->Unmount();
+  });
+  vt.set_function("destroy", [weakView](const sol::table&) {
+    if (auto v = weakView.lock()) v->Unmount();
+  });
 }
 
 void RebuildViewTreeForReload(UIRuntime* runtime, const std::shared_ptr<UIViewInstance>& v, const OxmlDocument& doc,
@@ -2639,10 +2952,11 @@ void RebuildViewTreeForReload(UIRuntime* runtime, const std::shared_ptr<UIViewIn
   if (reg != nullptr && reg->IsAlive(v->rootEntity)) {
     reg->BlamEntity(v->rootEntity);
   }
-  v->refreshFns.clear();
+  v->refreshEntries.clear();
   v->unmountFns.clear();
   v->sliders.clear();
   v->changeCallbacks.clear();
+  v->parentChildSlots.clear();
   v->inertSubtreeRoots.clear();
   v->stylesheet = std::move(resources.stylesheet);
   v->importedUses = std::move(resources.uses);
@@ -2712,20 +3026,23 @@ AssetManager* UIRuntime::GetAssetManager() const {
 }
 
 void UIRuntime::InstallLuaFunctions(sol::table& uiTable) {
-  uiTable.set_function("mount", [this](const sol::object& source, const sol::optional<sol::table>& opts) {
-    return Mount(source, opts);
-  });
+  using octarine::lua_schema::LuaSchemaRegistry;
+  LuaSchemaRegistry::SetFunction(
+      uiTable, "ui", "mount",
+      [this](const sol::object& source, const sol::optional<sol::table>& opts) { return Mount(source, opts); });
 
-  uiTable.set_function("observable", [this](const sol::optional<sol::table>& raw) {
-    sol::table base = raw.value_or(lua_->create_table());
-    return CreateObservable(base);
-  });
+  LuaSchemaRegistry::SetFunction(uiTable, "ui", "observable",
+                                 [this](const sol::optional<sol::table>& raw, const sol::this_state s) {
+                                   sol::state_view sv(s);
+                                   sol::table base = raw.value_or(sv.create_table());
+                                   return CreateObservable(base);
+                                 });
 
-  uiTable.set_function("register_widget", [this](const std::string& name, const sol::table& descriptor) {
-    RegisterWidget(name, descriptor);
-  });
+  LuaSchemaRegistry::SetFunction(
+      uiTable, "ui", "register_widget",
+      [this](const std::string& name, const sol::table& descriptor) { RegisterWidget(name, descriptor); });
 
-  uiTable.set_function("debug_draw", [this](const sol::optional<bool>& enabled) -> bool {
+  LuaSchemaRegistry::SetFunction(uiTable, "ui", "debug_draw", [this](const sol::optional<bool>& enabled) -> bool {
     if (registry_ == nullptr) return false;
     auto* cfg = registry_->TryGet<UIDebugConfig>();
     if (cfg == nullptr) {
@@ -3047,6 +3364,10 @@ sol::object UIRuntime::Mount(const sol::object& sourceObj, const sol::optional<s
   const sol::table rootScope = view->MakeScope();
   view->rootEntity = InstantiateNode(view, parsed.document.roots.front(), parentEntity, rootScope, nullptr, nullptr);
   PopulateMountViewTable(view);
+  sol::table resultTable = view->viewTable;
+
+  view->viewId = RegisterMountedViewWatch(sourceStr, std::move(resources.watchedPaths), view, parentEntity);
+  PinMountedView(lua_, view->viewId, view);
   view->InvokeController("on_mount");
 
   if (resources.ok) {
@@ -3055,15 +3376,19 @@ sol::object UIRuntime::Mount(const sol::object& sourceObj, const sol::optional<s
     RecordDiagnosticsError(resources.errorFile, resources.errorLine, resources.error);
   }
 
-  RegisterMountedViewWatch(sourceStr, std::move(resources.watchedPaths), view, parentEntity);
-
-  return view->viewTable;
+  return resultTable;
 }
 
 uint64_t UIRuntime::RegisterMountedViewWatch(const std::string& sourceStr, std::vector<std::string> watchedPaths,
                                              const std::shared_ptr<void>& viewErased,
                                              const std::optional<Entity>& parentEntity) {
-  std::erase_if(mounted_views_, [](const auto& r) { return !r->isMountedFn || !r->isMountedFn(); });
+  std::erase_if(mounted_views_, [](const auto& r) {
+    if (!r || !r->isMountedFn || !r->isMountedFn()) {
+      if (r && r->unmountFn) r->unmountFn();
+      return true;
+    }
+    return false;
+  });
   auto rec = std::make_shared<MountedViewRecord>();
   rec->id = next_view_id_++;
   rec->sourcePath = sourceStr;
@@ -3104,7 +3429,13 @@ void UIRuntime::PollHotReload(const float deltaTime, const float pollIntervalSec
     }
     hot_reload_accum_ = 0.0f;
   }
-  std::erase_if(mounted_views_, [](const auto& r) { return !r->isMountedFn || !r->isMountedFn(); });
+  std::erase_if(mounted_views_, [](const auto& r) {
+    if (!r || !r->isMountedFn || !r->isMountedFn()) {
+      if (r && r->unmountFn) r->unmountFn();
+      return true;
+    }
+    return false;
+  });
   const auto snapshot = mounted_views_;
   for (const auto& rec : snapshot) {
     if (!rec->watchedFiles.empty() && HasWatchedViewFilesChanged(rec->watchedFiles, rec->lastWriteTimes) &&
@@ -3169,9 +3500,33 @@ void UIRuntime::UnmountView(const uint64_t id) {
       break;
     }
   }
-  std::erase_if(mounted_views_,
-                [id](const auto& r) { return !r || r->id == id || !r->isMountedFn || !r->isMountedFn(); });
+  std::erase_if(mounted_views_, [id](const auto& r) {
+    if (!r || r->id == id || !r->isMountedFn || !r->isMountedFn()) {
+      if (r && r->id != id && r->unmountFn) r->unmountFn();
+      return true;
+    }
+    return false;
+  });
 }
+
+void UIRuntime::UnmountAllViews() {
+  const auto snapshot = std::move(mounted_views_);
+  mounted_views_.clear();
+  for (const auto& rec : snapshot) {
+    if (rec && rec->unmountFn) {
+      rec->unmountFn();
+    }
+  }
+  if (lua_ != nullptr) {
+    sol::table reg = lua_->registry();
+    sol::object tblObj = reg.raw_get<sol::object>(kMountedViewsRegKey);
+    if (tblObj.is<sol::table>()) {
+      tblObj.as<sol::table>().clear();
+    }
+  }
+}
+
+void UIRuntime::ClearCustomWidgets() { custom_widgets_.clear(); }
 
 std::vector<std::pair<uint64_t, bool>> UIRuntime::SetNonPreviewViewsInert(const uint64_t previewViewId,
                                                                           const bool inert) {

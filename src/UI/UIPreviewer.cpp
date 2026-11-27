@@ -1536,7 +1536,7 @@ void ApplyAutoSeedContextToMountedView(UIRuntime& uiRuntime, const Registry* reg
   }
 }
 
-sol::object MakeWrappedControllerFn(sol::state& lua, const std::shared_ptr<UIPreviewer*>& handle,
+sol::object MakeWrappedControllerFn(sol::state_view lua, const std::shared_ptr<UIPreviewer*>& handle,
                                     const std::string& key, const sol::table& backing,
                                     const sol::protected_function& userFn) {
   return sol::make_object(
@@ -1549,7 +1549,8 @@ sol::object MakeWrappedControllerFn(sol::state& lua, const std::shared_ptr<UIPre
       });
 }
 
-sol::object MakeStubControllerFn(sol::state& lua, const std::shared_ptr<UIPreviewer*>& handle, const std::string& key) {
+sol::object MakeStubControllerFn(sol::state_view lua, const std::shared_ptr<UIPreviewer*>& handle,
+                                 const std::string& key) {
   return sol::make_object(lua, [handle, key](const sol::table&, const sol::object& arg) {
     const std::string msg = key + "(" + FormatFallbackArg(arg) + ")";
     if (handle && *handle != nullptr) {
@@ -1592,15 +1593,17 @@ sol::table UIPreviewer::BuildFallbackController(const sol::optional<sol::table>&
   sol::table meta = lua.create_table();
   const std::shared_ptr<UIPreviewer*> handle = self_handle_;
 
-  meta.set_function("__index", [&lua, backing, handle](const sol::table&, const std::string& key) -> sol::object {
-    if (const sol::object existing = LookupUserControllerMember(backing, key); existing != sol::lua_nil) {
-      return existing.is<sol::protected_function>()
-                 ? MakeWrappedControllerFn(lua, handle, key, backing, existing.as<sol::protected_function>())
-                 : existing;
-    }
-    if (key == "on_mount" || key == "on_unmount") return sol::lua_nil;
-    return MakeStubControllerFn(lua, handle, key);
-  });
+  meta.set_function(
+      "__index", [backing, handle](const sol::table&, const std::string& key, const sol::this_state s) -> sol::object {
+        sol::state_view lua(s);
+        if (const sol::object existing = LookupUserControllerMember(backing, key); existing != sol::lua_nil) {
+          return existing.is<sol::protected_function>()
+                     ? MakeWrappedControllerFn(lua, handle, key, backing, existing.as<sol::protected_function>())
+                     : existing;
+        }
+        if (key == "on_mount" || key == "on_unmount") return sol::lua_nil;
+        return MakeStubControllerFn(lua, handle, key);
+      });
 
   wrapper[sol::metatable_key] = meta;
   return wrapper;

@@ -24,6 +24,7 @@
 #include "Lua/Bindings/UIScrollComponentLuaBinding.h"
 #include "Lua/Bindings/UIStyleStateComponentLuaBinding.h"
 #include "Lua/LuaBindingContext.h"
+#include "Lua/LuaSchemaRegistry.h"
 #include "Systems/UIButtonSystem.h"
 #include "Systems/UILayoutMetrics.h"
 #include "UI/UIRuntime.h"
@@ -257,42 +258,50 @@ bool ApplyDebugDraw(Registry* r, const sol::optional<bool>& enabled) {
 }  // namespace
 
 void LuaModuleBinding<UIModule>::install(sol::state& lua, LuaBindingContext& ctx) {
+  using octarine::lua_schema::LuaSchemaRegistry;
   sol::table ui = lua.create_table();
 
-  ui.set_function("canvas", [&ctx](const Entity entity, const sol::optional<sol::table>& opts) {
-    ApplyCanvas(ctx.GetRegistry(), entity, opts);
-  });
-  ui.set_function("anchor",
-                  [&ctx](const Entity entity, const sol::object& preset_or_table, sol::optional<sol::table> opts) {
-                    ApplyAnchor(ctx.GetRegistry(), entity, preset_or_table, opts);
-                  });
-  ui.set_function("z_index", [&ctx](const Entity entity, const int z) { ApplyZIndex(ctx.GetRegistry(), entity, z); });
-  ui.set_function("flex", [&ctx](const Entity entity, const sol::optional<sol::table>& opts) {
+  LuaSchemaRegistry::SetFunction(ui, "ui", "canvas",
+                                 [&ctx](const Entity entity, const sol::optional<sol::table>& opts) {
+                                   ApplyCanvas(ctx.GetRegistry(), entity, opts);
+                                 });
+  LuaSchemaRegistry::SetFunction(
+      ui, "ui", "anchor",
+      [&ctx](const Entity entity, const sol::object& preset_or_table, sol::optional<sol::table> opts) {
+        ApplyAnchor(ctx.GetRegistry(), entity, preset_or_table, opts);
+      });
+  LuaSchemaRegistry::SetFunction(
+      ui, "ui", "z_index", [&ctx](const Entity entity, const int z) { ApplyZIndex(ctx.GetRegistry(), entity, z); });
+  LuaSchemaRegistry::SetFunction(ui, "ui", "flex", [&ctx](const Entity entity, const sol::optional<sol::table>& opts) {
     ApplyFlex(ctx.GetRegistry(), entity, opts);
   });
-  ui.set_function("box", [&ctx](const Entity entity, const sol::optional<sol::table>& opts) {
+  LuaSchemaRegistry::SetFunction(ui, "ui", "box", [&ctx](const Entity entity, const sol::optional<sol::table>& opts) {
     ApplyBox(ctx.GetRegistry(), entity, opts);
   });
-  ui.set_function("clip", [&ctx](const Entity entity, const sol::optional<sol::object>& opts) {
+  LuaSchemaRegistry::SetFunction(ui, "ui", "clip", [&ctx](const Entity entity, const sol::optional<sol::object>& opts) {
     ApplyClip(ctx.GetRegistry(), entity, opts);
   });
-  ui.set_function("nine_slice", [&ctx](const Entity entity, const sol::object& opts) {
+  LuaSchemaRegistry::SetFunction(ui, "ui", "nine_slice", [&ctx](const Entity entity, const sol::object& opts) {
     ApplyNineSlice(ctx.GetRegistry(), entity, opts);
   });
-  ui.set_function("scroll", [&ctx](const Entity entity, const sol::optional<sol::table>& opts) {
-    ApplyScroll(ctx.GetRegistry(), entity, opts);
+  LuaSchemaRegistry::SetFunction(ui, "ui", "scroll",
+                                 [&ctx](const Entity entity, const sol::optional<sol::table>& opts) {
+                                   ApplyScroll(ctx.GetRegistry(), entity, opts);
+                                 });
+  LuaSchemaRegistry::SetFunction(ui, "ui", "focus",
+                                 [&ctx](const sol::optional<Entity> entity) { ApplyFocus(ctx.GetRegistry(), entity); });
+  LuaSchemaRegistry::SetFunction(ui, "ui", "get_focused", [&ctx]() { return GetFocusedEntity(ctx.GetRegistry()); });
+  LuaSchemaRegistry::SetFunction(ui, "ui", "debug_draw", [&ctx](const sol::optional<bool>& enabled) {
+    return ApplyDebugDraw(ctx.GetRegistry(), enabled);
   });
-  ui.set_function("focus", [&ctx](const sol::optional<Entity> entity) { ApplyFocus(ctx.GetRegistry(), entity); });
-  ui.set_function("get_focused", [&ctx]() { return GetFocusedEntity(ctx.GetRegistry()); });
-  ui.set_function("debug_draw",
-                  [&ctx](const sol::optional<bool>& enabled) { return ApplyDebugDraw(ctx.GetRegistry(), enabled); });
-  ui.set_function("get_scale", [&ctx]() { return octarine::ui::ResolveUiScale(ctx.GetRegistry()); });
-  ui.set_function("get_auto_scale", [&ctx]() {
+  LuaSchemaRegistry::SetFunction(ui, "ui", "get_scale",
+                                 [&ctx]() { return octarine::ui::ResolveUiScale(ctx.GetRegistry()); });
+  LuaSchemaRegistry::SetFunction(ui, "ui", "get_auto_scale", [&ctx]() {
     const Registry* r = ctx.GetRegistry();
     const auto* cfg = r != nullptr ? r->TryGet<GameConfig>() : nullptr;
     return cfg != nullptr ? octarine::ui::ResolveAutoUiScale(*cfg) : 1.0f;
   });
-  ui.set_function("set_scale", [&ctx](const sol::optional<float>& scale) {
+  LuaSchemaRegistry::SetFunction(ui, "ui", "set_scale", [&ctx](const sol::optional<float>& scale) {
     Registry* r = ctx.GetRegistry();
     auto* cfg = r != nullptr ? r->TryGet<GameConfig>() : nullptr;
     if (cfg == nullptr) return 1.0f;
@@ -303,22 +312,33 @@ void LuaModuleBinding<UIModule>::install(sol::state& lua, LuaBindingContext& ctx
   if (Registry* r = ctx.GetRegistry(); r != nullptr) {
     auto& runtime = r->Set<UIRuntime>(UIRuntime(&lua, r, nullptr));
     runtime.InstallLuaFunctions(ui);
+  } else {
+    LuaSchemaRegistry::RegisterFunctionSchema(
+        "ui.mount",
+        {.params = {{.name = "arg1", .type = "string"}, {.name = "arg2", .type = "table", .optional = true}},
+         .returns = {"table"}});
+    LuaSchemaRegistry::RegisterFunctionSchema(
+        "ui.observable", {.params = {{.name = "arg1", .type = "table", .optional = true}}, .returns = {"table"}});
+    LuaSchemaRegistry::RegisterFunctionSchema(
+        "ui.register_widget",
+        {.params = {{.name = "arg1", .type = "string"}, {.name = "arg2", .type = "table"}}, .returns = {}});
   }
 
   lua["ui"] = ui;
 
-  lua.set_function("set_ui_nine_slice", [&ctx](const Entity entity, const float left, const float top,
-                                               const float right, const float bottom) {
-    auto* registry = ctx.GetRegistry();
-    if (registry == nullptr || !registry->IsAlive(entity)) return;
-    if (registry->HasComponent<UINineSliceComponent>(entity)) {
-      auto& ns = registry->GetComponent<UINineSliceComponent>(entity);
-      ns.left = left;
-      ns.top = top;
-      ns.right = right;
-      ns.bottom = bottom;
-    } else {
-      registry->AddComponent(entity, UINineSliceComponent(left, top, right, bottom));
-    }
-  });
+  LuaSchemaRegistry::SetFunction(
+      lua, "set_ui_nine_slice",
+      [&ctx](const Entity entity, const float left, const float top, const float right, const float bottom) {
+        auto* registry = ctx.GetRegistry();
+        if (registry == nullptr || !registry->IsAlive(entity)) return;
+        if (registry->HasComponent<UINineSliceComponent>(entity)) {
+          auto& ns = registry->GetComponent<UINineSliceComponent>(entity);
+          ns.left = left;
+          ns.top = top;
+          ns.right = right;
+          ns.bottom = bottom;
+        } else {
+          registry->AddComponent(entity, UINineSliceComponent(left, top, right, bottom));
+        }
+      });
 }
