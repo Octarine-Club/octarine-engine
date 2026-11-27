@@ -67,9 +67,10 @@ void RunCollisionResponse(const std::vector<std::pair<Entity, Entity>>& pairs, s
   });
 
   for (size_t b = 0; b < poolSize; ++b) {
-    const std::vector<HitT>& batch = perBatch[b];
+    std::vector<HitT>& batch = perBatch[b];
     for (const HitT& hit : batch) {
       apply(hit);
     }
+    batch.clear();
   }
 }

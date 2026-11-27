@@ -199,7 +199,7 @@ class RenderUIPrimitiveSystem {
     if (ratio >= 1.0f || square.trackColor.a == 0) return;
     const float fullW = rect.Width();
     const float fullH = rect.Height();
-    const auto layer = static_cast<unsigned int>(rect.layer);
+    const auto layer = static_cast<unsigned int>(std::max(0, rect.layer));
     const float scaledCorner = square.cornerRadius * uiScale;
     const float r = std::min(scaledCorner, std::min(fullW, fullH) * 0.5f);
     const SDL_Color tcol{square.trackColor.r, square.trackColor.g, square.trackColor.b, square.trackColor.a};
@@ -232,7 +232,7 @@ class RenderUIPrimitiveSystem {
     const float fullW = rect.Width();
     const float fullH = rect.Height();
     const float fillW = fullW * ratio;
-    const auto layer = static_cast<unsigned int>(rect.layer);
+    const auto layer = static_cast<unsigned int>(std::max(0, rect.layer));
     const float scaledCorner = square.cornerRadius * uiScale;
     const float r = std::min(scaledCorner, std::min(fullW, fullH) * 0.5f);
     const float depth = rect.top + (square.trackColor.a > 0 ? 0.005f : 0.0f);
@@ -270,7 +270,7 @@ class RenderUIPrimitiveSystem {
 
     const float fullW = rect.Width();
     const float fullH = rect.Height();
-    const auto layer = static_cast<unsigned int>(rect.layer);
+    const auto layer = static_cast<unsigned int>(std::max(0, rect.layer));
     const SDL_Color bcol{borderColor.r, borderColor.g, borderColor.b, borderColor.a};
     const SDL_BlendMode bmode = octarine::ToSdlBlendMode(square.blendMode);
     const float scaledCorner = square.cornerRadius * uiScale;
@@ -310,8 +310,8 @@ class RenderUIPrimitiveSystem {
                             const float uiScale = 1.0f) {
     if (!rect.visible) return;
     const auto resolved = octarine::ui::ResolveCircle(rect, circle.position, circle.radius, uiScale);
-    auto& cmd = renderQueue.EmplaceCircle(static_cast<unsigned int>(rect.layer), rect.top, nullptr, circle.blendMode,
-                                          rect.clipId);
+    auto& cmd = renderQueue.EmplaceCircle(static_cast<unsigned int>(std::max(0, rect.layer)), rect.top, nullptr,
+                                          circle.blendMode, rect.clipId);
     cmd.center = {resolved.center.x, resolved.center.y};
     cmd.radiusX = resolved.radiusX;
     cmd.radiusY = resolved.radiusY;
@@ -334,8 +334,8 @@ class RenderUIPrimitiveSystem {
     }
     const auto resolved =
         octarine::ui::ResolveCapsule(effectiveRect, capsule.start, capsule.end, capsule.radius, uiScale);
-    auto& cmd = renderQueue.EmplaceCapsule(static_cast<unsigned int>(rect.layer), rect.top, nullptr, capsule.blendMode,
-                                           rect.clipId);
+    auto& cmd = renderQueue.EmplaceCapsule(static_cast<unsigned int>(std::max(0, rect.layer)), rect.top, nullptr,
+                                           capsule.blendMode, rect.clipId);
     cmd.start = {resolved.start.x, resolved.start.y};
     cmd.end = {resolved.end.x, resolved.end.y};
     cmd.radius = resolved.radius;
@@ -350,7 +350,7 @@ class RenderUIPrimitiveSystem {
                               const float uiScale = 1.0f) {
     if (!rect.visible) return;
     const auto resolved = octarine::ui::ResolveTriangle(rect, triangle.p1, triangle.p2, triangle.p3, uiScale);
-    auto& cmd = renderQueue.EmplaceTriangle(static_cast<unsigned int>(rect.layer), rect.top, nullptr,
+    auto& cmd = renderQueue.EmplaceTriangle(static_cast<unsigned int>(std::max(0, rect.layer)), rect.top, nullptr,
                                             triangle.blendMode, rect.clipId);
     cmd.p1 = {resolved.p1.x, resolved.p1.y};
     cmd.p2 = {resolved.p2.x, resolved.p2.y};
@@ -365,8 +365,8 @@ class RenderUIPrimitiveSystem {
                           const octarine::Color& activeColor, const float uiScale = 1.0f) {
     if (!rect.visible) return;
     const auto resolved = octarine::ui::ResolveLine(rect, line.start, line.end, uiScale);
-    auto& cmd =
-        renderQueue.EmplaceLine(static_cast<unsigned int>(rect.layer), rect.top, nullptr, line.blendMode, rect.clipId);
+    auto& cmd = renderQueue.EmplaceLine(static_cast<unsigned int>(std::max(0, rect.layer)), rect.top, nullptr,
+                                        line.blendMode, rect.clipId);
     cmd.start = {resolved.start.x, resolved.start.y};
     cmd.end = {resolved.end.x, resolved.end.y};
     cmd.thickness = octarine::ui::SnapUiThickness(line.thickness, uiScale);

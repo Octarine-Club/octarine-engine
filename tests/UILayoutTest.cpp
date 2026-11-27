@@ -4539,6 +4539,90 @@ void TestBatchDUIRuntimeLifecycleExprAndSelectiveRefresh() {
   Check(
       lua.safe_script("_G.leaked_hud_view:refresh(); _G.leaked_hud_view:unmount()", sol::script_pass_on_error).valid(),
       "Calling methods on unmounted retained Lua view table is a safe no-op");
+
+  // Mid-refresh unmount + multiple change listeners + Lua error logging in UI callbacks.
+  const auto errCountBefore = Logger::RecentScriptErrors().size();
+  const uint64_t errSeqBefore = Logger::RecentScriptErrors().empty() ? 0 : Logger::RecentScriptErrors().back().sequence;
+  const auto midUnmountRes = lua.safe_script(R"(
+    _G.mid_vm = ui.observable({ x = 1 })
+    _G.prop_hits = 0
+    _G.change_hits = 0
+    ui.register_widget("UnmountTriggerWidget", {
+      props = { val = "0" },
+      template = "<Panel><Label text='{val}'/></Panel>",
+      on_prop_changed = function(ctx, k, v)
+        _G.prop_hits = _G.prop_hits + 1
+        if tostring(v) == "2" and _G.mid_view then
+          _G.mid_view:unmount()
+          error("ui_prop_boom")
+        end
+      end
+    })
+    _G.mid_view = ui.mount([[
+      <OXML>
+        <Canvas width="400" height="300">
+          <Column>
+            <UnmountTriggerWidget val="{x}" />
+            <Label ref="after_lbl" text="after:{x}" />
+            <Button ref="err_btn" text="Go" />
+            <Toggle ref="unmount_tog" text="T" />
+          </Column>
+        </Canvas>
+      </OXML>
+    ]], { context = _G.mid_vm })
+    _G.mid_view.refs.err_btn:on("click", function() error("ui_click_boom") end)
+    _G.mid_view.refs.unmount_tog:on("change", function()
+      _G.change_hits = _G.change_hits + 1
+      _G.mid_view:unmount()
+    end)
+    _G.mid_view.refs.unmount_tog:on("change", function()
+      _G.change_hits = _G.change_hits + 100
+    end)
+  )",
+                                             sol::script_pass_on_error);
+  Check(midUnmountRes.valid(), "mid-refresh unmount fixture mounts cleanly");
+  const Entity afterLblEnt = lua["mid_view"]["refs"]["after_lbl"]["entity"].get<Entity>();
+  const Entity errBtnEnt = lua["mid_view"]["refs"]["err_btn"]["entity"].get<Entity>();
+  const Entity unmountTogEnt = lua["mid_view"]["refs"]["unmount_tog"]["entity"].get<Entity>();
+
+  btnSys.TriggerButton(errBtnEnt, reg.GetComponent<UIButtonComponent>(errBtnEnt));
+  const auto errsAfterClick = Logger::RecentScriptErrors();
+  const uint64_t errSeqAfterClick = errsAfterClick.empty() ? 0 : errsAfterClick.back().sequence;
+  Check(errSeqAfterClick > errSeqBefore || errsAfterClick.size() > errCountBefore,
+        "UI ref click callback Lua error is logged via Logger::ErrorLua");
+
+  lua.safe_script("_G.mid_vm.x = 2");
+  Check(!reg.IsAlive(afterLblEnt), "mid-refresh unmount destroyed trailing label entity");
+  CheckEq(lua["prop_hits"].get<int>(), 1, "on_prop_changed ran once before unmounting mid-refresh");
+  const auto errsAfterProp = Logger::RecentScriptErrors();
+  const uint64_t errSeqAfterProp = errsAfterProp.empty() ? 0 : errsAfterProp.back().sequence;
+  Check(errSeqAfterProp > errSeqAfterClick, "on_prop_changed Lua error is logged via Logger::ErrorLua");
+
+  // Re-mount for toggle change listener unmount test (must not UAF or fire listener #2 after unmount).
+  Check(lua.safe_script(R"(
+    _G.change_hits = 0
+    _G.obs_err = ui.observable({ k = 1 })
+    _G.obs_err.__subscribe(_G.obs_err, function() error("ui_obs_boom") end)
+    _G.obs_err.k = 2
+    _G.tog_view = ui.mount("<Canvas width='200' height='100'><Toggle ref='t' text='T'/></Canvas>")
+    _G.tog_view.refs.t:on("change", function()
+      _G.change_hits = _G.change_hits + 1
+      _G.tog_view:unmount()
+    end)
+    _G.tog_view.refs.t:on("change", function()
+      _G.change_hits = _G.change_hits + 100
+    end)
+  )",
+                        sol::script_pass_on_error)
+            .valid(),
+        "observable error & toggle unmount fixture setup");
+  const auto errsAfterObs = Logger::RecentScriptErrors();
+  const uint64_t errSeqAfterObs = errsAfterObs.empty() ? 0 : errsAfterObs.back().sequence;
+  Check(errSeqAfterObs > errSeqAfterProp, "observable listener Lua error is logged via Logger::ErrorLua");
+
+  const Entity togUnmountEnt = lua["tog_view"]["refs"]["t"]["entity"].get<Entity>();
+  btnSys.TriggerButton(togUnmountEnt, reg.GetComponent<UIButtonComponent>(togUnmountEnt));
+  CheckEq(lua["change_hits"].get<int>(), 1, "Toggle change listener stops after first listener unmounts view");
 }
 
 }  // namespace

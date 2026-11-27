@@ -26,8 +26,8 @@ class RenderCirclePrimitiveSystem : public RenderPrimitiveBase {
     const glm::vec2 screenCenter = ToScreenPoint(worldCenter, circle.isFixed);
     const float sortDepth = circle.isFixed ? circle.position.y : (worldCenter.y + ry);
 
-    auto& cmd =
-        renderQueue_->EmplaceCircle(static_cast<unsigned int>(circle.layer), sortDepth, nullptr, circle.blendMode);
+    auto& cmd = renderQueue_->EmplaceCircle(static_cast<unsigned int>(std::max(0, circle.layer)), sortDepth, nullptr,
+                                            circle.blendMode);
     cmd.center = {screenCenter.x, screenCenter.y};
     cmd.radiusX = ToScreenLength(rx, circle.isFixed);
     cmd.radiusY = ToScreenLength(ry, circle.isFixed);

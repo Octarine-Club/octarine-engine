@@ -708,6 +708,61 @@ class KDTreeCollisionSystem {
     EmitCollisionEvents(eventBus, syncPairsScratch_);
   }
 
+  struct SubmitRollbackGuard {
+    AsyncState* state{nullptr};
+    bool committed{false};
+    explicit SubmitRollbackGuard(AsyncState* s) noexcept : state(s) {}
+    SubmitRollbackGuard(const SubmitRollbackGuard&) = delete;
+    SubmitRollbackGuard& operator=(const SubmitRollbackGuard&) = delete;
+    SubmitRollbackGuard(SubmitRollbackGuard&&) = delete;
+    SubmitRollbackGuard& operator=(SubmitRollbackGuard&&) = delete;
+    ~SubmitRollbackGuard() {
+      if (!committed) {
+        ThreadPool::Instance().NoteAsyncWorkerReleased();
+        state->in_flight.store(false, std::memory_order_release);
+      }
+    }
+  };
+
+  struct WorkerCompletionGuard {
+    AsyncState* s{nullptr};
+    bool released{false};
+    explicit WorkerCompletionGuard(AsyncState* statePtr) noexcept : s(statePtr) {}
+    WorkerCompletionGuard(const WorkerCompletionGuard&) = delete;
+    WorkerCompletionGuard& operator=(const WorkerCompletionGuard&) = delete;
+    WorkerCompletionGuard(WorkerCompletionGuard&&) = delete;
+    WorkerCompletionGuard& operator=(WorkerCompletionGuard&&) = delete;
+    void ReleaseWorker() noexcept {
+      if (!released) {
+        released = true;
+        ThreadPool::Instance().NoteAsyncWorkerReleased();
+      }
+    }
+    ~WorkerCompletionGuard() {
+      ReleaseWorker();
+      std::lock_guard<std::mutex> lk(s->mutex);
+      s->ready.store(true, std::memory_order_release);
+      s->cv.notify_one();
+    }
+  };
+
+  void SubmitAsyncCollisionJob() {
+    asyncState_->boxes.swap(cachedBoxes_);
+    asyncState_->ready.store(false, std::memory_order_release);
+    asyncState_->in_flight.store(true, std::memory_order_release);
+
+    ThreadPool::Instance().NoteAsyncWorkerOccupied();
+    SubmitRollbackGuard submitGuard{asyncState_.get()};
+    ThreadPool::Instance().Submit([state = asyncState_.get()] {
+      WorkerCompletionGuard completionGuard{state};
+      state->pairs.clear();
+      ComputeAsyncCollisions(state->boxes, state->pairs);
+      CanonicalizeAndDeduplicatePairs(state->pairs);
+      completionGuard.ReleaseWorker();
+    });
+    submitGuard.committed = true;
+  }
+
   void ResetAsyncFlags() {
     if (!asyncState_) {
       return;
@@ -780,21 +835,7 @@ class KDTreeCollisionSystem {
     std::sort(cachedBoxes_.begin(), cachedBoxes_.end(), [](const Box& a, const Box& b) {
       return a.entity.id != b.entity.id ? (a.entity.id < b.entity.id) : (a.shape < b.shape);
     });
-    asyncState_->boxes.swap(cachedBoxes_);
-    asyncState_->ready.store(false, std::memory_order_release);
-    asyncState_->in_flight.store(true, std::memory_order_release);
-    ThreadPool::Instance().NoteAsyncWorkerOccupied();
-    ThreadPool::Instance().Submit([state = asyncState_.get()] {
-      state->pairs.clear();
-      ComputeAsyncCollisions(state->boxes, state->pairs);
-      CanonicalizeAndDeduplicatePairs(state->pairs);
-      ThreadPool::Instance().NoteAsyncWorkerReleased();
-      {
-        std::lock_guard<std::mutex> lk(state->mutex);
-        state->ready.store(true, std::memory_order_release);
-        state->cv.notify_one();
-      }
-    });
+    SubmitAsyncCollisionJob();
   }
 
  public:

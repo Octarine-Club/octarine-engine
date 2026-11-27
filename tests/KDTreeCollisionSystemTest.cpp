@@ -1,10 +1,7 @@
 // Integration tests for KDTreeCollisionSystem's enter/exit filtering (W2.2).
 //
-// KDTreeCollisionSystem is async: operator() on call N gathers the current entity positions and
-// starts BVH detection; call N+1 consumes that result and emits CollisionBatchEvent. A 20 ms
-// sleep between Update() calls gives the async work time to complete (it finishes in µs for
-// 2-3 entities). Because the detection result is one frame behind the gather, each scenario
-// requires an extra tick to flush the pipeline.
+// Most scenarios run KDTreeCollisionSystem(true) in synchronous mode for deterministic assertions;
+// async coverage explicitly invokes WaitForAsync() between ticks and checks worker-occupancy balance.
 //
 // gtest-free; exit code = failed-check count. Links the ECS core only.
 
@@ -449,17 +446,24 @@ int main() {
     reg.AddComponent(e2, EntityMaskComponent{});
 
     // Step 1: gathers boxes and launches async detection
+    const size_t availBefore = ThreadPool::Instance().AvailableConcurrency();
     reg.Update(1.0f / 60.0f);
     collision.Func().WaitForAsync();
-    // Step 2: consumes async result and updates prevPairs_
+    CheckEq(ThreadPool::Instance().AvailableConcurrency(), availBefore,
+            "ThreadPool AvailableConcurrency restored after async collision pass 1");
+    // Step 2: consumes async result and updates prevPairs_ (and launches pass 2)
     reg.Update(1.0f / 60.0f);
+    collision.Func().WaitForAsync();
 
     Check(collision.Func().IsOverlapping(e1, e2), "e1 and e2 are overlapping");
+    CheckEq(ThreadPool::Instance().AvailableConcurrency(), availBefore,
+            "ThreadPool AvailableConcurrency restored after async collision pass 2");
 
     // Despawn to exercise empty box path with prior pairs
     reg.BlamEntity(e1);
     reg.BlamEntity(e2);
     reg.Update(1.0f / 60.0f);
+    reg.ValidateInvariants();
   }
 
   TestAsyncTeardownLifecycle();
@@ -570,6 +574,7 @@ int main() {
 
     CheckEq(cap.TotalPairs(), 1, "simSubSteps > 1 detects transient sub-step overlap without dropping sub-steps");
     Check(cap.Contains(e1, e2), "simSubSteps > 1 emitted transient (e1, e2) overlap");
+    reg.ValidateInvariants();
   }
 
   return octarine::test::Result();

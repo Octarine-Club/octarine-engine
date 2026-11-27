@@ -28,7 +28,8 @@ class RenderLinePrimitiveSystem : public RenderPrimitiveBase {
     const glm::vec2 s2 = ToScreenPoint(p2World, line.isFixed);
     const float sortDepth = line.isFixed ? line.start.y : maxY;
 
-    auto& cmd = renderQueue_->EmplaceLine(static_cast<unsigned int>(line.layer), sortDepth, nullptr, line.blendMode);
+    auto& cmd = renderQueue_->EmplaceLine(static_cast<unsigned int>(std::max(0, line.layer)), sortDepth, nullptr,
+                                          line.blendMode);
     cmd.start = {s1.x, s1.y};
     cmd.end = {s2.x, s2.y};
     cmd.thickness = ToScreenLength(line.thickness, line.isFixed);

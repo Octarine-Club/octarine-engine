@@ -34,6 +34,7 @@
 #include "Renderer/Renderer.h"
 #include "Systems/DrawColliderSystem.h"
 #include "Systems/InputSystem.h"
+#include "Systems/KDTreeCollisionSystem.h"
 #include "Systems/TilemapSystem.h"
 #include "Systems/UIButtonSystem.h"
 #include "UI/UIRuntime.h"
@@ -527,8 +528,6 @@ void FrameLoop::PollHotReload([[maybe_unused]] const EngineOptions& options, [[m
   }
 #endif
 }
-
-#include "Systems/KDTreeCollisionSystem.h"
 
 namespace {
 float ComputeStepDt(const float deltaTime, const EngineOptions& options, const int subSteps) {

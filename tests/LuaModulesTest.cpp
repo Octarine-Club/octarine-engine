@@ -459,6 +459,10 @@ void TestSandboxedIoDofileImportTagsAndXy(sol::state& lua, Game& game) {
     f.write("\x1bLua\x55\x00\x01\x02", 8);
   }
   {
+    std::ofstream f(tempProj / "scripts" / "bad_runtime.lua", std::ios::trunc);
+    f << "error('runtime_boom')\n";
+  }
+  {
     std::ofstream f(outsideFile, std::ios::trunc);
     f << "return 'escaped'\n";
   }
@@ -492,6 +496,8 @@ void TestSandboxedIoDofileImportTagsAndXy(sol::state& lua, Game& game) {
     imp_same = rawequal(m1, m2)
     imp_count_after_cached = _G.mod_load_count
     imp_cyc_ok, imp_cyc_err = pcall(import, "scripts/cyc_a")
+    imp_bad1_ok, imp_bad1_err = pcall(import, "scripts/bad_runtime")
+    imp_bad2_ok, imp_bad2_err = pcall(import, "scripts/bad_runtime")
     imp_bin_ok = pcall(import, "scripts/evil_bytecode.lua")
     clear_import_cache("scripts/mod_counter")
     m3 = import("scripts/mod_counter")
@@ -535,6 +541,17 @@ void TestSandboxedIoDofileImportTagsAndXy(sol::state& lua, Game& game) {
   CheckEq(lua["imp_cyc_ok"].get<bool>(), false, "circular import fails cleanly without stack overflow");
   Check(lua["imp_cyc_err"].get<std::string>().find("circular") != std::string::npos,
         "circular import reports circular dependency");
+  CheckEq(lua["imp_bad1_ok"].get<bool>(), false, "failing import reports error");
+  CheckEq(lua["imp_bad2_ok"].get<bool>(), false, "retried failing import still fails");
+  Check(lua["imp_bad2_err"].get<std::string>().find("runtime_boom") != std::string::npos,
+        "retried failing import does not poison loading guard with false circular error");
+  {
+    std::ofstream f(tempProj / "scripts" / "cyc_b.lua", std::ios::trunc);
+    f << "return { repaired = true }\n";
+  }
+  Check(RunLua(lua, "repaired_b = import('scripts/cyc_b')"),
+        "import succeeds after fixing module involved in prior longjmp cycle error");
+  CheckEq(lua["repaired_b"]["repaired"].get<bool>(), true, "repaired module returns expected table");
   CheckEq(lua["imp_bin_ok"].get<bool>(), false, "import rejects binary bytecode");
   CheckEq(lua["imp_count_after_clear"].get<int>(), 2, "clear_import_cache evicts cached module");
 

@@ -147,8 +147,8 @@ class RenderUISpriteSystem {
                        const float sx, const float sy, const float sw, const float sh,
                        const octarine::Color& activeColor) {
     static constexpr float kHalf = 0.5f;
-    auto& cmd = renderQueue.EmplaceSprite(static_cast<unsigned int>(rect.layer), rect.top, texture, sprite.blendMode,
-                                          rect.clipId);
+    auto& cmd = renderQueue.EmplaceSprite(static_cast<unsigned int>(std::max(0, rect.layer)), rect.top, texture,
+                                          sprite.blendMode, rect.clipId);
     cmd.destX = dx;
     cmd.destY = dy;
     cmd.destW = dw;

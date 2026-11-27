@@ -155,6 +155,8 @@ class Game : public LuaBindingContext {
 
  private:
   void Setup();
+  SystemId SetupLuaBindingsAndCatalog(GameConfig& gameConfig);
+  void RegisterRenderAndAudioSystems(SystemId scriptSystemId);
   // Resolve the ImGui ini path, init the backend. Empty in non-ImGui builds.
   void InitImGuiBackend();
   // Start the dev-iterate TCP listener when --dev-listen was passed. Empty in shipped builds.

@@ -6,6 +6,7 @@
 #include <SDL3/SDL.h>
 
 #include <cstdint>
+#include <limits>
 #include <numbers>
 #include <string>
 #include <thread>
@@ -22,6 +23,7 @@
 #include "Components/SquarePrimitiveComponent.h"
 #include "Components/TextLabelComponent.h"
 #include "Components/TrianglePrimitiveComponent.h"
+#include "Components/UIRectComponent.h"
 #include "ECS/Registry.h"
 #include "Engine/GameModuleHooks.h"
 #include "Game/EngineContext.h"
@@ -43,6 +45,7 @@
 #include "Systems/RenderTextSystem.h"
 #include "Systems/RenderTrianglePrimitiveSystem.h"
 #include "Systems/RenderUIPrimitiveSystem.h"
+#include "Systems/RenderUISpriteSystem.h"
 #include "TestHarness.h"
 
 using octarine::BlendMode;
@@ -610,7 +613,12 @@ void TestGradientsBatchedTextAndPostScenePass() {
   Check(renderer.CreateScene(sdlRenderer, 64, 64), "CreateScene 64x64");
 
   Registry reg;
+  static int hookInvocations = 0;
+  hookInvocations = 0;
+  game_module::SetRenderPassHook([](Registry&, Renderer&) { ++hookInvocations; });
   game_module::InvokeRegisterRenderPasses(reg, renderer);
+  game_module::SetRenderPassHook(nullptr);
+  CheckEq(hookInvocations, 1, "SetRenderPassHook registers portable post-scene pass callback");
 
   int passInvocations = 0;
   renderer.AddPostScenePass([&passInvocations](const Renderer::RenderPassContext& ctx) {
@@ -687,6 +695,104 @@ void TestGradientsBatchedTextAndPostScenePass() {
   renderer.DestroyScene();
   SDL_DestroyRenderer(sdlRenderer);
   SDL_DestroySurface(surf);
+}
+
+void TestExtremeDepthAndNegativeLayerClamp() {
+  std::cout << "[sortkey+layers] Extreme finite depth saturates cleanly & negative layers clamp to 0\n";
+  // Extreme finite depth values must saturate in the 17-bit depthBand without int64 cast overflow
+  // or bleeding into layer bits.
+  const std::uint64_t hiKey = RenderKey::ComputeSortKey(0u, 1e30f, SPRITE, nullptr);
+  const std::uint64_t loKey = RenderKey::ComputeSortKey(0u, -1e30f, SPRITE, nullptr);
+  const std::uint64_t maxTinyBand =
+      RenderKey::ComputeSortKey(0u, std::numeric_limits<float>::max(), SPRITE, nullptr, 0u, 0u, 1e-35f, true);
+  const std::uint64_t layer1Key = RenderKey::ComputeSortKey(1u, -1e30f, SPRITE, nullptr);
+  Check(hiKey > loKey, "extreme positive finite depth sorts after extreme negative finite depth");
+  CheckEq(hiKey >> 48, static_cast<std::uint64_t>(0), "extreme depth does not bleed into layer field");
+  CheckEq(maxTinyBand >> 48, static_cast<std::uint64_t>(0), "overflowed depth/band quotient stays in layer 0");
+  Check(layer1Key > maxTinyBand, "layer 1 still outranks saturated layer 0 depth");
+
+  // Negative layers in Render* systems clamp to layer 0 rather than wrapping to 65531 above layer 1.
+  Registry reg;
+  auto& cfg = reg.Set<GameConfig>(GameConfig{});
+  cfg.windowWidth = 640;
+  cfg.windowHeight = 480;
+  auto& cam = reg.Set<CameraComponent>(CameraComponent{});
+  cam.viewport = octarine::Rect{0.0f, 0.0f, 640.0f, 480.0f};
+  cam.zoom = 1.0f;
+  reg.Set<AssetManager>(AssetManager{});
+  reg.Set<SpriteRenderCache>(SpriteRenderCache{});
+  auto& rq = reg.Set<RenderQueue>(RenderQueue(64));
+
+  GlobalTransformComponent xf;
+  xf.position = {32.0f, 32.0f};
+
+  RenderSpriteSystem spriteSys;
+  spriteSys.Prepare(&reg);
+  SpriteComponent negSprite;
+  negSprite.layer = -5;
+  negSprite.width = 16.0f;
+  negSprite.height = 16.0f;
+  const Entity spEnt = reg.CreateEntityWithBundle(xf, negSprite);
+  spriteSys(spEnt, xf, negSprite);
+
+  RenderPrimitiveSystem sqSys;
+  sqSys.Prepare(&reg);
+  SquarePrimitiveComponent negSq;
+  negSq.layer = -5;
+  negSq.width = 16.0f;
+  negSq.height = 16.0f;
+  sqSys(negSq, xf);
+
+  RenderCirclePrimitiveSystem circSys;
+  circSys.Prepare(&reg);
+  CirclePrimitiveComponent negCirc;
+  negCirc.layer = -5;
+  negCirc.radius = 8.0f;
+  circSys(negCirc, xf);
+
+  RenderLinePrimitiveSystem lineSys;
+  lineSys.Prepare(&reg);
+  LinePrimitiveComponent negLine;
+  negLine.layer = -5;
+  negLine.end = {16.0f, 0.0f};
+  lineSys(negLine, xf);
+
+  RenderTrianglePrimitiveSystem triSys;
+  triSys.Prepare(&reg);
+  TrianglePrimitiveComponent negTri;
+  negTri.layer = -5;
+  negTri.p2 = {16.0f, 0.0f};
+  negTri.p3 = {0.0f, 16.0f};
+  triSys(negTri, xf);
+
+  RenderCapsulePrimitiveSystem capSys;
+  capSys.Prepare(&reg);
+  CapsulePrimitiveComponent negCap;
+  negCap.layer = -5;
+  negCap.end = {16.0f, 0.0f};
+  negCap.radius = 4.0f;
+  capSys(negCap, xf);
+
+  UIRectComponent negUiRect{0.0f, 0.0f, 32.0f, 32.0f};
+  negUiRect.visible = true;
+  negUiRect.layer = -5;
+  const Entity uiSprEnt = reg.CreateEntityWithBundle(negUiRect, negSprite);
+  RenderUISpriteSystem uiSprSys;
+  uiSprSys.Prepare(&reg);
+  ContextFacade uiCtx(&reg, 0.0f, nullptr, nullptr);
+  uiSprSys(ContextFacade(&reg, 0.0f, nullptr, nullptr), uiSprEnt, negUiRect, negSprite);
+  (void)uiCtx;
+
+  const Entity uiSqEnt = reg.CreateEntityWithBundle(negUiRect, negSq);
+  (void)uiSqEnt;
+  reg.RegisterBulkSystem(RenderUIPrimitiveSystem());
+  reg.Update(0.016f);
+
+  Check(!rq.IsEmpty(), "negative-layer render systems emplaced commands");
+  for (const RenderKey& key : rq) {
+    CheckEq(static_cast<unsigned int>(key.sortKey >> 48), 0u,
+            "negative component/UI layer clamps to render layer 0 instead of wrapping to 65531");
+  }
 }
 
 }  // namespace
@@ -1076,6 +1182,7 @@ int main() {
   TestSpriteAndTextCaches();
   TestWorldPrimitiveDepthAndRotatedNegativeScaleCulling();
   TestGradientsBatchedTextAndPostScenePass();
+  TestExtremeDepthAndNegativeLayerClamp();
 
   std::cout << "[render_queue] ClearGeneration increments on Clear and survives move\n";
   {

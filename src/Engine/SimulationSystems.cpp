@@ -2,10 +2,12 @@
 
 #include <functional>
 
+#include "Components/CameraFollowComponent.h"
 #include "Components/GlobalTransformComponent.h"
 #include "Components/LifetimeComponent.h"
 #include "Components/PositionComponent.h"
 #include "Components/RigidBodyComponent.h"
+#include "Components/ScaleComponent.h"
 #include "Components/SpriteComponent.h"
 #include "ECS/Registry.h"
 #include "Engine/GameModuleHooks.h"
@@ -30,7 +32,9 @@ SimulationSystemHandles RegisterSimulationSystems(Registry& registry, const std:
   game_module::RegisterSimulationSystems(registry, eventBus, velocityIntegration.Id());
 
   // Despawn entities outside playable area (exempting CameraFollowComponent entities).
-  auto offscreenDespawn = registry.RegisterParallelSystem<PositionComponent, SpriteComponent>(OffScreenDespawnSystem());
+  auto offscreenDespawn =
+      registry.RegisterParallelSystem<PositionComponent, SpriteComponent, Opt<GlobalTransformComponent>,
+                                      Opt<ScaleComponent>, Opt<CameraFollowComponent>>(OffScreenDespawnSystem());
 
   // Resolve the transform hierarchy into global positions/scales.
   auto transform = registry.RegisterBulkSystem<GlobalTransformComponent>(TransformSystem());

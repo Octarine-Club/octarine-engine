@@ -327,7 +327,7 @@ class RenderTextSystem {
     if (!placement.visible) return;
     const auto& origin = placement.origin;
     const bool effectivelyFixed = placement.effectivelyFixed;
-    const int renderLayer = placement.renderLayer;
+    const int renderLayer = std::max(0, placement.renderLayer);
     const float sortY = placement.sortY;
     const std::uint8_t clipId = placement.clipId;
 
@@ -378,7 +378,8 @@ class RenderTextSystem {
     const float sx = snapOffset ? std::round(rawSx) : rawSx;
     const float sy = snapOffset ? std::round(rawSy) : rawSy;
     const auto shadowAlpha = static_cast<Uint8>((static_cast<int>(text.shadowColor.a) * activeTextColor.a) / 255);
-    auto& shadowCmd = renderQueue.EmplaceText(static_cast<unsigned int>(renderLayer), sortY, texture, clipId);
+    auto& shadowCmd =
+        renderQueue.EmplaceText(static_cast<unsigned int>(std::max(0, renderLayer)), sortY, texture, clipId);
     shadowCmd.destRect = {x + sx, y + sy, w, h};
     shadowCmd.texture = texture;
     shadowCmd.colorMod = SDL_Color{text.shadowColor.r, text.shadowColor.g, text.shadowColor.b, shadowAlpha};
@@ -442,7 +443,8 @@ class RenderTextSystem {
     for (int ring = 1; ring <= maxRing; ++ring) {
       const float radius = (ring == maxRing ? clampedWidth : static_cast<float>(ring)) * scale;
       for (const auto& dir : kDirs) {
-        auto& outCmd = renderQueue.EmplaceText(static_cast<unsigned int>(renderLayer), sortY, texture, clipId);
+        auto& outCmd =
+            renderQueue.EmplaceText(static_cast<unsigned int>(std::max(0, renderLayer)), sortY, texture, clipId);
         outCmd.destRect = {x + dir.x * radius, y + dir.y * radius, w, h};
         outCmd.texture = texture;
         outCmd.colorMod = modColor;

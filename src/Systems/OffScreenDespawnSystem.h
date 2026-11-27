@@ -10,7 +10,6 @@
 #include "Components/SpriteComponent.h"
 #include "ECS/CommandBuffer.h"
 #include "ECS/Entity.h"
-#include "ECS/Query.h"
 #include "ECS/Registry.h"
 #include "Game/GameConfig.h"
 
@@ -29,20 +28,7 @@ class OffScreenDespawnSystem {
     playableAreaHeight_ = static_cast<float>(gameConfig.playableAreaHeight);
     if (playableAreaWidth_ <= 0) playableAreaWidth_ = windowWidth;
     if (playableAreaHeight_ <= 0) playableAreaHeight_ = windowHeight;
-
-    if (!opt_query_ || opt_query_registry_ != registry) {
-      opt_query_registry_ = registry;
-      opt_query_ = registry->CreateQuery<PositionComponent, SpriteComponent, Opt<GlobalTransformComponent>,
-                                         Opt<ScaleComponent>, Opt<CameraFollowComponent>>();
-    }
-    opt_query_->Update();
-    opt_query_->ParallelForEach([this](const Entity entity, const PositionComponent& position,
-                                       const SpriteComponent& sprite, const GlobalTransformComponent* globalTransform,
-                                       const ScaleComponent* scaleComp, const CameraFollowComponent* cameraFollow) {
-      (*this)(entity, position, sprite, globalTransform, scaleComp, cameraFollow);
-    });
-    cmd_buffer_.Playback(registry_);
-    return false;
+    return true;
   }
 
   void operator()(const Entity entity, const PositionComponent& position, const SpriteComponent& sprite,
@@ -66,30 +52,32 @@ class OffScreenDespawnSystem {
     }
   }
 
+  /// Fallback overload for legacy callers registering `<PositionComponent, SpriteComponent>`
+  /// without `Opt<GlobalTransformComponent>, Opt<ScaleComponent>, Opt<CameraFollowComponent>`.
   void operator()(const Entity entity, const PositionComponent& position, const SpriteComponent& sprite) const {
+    if (!registry_) {
+      (*this)(entity, position, sprite, nullptr, nullptr, nullptr);
+      return;
+    }
     const auto [archetype, chunkIdx, indexInChunk] = registry_->GetEntityLocation(entity);
     if (!archetype) return;
-    const auto followOpt = registry_->TryComponent<CameraFollowComponent>();
-    const auto* followArr = followOpt.has_value()
-                                ? archetype->TryGetComponentArray<CameraFollowComponent>(chunkIdx, followOpt->GetId())
-                                : nullptr;
-    const auto globalOpt = registry_->TryComponent<GlobalTransformComponent>();
-    const auto* globalArr =
-        globalOpt.has_value() ? archetype->TryGetComponentArray<GlobalTransformComponent>(chunkIdx, globalOpt->GetId())
-                              : nullptr;
-    const auto scaleOpt = registry_->TryComponent<ScaleComponent>();
-    const auto* scaleArr =
-        scaleOpt.has_value() ? archetype->TryGetComponentArray<ScaleComponent>(chunkIdx, scaleOpt->GetId()) : nullptr;
-    (*this)(entity, position, sprite, globalArr ? &globalArr[indexInChunk] : nullptr,
-            scaleArr ? &scaleArr[indexInChunk] : nullptr, followArr ? &followArr[indexInChunk] : nullptr);
+    (*this)(entity, position, sprite,
+            ResolveOptionalComponent<GlobalTransformComponent>(*registry_, archetype, chunkIdx, indexInChunk),
+            ResolveOptionalComponent<ScaleComponent>(*registry_, archetype, chunkIdx, indexInChunk),
+            ResolveOptionalComponent<CameraFollowComponent>(*registry_, archetype, chunkIdx, indexInChunk));
   }
 
  private:
-  using OptDespawnQuery = ComponentQuery<PositionComponent, SpriteComponent, Opt<GlobalTransformComponent>,
-                                         Opt<ScaleComponent>, Opt<CameraFollowComponent>>;
+  template <typename T>
+  static const T* ResolveOptionalComponent(const Registry& registry, const Archetype* archetype, const size_t chunkIdx,
+                                           const size_t indexInChunk) {
+    const auto opt = registry.TryComponent<T>();
+    if (!opt.has_value()) return nullptr;
+    const auto* arr = archetype->TryGetComponentArray<T>(chunkIdx, opt->GetId());
+    return arr ? &arr[indexInChunk] : nullptr;
+  }
+
   Registry* registry_ = nullptr;
-  Registry* opt_query_registry_ = nullptr;
-  std::unique_ptr<OptDespawnQuery> opt_query_;
   CommandBuffer cmd_buffer_;
   float playableAreaWidth_ = 0.0f;
   float playableAreaHeight_ = 0.0f;

@@ -1035,9 +1035,7 @@ bool Game::CaptureFrameToFile(const std::string& path) {
 }
 #endif
 
-void Game::Setup() {
-  auto& gameConfig = registry_->Get<GameConfig>();
-
+SystemId Game::SetupLuaBindingsAndCatalog(GameConfig& gameConfig) {
   engine_bootstrap::InstallCoreSingletons(*registry_, registry_->Get<EngineContext>(), gameConfig.windowWidth,
                                           gameConfig.windowHeight, /*withFramePathCaches=*/true, &lua);
 
@@ -1072,13 +1070,18 @@ void Game::Setup() {
     LuaApiManifest::WriteProjectStub(lua, preBindingGlobals, gameConfig.GetAssetPath());
   }
 #endif
+  return scriptSystem.Id();
+}
 
+void Game::RegisterRenderAndAudioSystems(const SystemId scriptSystemId) {
   auto audioSystem = registry_->RegisterSystem<AudioSourceComponent>(AudioSystem());
   if (!audioSystem.Func().Init(registry_.get(), event_bus_)) {
     Logger::Error("AudioSystem failed to initialize; audio disabled this session.");
   }
   registry_->Get<EngineContext>().mixer = audioSystem.Func().Mixer();
 
+  auto& gameConfig = registry_->Get<GameConfig>();
+  auto& assetManager = registry_->Get<AssetManager>();
 #ifndef OCTARINE_SHIPPED
   auto& installedPreviewer = registry_->Set<UIPreviewer>(UIPreviewer(registry_.get()));
   installedPreviewer.SetCaptureCallback([this](const std::string& path) { return CaptureFrameToFile(path); });
@@ -1106,11 +1109,9 @@ void Game::Setup() {
   auto doppler =
       registry_->RegisterSystem<GlobalTransformComponent, RigidBodyComponent, AudioSourceComponent, AudioSinkComponent>(
           DopplerSystem());
-
   auto cameraFollow = registry_->RegisterSystem<PositionComponent, CameraFollowComponent>(CameraFollowSystem());
 
-  // UI layout pass: resolves UIRectComponent for all canvas descendants. Runs after TransformSystem
-  // so world-parented canvases see up-to-date globals; runs before render systems that read UIRectComponent.
+  // UI layout pass resolves UIRectComponent after TransformSystem and before UI render systems.
   auto uiLayout = registry_->RegisterBulkSystem(UILayoutSystem());
   registry_->Order(uiLayout).After(transform);
 
@@ -1119,12 +1120,14 @@ void Game::Setup() {
       registry_->RegisterParallelSystem<GlobalTransformComponent, SpriteComponent>(RenderSpriteSystem());
   registry_->Order(tilemapRender).After(cameraFollow).Before(renderSprite);
   registry_->Order(renderSprite).After(transform).After(cameraFollow);
+
   auto renderUISprite = registry_->RegisterSystem<UIRectComponent, SpriteComponent>(RenderUISpriteSystem());
   auto renderUIPrimitive = registry_->RegisterBulkSystem(RenderUIPrimitiveSystem());
   auto renderText = registry_->RegisterSystem<TextLabelComponent>(RenderTextSystem());
-  registry_->Order(renderUISprite).After(uiLayout);
-  registry_->Order(renderUIPrimitive).After(uiLayout);
-  registry_->Order(renderText).After(uiLayout);
+  for (const auto uiSysId : {renderUISprite.Id(), renderUIPrimitive.Id(), renderText.Id()}) {
+    registry_->Order(uiSysId).After(uiLayout);
+  }
+
   auto renderSquare =
       registry_->RegisterParallelSystem<SquarePrimitiveComponent, GlobalTransformComponent>(RenderPrimitiveSystem());
   auto renderCircle = registry_->RegisterParallelSystem<CirclePrimitiveComponent, GlobalTransformComponent>(
@@ -1147,11 +1150,21 @@ void Game::Setup() {
   registry_->Order(audioSystem).After(listenerTransform).After(audioCulling);
   registry_->Order(spatialAudio).After(transform).After(listenerTransform).After(audioCulling).After(audioSystem);
   registry_->Order(doppler).After(transform).After(listenerTransform).After(audioCulling).After(audioSystem);
-  registry_->Order(cameraFollow).After(transform).After(scriptSystem);
+  registry_->Order(cameraFollow).After(transform).After(scriptSystemId);
 
+  if (renderer_ != nullptr) {
+    game_module::InvokeRegisterRenderPasses(*registry_, *renderer_);
+  }
+}
+
+void Game::Setup() {
+  auto& gameConfig = registry_->Get<GameConfig>();
+  const SystemId scriptSystemId = SetupLuaBindingsAndCatalog(gameConfig);
+  RegisterRenderAndAudioSystems(scriptSystemId);
   RegisterEventAndHotReloadSingletons(*registry_, event_bus_);
+
 #ifndef OCTARINE_SHIPPED
-  if (isUiPreviewMode) {
+  if (startup_mode_ == "ui-preview") {
     UiPreviewCliOptions sessionOpts;
     sessionOpts.file = ui_preview_file_;
     sessionOpts.mockScript = ui_preview_mock_;

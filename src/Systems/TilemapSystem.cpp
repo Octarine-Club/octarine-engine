@@ -201,16 +201,19 @@ void ApplyUnremappedAtlasSlices(TilemapData& data, AssetManager& assetManager) {
 
 bool TilemapSystem::LoadFromData(Registry& registry, TilemapData data, const TilemapLoadOptions& options,
                                  const std::string& sourceLabel) {
+  return LoadFromDataInternal(registry, std::move(data), options, sourceLabel, /*preSlicedForAtlas=*/false);
+}
+
+bool TilemapSystem::LoadFromDataInternal(Registry& registry, TilemapData data, const TilemapLoadOptions& options,
+                                         const std::string& sourceLabel, const bool preSlicedForAtlas) {
   if (data.templates.empty() && !data.borderTemplate.isBorder) {
     return false;
   }
 
-  const bool preSliced = data_pre_sliced_for_atlas_;
   std::vector<std::string> previousAcquired = std::move(acquired_tileset_ids_);
   acquired_tileset_ids_.clear();
 
   Unload(registry);
-  data_pre_sliced_for_atlas_ = preSliced;
   loaded_path_ = sourceLabel.empty() ? "<data>" : sourceLabel;
   loaded_full_path_.clear();
   loaded_format_hint_ = options.formatHint;
@@ -230,7 +233,7 @@ bool TilemapSystem::LoadFromData(Registry& registry, TilemapData data, const Til
   is_loaded_ = true;
   RebuildTemplateLookupCaches();
 
-  EnsureTilesetTexturesLoaded(registry);
+  EnsureTilesetTexturesLoaded(registry, preSlicedForAtlas);
   if (!previousAcquired.empty()) {
     if (auto* assetManager = registry.TryGet<AssetManager>()) {
       assetManager->ReleaseAll(previousAcquired);
@@ -252,9 +255,8 @@ bool TilemapSystem::Load(Registry& registry, const std::string& path, const Tile
     return false;
   }
 
-  data_pre_sliced_for_atlas_ = (assetManager != nullptr && parsed->sourceFormat == "ldtk");
-  if (!LoadFromData(registry, std::move(*parsed), options, path)) {
-    data_pre_sliced_for_atlas_ = false;
+  const bool preSlicedForAtlas = (assetManager != nullptr && parsed->sourceFormat == "ldtk");
+  if (!LoadFromDataInternal(registry, std::move(*parsed), options, path, preSlicedForAtlas)) {
     return false;
   }
 
@@ -277,8 +279,7 @@ bool TilemapSystem::LoadFromJsonString(Registry& registry, const std::string& js
   if (!parsed.has_value()) {
     return false;
   }
-  data_pre_sliced_for_atlas_ = false;
-  return LoadFromData(registry, std::move(*parsed), options, "<memory>");
+  return LoadFromDataInternal(registry, std::move(*parsed), options, "<memory>", /*preSlicedForAtlas=*/false);
 }
 
 void TilemapSystem::Unload(Registry& registry) {
@@ -294,7 +295,6 @@ void TilemapSystem::Unload(Registry& registry) {
     }
     acquired_tileset_ids_.clear();
   }
-  data_pre_sliced_for_atlas_ = false;
   file_watcher_ = FileWatcher{};
   loaded_path_.clear();
   loaded_full_path_.clear();
@@ -324,10 +324,10 @@ bool TilemapSystem::Reload(Registry& registry) {
   active_chunks_.clear();
   TilemapBuilder::ApplyWorldTileScale(*parsed, tile_scale_);
   InvokeVariantGenerator(*parsed, variant_count_, seed_);
-  data_pre_sliced_for_atlas_ = (assetManager != nullptr && parsed->sourceFormat == "ldtk");
+  const bool preSlicedForAtlas = (assetManager != nullptr && parsed->sourceFormat == "ldtk");
   project_data_ = std::move(*parsed);
   RebuildTemplateLookupCaches();
-  EnsureTilesetTexturesLoaded(registry);
+  EnsureTilesetTexturesLoaded(registry, preSlicedForAtlas);
   if (!previousAcquired.empty()) {
     if (auto* am = registry.TryGet<AssetManager>()) {
       am->ReleaseAll(previousAcquired);
@@ -527,7 +527,7 @@ bool TilemapSystem::IsPropConsumed(const int32_t chunkX, const int32_t chunkY,
   return it->second.Test(propIndex);
 }
 
-void TilemapSystem::EnsureTilesetTexturesLoaded(Registry& registry) {
+void TilemapSystem::EnsureTilesetTexturesLoaded(Registry& registry, const bool preSlicedForAtlas) {
   auto* assetManager = registry.TryGet<AssetManager>();
   const auto* ctx = registry.TryGet<EngineContext>();
   if (assetManager != nullptr && ctx != nullptr && ctx->sdlRenderer != nullptr) {
@@ -535,9 +535,8 @@ void TilemapSystem::EnsureTilesetTexturesLoaded(Registry& registry) {
       LoadSingleTilesetTexture(*assetManager, *ctx, assetId, relPath, acquired_tileset_ids_);
     }
   }
-  if (assetManager != nullptr && !data_pre_sliced_for_atlas_) {
+  if (assetManager != nullptr && !preSlicedForAtlas) {
     ApplyUnremappedAtlasSlices(project_data_, *assetManager);
-    data_pre_sliced_for_atlas_ = true;
   }
   cached_texture_gen_ = 0;
   RefreshTemplateTextureCache(assetManager);

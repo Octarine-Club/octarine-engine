@@ -200,7 +200,8 @@ int main() {
     config.playableAreaHeight = 600;
     registry.Set<GameConfig>(config);
 
-    registry.RegisterParallelSystem<PositionComponent, SpriteComponent>(OffScreenDespawnSystem());
+    registry.RegisterParallelSystem<PositionComponent, SpriteComponent, Opt<GlobalTransformComponent>,
+                                    Opt<ScaleComponent>, Opt<CameraFollowComponent>>(OffScreenDespawnSystem());
 
     // Entity near left edge (x = 20), width = 64, mirrored scale x = -1.0.
     // Screen bounds [0, 800]. Sprite occupies x in [-44, 20]. Partially visible on screen!
@@ -223,6 +224,7 @@ int main() {
 
     Check(registry.IsAlive(mirroredOnScreen), "partially visible mirrored sprite at x=20 is NOT despawned");
     Check(!registry.IsAlive(mirroredOffScreen), "fully offscreen mirrored sprite at x=-10 IS despawned");
+    registry.ValidateInvariants();
   }
 
   // Part 6 - RegisterParallelSystem with Opt<T> and custom serialBelowEntities threshold.

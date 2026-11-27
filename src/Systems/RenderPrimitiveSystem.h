@@ -110,8 +110,8 @@ class RenderPrimitiveSystem : public RenderPrimitiveBase {
     const float destH = ToScreenLength(h, square.isFixed);
     const float sortDepth = square.isFixed ? square.position.y : std::max(origin.y, origin.y + h);
 
-    auto& cmd =
-        renderQueue_->EmplaceSquare(static_cast<unsigned int>(square.layer), sortDepth, nullptr, square.blendMode);
+    auto& cmd = renderQueue_->EmplaceSquare(static_cast<unsigned int>(std::max(0, square.layer)), sortDepth, nullptr,
+                                            square.blendMode);
     cmd.destRect =
         SnapFixedUnrotatedEdges({screenOrigin.x, screenOrigin.y, destW, destH}, square.isFixed, transform.rotation);
     cmd.color = SDL_Color{square.color.r, square.color.g, square.color.b, square.color.a};

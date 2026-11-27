@@ -135,17 +135,18 @@ sol::table EnsureRegistryTable(sol::state_view lua, const char* regKey) {
   return created;
 }
 
-sol::object ExecuteImportModule(lua_State* L, const std::string& fullPath, const AssetManager* assets) {
+bool ExecuteImportModule(lua_State* L, const std::string& fullPath, const AssetManager* assets, sol::object& outResult,
+                         std::string& outError) {
   auto bytes = ReadFileViaSDL(fullPath, assets);
   if (!bytes.has_value()) {
-    luaL_error(L, "import: cannot open '%s'", fullPath.c_str());
-    return sol::lua_nil;
+    outError = "import: cannot open '" + fullPath + "'";
+    return false;
   }
   const bool wasScrambledOct = bytes->size() >= 4 && std::memcmp(bytes->data(), "\x1bOCT", 4) == 0;
   const bool requireProtected = (assets != nullptr && assets->GetAssetPak() != nullptr);
   if (!DecryptLuaBytes(*bytes, requireProtected)) {
-    luaL_error(L, "import: rejected unprotected or corrupted script '%s'", fullPath.c_str());
-    return sol::lua_nil;
+    outError = "import: rejected unprotected or corrupted script '" + fullPath + "'";
+    return false;
   }
 
   const std::string chunkName = "@" + fullPath;
@@ -156,22 +157,20 @@ sol::object ExecuteImportModule(lua_State* L, const std::string& fullPath, const
   if (loadRc != LUA_OK) {
     const std::string err = lua_tostring(L, -1) ? lua_tostring(L, -1) : "syntax error";
     lua_pop(L, 1);
-    luaL_error(L, "import load '%s': %s", fullPath.c_str(), err.c_str());
-    return sol::lua_nil;
+    outError = "import load '" + fullPath + "': " + err;
+    return false;
   }
 
   if (lua_pcall(L, 0, 1, 0) != LUA_OK) {
     const std::string err = lua_tostring(L, -1) ? lua_tostring(L, -1) : "runtime error";
     lua_pop(L, 1);
-    luaL_error(L, "import run '%s': %s", fullPath.c_str(), err.c_str());
-    return sol::lua_nil;
+    outError = "import run '" + fullPath + "': " + err;
+    return false;
   }
 
   sol::object ret = sol::stack::pop<sol::object>(L);
-  if (!ret.valid() || ret == sol::lua_nil) {
-    return sol::make_object(L, true);
-  }
-  return ret;
+  outResult = (!ret.valid() || ret == sol::lua_nil) ? sol::make_object(L, true) : ret;
+  return true;
 }
 
 sol::object ImportModule(LuaBindingContext& ctx, const std::string& relPath, const sol::optional<bool>& forceReload,
@@ -203,19 +202,29 @@ sol::object ImportModule(LuaBindingContext& ctx, const std::string& relPath, con
 
   loading.raw_set(fullPath, true);
   struct LoadingGuard {
-    sol::table tbl;
-    std::string key;
+    sol::table tbl{};
+    std::string key{};
     LoadingGuard(sol::table t, std::string k) : tbl(std::move(t)), key(std::move(k)) {}
     LoadingGuard(const LoadingGuard&) = delete;
     LoadingGuard& operator=(const LoadingGuard&) = delete;
     LoadingGuard(LoadingGuard&&) = delete;
     LoadingGuard& operator=(LoadingGuard&&) = delete;
-    ~LoadingGuard() {
+    void Reset() {
       if (tbl.valid()) tbl.raw_set(key, sol::lua_nil);
+      tbl = sol::lua_nil;
     }
+    ~LoadingGuard() { Reset(); }
   } guard{loading, fullPath};
 
-  sol::object result = ExecuteImportModule(L, fullPath, assets);
+  sol::object result = sol::lua_nil;
+  std::string errMsg;
+  const bool ok = ExecuteImportModule(L, fullPath, assets, result, errMsg);
+  // Explicitly clear before luaL_error because C Lua longjmp unwinds past C++ stack destructors.
+  guard.Reset();
+  if (!ok) {
+    luaL_error(L, "%s", errMsg.c_str());
+    return sol::lua_nil;
+  }
   cache.raw_set(fullPath, result);
   return result;
 }

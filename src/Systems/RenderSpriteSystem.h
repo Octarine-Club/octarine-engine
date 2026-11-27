@@ -88,8 +88,8 @@ class RenderSpriteSystem {
     const float destH = sprite.isFixed ? sprite.height * transform.scale.y : sprite.height * transform.scale.y * zoom_;
     const SDL_FRect destRect = SnapFixedUnrotated({x, y, destW, destH}, sprite.isFixed, transform.rotation);
 
-    auto& cmd = renderQueue_->EmplaceSprite(static_cast<unsigned int>(sprite.layer), transform.position.y, texture,
-                                            sprite.blendMode);
+    auto& cmd = renderQueue_->EmplaceSprite(static_cast<unsigned int>(std::max(0, sprite.layer)), transform.position.y,
+                                            texture, sprite.blendMode);
     cmd.destX = destRect.x;
     cmd.destY = destRect.y;
     cmd.destW = destRect.w;

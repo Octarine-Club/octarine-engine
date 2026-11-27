@@ -30,8 +30,8 @@ class RenderCapsulePrimitiveSystem : public RenderPrimitiveBase {
     const glm::vec2 s2 = ToScreenPoint(p2World, capsule.isFixed);
     const float sortDepth = capsule.isFixed ? capsule.start.y : maxY;
 
-    auto& cmd =
-        renderQueue_->EmplaceCapsule(static_cast<unsigned int>(capsule.layer), sortDepth, nullptr, capsule.blendMode);
+    auto& cmd = renderQueue_->EmplaceCapsule(static_cast<unsigned int>(std::max(0, capsule.layer)), sortDepth, nullptr,
+                                             capsule.blendMode);
     cmd.start = {s1.x, s1.y};
     cmd.end = {s2.x, s2.y};
     cmd.radius = ToScreenLength(r, capsule.isFixed);

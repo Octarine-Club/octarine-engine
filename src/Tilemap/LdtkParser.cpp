@@ -41,14 +41,98 @@ struct ParsedLevelRaw {
   std::vector<uint8_t> rawCollisions{};
 };
 
+std::filesystem::path NormalizeDirectoryPath(const std::string& raw) {
+  std::filesystem::path p = std::filesystem::path(raw).lexically_normal();
+  while (p.filename().empty() && p.has_parent_path() && p != p.root_path()) {
+    p = p.parent_path();
+  }
+  return p;
+}
+
+bool HasAbsoluteOrRootPath(const std::string& raw) {
+  if (raw.empty()) return false;
+  const std::filesystem::path p(raw);
+  return p.is_absolute() || p.has_root_name() || p.has_root_directory();
+}
+
+bool HasEscapingTraversal(const std::filesystem::path& p) {
+  if (p.empty()) return true;
+  const auto norm = p.lexically_normal();
+  return norm.empty() || *norm.begin() == "..";
+}
+
+std::string SafeString(const Json& obj, const char* key, const std::string& def = {}) {
+  if (!obj.is_object()) return def;
+  const auto it = obj.find(key);
+  return (it != obj.end() && it->is_string()) ? it->get<std::string>() : def;
+}
+
+int32_t SafeInt(const Json& obj, const char* key, const int32_t def = 0) {
+  if (!obj.is_object()) return def;
+  const auto it = obj.find(key);
+  if (it == obj.end()) return def;
+  if (it->is_number_integer()) {
+    return static_cast<int32_t>(std::clamp<int64_t>(it->get<int64_t>(), std::numeric_limits<int32_t>::min(),
+                                                    std::numeric_limits<int32_t>::max()));
+  }
+  if (it->is_number_float()) {
+    const double v = it->get<double>();
+    if (!std::isfinite(v)) return def;
+    return static_cast<int32_t>(std::clamp(v, static_cast<double>(std::numeric_limits<int32_t>::min()),
+                                           static_cast<double>(std::numeric_limits<int32_t>::max())));
+  }
+  return def;
+}
+
+float SafeFloat(const Json& obj, const char* key, const float def = 0.0f) {
+  if (!obj.is_object()) return def;
+  const auto it = obj.find(key);
+  if (it == obj.end() || !it->is_number()) return def;
+  const double v = it->get<double>();
+  return std::isfinite(v) ? static_cast<float>(v) : def;
+}
+
+bool TryReadIntPair(const Json& obj, const char* key, int32_t& outX, int32_t& outY) {
+  if (!obj.is_object()) return false;
+  const auto it = obj.find(key);
+  if (it == obj.end() || !it->is_array() || it->size() < 2) return false;
+  if (!(*it)[0].is_number() || !(*it)[1].is_number()) return false;
+  const double vx = (*it)[0].get<double>();
+  const double vy = (*it)[1].get<double>();
+  if (!std::isfinite(vx) || !std::isfinite(vy)) return false;
+  outX = static_cast<int32_t>(std::clamp(vx, static_cast<double>(std::numeric_limits<int32_t>::min()),
+                                         static_cast<double>(std::numeric_limits<int32_t>::max())));
+  outY = static_cast<int32_t>(std::clamp(vy, static_cast<double>(std::numeric_limits<int32_t>::min()),
+                                         static_cast<double>(std::numeric_limits<int32_t>::max())));
+  return true;
+}
+
+bool TryReadFloatPair(const Json& obj, const char* key, float& outX, float& outY) {
+  if (!obj.is_object()) return false;
+  const auto it = obj.find(key);
+  if (it == obj.end() || !it->is_array() || it->size() < 2) return false;
+  if (!(*it)[0].is_number() || !(*it)[1].is_number()) return false;
+  const double vx = (*it)[0].get<double>();
+  const double vy = (*it)[1].get<double>();
+  if (!std::isfinite(vx) || !std::isfinite(vy)) return false;
+  outX = static_cast<float>(vx);
+  outY = static_cast<float>(vy);
+  return true;
+}
+
 std::string ResolveRelativePath(const std::string& baseDir, const std::string& relPath) {
   if (relPath.empty()) {
     return {};
   }
-  if (baseDir.empty()) {
-    return std::filesystem::path(relPath).lexically_normal().generic_string();
+  std::string normalizedRel = relPath;
+  std::replace(normalizedRel.begin(), normalizedRel.end(), '\\', '/');
+  if (HasAbsoluteOrRootPath(normalizedRel)) {
+    return {};
   }
-  return (std::filesystem::path(baseDir) / relPath).lexically_normal().generic_string();
+  if (baseDir.empty()) {
+    return std::filesystem::path(normalizedRel).lexically_normal().generic_string();
+  }
+  return (NormalizeDirectoryPath(baseDir) / normalizedRel).lexically_normal().generic_string();
 }
 
 bool ProbePngHeaderSize(SDL_IOStream* io, float& outWidth, float& outHeight) {
@@ -100,8 +184,10 @@ void ResolveTilesetAtlasMetadata(TilesetDesc& desc, const std::string& rawRel, c
 }
 
 std::unordered_map<int32_t, TilesetDef> ParseTilesetDefs(const Json& root, const std::string& ldtkDirRelPath,
-                                                         const AssetManager* assetManager, TilemapData& outData) {
+                                                         const AssetManager* assetManager, TilemapData& outData,
+                                                         int32_t& outFirstTileSize) {
   std::unordered_map<int32_t, TilesetDef> defs;
+  outFirstTileSize = 0;
   if (!root.contains("defs") || !root["defs"].is_object()) {
     return defs;
   }
@@ -112,16 +198,19 @@ std::unordered_map<int32_t, TilesetDef> ParseTilesetDefs(const Json& root, const
   for (const auto& ts : defsObj["tilesets"]) {
     if (!ts.is_object()) continue;
     TilesetDef def;
-    def.uid = ts.value("uid", 0);
-    const std::string rawRel = ts.value("relPath", std::string{});
+    def.uid = SafeInt(ts, "uid", 0);
+    const std::string rawRel = SafeString(ts, "relPath");
     def.desc.relPath = ResolveRelativePath(ldtkDirRelPath, rawRel);
-    def.desc.assetId = ts.value("identifier", std::string{});
+    def.desc.assetId = SafeString(ts, "identifier");
     if (def.desc.assetId.empty() && !rawRel.empty()) {
       def.desc.assetId = std::filesystem::path(rawRel).stem().string();
     }
-    def.desc.textureWidth = std::max(1.0f, static_cast<float>(ts.value("pxWid", 256)));
-    def.desc.textureHeight = std::max(1.0f, static_cast<float>(ts.value("pxHei", 256)));
-    def.desc.tileGridSize = std::max(1, ts.value("tileGridSize", kDefaultTileSize));
+    def.desc.textureWidth = std::max(1.0f, static_cast<float>(SafeInt(ts, "pxWid", 256)));
+    def.desc.textureHeight = std::max(1.0f, static_cast<float>(SafeInt(ts, "pxHei", 256)));
+    def.desc.tileGridSize = std::max(1, SafeInt(ts, "tileGridSize", kDefaultTileSize));
+    if (outFirstTileSize <= 0) {
+      outFirstTileSize = def.desc.tileGridSize;
+    }
     ResolveTilesetAtlasMetadata(def.desc, rawRel, assetManager);
     defs[def.uid] = def;
     if (!def.desc.assetId.empty()) {
@@ -133,37 +222,41 @@ std::unordered_map<int32_t, TilesetDef> ParseTilesetDefs(const Json& root, const
 
 TilesetDef ResolveLayerTileset(const Json& layer, const std::unordered_map<int32_t, TilesetDef>& tilesets,
                                const std::string& ldtkDirRelPath, const AssetManager* assetManager) {
-  int32_t uid = layer.value("__tilesetDefUid", -1);
+  int32_t uid = SafeInt(layer, "__tilesetDefUid", -1);
   if (uid < 0 && layer.contains("tilesetDefUid") && !layer["tilesetDefUid"].is_null()) {
-    uid = layer.value("tilesetDefUid", -1);
+    uid = SafeInt(layer, "tilesetDefUid", -1);
   }
   if (const auto it = tilesets.find(uid); it != tilesets.end()) {
     return it->second;
   }
   TilesetDef fallback;
   fallback.uid = uid;
-  const std::string rawRel = layer.value("__tilesetRelPath", std::string{});
+  const std::string rawRel = SafeString(layer, "__tilesetRelPath");
   fallback.desc.relPath = ResolveRelativePath(ldtkDirRelPath, rawRel);
   fallback.desc.assetId =
       rawRel.empty() ? std::string{"default_tileset"} : std::filesystem::path(rawRel).stem().string();
-  fallback.desc.tileGridSize = std::max(1, layer.value("__gridSize", kDefaultTileSize));
+  fallback.desc.tileGridSize = std::max(1, SafeInt(layer, "__gridSize", kDefaultTileSize));
   ResolveTilesetAtlasMetadata(fallback.desc, rawRel, assetManager);
   return fallback;
 }
 
 void AppendTileQuad(TileLayerMesh& mesh, const Json& tile, const TilesetDef& ts, const float gridSize,
                     const float layerOpacity) {
-  if (!tile.contains("px") || !tile.contains("src") || tile["px"].size() < 2 || tile["src"].size() < 2) {
+  int32_t pxX = 0;
+  int32_t pxY = 0;
+  int32_t srcX = 0;
+  int32_t srcY = 0;
+  if (!TryReadIntPair(tile, "px", pxX, pxY) || !TryReadIntPair(tile, "src", srcX, srcY)) {
     return;
   }
-  const int32_t flipBits = tile.value("f", 0);
+  const int32_t flipBits = SafeInt(tile, "f", 0);
   TileQuadDesc quad;
-  quad.localX = static_cast<float>(tile["px"][0].get<int32_t>());
-  quad.localY = static_cast<float>(tile["px"][1].get<int32_t>());
-  quad.srcX = static_cast<float>(tile["src"][0].get<int32_t>());
-  quad.srcY = static_cast<float>(tile["src"][1].get<int32_t>());
+  quad.localX = static_cast<float>(pxX);
+  quad.localY = static_cast<float>(pxY);
+  quad.srcX = static_cast<float>(srcX);
+  quad.srcY = static_cast<float>(srcY);
   quad.size = gridSize;
-  quad.alpha = tile.value("a", 1.0f) * layerOpacity;
+  quad.alpha = SafeFloat(tile, "a", 1.0f) * layerOpacity;
   quad.flipX = (flipBits & 1) != 0;
   quad.flipY = (flipBits & 2) != 0;
   TilemapBuilder::AppendStaticTileQuad(mesh, ts.desc, quad);
@@ -172,14 +265,14 @@ void AppendTileQuad(TileLayerMesh& mesh, const Json& tile, const TilesetDef& ts,
 void ParseStaticTileLayer(const Json& layer, const TilesetDef& ts, const unsigned int renderLayer,
                           const float renderDepth, ChunkTemplate& outTemplate) {
   TileLayerMesh mesh;
-  mesh.layerName = layer.value("__identifier", std::string{"Ground"});
+  mesh.layerName = SafeString(layer, "__identifier", "Ground");
   mesh.tilesetAssetId = ts.desc.assetId;
   mesh.tilesetRelPath = ts.desc.relPath;
   mesh.renderLayer = renderLayer;
   mesh.renderDepth = renderDepth;
 
-  const auto gridSize = static_cast<float>(std::max(1, layer.value("__gridSize", ts.desc.tileGridSize)));
-  const float opacity = layer.value("__opacity", 1.0f);
+  const auto gridSize = static_cast<float>(std::max(1, SafeInt(layer, "__gridSize", ts.desc.tileGridSize)));
+  const float opacity = SafeFloat(layer, "__opacity", 1.0f);
 
   size_t tileCount = 0;
   if (layer.contains("autoLayerTiles") && layer["autoLayerTiles"].is_array()) {
@@ -208,15 +301,19 @@ void ParseStaticTileLayer(const Json& layer, const TilesetDef& ts, const unsigne
 
 void AppendYSortTile(std::vector<YSortTileCmd>& outTiles, const Json& tile, const TilesetDef& ts,
                      const float gridSize) {
-  if (!tile.contains("px") || !tile.contains("src") || tile["px"].size() < 2 || tile["src"].size() < 2) {
+  int32_t pxX = 0;
+  int32_t pxY = 0;
+  int32_t srcX = 0;
+  int32_t srcY = 0;
+  if (!TryReadIntPair(tile, "px", pxX, pxY) || !TryReadIntPair(tile, "src", srcX, srcY)) {
     return;
   }
-  const int32_t flipBits = tile.value("f", 0);
+  const int32_t flipBits = SafeInt(tile, "f", 0);
   TileQuadDesc quad;
-  quad.localX = static_cast<float>(tile["px"][0].get<int32_t>());
-  quad.localY = static_cast<float>(tile["px"][1].get<int32_t>());
-  quad.srcX = static_cast<float>(tile["src"][0].get<int32_t>());
-  quad.srcY = static_cast<float>(tile["src"][1].get<int32_t>());
+  quad.localX = static_cast<float>(pxX);
+  quad.localY = static_cast<float>(pxY);
+  quad.srcX = static_cast<float>(srcX);
+  quad.srcY = static_cast<float>(srcY);
   quad.size = gridSize;
   quad.flipX = (flipBits & 1) != 0;
   quad.flipY = (flipBits & 2) != 0;
@@ -224,7 +321,7 @@ void AppendYSortTile(std::vector<YSortTileCmd>& outTiles, const Json& tile, cons
 }
 
 void ParseYSortLayer(const Json& layer, const TilesetDef& ts, ChunkTemplate& outTemplate) {
-  const auto gridSize = static_cast<float>(std::max(1, layer.value("__gridSize", ts.desc.tileGridSize)));
+  const auto gridSize = static_cast<float>(std::max(1, SafeInt(layer, "__gridSize", ts.desc.tileGridSize)));
   std::vector<YSortTileCmd> layerTiles;
 
   if (layer.contains("autoLayerTiles") && layer["autoLayerTiles"].is_array()) {
@@ -259,9 +356,9 @@ void ParseLegacyIntGrid(const Json& cells, const size_t maxCells, std::vector<ui
                         const uint8_t overrideTileValue = 0) {
   for (const auto& cell : cells) {
     if (!cell.is_object()) continue;
-    const int32_t coordId = cell.value("coordId", -1);
+    const int32_t coordId = SafeInt(cell, "coordId", -1);
     if (coordId < 0 || static_cast<size_t>(coordId) >= maxCells) continue;
-    const int32_t val = cell.value("v", 0);
+    const int32_t val = SafeInt(cell, "v", 0);
     if (val != 0) {
       outCollisions[static_cast<size_t>(coordId)] =
           (overrideTileValue != 0) ? overrideTileValue : static_cast<uint8_t>(std::clamp(val, 0, 255));
@@ -270,8 +367,8 @@ void ParseLegacyIntGrid(const Json& cells, const size_t maxCells, std::vector<ui
 }
 
 void ParseCollisionsLayer(const Json& layer, ParsedLevelRaw& outRaw, const uint8_t overrideTileValue = 0) {
-  const int32_t cWid = std::clamp(layer.value("__cWid", outRaw.rawGridW), 1, 512);
-  const int32_t cHei = std::clamp(layer.value("__cHei", outRaw.rawGridH), 1, 512);
+  const int32_t cWid = std::clamp(SafeInt(layer, "__cWid", outRaw.rawGridW), 1, 512);
+  const int32_t cHei = std::clamp(SafeInt(layer, "__cHei", outRaw.rawGridH), 1, 512);
   outRaw.rawGridW = cWid;
   outRaw.rawGridH = cHei;
   const auto maxCells = static_cast<size_t>(cWid) * static_cast<size_t>(cHei);
@@ -290,7 +387,7 @@ void ParseFieldInstance(const Json& field, std::unordered_map<std::string, PropF
   if (!field.is_object() || !field.contains("__identifier") || !field.contains("__value")) {
     return;
   }
-  const std::string key = field.value("__identifier", std::string{});
+  const std::string key = SafeString(field, "__identifier");
   const Json& val = field["__value"];
   if (key.empty() || val.is_null()) {
     return;
@@ -308,16 +405,20 @@ void ParseFieldInstance(const Json& field, std::unordered_map<std::string, PropF
 
 PropSpawnDesc ParseSingleEntityInstance(const Json& ent, const uint32_t propIndex) {
   PropSpawnDesc desc;
-  desc.identifier = ent.value("__identifier", std::string{"Prop"});
-  if (ent.contains("px") && ent["px"].is_array() && ent["px"].size() >= 2) {
-    desc.localX = static_cast<float>(ent["px"][0].get<int32_t>());
-    desc.localY = static_cast<float>(ent["px"][1].get<int32_t>());
+  desc.identifier = SafeString(ent, "__identifier", "Prop");
+  int32_t pxX = 0;
+  int32_t pxY = 0;
+  if (TryReadIntPair(ent, "px", pxX, pxY)) {
+    desc.localX = static_cast<float>(pxX);
+    desc.localY = static_cast<float>(pxY);
   }
-  desc.width = static_cast<float>(ent.value("width", kDefaultTileSize));
-  desc.height = static_cast<float>(ent.value("height", kDefaultTileSize));
-  if (ent.contains("__pivot") && ent["__pivot"].is_array() && ent["__pivot"].size() >= 2) {
-    desc.pivotX = ent["__pivot"][0].get<float>();
-    desc.pivotY = ent["__pivot"][1].get<float>();
+  desc.width = static_cast<float>(SafeInt(ent, "width", kDefaultTileSize));
+  desc.height = static_cast<float>(SafeInt(ent, "height", kDefaultTileSize));
+  float pivX = 0.0f;
+  float pivY = 0.0f;
+  if (TryReadFloatPair(ent, "__pivot", pivX, pivY)) {
+    desc.pivotX = pivX;
+    desc.pivotY = pivY;
   }
   desc.propIndex = propIndex;
 
@@ -356,7 +457,10 @@ void ApplyStringLevelField(const std::string& id, const std::string& val, ChunkT
 
 void ApplyKnownLevelField(const std::string& id, const Json& val, ChunkTemplate& outTemplate) {
   if ((id == "weight" || id == "Weight") && val.is_number()) {
-    outTemplate.weight = std::max(0.0f, val.get<float>());
+    const double w = val.get<double>();
+    if (std::isfinite(w)) {
+      outTemplate.weight = std::max(0.0f, static_cast<float>(w));
+    }
   } else if ((id == "is_border" || id == "IsBorder") && val.is_boolean()) {
     outTemplate.isBorder = val.get<bool>();
   } else if ((id == "is_palette" || id == "IsPalette") && val.is_boolean()) {
@@ -376,7 +480,10 @@ void ParseLevelFields(const Json& level, ChunkTemplate& outTemplate) {
   for (const auto& field : level["fieldInstances"]) {
     if (!field.is_object()) continue;
     ParseFieldInstance(field, outTemplate.fields);
-    ApplyKnownLevelField(field.value("__identifier", std::string{}), field["__value"], outTemplate);
+    const auto valIt = field.find("__value");
+    if (valIt != field.end()) {
+      ApplyKnownLevelField(SafeString(field, "__identifier"), *valIt, outTemplate);
+    }
   }
 }
 
@@ -453,7 +560,7 @@ CollisionMatchResult FindMatchingCollisionRule(const std::string& layerId, const
 bool LevelHasExplicitCollisionLayer(const Json& layers, const std::vector<CollisionLayerRule>& rules) {
   return std::ranges::any_of(layers, [&](const Json& layer) {
     if (!layer.is_object()) return false;
-    const std::string id = layer.value("__identifier", std::string{});
+    const std::string id = SafeString(layer, "__identifier");
     if (!rules.empty()) {
       return std::ranges::any_of(rules, [&](const auto& rule) {
         return !rule.layerMatch.empty() && ContainsCaseInsensitive(id, rule.layerMatch);
@@ -467,8 +574,8 @@ void ParseLevelLayer(const Json& layer, const std::unordered_map<int32_t, Tilese
                      const std::string& ldtkDirRelPath, const AssetManager* assetManager,
                      const bool hasExplicitCollisionLayer, const TilemapParseOptions& options, float& nextStaticDepth,
                      ParsedLevelRaw& outRaw) {
-  const std::string id = layer.value("__identifier", std::string{});
-  const std::string type = layer.value("__type", std::string{});
+  const std::string id = SafeString(layer, "__identifier");
+  const std::string type = SafeString(layer, "__type");
 
   if (type == "Entities" || id == "Entities") {
     ParseEntitiesLayer(layer, outRaw.tmpl);
@@ -497,13 +604,13 @@ ParsedLevelRaw ParseSingleLevel(const Json& level, const Json* externalLayerCont
                                 const std::string& ldtkDirRelPath, const AssetManager* assetManager,
                                 const int32_t defaultTileSize, const TilemapParseOptions& options) {
   ParsedLevelRaw raw;
-  raw.tmpl.identifier = level.value("identifier", std::string{"Level"});
+  raw.tmpl.identifier = SafeString(level, "identifier", "Level");
   raw.tmpl.tileSize = defaultTileSize;
 
-  raw.coord.worldX = level.value("worldX", 0);
-  raw.coord.worldY = level.value("worldY", 0);
-  raw.coord.pxWid = std::max(defaultTileSize, level.value("pxWid", kDefaultChunkGridSize * defaultTileSize));
-  raw.coord.pxHei = std::max(defaultTileSize, level.value("pxHei", kDefaultChunkGridSize * defaultTileSize));
+  raw.coord.worldX = SafeInt(level, "worldX", 0);
+  raw.coord.worldY = SafeInt(level, "worldY", 0);
+  raw.coord.pxWid = std::max(defaultTileSize, SafeInt(level, "pxWid", kDefaultChunkGridSize * defaultTileSize));
+  raw.coord.pxHei = std::max(defaultTileSize, SafeInt(level, "pxHei", kDefaultChunkGridSize * defaultTileSize));
 
   raw.rawGridW = std::clamp(raw.coord.pxWid / defaultTileSize, 1, 512);
   raw.rawGridH = std::clamp(raw.coord.pxHei / defaultTileSize, 1, 512);
@@ -838,14 +945,43 @@ std::string ResolveLdtkDirRelPath(const std::string& ldtkPath, const std::string
     return relParent.lexically_normal().generic_string();
   }
   if (assetManager != nullptr && !assetManager->GetBasePath().empty()) {
-    const auto normParent = std::filesystem::path(fullPath).parent_path().lexically_normal();
-    const auto normBase = std::filesystem::path(assetManager->GetBasePath()).lexically_normal();
+    const auto normParent = NormalizeDirectoryPath(std::filesystem::path(fullPath).parent_path().string());
+    const auto normBase = NormalizeDirectoryPath(assetManager->GetBasePath());
     const auto rel = normParent.lexically_relative(normBase);
     if (!rel.empty() && rel != "." && *rel.begin() != "..") {
       return rel.generic_string();
     }
   }
   return {};
+}
+
+std::string ResolveSafeExternalLevelPath(std::string extRel, const std::string& ldtkDirRelPath,
+                                         const std::string& ldtkDiskParentDir, const AssetManager* assetManager) {
+  std::replace(extRel.begin(), extRel.end(), '\\', '/');
+  if (HasAbsoluteOrRootPath(extRel)) {
+    Logger::Error("LdtkParser: rejected absolute externalRelPath '" + extRel + "'");
+    return {};
+  }
+  if (assetManager == nullptr) {
+    const std::filesystem::path extNorm = std::filesystem::path(extRel).lexically_normal();
+    if (HasEscapingTraversal(extNorm)) {
+      Logger::Error("LdtkParser: rejected escaping externalRelPath '" + extRel + "'");
+      return {};
+    }
+    return !ldtkDiskParentDir.empty()
+               ? (NormalizeDirectoryPath(ldtkDiskParentDir) / extNorm).lexically_normal().string()
+               : extNorm.generic_string();
+  }
+  const std::string resolvedRel = ResolveRelativePath(ldtkDirRelPath, extRel);
+  if (resolvedRel.empty() || HasAbsoluteOrRootPath(resolvedRel) || HasEscapingTraversal(resolvedRel)) {
+    Logger::Error("LdtkParser: rejected escaping externalRelPath '" + extRel + "'");
+    return {};
+  }
+  const std::string readPath = ResolveLdtkFullPath(resolvedRel, assetManager);
+  if (readPath.empty()) {
+    Logger::Error("LdtkParser: cannot resolve external level '" + extRel + "'");
+  }
+  return readPath;
 }
 
 std::optional<Json> LoadExternalLevelJson(const Json& level, const std::string& ldtkDirRelPath,
@@ -858,13 +994,8 @@ std::optional<Json> LoadExternalLevelJson(const Json& level, const std::string& 
   const std::string extRel = level["externalRelPath"].get<std::string>();
   if (extRel.empty()) return std::nullopt;
 
-  const std::string resolvedRel = ResolveRelativePath(ldtkDirRelPath, extRel);
-  std::string readPath = ResolveLdtkFullPath(resolvedRel, assetManager);
-  if (assetManager == nullptr && !ldtkDiskParentDir.empty() && !std::filesystem::path(extRel).is_absolute()) {
-    readPath = (std::filesystem::path(ldtkDiskParentDir) / extRel).lexically_normal().string();
-  }
+  const std::string readPath = ResolveSafeExternalLevelPath(extRel, ldtkDirRelPath, ldtkDiskParentDir, assetManager);
   if (readPath.empty()) {
-    Logger::Error("LdtkParser: cannot resolve external level '" + extRel + "'");
     outHadExternalError = true;
     return std::nullopt;
   }
@@ -966,10 +1097,11 @@ std::optional<TilemapData> ParseLdtkJsonImpl(const std::string& jsonText, const 
 
   TilemapData projectData;
   projectData.sourceFormat = "ldtk";
-  projectData.tileSize = std::max(1, root.value("defaultGridSize", kDefaultTileSize));
-  const auto tilesets = ParseTilesetDefs(root, ldtkDirRelPath, assetManager, projectData);
-  if (!tilesets.empty() && !root.contains("defaultGridSize")) {
-    projectData.tileSize = tilesets.begin()->second.desc.tileGridSize;
+  projectData.tileSize = std::max(1, SafeInt(root, "defaultGridSize", kDefaultTileSize));
+  int32_t firstTilesetGridSize = 0;
+  const auto tilesets = ParseTilesetDefs(root, ldtkDirRelPath, assetManager, projectData, firstTilesetGridSize);
+  if (firstTilesetGridSize > 0 && !root.contains("defaultGridSize")) {
+    projectData.tileSize = firstTilesetGridSize;
   }
 
   if (!root.contains("levels") || !root["levels"].is_array() || root["levels"].empty()) {

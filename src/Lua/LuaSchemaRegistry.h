@@ -528,6 +528,8 @@ class LuaSchemaRegistry {
 
 class LuaSchemaRegistry {
  public:
+  static void Clear() {}
+
   static void RegisterFunctionSchema(std::string_view /*qualifiedName*/, const LuaFunctionSchema& /*schema*/) {}
 
   template <typename Fn>

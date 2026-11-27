@@ -11,6 +11,5 @@ void RegisterSimulationSystems(Registry& /*registry*/, const std::unique_ptr<Eve
 void RegisterEventSystems(Registry& /*registry*/, const std::unique_ptr<EventBus>& /*eventBus*/) {}
 void InstallLuaFunctions(sol::state& /*lua*/, LuaBindingContext& /*ctx*/) {}
 void RegisterDebugUI(Registry& /*registry*/) {}
-void RegisterRenderPasses(Registry& /*registry*/, Renderer& /*renderer*/) {}
 
 }  // namespace game_module

@@ -51,15 +51,25 @@ struct RenderKey {
   static std::uint64_t ComputeSortKey(unsigned int layer, float depth, RenderableType type, const void* batchKey,
                                       std::uint8_t blendBits = 0, std::uint8_t materialId = 0,
                                       float yBandPx = kDefaultYBandPx, bool ySortEnabled = true) noexcept {
-    std::int64_t rawBand = 0;
-    if (ySortEnabled && yBandPx > 0.0f && std::isfinite(depth)) {
-      rawBand = static_cast<std::int64_t>(std::floor(depth / yBandPx));
-    }
-
     // Bias depthBand into a clamped non-negative 17-bit range so extreme world coordinates
-    // saturate at band boundaries rather than wrapping into adjacent layers.
+    // saturate at band boundaries rather than overflowing int64_t or wrapping into layers.
     constexpr std::int64_t kBandBias = 1LL << 16;
     constexpr std::int64_t kMaxBiasedBand = (1LL << 17) - 1LL;
+    constexpr auto kMinRawBand = static_cast<double>(-kBandBias);
+    constexpr auto kMaxRawBand = static_cast<double>(kMaxBiasedBand - kBandBias);
+
+    std::int64_t rawBand = 0;
+    if (ySortEnabled && yBandPx > 0.0f && std::isfinite(depth) && std::isfinite(yBandPx)) {
+      const double bandFloor = std::floor(static_cast<double>(depth) / static_cast<double>(yBandPx));
+      if (bandFloor <= kMinRawBand) {
+        rawBand = -kBandBias;
+      } else if (bandFloor >= kMaxRawBand) {
+        rawBand = kMaxBiasedBand - kBandBias;
+      } else if (!std::isnan(bandFloor)) {
+        rawBand = static_cast<std::int64_t>(bandFloor);
+      }
+    }
+
     const auto layer16 = static_cast<std::uint64_t>(layer & 0xFFFFu);
     const auto band17 = static_cast<std::uint64_t>(std::clamp<std::int64_t>(rawBand + kBandBias, 0LL, kMaxBiasedBand));
     const auto mat8 = static_cast<std::uint64_t>(materialId) & 0xFFu;

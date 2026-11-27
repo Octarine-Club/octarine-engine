@@ -42,7 +42,10 @@ SDL_IOStream* AssetManager::OpenAssetIO(const std::string& fullPath) const {
       }
     }
     if (!base_path_.empty()) {
-      const std::filesystem::path normBase = std::filesystem::path(base_path_).lexically_normal();
+      std::filesystem::path normBase = std::filesystem::path(base_path_).lexically_normal();
+      while (normBase.filename().empty() && normBase.has_parent_path() && normBase != normBase.root_path()) {
+        normBase = normBase.parent_path();
+      }
       const std::filesystem::path rel = normFullPath.lexically_relative(normBase);
       if (!rel.empty() && rel != "." && *rel.begin() != "..") {
         const std::string relStr = rel.generic_string();
@@ -380,7 +383,10 @@ std::string AssetManager::GetFullPath(const std::string& relativePath) const {
   if (inputPath.is_absolute()) {
     return relativePath;
   }
-  const std::filesystem::path basePath = std::filesystem::path(base_path_).lexically_normal();
+  std::filesystem::path basePath = std::filesystem::path(base_path_).lexically_normal();
+  while (basePath.filename().empty() && basePath.has_parent_path() && basePath != basePath.root_path()) {
+    basePath = basePath.parent_path();
+  }
   const std::filesystem::path assetPath = (basePath / inputPath).lexically_normal();
   const auto rel = assetPath.lexically_relative(basePath);
   if (rel.empty() || *rel.begin() == "..") {

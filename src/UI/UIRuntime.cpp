@@ -645,18 +645,6 @@ bool MatchesAnyDep(const std::unordered_set<std::string>& deps, const std::unord
   return std::ranges::any_of(dirtyKeys, [&deps](const std::string& k) { return deps.contains(k); });
 }
 
-void RunRefreshEntries(const std::vector<RefreshEntry>& entries, std::unordered_set<std::string>* dirtyKeys) {
-  for (const auto& entry : entries) {
-    if (dirtyKeys != nullptr && !entry.deps.empty() && !MatchesAnyDep(entry.deps, *dirtyKeys)) {
-      continue;
-    }
-    entry.fn(dirtyKeys);
-    if (dirtyKeys != nullptr && !entry.producesKey.empty()) {
-      dirtyKeys->insert(entry.producesKey);
-    }
-  }
-}
-
 struct RepeaterRecord {
   Entity parentEntity{};
   OxmlNode itemTemplate{};
@@ -679,6 +667,16 @@ sol::object LookupKeyInTable(const sol::table& tbl, const std::string& key) {
 }
 
 struct UIViewInstance;
+
+void LogIfLuaError(const sol::protected_function_result& res, const char* context) {
+  if (!res.valid()) {
+    const sol::error err = res;
+    Logger::ErrorLua(std::string(context) + ": " + err.what());
+  }
+}
+
+void RunRefreshEntries(const UIViewInstance& view, const std::vector<RefreshEntry>& entries,
+                       std::unordered_set<std::string>* dirtyKeys);
 
 void PinMountedView(sol::state* lua, uint64_t viewId, const std::shared_ptr<UIViewInstance>& view);
 void UnpinMountedView(sol::state* lua, uint64_t viewId);
@@ -708,8 +706,21 @@ struct UIViewInstance : std::enable_shared_from_this<UIViewInstance> {
   std::vector<Entity> inertSubtreeRoots{};
   std::vector<std::string> acquiredAssetIds{};
   bool isMounted = true;
+  bool isBuildingTree = false;
   bool isRefreshing = false;
   bool isInert = false;
+
+  [[nodiscard]] bool IsActiveOrBuilding() const { return isMounted && (isBuildingTree || IsCurrentlyMounted()); }
+
+  struct BuildingTreeGuard {
+    UIViewInstance& view;
+    explicit BuildingTreeGuard(UIViewInstance& v) : view(v) { view.isBuildingTree = true; }
+    ~BuildingTreeGuard() { view.isBuildingTree = false; }
+    BuildingTreeGuard(const BuildingTreeGuard&) = delete;
+    BuildingTreeGuard& operator=(const BuildingTreeGuard&) = delete;
+    BuildingTreeGuard(BuildingTreeGuard&&) = delete;
+    BuildingTreeGuard& operator=(BuildingTreeGuard&&) = delete;
+  };
 
   void SetInert(const bool inert) {
     isInert = inert;
@@ -792,6 +803,7 @@ struct UIViewInstance : std::enable_shared_from_this<UIViewInstance> {
   }
 
   void SyncInertAfterRefresh() {
+    if (!IsCurrentlyMounted()) return;
     if (isInert) {
       SetSubtreeInert(runtime->GetRegistry(), rootEntity, true);
     } else if (!inertSubtreeRoots.empty()) {
@@ -811,10 +823,10 @@ struct UIViewInstance : std::enable_shared_from_this<UIViewInstance> {
     isRefreshing = true;
     const auto entries = refreshEntries;
     if (changedKey.empty()) {
-      RunRefreshEntries(entries, nullptr);
+      RunRefreshEntries(*this, entries, nullptr);
     } else {
       std::unordered_set<std::string> dirtyKeys{changedKey};
-      RunRefreshEntries(entries, &dirtyKeys);
+      RunRefreshEntries(*this, entries, &dirtyKeys);
     }
     SyncInertAfterRefresh();
     isRefreshing = false;
@@ -857,6 +869,34 @@ struct UIViewInstance : std::enable_shared_from_this<UIViewInstance> {
     paramOverrides = sol::lua_nil;
   }
 };
+
+void RunRefreshEntries(const UIViewInstance& view, const std::vector<RefreshEntry>& entries,
+                       std::unordered_set<std::string>* dirtyKeys) {
+  for (const auto& entry : entries) {
+    if (!view.IsActiveOrBuilding()) {
+      return;
+    }
+    if (dirtyKeys != nullptr && !entry.deps.empty() && !MatchesAnyDep(entry.deps, *dirtyKeys)) {
+      continue;
+    }
+    entry.fn(dirtyKeys);
+    if (dirtyKeys != nullptr && !entry.producesKey.empty()) {
+      dirtyKeys->insert(entry.producesKey);
+    }
+  }
+}
+
+std::shared_ptr<UIViewInstance> LockActiveView(const std::weak_ptr<UIViewInstance>& weakView) {
+  auto v = weakView.lock();
+  if (!v || !v->IsActiveOrBuilding()) return nullptr;
+  return v;
+}
+
+std::shared_ptr<UIViewInstance> LockMountedView(const std::weak_ptr<UIViewInstance>& weakView) {
+  auto v = weakView.lock();
+  if (!v || !v->IsCurrentlyMounted()) return nullptr;
+  return v;
+}
 
 void PinMountedView(sol::state* lua, const uint64_t viewId, const std::shared_ptr<UIViewInstance>& view) {
   if (lua == nullptr || viewId == 0) return;
@@ -1453,9 +1493,12 @@ void HandleToggleClick(const std::shared_ptr<UIViewInstance>& v, Entity entity, 
     v->RefreshKey(LastDotPathSegment(bindPath));
   }
   v->InvokeController(onChangeMethod, valObj);
+  if (!v->IsCurrentlyMounted()) return;
   if (const auto it = v->changeCallbacks.find(entity.id); it != v->changeCallbacks.end()) {
-    for (const auto& cb : it->second) {
-      cb(nextChecked);
+    const auto cbs = it->second;
+    for (const auto& cb : cbs) {
+      if (!v->IsCurrentlyMounted()) break;
+      LogIfLuaError(cb(nextChecked), "UI toggle on-change");
     }
   }
 }
@@ -1493,7 +1536,7 @@ void ConfigureToggleEntity(const std::shared_ptr<UIViewInstance>& view, Entity e
     ExtractExprIdentifiers(bindPath, deps);
     view->AddRefreshFn(
         [weakView, entity, bindPath]() {
-          auto v = weakView.lock();
+          auto v = LockActiveView(weakView);
           if (!v || !v->context.valid()) return;
           SetEntityChecked(v->runtime->GetRegistry(), entity, ObjectToBool(GetPathValue(v->context, bindPath)));
         },
@@ -1521,9 +1564,12 @@ void HandleRadioButtonClick(const std::shared_ptr<UIViewInstance>& v, Entity ent
   }
 
   v->InvokeController(onClickMethod, valObj);
+  if (!v->IsCurrentlyMounted()) return;
   if (const auto it = v->changeCallbacks.find(entity.id); it != v->changeCallbacks.end()) {
-    for (const auto& cb : it->second) {
-      cb(optionValue);
+    const auto cbs = it->second;
+    for (const auto& cb : cbs) {
+      if (!v->IsCurrentlyMounted()) break;
+      LogIfLuaError(cb(optionValue), "UI radio on-change");
     }
   }
 }
@@ -1587,8 +1633,11 @@ void SetSliderValue(const std::shared_ptr<UIViewInstance>& view, const std::shar
     view->RefreshKey(LastDotPathSegment(st->bindPath));
   }
   view->InvokeController(st->onChangeMethod, valObj);
-  for (const auto& cb : st->changeListeners) {
-    cb(st->value);
+  if (!view->IsCurrentlyMounted()) return;
+  const auto listeners = st->changeListeners;
+  for (const auto& cb : listeners) {
+    if (!view->IsCurrentlyMounted()) break;
+    LogIfLuaError(cb(st->value), "UI slider on-change");
   }
 }
 
@@ -1701,7 +1750,7 @@ void ConfigureSliderEntity(const std::shared_ptr<UIViewInstance>& view, Entity e
     ExtractExprIdentifiers(st->bindPath, deps);
     view->AddRefreshFn(
         [weakView, st]() {
-          auto v = weakView.lock();
+          auto v = LockActiveView(weakView);
           if (!v || !v->context.valid()) return;
           const float boundVal = ObjectToFloat(GetPathValue(v->context, st->bindPath), st->value);
           SetSliderValue(v, st, boundVal, false);
@@ -1740,7 +1789,7 @@ void BindVisibilityAttribute(const std::shared_ptr<UIViewInstance>& view, Entity
   ExtractExprIdentifiers(expr, deps);
   std::weak_ptr<UIViewInstance> weakView = view;
   auto applyVis = [weakView, entity, expr, scope]() {
-    auto v = weakView.lock();
+    auto v = LockActiveView(weakView);
     if (!v) return;
     const bool vis = ObjectToBool(EvalBindingExpr(*v->runtime->GetLua(), expr, scope));
     SetEntityVisibility(v->runtime->GetRegistry(), entity, vis);
@@ -1756,7 +1805,7 @@ void BindDisabledAttribute(const std::shared_ptr<UIViewInstance>& view, Entity e
   ExtractExprIdentifiers(expr, deps);
   std::weak_ptr<UIViewInstance> weakView = view;
   auto applyDis = [weakView, entity, expr, scope]() {
-    auto v = weakView.lock();
+    auto v = LockActiveView(weakView);
     if (!v) return;
     const bool dis = ObjectToBool(EvalBindingExpr(*v->runtime->GetLua(), expr, scope));
     SetEntityDisabled(v->runtime->GetRegistry(), entity, dis);
@@ -1771,7 +1820,7 @@ void BindSpriteAttribute(const std::shared_ptr<UIViewInstance>& view, Entity ent
   ExtractInterpolatedIdentifiers(rawSprite, deps);
   std::weak_ptr<UIViewInstance> weakView = view;
   auto applySprite = [weakView, entity, rawSprite, scope]() {
-    auto v = weakView.lock();
+    auto v = LockActiveView(weakView);
     if (!v) return;
     Registry* r = v->runtime->GetRegistry();
     if (!r->IsAlive(entity)) return;
@@ -1893,7 +1942,7 @@ void BindDynamicStyleAttributes(const std::shared_ptr<UIViewInstance>& view, Ent
   std::weak_ptr<UIViewInstance> weakView = view;
   view->AddRefreshFn(
       [weakView, entity, node, scope]() {
-        auto v = weakView.lock();
+        auto v = LockActiveView(weakView);
         if (!v) return;
         Registry* r = v->runtime->GetRegistry();
         if (!r->IsAlive(entity)) return;
@@ -1918,7 +1967,7 @@ void BindTextAttribute(const std::shared_ptr<UIViewInstance>& view, Entity entit
   std::weak_ptr<UIViewInstance> weakView = view;
   view->AddRefreshFn(
       [weakView, entity, rawText, scope]() {
-        auto v = weakView.lock();
+        auto v = LockActiveView(weakView);
         if (!v) return;
         Registry* r = v->runtime->GetRegistry();
         if (!r->IsAlive(entity) || !r->HasComponent<TextLabelComponent>(entity)) return;
@@ -1939,7 +1988,7 @@ void BindProgressValueAttribute(const std::shared_ptr<UIViewInstance>& view, Ent
   std::weak_ptr<UIViewInstance> weakView = view;
   view->AddRefreshFn(
       [weakView, entity, valExpr, scope]() {
-        auto v = weakView.lock();
+        auto v = LockActiveView(weakView);
         if (!v) return;
         Registry* r = v->runtime->GetRegistry();
         if (!r->IsAlive(entity) || !r->HasComponent<SquarePrimitiveComponent>(entity)) return;
@@ -2084,13 +2133,18 @@ void RegisterRefEventHandler(const std::shared_ptr<UIViewInstance>& v, Entity en
   if (eventName == "click" && r->HasComponent<UIButtonComponent>(entity)) {
     auto& btn = r->GetComponent<UIButtonComponent>(entity);
     const sol::protected_function prev = btn.clickFunction;
-    btn.clickFunction = v->runtime->GetLua()
-                            ->create_table_with("fn",
-                                                [prev, fn]() {
-                                                  if (prev.valid()) prev();
-                                                  fn();
-                                                })
-                            .get<sol::protected_function>("fn");
+    std::weak_ptr<UIViewInstance> weakView = v;
+    btn.clickFunction =
+        v->runtime->GetLua()
+            ->create_table_with("fn",
+                                [weakView, prev, fn](sol::variadic_args va) {
+                                  if (prev.valid()) {
+                                    LogIfLuaError(prev(sol::as_args(va)), "UI ref previous click handler");
+                                  }
+                                  if (!LockMountedView(weakView)) return;
+                                  LogIfLuaError(fn(sol::as_args(va)), "UI ref click handler");
+                                })
+            .get<sol::protected_function>("fn");
   } else if (eventName == "change") {
     if (const auto sIt = v->sliders.find(entity.id); sIt != v->sliders.end()) {
       sIt->second->changeListeners.push_back(fn);
@@ -2184,7 +2238,8 @@ std::optional<std::size_t> FindFocusedRepeaterIndex(Registry* r, const std::vect
 void FinalizeRepeaterItems(Registry* r, const std::shared_ptr<UIViewInstance>& v,
                            const std::shared_ptr<RepeaterRecord>& rec,
                            const std::optional<std::size_t> prevFocusedIdx) {
-  RunRefreshEntries(rec->itemRefreshEntries, nullptr);
+  RunRefreshEntries(*v, rec->itemRefreshEntries, nullptr);
+  if (!v->IsActiveOrBuilding()) return;
   if (v->isInert || IsEntityInert(r, rec->parentEntity)) {
     for (const Entity e : rec->spawnedEntities) {
       SetSubtreeInert(r, e, true);
@@ -2267,7 +2322,7 @@ void MountRepeaterNode(const std::shared_ptr<UIViewInstance>& view, const OxmlNo
   // Repeater refresh callback invokes RebuildRepeaterItems which traverses child OXML subtrees.
   // NOLINTNEXTLINE(misc-no-recursion)
   auto rebuild = [weakView, rec, scope, savedSlots, savedCallerScope, activeRadioGroup]() {
-    auto v = weakView.lock();
+    auto v = LockActiveView(weakView);
     if (!v) return;
     const SlotProjection savedProj{&savedSlots, savedCallerScope};
     const SlotProjection* projPtr = savedSlots.empty() && !savedCallerScope.valid() ? nullptr : &savedProj;
@@ -2280,11 +2335,13 @@ void MountRepeaterNode(const std::shared_ptr<UIViewInstance>& view, const OxmlNo
       .producesKey = {},
       // NOLINTNEXTLINE(misc-no-recursion)
       .fn =
-          [rec, rebuild](std::unordered_set<std::string>* dirtyKeys) {
+          [weakView, rec, rebuild](std::unordered_set<std::string>* dirtyKeys) {
+            auto v = LockActiveView(weakView);
+            if (!v) return;
             if (dirtyKeys == nullptr || rec->listDeps.empty() || MatchesAnyDep(rec->listDeps, *dirtyKeys)) {
               rebuild();
             } else {
-              RunRefreshEntries(rec->itemRefreshEntries, dirtyKeys);
+              RunRefreshEntries(*v, rec->itemRefreshEntries, dirtyKeys);
             }
           },
   });
@@ -2341,7 +2398,7 @@ Entity InstantiateImportedUse(const std::shared_ptr<UIViewInstance>& view, const
       ExtractInterpolatedIdentifiers(valStr, deps);
       view->AddRefreshFn(
           [weakView, paramVars, key, valStr, scope]() mutable {
-            auto v = weakView.lock();
+            auto v = LockActiveView(weakView);
             if (!v) return;
             paramVars[key] = EvalBoundAttrValue(*v->runtime->GetLua(), valStr, scope);
           },
@@ -2387,12 +2444,12 @@ void BindCustomWidgetAttributes(const std::shared_ptr<UIViewInstance>& view, con
     ExtractInterpolatedIdentifiers(valStr, deps);
     view->AddRefreshFn(
         [weakView, instanceCtx, props, key, valStr, scope, onPropChanged]() mutable {
-          auto v = weakView.lock();
+          auto v = LockActiveView(weakView);
           if (!v) return;
           sol::object nextVal = EvalBoundAttrValue(*v->runtime->GetLua(), valStr, scope);
           props[key] = nextVal;
           if (onPropChanged.has_value()) {
-            (*onPropChanged)(instanceCtx, key, nextVal);
+            LogIfLuaError((*onPropChanged)(instanceCtx, key, nextVal), "UI custom widget on_prop_changed");
           }
         },
         std::move(deps), key);
@@ -2433,11 +2490,12 @@ Entity InstantiateCustomLuaWidget(const std::shared_ptr<UIViewInstance>& view, c
   instanceCtx.set("view", view->viewTable);
 
   if (const sol::optional<sol::protected_function> onMount = descriptor["on_mount"]; onMount) {
-    (*onMount)(instanceCtx);
+    LogIfLuaError((*onMount)(instanceCtx), "UI custom widget on_mount");
   }
   if (const sol::optional<sol::protected_function> onUnmount = descriptor["on_unmount"]; onUnmount) {
     const sol::protected_function& cb = *onUnmount;
-    view->unmountFns.emplace_back([cb, instanceCtx]() { cb(instanceCtx); });
+    view->unmountFns.emplace_back(
+        [cb, instanceCtx]() { LogIfLuaError(cb(instanceCtx), "UI custom widget on_unmount"); });
   }
   return rootEnt;
 }
@@ -2470,10 +2528,11 @@ std::shared_ptr<RadioGroupState> CreateRadioGroupState(const std::shared_ptr<UIV
     std::weak_ptr<UIViewInstance> weakView = view;
     view->AddRefreshFn(
         [weakView, rg]() {
-          auto v = weakView.lock();
+          auto v = LockActiveView(weakView);
           if (!v || !v->context.valid()) return;
           Registry* r = v->runtime->GetRegistry();
           rg->currentValue = ObjectToString(GetPathValue(v->context, rg->bindPath));
+          if (!v->IsActiveOrBuilding()) return;
           for (const auto& [btnEnt, btnVal] : rg->buttons) {
             SetEntityChecked(r, btnEnt, btnVal == rg->currentValue);
           }
@@ -2648,7 +2707,7 @@ bool IsTableObservable(const sol::table& tbl) { return tbl.valid() && tbl.get_or
 void SubscribeObservableTable(sol::table& obsTbl, const std::function<void(const std::string&)>& fn) {
   sol::protected_function subFn = obsTbl.get<sol::protected_function>("__subscribe");
   if (subFn.valid()) {
-    subFn(obsTbl, fn);
+    LogIfLuaError(subFn(obsTbl, fn), "UI observable __subscribe");
   }
 }
 
@@ -2976,7 +3035,10 @@ void RebuildViewTreeForReload(UIRuntime* runtime, const std::shared_ptr<UIViewIn
 
   SeedParamsFromDocument(v, doc, *runtime->GetLua());
   const sol::table reloadedScope = v->MakeScope();
-  v->rootEntity = InstantiateNode(v, doc.roots.front(), savedParent, reloadedScope, nullptr, nullptr);
+  {
+    const UIViewInstance::BuildingTreeGuard guard(*v);
+    v->rootEntity = InstantiateNode(v, doc.roots.front(), savedParent, reloadedScope, nullptr, nullptr);
+  }
   v->viewTable.set("root", v->rootEntity);
   v->Refresh();
 }
@@ -3121,7 +3183,7 @@ void NotifyObservableListeners(const sol::table& listeners, const std::string& k
   for (std::size_t i = 1; i <= n; ++i) {
     sol::object fnObj = listeners.get<sol::object>(i);
     if (fnObj.is<sol::protected_function>()) {
-      fnObj.as<sol::protected_function>()(key);
+      LogIfLuaError(fnObj.as<sol::protected_function>()(key), "UI observable listener");
     }
   }
 }
@@ -3368,7 +3430,10 @@ sol::object UIRuntime::Mount(const sol::object& sourceObj, const sol::optional<s
   view->acquiredAssetIds = AcquireViewCatalogAssets(this, parsed.document, view->stylesheet, view->importedUses);
 
   const sol::table rootScope = view->MakeScope();
-  view->rootEntity = InstantiateNode(view, parsed.document.roots.front(), parentEntity, rootScope, nullptr, nullptr);
+  {
+    const UIViewInstance::BuildingTreeGuard guard(*view);
+    view->rootEntity = InstantiateNode(view, parsed.document.roots.front(), parentEntity, rootScope, nullptr, nullptr);
+  }
   PopulateMountViewTable(view);
   sol::table resultTable = view->viewTable;
 

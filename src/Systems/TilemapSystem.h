@@ -185,11 +185,14 @@ class TilemapSystem {
   [[nodiscard]] bool GetShowCollisionOverlay() const noexcept { return show_collision_overlay_; }
 
  private:
+  bool LoadFromDataInternal(Registry& registry, octarine::tilemap::TilemapData data,
+                            const octarine::tilemap::TilemapLoadOptions& options, const std::string& sourceLabel,
+                            bool preSlicedForAtlas);
   void RebuildTemplateLookupCaches();
   [[nodiscard]] const octarine::tilemap::ChunkTemplate* ResolveVariantForChunk(
       const octarine::tilemap::ChunkTemplate* baseTmpl, int32_t chunkX, int32_t chunkY) const noexcept;
   void InvokeVariantGenerator(octarine::tilemap::TilemapData& data, int32_t variantCount, uint32_t seed) const;
-  void EnsureTilesetTexturesLoaded(Registry& registry);
+  void EnsureTilesetTexturesLoaded(Registry& registry, bool preSlicedForAtlas);
   void RefreshTemplateTextureCache(AssetManager* assetManager);
   [[nodiscard]] SDL_Texture* ResolveTilesetTexture(AssetManager* assetManager, const std::string& assetId) const;
   void LoadChunk(Registry& registry, int32_t chunkX, int32_t chunkY);
@@ -222,7 +225,6 @@ class TilemapSystem {
   std::unordered_map<std::string, const octarine::tilemap::ChunkTemplate*> template_by_id_{};
   std::unordered_map<int64_t, octarine::tilemap::ConsumedPropMask> consumed_props_{};
   std::vector<std::string> acquired_tileset_ids_{};
-  bool data_pre_sliced_for_atlas_ = false;
   sol::protected_function prop_spawner_{};
   octarine::tilemap::VariantGeneratorFn variant_generator_{};
 
