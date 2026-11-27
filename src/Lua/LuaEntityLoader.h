@@ -281,7 +281,38 @@ class LuaEntityLoader {
     if (!needsGlobal) return;
 
     if (registry->HasComponent<GlobalTransformComponent>(entity)) return;
-    registry->AddComponent(entity, GlobalTransformComponent{});
+    GlobalTransformComponent global{};
+    if (registry->HasComponent<PositionComponent>(entity)) {
+      global.position = registry->GetComponent<PositionComponent>(entity).value;
+    }
+    if (registry->HasComponent<ScaleComponent>(entity)) {
+      global.scale = registry->GetComponent<ScaleComponent>(entity).value;
+    }
+    if (registry->HasComponent<RotationComponent>(entity)) {
+      global.rotation = registry->GetComponent<RotationComponent>(entity).value;
+    }
+    if (registry->HasComponent<PivotComponent>(entity) || registry->HasComponent<SpriteComponent>(entity) ||
+        registry->HasComponent<SquarePrimitiveComponent>(entity) ||
+        registry->HasComponent<BoxColliderComponent>(entity)) {
+      const glm::vec2 normPivot = registry->HasComponent<PivotComponent>(entity)
+                                      ? registry->GetComponent<PivotComponent>(entity).value
+                                      : glm::vec2(PivotComponent::kDefaultX, PivotComponent::kDefaultY);
+      glm::vec2 localSize{0.0F, 0.0F};
+      if (registry->HasComponent<SpriteComponent>(entity)) {
+        const auto& s = registry->GetComponent<SpriteComponent>(entity);
+        localSize = {s.width, s.height};
+      } else if (registry->HasComponent<SquarePrimitiveComponent>(entity)) {
+        const auto& sq = registry->GetComponent<SquarePrimitiveComponent>(entity);
+        localSize = {sq.width, sq.height};
+      } else if (registry->HasComponent<BoxColliderComponent>(entity)) {
+        const auto& c = registry->GetComponent<BoxColliderComponent>(entity);
+        localSize = {static_cast<float>(c.width), static_cast<float>(c.height)};
+      }
+      const glm::vec2 anchor = localSize * normPivot;
+      global.position += anchor * (glm::vec2(1.0F, 1.0F) - global.scale);
+      global.pivot = anchor * global.scale;
+    }
+    registry->AddComponent(entity, global);
   }
 
   static void ApplyTagField(const sol::table& currentData, const char* key, Registry* registry, const Entity& entity) {

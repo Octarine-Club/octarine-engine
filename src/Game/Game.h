@@ -83,6 +83,9 @@ class Game : public LuaBindingContext {
   [[nodiscard]] bool IsHeadless() const { return headless_; }
   void SetDevMode(bool dev) { dev_mode_ = dev; }
   [[nodiscard]] bool IsDevMode() const { return dev_mode_; }
+  void SetQuitOnError(bool quitOnError) { quit_on_error_ = quitOnError; }
+  [[nodiscard]] bool IsQuitOnError() const { return quit_on_error_; }
+  [[nodiscard]] bool HasFatalError() const { return has_fatal_error_; }
 
   struct UiPreviewCliOptions {
     std::string file{};
@@ -169,11 +172,15 @@ class Game : public LuaBindingContext {
   EngineRuntime runtime_;
   static inline bool s_is_running_{false};
   bool is_setup_ = false;
+  bool is_destroyed_ = false;
   uint64_t current_tick_ = 0;
   bool bake_mode_ = false;
   bool use_manifest_ = false;
   bool headless_ = false;
   bool dev_mode_ = false;
+  bool quit_on_error_ = false;
+  bool has_fatal_error_ = false;
+  uint64_t initial_script_error_seq_ = 0;
 #ifndef OCTARINE_SHIPPED
   int dev_listen_port_ = 0;
   std::string ui_preview_file_{};

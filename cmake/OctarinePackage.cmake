@@ -255,19 +255,20 @@ function(_octarine_setup_desktop_install TARGET PROJECT_DIR RUNTIME_DEST DATA_DE
         file(REMOVE_RECURSE \"${_staged_scripts_dir}\")
         file(MAKE_DIRECTORY \"${_staged_scripts_dir}\")
 
-        # Copy root Lua scripts
-        file(GLOB _root_lua LIST_DIRECTORIES false \"${PROJECT_DIR}/*.lua\")
-        if (_root_lua)
-            list(FILTER _root_lua EXCLUDE REGEX \"asset_manifest\\\\.lua$\")
-            if (_root_lua)
-                file(COPY \${_root_lua} DESTINATION \"${_staged_scripts_dir}\")
+        # Stage all project Lua scripts recursively (excluding build/preview/generated artifacts)
+        file(GLOB_RECURSE _all_project_lua LIST_DIRECTORIES false \"${PROJECT_DIR}/*.lua\")
+        foreach (_lua_file IN LISTS _all_project_lua)
+            file(RELATIVE_PATH _rel_lua \"${PROJECT_DIR}\" \"\${_lua_file}\")
+            if (\"/\${_rel_lua}\" MATCHES \"/(build|cmake-build-[^/]+|vcpkg_installed|atlases|_atlases|normalized|backups|types|generated|node_modules|\\\\.[^/]+)/\")
+                continue()
             endif ()
-        endif ()
-
-        # Copy scripts/ directory if present
-        if (IS_DIRECTORY \"${PROJECT_DIR}/scripts\")
-            file(COPY \"${PROJECT_DIR}/scripts/\" DESTINATION \"${_staged_scripts_dir}/scripts\")
-        endif ()
+            if (\"\${_rel_lua}\" MATCHES \"(asset_manifest\\\\.lua|octarine_api\\\\.lua|\\\\.preview\\\\.lua|\\\\.atlas\\\\.lua)$\")
+                continue()
+            endif ()
+            get_filename_component(_rel_dir \"\${_rel_lua}\" DIRECTORY)
+            file(MAKE_DIRECTORY \"${_staged_scripts_dir}/\${_rel_dir}\")
+            file(COPY \"\${_lua_file}\" DESTINATION \"${_staged_scripts_dir}/\${_rel_dir}\")
+        endforeach ()
 
         file(GLOB_RECURSE _lua_sources LIST_DIRECTORIES false \"${_staged_scripts_dir}/*.lua\")
         foreach (_src IN LISTS _lua_sources)

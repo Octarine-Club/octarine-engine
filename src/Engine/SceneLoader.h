@@ -37,8 +37,8 @@ class SceneLoader {
   void ReloadScene();
   void StopScene();
 
-  // Arm deferral (first call) and perform a pending deferred swap, if any. Called at the top of the
-  // frame, before systems run, so the new scene's entities get their GlobalTransformComponent
+  // Arm deferral (first call) and perform a pending deferred swap or stop, if any. Called at the top
+  // of the frame, before systems run, so the new scene's entities get their GlobalTransformComponent
   // populated this same frame. Never reached under bake (no frame loop), so bake loads stay immediate.
   void FlushPendingSceneLoad();
 
@@ -50,6 +50,7 @@ class SceneLoader {
 
   // True between a successful LoadScene/ReloadScene and the next StopScene.
   [[nodiscard]] bool IsSceneRunning() const { return scene_running_; }
+  [[nodiscard]] bool LastLoadFailed() const { return last_load_failed_; }
   [[nodiscard]] const std::string& GetCurrentScenePath() const { return current_scene_path_; }
 
  private:
@@ -57,15 +58,19 @@ class SceneLoader {
   // touching acquired assets. Asset release is sequenced separately so a scene swap can acquire
   // the next scene's set before releasing the previous one (acquire-before-release).
   void clearSceneEntities();
+  void stopSceneImmediate();
 
   Registry* registry_;
   sol::state& lua_;
   bool loading_scene_ = false;
   bool scene_running_ = false;
-  // Deferred-swap state. deferred_swaps_ flips on once the live loop is running; while set, LoadScene
-  // only stashes pending_scene_path_ (last request wins) and FlushPendingSceneLoad does the work.
+  bool last_load_failed_ = false;
+  // Deferred-swap state. deferred_swaps_ flips on once the live loop is running; while set,
+  // RequestLoadScene and StopScene only stash pending state (last request wins) and
+  // FlushPendingSceneLoad does the work.
   bool deferred_swaps_ = false;
   bool has_pending_scene_ = false;
+  bool has_pending_stop_ = false;
   std::string pending_scene_path_;
   // Asset ids acquired for the currently loaded scene. StopScene releases these; LoadScene
   // acquires the next scene's set first (acquire-before-release) so shared assets never churn.

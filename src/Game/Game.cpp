@@ -107,19 +107,19 @@
 #include "UI/UIPreviewer.h"
 #endif
 
-inline void LoadGame(sol::state& lua, const AssetManager& assetManager, const GameConfig& gameConfig) {
+inline bool LoadGame(sol::state& lua, const AssetManager& assetManager, const GameConfig& gameConfig) {
   const auto filePath = assetManager.GetFullPath(gameConfig.GetStartupScript());
 
   Logger::Info("Loading entry script: " + filePath);
   auto bytes = ReadFileViaSDL(filePath, &assetManager);
   if (!bytes) {
-    Logger::Error("Failed to read entry script: " + filePath);
-    return;
+    Logger::ErrorLua("Failed to read entry script: " + filePath);
+    return false;
   }
   const bool requireProtected = (assetManager.GetAssetPak() != nullptr);
   if (!DecryptLuaBytes(*bytes, requireProtected)) {
-    Logger::Error("Failed to decrypt or verify entry script: " + filePath);
-    return;
+    Logger::ErrorLua("Failed to decrypt or verify entry script: " + filePath);
+    return false;
   }
 
   sol::protected_function_result result;
@@ -128,19 +128,20 @@ inline void LoadGame(sol::state& lua, const AssetManager& assetManager, const Ga
   } catch (const std::exception& ex) {
     std::fill(bytes->begin(), bytes->end(), '\0');
     bytes->clear();
-    Logger::Error(ex.what());
-    return;
+    Logger::ErrorLua(ex.what());
+    return false;
   }
   std::fill(bytes->begin(), bytes->end(), '\0');
   bytes->clear();
 
   if (!result.valid()) {
     const sol::error err = result;
-    Logger::Error("Failed to load entry script '" + filePath + "': " + err.what());
-    return;
+    Logger::ErrorLua("Failed to load entry script '" + filePath + "': " + err.what());
+    return false;
   }
 
   Logger::Info("Just opened entry script: " + filePath);
+  return true;
 }
 
 Game::Game() {
@@ -162,10 +163,14 @@ Game::Game() {
   Logger::Info("Game Constructor called.");
 }
 
-Game::~Game() { Logger::Info("Game Destructor called."); }
+Game::~Game() {
+  Destroy();
+  Logger::Info("Game Destructor called.");
+}
 
 namespace {
 constexpr const char* kHeadlessEnvVar = "OCTARINE_HEADLESS";
+constexpr const char* kFailOnLuaErrorEnvVar = "OCTARINE_FAIL_ON_LUA_ERROR";
 constexpr const char* kSavePathEnvVar = "OCTARINE_SAVE_PATH";
 constexpr const char* kDefaultOrgName = "Octarine";
 constexpr const char* kDefaultAppName = "Engine";
@@ -174,23 +179,31 @@ constexpr const char* kDefaultWindowTitle = "Octarine Engine";
 constexpr const char* kImGuiIniFilename = "imgui.ini";
 #endif
 
-bool CheckHeadlessEnv() {
+bool CheckBoolEnv(const char* name) {
 #ifdef _MSC_VER
   char* envVal = nullptr;
   size_t envLen = 0;
-  if (_dupenv_s(&envVal, &envLen, kHeadlessEnvVar) == 0 && envVal != nullptr) {
+  if (_dupenv_s(&envVal, &envLen, name) == 0 && envVal != nullptr) {
     const std::string s(envVal);
     free(envVal);
     return s == "1" || s == "true";
   }
   return false;
 #else
-  if (const char* envVal = std::getenv(kHeadlessEnvVar)) {
+  if (const char* envVal = std::getenv(name)) {
     const std::string s(envVal);
     return s == "1" || s == "true";
   }
   return false;
 #endif
+}
+
+bool CheckHeadlessEnv() { return CheckBoolEnv(kHeadlessEnvVar); }
+bool CheckFailOnLuaErrorEnv() { return CheckBoolEnv(kFailOnLuaErrorEnvVar); }
+
+uint64_t LatestScriptErrorSeq() {
+  const auto errs = Logger::RecentScriptErrors();
+  return errs.empty() ? 0 : errs.back().sequence;
 }
 
 void ApplyHeadlessOptions(EngineOptions& opts) {
@@ -396,6 +409,10 @@ bool Game::Initialize(const std::string& assetPath) {
   if (!headless_) {
     headless_ = CheckHeadlessEnv();
   }
+  if (!quit_on_error_) {
+    quit_on_error_ = CheckFailOnLuaErrorEnv();
+  }
+  initial_script_error_seq_ = LatestScriptErrorSeq();
 
   if (!runtime_.InitSubsystems(headless_)) {
     return false;
@@ -446,12 +463,17 @@ bool Game::Initialize(const std::string& assetPath) {
 
 void Game::InitImGuiBackend() {
 #ifdef OCTARINE_WITH_IMGUI
-  auto& gameConfig = registry_->Get<GameConfig>();
   static std::string imguiIniPath;
-  if (gameConfig.HasLoadedConfig()) {
-    imguiIniPath = gameConfig.GetAssetPath() + "/" + kImGuiIniFilename;
+  const std::string saveDataPath = GetSaveDataPath();
+  if (!saveDataPath.empty()) {
+    std::error_code ec;
+    std::filesystem::create_directories(saveDataPath, ec);
+    const char sep = (saveDataPath.back() == '/' || saveDataPath.back() == '\\') ? '\0' : '/';
+    imguiIniPath = (sep == '\0') ? (saveDataPath + kImGuiIniFilename) : (saveDataPath + sep + kImGuiIniFilename);
   } else {
-    imguiIniPath = kImGuiIniFilename;
+    auto& gameConfig = registry_->Get<GameConfig>();
+    imguiIniPath =
+        gameConfig.HasLoadedConfig() ? (gameConfig.GetAssetPath() + "/" + kImGuiIniFilename) : kImGuiIniFilename;
   }
   runtime_.InitImGui(imguiIniPath.c_str());
   octarine::debug::InstallImGuiSettingsHandler(*registry_);
@@ -638,6 +660,11 @@ bool Game::SaveUserSettings() {
 }
 
 void Game::Destroy() {
+  if (is_destroyed_) {
+    return;
+  }
+  is_destroyed_ = true;
+
   if (registry_) {
 #ifndef OCTARINE_SHIPPED
     // Stop the dev listener before the registry teardown drops it so the listener thread
@@ -657,6 +684,50 @@ void Game::Destroy() {
     if (!bake_mode_ && !hasOneShotPreviewExport && (!headless_ || HasExplicitSavePathEnv())) {
       static_cast<void>(SaveUserSettings());
     }
+
+#ifndef OCTARINE_SHIPPED
+    if (auto* previewer = registry_->TryGet<UIPreviewer>()) {
+      previewer->UnmountPreview(/*restoreIsolationState=*/false);
+    }
+#endif
+    if (auto* uiRuntime = registry_->TryGet<UIRuntime>()) {
+      uiRuntime->UnmountAllViews();
+      uiRuntime->ClearCustomWidgets();
+    }
+  }
+
+  // Phase 1 (both Registry and lua_State* live): release all scene, UI, singleton, and ECS-held
+  // sol::* references, nil out LUA_REGISTRYINDEX["octarine_assets"], and run a Lua GC pass so
+  // any Lua __gc finalizers execute while engine singletons are still alive.
+  if (scene_loader_) {
+    if (scene_loader_->IsSceneRunning()) {
+      scene_loader_->StopScene();
+    }
+    scene_loader_->FlushPendingSceneLoad();
+  }
+  if (registry_) {
+    registry_->ClearUserEntities();
+    if (auto* inputSystem = registry_->TryGet<InputSystem>()) {
+      inputSystem->ResetLuaState();
+    }
+    if (auto* tilemap = registry_->TryGet<TilemapSystem>()) {
+      tilemap->Unload(*registry_);
+      tilemap->ClearPropSpawner();
+    }
+    if (auto* debugReg = registry_->TryGet<octarine::debug::DebugMenuRegistry>()) {
+      debugReg->ClearLuaOwned();
+    }
+    if (auto* hotReloadTracker = registry_->TryGet<octarine::LuaScriptHotReloadTracker>()) {
+      *hotReloadTracker = octarine::LuaScriptHotReloadTracker{};
+    }
+  }
+
+  LuaSystemRegistry::clear();
+  if (lua.lua_state() != nullptr) {
+    lua_State* L = lua.lua_state();
+    lua_pushnil(L);
+    lua_setfield(L, LUA_REGISTRYINDEX, "octarine_assets");
+    lua.collect_garbage();
   }
 
 #ifdef OCTARINE_WITH_IMGUI
@@ -669,22 +740,37 @@ void Game::Destroy() {
   }
 #endif
 
-  // Tear registry/event bus down BEFORE SDL_Quit so owned systems (AudioSystem -> MIX_Quit,
-  // AssetManager -> SDL_DestroyTexture) can still call into a live SDL.
+  // Phase 2 (lua_State* still live): tear down Registry/EventBus BEFORE closing Lua and BEFORE
+  // SDL_Quit so any remaining sol::* refs in engine or downstream octarine_game_module singletons
+  // or systems safely call luaL_unref on a live lua_State*, and SDL-backed systems can destroy
+  // their handles while SDL is still live.
+  frame_loop_.reset();
+  scene_loader_.reset();
   registry_.reset();
   event_bus_.reset();
 
+  // Phase 3: close Lua now that zero C++ objects hold sol::* references into it.
+  if (lua.lua_state() != nullptr) {
+    lua = sol::state{};
+  }
+
   // Free the off-screen scene target while the SDL renderer is still live (EngineRuntime owns
   // the ImGui backend + window/renderer destroy + SDL_Quit, in that order).
-  if (runtime_.SdlRenderer()) {
+  if (runtime_.SdlRenderer() != nullptr) {
     renderer_->DestroyScene();
   }
-  runtime_.Shutdown();
+  if (runtime_.SdlRenderer() != nullptr || runtime_.Window() != nullptr) {
+    runtime_.Shutdown();
+  }
 }
 
 void Game::Run() {
   if (!is_setup_) {
     Setup();
+    if (has_fatal_error_) {
+      s_is_running_ = false;
+      return;
+    }
     frame_loop_->Begin();
     is_setup_ = true;
   }
@@ -695,6 +781,12 @@ void Game::Run() {
     // current_tick_ counts simulation steps (not rendered frames), so sub-stepped fast-forward
     // and paused frames are accounted exactly.
     current_tick_ += static_cast<uint64_t>(frame_loop_->Update(deltaTime));
+    if ((quit_on_error_ && LatestScriptErrorSeq() > initial_script_error_seq_) ||
+        (scene_loader_ && scene_loader_->LastLoadFailed() && (quit_on_error_ || headless_))) {
+      has_fatal_error_ = true;
+      s_is_running_ = false;
+      break;
+    }
     frame_loop_->Render(deltaTime);
   }
 }
@@ -704,6 +796,10 @@ void Game::Step(const float deltaTime) { StepTicks(1, deltaTime); }
 void Game::StepTicks(const uint32_t count, const float deltaTime) {
   if (!is_setup_) {
     Setup();
+    if (has_fatal_error_) {
+      s_is_running_ = false;
+      return;
+    }
     frame_loop_->Begin();
     is_setup_ = true;
   }
@@ -718,6 +814,11 @@ void Game::StepTicks(const uint32_t count, const float deltaTime) {
       registry_->Get<GameConfig>().GetEngineOptions().stepFrame = true;
     }
     current_tick_ += static_cast<uint64_t>(frame_loop_->Update(deltaTime));
+    if ((quit_on_error_ && LatestScriptErrorSeq() > initial_script_error_seq_) ||
+        (scene_loader_ && scene_loader_->LastLoadFailed() && (quit_on_error_ || headless_))) {
+      has_fatal_error_ = true;
+      s_is_running_ = false;
+    }
     if (i + 1 == count || !s_is_running_) {
       frame_loop_->Render(deltaTime);
     }
@@ -933,12 +1034,6 @@ void Game::Setup() {
   engine_bootstrap::SetCommonLuaGlobals(lua, gameConfig, startup_mode_, dev_mode_);
   game_module::RegisterDebugUI(*registry_);
 
-#ifndef OCTARINE_SHIPPED
-  if (!LuaApiManifest::MaybeDumpFromEnv(lua, preBindingGlobals) && dev_mode_) {
-    LuaApiManifest::WriteProjectStub(lua, preBindingGlobals, gameConfig.GetAssetPath());
-  }
-#endif
-
   if (IsBenchMode()) {
     ApplyBenchModeOverlayOverrides(*registry_, gameConfig, startup_mode_);
   }
@@ -947,6 +1042,12 @@ void Game::Setup() {
   if (gameConfig.HasLoadedConfig()) {
     SetupAssetCatalogAndPak(*registry_, assetManager, lua, gameConfig, use_manifest_);
   }
+
+#ifndef OCTARINE_SHIPPED
+  if (!LuaApiManifest::MaybeDumpFromEnv(lua, preBindingGlobals) && dev_mode_) {
+    LuaApiManifest::WriteProjectStub(lua, preBindingGlobals, gameConfig.GetAssetPath());
+  }
+#endif
 
   auto audioSystem = registry_->RegisterSystem<AudioSourceComponent>(AudioSystem());
   if (!audioSystem.Func().Init(registry_.get(), event_bus_)) {
@@ -962,7 +1063,11 @@ void Game::Setup() {
   constexpr bool isUiPreviewMode = false;
 #endif
   if (gameConfig.HasLoadedConfig() && !isUiPreviewMode) {
-    LoadGame(lua, assetManager, gameConfig);
+    if (!LoadGame(lua, assetManager, gameConfig) || (scene_loader_ && scene_loader_->LastLoadFailed()) ||
+        (quit_on_error_ && LatestScriptErrorSeq() > initial_script_error_seq_)) {
+      has_fatal_error_ = true;
+      s_is_running_ = false;
+    }
   }
 
   const auto simulation = engine_bootstrap::RegisterSimulationSystems(*registry_, event_bus_);
@@ -989,23 +1094,33 @@ void Game::Setup() {
   auto renderSprite =
       registry_->RegisterParallelSystem<GlobalTransformComponent, SpriteComponent>(RenderSpriteSystem());
   registry_->Order(tilemapRender).After(cameraFollow).Before(renderSprite);
+  registry_->Order(renderSprite).After(transform).After(cameraFollow);
   auto renderUISprite = registry_->RegisterSystem<UIRectComponent, SpriteComponent>(RenderUISpriteSystem());
   auto renderUIPrimitive = registry_->RegisterBulkSystem(RenderUIPrimitiveSystem());
   auto renderText = registry_->RegisterSystem<TextLabelComponent>(RenderTextSystem());
   registry_->Order(renderUISprite).After(uiLayout);
   registry_->Order(renderUIPrimitive).After(uiLayout);
   registry_->Order(renderText).After(uiLayout);
-  registry_->RegisterParallelSystem<SquarePrimitiveComponent, GlobalTransformComponent>(RenderPrimitiveSystem());
-  registry_->RegisterParallelSystem<CirclePrimitiveComponent, GlobalTransformComponent>(RenderCirclePrimitiveSystem());
-  registry_->RegisterParallelSystem<LinePrimitiveComponent, GlobalTransformComponent>(RenderLinePrimitiveSystem());
-  registry_->RegisterParallelSystem<TrianglePrimitiveComponent, GlobalTransformComponent>(
+  auto renderSquare =
+      registry_->RegisterParallelSystem<SquarePrimitiveComponent, GlobalTransformComponent>(RenderPrimitiveSystem());
+  auto renderCircle = registry_->RegisterParallelSystem<CirclePrimitiveComponent, GlobalTransformComponent>(
+      RenderCirclePrimitiveSystem());
+  auto renderLine =
+      registry_->RegisterParallelSystem<LinePrimitiveComponent, GlobalTransformComponent>(RenderLinePrimitiveSystem());
+  auto renderTriangle = registry_->RegisterParallelSystem<TrianglePrimitiveComponent, GlobalTransformComponent>(
       RenderTrianglePrimitiveSystem());
-  registry_->RegisterParallelSystem<CapsulePrimitiveComponent, GlobalTransformComponent>(
+  auto renderCapsule = registry_->RegisterParallelSystem<CapsulePrimitiveComponent, GlobalTransformComponent>(
       RenderCapsulePrimitiveSystem());
-  registry_->RegisterParallelSystem<ColorGridComponent, GlobalTransformComponent>(RenderColorGridSystem());
+  auto renderColorGrid =
+      registry_->RegisterParallelSystem<ColorGridComponent, GlobalTransformComponent>(RenderColorGridSystem());
+  for (const auto sysId : {renderSquare.Id(), renderCircle.Id(), renderLine.Id(), renderTriangle.Id(),
+                           renderCapsule.Id(), renderColorGrid.Id()}) {
+    registry_->Order(sysId).After(transform).After(cameraFollow);
+  }
 
   registry_->Order(listenerTransform).After(transform);
-  registry_->Order(audioCulling).After(audioSystem);
+  registry_->Order(audioCulling).After(transform).After(listenerTransform).Before(audioSystem);
+  registry_->Order(audioSystem).After(listenerTransform).After(audioCulling);
   registry_->Order(spatialAudio).After(transform).After(listenerTransform).After(audioCulling).After(audioSystem);
   registry_->Order(doppler).After(transform).After(listenerTransform).After(audioCulling).After(audioSystem);
   registry_->Order(cameraFollow).After(transform).After(scriptSystem);
