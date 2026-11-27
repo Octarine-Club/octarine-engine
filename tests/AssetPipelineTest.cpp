@@ -336,6 +336,88 @@ int main() {
     Check(ids.size() == 7, "scanner dedupes repeated ids (7 unique)");
   }
 
+  std::cout << "[scanner + store + atlas] TextureStore::Clear gen, atlas Reload/ScaleMode, and LDtk scanner deps\n";
+  {
+    SDL_Init(0);
+    SDL_Surface* surf = SDL_CreateSurface(32, 32, SDL_PIXELFORMAT_RGBA32);
+    SDL_Renderer* sdlRenderer = surf != nullptr ? SDL_CreateSoftwareRenderer(surf) : nullptr;
+    Check(sdlRenderer != nullptr, "software renderer for TextureStore::Clear & atlas Reload checks");
+
+    const std::filesystem::path tmpDir = std::filesystem::temp_directory_path() / "octarine_rnd_pipeline_checks";
+    std::error_code ec;
+    std::filesystem::remove_all(tmpDir, ec);
+    std::filesystem::create_directories(tmpDir / "sprites", ec);
+    std::filesystem::create_directories(tmpDir / "maps" / "sub", ec);
+
+    std::vector<unsigned char> px(8 * 8 * 4, 255);
+    Check(stbi_write_png((tmpDir / "sprites" / "tiles_a.png").string().c_str(), 8, 8, 4, px.data(), 32) != 0 &&
+              stbi_write_png((tmpDir / "sprites" / "tiles_b.png").string().c_str(), 8, 8, 4, px.data(), 32) != 0,
+          "wrote PNGs for atlas reload & scanner test");
+    std::ofstream(tmpDir / "sprites" / "tiles_a.png.meta") << "return { atlas = \"grp\", scale_mode = \"linear\" }\n";
+    std::ofstream(tmpDir / "sprites" / "tiles_b.png.meta") << "return { atlas = \"grp\", scale_mode = \"linear\" }\n";
+
+    std::ofstream(tmpDir / "maps" / "sub" / "Room_0.ldtkl")
+        << R"JSON({ "identifier": "Room_0", "layerInstances": [] })JSON";
+    std::ofstream(tmpDir / "maps" / "dungeon.ldtk") << R"JSON({
+      "defs": {
+        "tilesets": [
+          { "uid": 1, "identifier": "tiles_a", "relPath": "../sprites/tiles_a.png" }
+        ]
+      },
+      "levels": [
+        { "identifier": "Room_0", "externalRelPath": "sub/Room_0.ldtkl", "layerInstances": null }
+      ]
+    })JSON";
+
+    if (sdlRenderer != nullptr) {
+      TextureStore ts;
+      const std::string pA = (tmpDir / "sprites" / "tiles_a.png").string();
+      Check(ts.Add(sdlRenderer, "tiles_a", SDL_IOFromFile(pA.c_str(), "rb"), pA) != nullptr, "TextureStore::Add ok");
+      const std::uint64_t genBeforeClear = ts.Generation();
+      ts.Clear();
+      Check(ts.Generation() == genBeforeClear + 1, "TextureStore::Clear increments generation_ (ENG-RND-03)");
+
+      sol::state lua;
+      lua.open_libraries(sol::lib::base, sol::lib::table);
+      AssetManager am;
+      Check(am.GetCatalog().Build(tmpDir.string(), lua, std::optional<ScaleMode>(ScaleMode::Linear), false),
+            "catalog built for atlas reload + LDtk scanner");
+      Check(TextureAtlasBaker{}.Run(am.GetCatalog(), tmpDir.string()), "TextureAtlasBaker packed grp atlas");
+
+      Check(am.Acquire("tiles_a", sdlRenderer, nullptr), "Acquire atlas-packed member tiles_a");
+      Check(am.SetTextureScaleMode("tiles_a", ScaleMode::Nearest),
+            "AssetManager::SetTextureScaleMode succeeds on atlas-packed member id");
+      SDL_ScaleMode modeOut = SDL_SCALEMODE_INVALID;
+      Check(SDL_GetTextureScaleMode(am.GetTexture("tiles_a"), &modeOut) && modeOut == SDL_SCALEMODE_NEAREST,
+            "backing atlas SDL_Texture* scale mode updated to Nearest via member id");
+
+      const std::uint64_t genBeforeReload = am.TextureGeneration();
+      Check(am.Reload("tiles_a", sdlRenderer, nullptr), "AssetManager::Reload succeeds on atlas-packed member id");
+      Check(am.TextureGeneration() > genBeforeReload, "Reload on atlas-packed member bumps TextureGeneration");
+      Check(am.RefCount("tiles_a") == 1, "Reload on atlas-packed member preserves member refcount");
+
+      lua_State* L = lua.lua_state();
+      lua_pushlightuserdata(L, &am);
+      lua_setfield(L, LUA_REGISTRYINDEX, "octarine_assets");
+      const sol::table ldtkScene = lua.script(R"lua(
+        return {
+          tilemap = { ldtk = "maps/dungeon.ldtk" },
+          entities = {},
+        }
+      )lua");
+      const auto scannedIds = SceneAssetScanner::Collect(ldtkScene);
+      Check(scannedIds.count("dungeon.ldtk") == 1, "SceneAssetScanner collects .ldtk catalog entry");
+      Check(scannedIds.count("Room_0.ldtkl") == 1, "SceneAssetScanner collects external .ldtkl dependency");
+      Check(scannedIds.count("tiles_a") == 1, "SceneAssetScanner collects LDtk tileset texture dependency");
+
+      am.Release("tiles_a");
+      SDL_DestroyRenderer(sdlRenderer);
+    }
+    SDL_DestroySurface(surf);
+    std::filesystem::remove_all(tmpDir, ec);
+    SDL_Quit();
+  }
+
 #ifdef ASSET_TEST_FIXTURE_DIR
   std::cout << "[validation] reference checks against catalog\n";
   {

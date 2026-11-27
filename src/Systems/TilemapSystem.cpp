@@ -90,6 +90,7 @@ void RecordSpawnedResult(Registry& registry, ActiveChunk& chunk, const sol::obje
 
 void InitChunkScreenVertices(ActiveChunk& chunk) {
   chunk.layerScreenVertices.clear();
+  chunk.hasSnappedVertices = false;
   if (chunk.templatePtr == nullptr) {
     return;
   }
@@ -132,24 +133,67 @@ SDL_Texture* FindTextureByStemOrCatalog(AssetManager* assetManager, const std::s
 }
 
 void LoadSingleTilesetTexture(AssetManager& assetManager, const EngineContext& ctx, const std::string& assetId,
-                              const std::string& relPath) {
-  if (assetManager.GetTexture(assetId) != nullptr) {
-    return;
-  }
+                              const std::string& relPath, std::vector<std::string>& outAcquiredIds) {
   const CatalogEntry* entry = assetManager.GetCatalog().Find(assetId);
   if (entry == nullptr && !relPath.empty()) {
     const std::string stem = std::filesystem::path(relPath).stem().string();
     entry = assetManager.GetCatalog().Find(stem);
   }
   if (entry != nullptr) {
-    assetManager.Acquire(entry->id, ctx.sdlRenderer, ctx.mixer);
+    if (assetManager.Acquire(entry->id, ctx.sdlRenderer, ctx.mixer)) {
+      outAcquiredIds.push_back(entry->id);
+    }
+    return;
+  }
+  if (assetManager.GetTexture(assetId) != nullptr) {
     return;
   }
   if (!relPath.empty()) {
     assetManager.AddTexture(ctx.sdlRenderer, assetId, relPath);
-    // Tilesets with atlas gutters must never inherit linear/pixelart filtering when uncatalogued,
-    // even if AssetManager::SetDefaultScaleMode runs later.
-    assetManager.SetTextureScaleMode(assetId, ScaleMode::Nearest);
+    if (assetManager.GetTexture(assetId) != nullptr) {
+      // Tilesets with atlas gutters must never inherit linear/pixelart filtering when uncatalogued,
+      // even if AssetManager::SetDefaultScaleMode runs later.
+      assetManager.SetTextureScaleMode(assetId, ScaleMode::Nearest);
+      if (assetManager.Acquire(assetId, ctx.sdlRenderer, ctx.mixer)) {
+        outAcquiredIds.push_back(assetId);
+      }
+    }
+  }
+}
+
+void RemapAllTemplatesToSlice(TilemapData& data, const std::string& assetId, const SDL_FRect& slice, const float atlasW,
+                              const float atlasH) {
+  for (auto& tmpl : data.templates) {
+    TilemapBuilder::RemapTemplateToAtlasSlice(tmpl, assetId, slice, atlasW, atlasH);
+  }
+  for (auto& pal : data.paletteTemplates) {
+    TilemapBuilder::RemapTemplateToAtlasSlice(pal, assetId, slice, atlasW, atlasH);
+  }
+  for (auto& [_, vars] : data.templateVariants) {
+    for (auto& var : vars) {
+      TilemapBuilder::RemapTemplateToAtlasSlice(var, assetId, slice, atlasW, atlasH);
+    }
+  }
+  TilemapBuilder::RemapTemplateToAtlasSlice(data.borderTemplate, assetId, slice, atlasW, atlasH);
+}
+
+void ApplyUnremappedAtlasSlices(TilemapData& data, AssetManager& assetManager) {
+  for (const auto& [assetId, relPath] : data.tilesetAssets) {
+    std::string lookupId = assetId;
+    auto slice = assetManager.GetAtlasSlice(lookupId);
+    if (!slice.has_value() && !relPath.empty()) {
+      const std::string stem = std::filesystem::path(relPath).stem().string();
+      slice = assetManager.GetAtlasSlice(stem);
+      if (slice.has_value()) lookupId = stem;
+    }
+    if (!slice.has_value()) continue;
+    SDL_Texture* tex = assetManager.GetTexture(lookupId);
+    float atlasW = 0.0f;
+    float atlasH = 0.0f;
+    if (tex == nullptr || !SDL_GetTextureSize(tex, &atlasW, &atlasH) || atlasW <= 0.0f || atlasH <= 0.0f) {
+      continue;
+    }
+    RemapAllTemplatesToSlice(data, assetId, *slice, atlasW, atlasH);
   }
 }
 
@@ -161,7 +205,12 @@ bool TilemapSystem::LoadFromData(Registry& registry, TilemapData data, const Til
     return false;
   }
 
+  const bool preSliced = data_pre_sliced_for_atlas_;
+  std::vector<std::string> previousAcquired = std::move(acquired_tileset_ids_);
+  acquired_tileset_ids_.clear();
+
   Unload(registry);
+  data_pre_sliced_for_atlas_ = preSliced;
   loaded_path_ = sourceLabel.empty() ? "<data>" : sourceLabel;
   loaded_full_path_.clear();
   loaded_format_hint_ = options.formatHint;
@@ -182,6 +231,11 @@ bool TilemapSystem::LoadFromData(Registry& registry, TilemapData data, const Til
   RebuildTemplateLookupCaches();
 
   EnsureTilesetTexturesLoaded(registry);
+  if (!previousAcquired.empty()) {
+    if (auto* assetManager = registry.TryGet<AssetManager>()) {
+      assetManager->ReleaseAll(previousAcquired);
+    }
+  }
 
   float camX = 0.0f, camY = 0.0f, viewW = 1280.0f, viewH = 720.0f, zoom = 1.0f;
   ComputeCameraCenter(registry, camX, camY, viewW, viewH, zoom);
@@ -198,7 +252,9 @@ bool TilemapSystem::Load(Registry& registry, const std::string& path, const Tile
     return false;
   }
 
+  data_pre_sliced_for_atlas_ = (assetManager != nullptr && parsed->sourceFormat == "ldtk");
   if (!LoadFromData(registry, std::move(*parsed), options, path)) {
+    data_pre_sliced_for_atlas_ = false;
     return false;
   }
 
@@ -221,6 +277,7 @@ bool TilemapSystem::LoadFromJsonString(Registry& registry, const std::string& js
   if (!parsed.has_value()) {
     return false;
   }
+  data_pre_sliced_for_atlas_ = false;
   return LoadFromData(registry, std::move(*parsed), options, "<memory>");
 }
 
@@ -231,6 +288,13 @@ void TilemapSystem::Unload(Registry& registry) {
   resolved_overrides_.clear();
   template_by_id_.clear();
   consumed_props_.clear();
+  if (!acquired_tileset_ids_.empty()) {
+    if (auto* assetManager = registry.TryGet<AssetManager>()) {
+      assetManager->ReleaseAll(acquired_tileset_ids_);
+    }
+    acquired_tileset_ids_.clear();
+  }
+  data_pre_sliced_for_atlas_ = false;
   file_watcher_ = FileWatcher{};
   loaded_path_.clear();
   loaded_full_path_.clear();
@@ -253,13 +317,22 @@ bool TilemapSystem::Reload(Registry& registry) {
     return false;
   }
 
+  std::vector<std::string> previousAcquired = std::move(acquired_tileset_ids_);
+  acquired_tileset_ids_.clear();
+
   DespawnAllChunkProps(registry);
   active_chunks_.clear();
   TilemapBuilder::ApplyWorldTileScale(*parsed, tile_scale_);
   InvokeVariantGenerator(*parsed, variant_count_, seed_);
+  data_pre_sliced_for_atlas_ = (assetManager != nullptr && parsed->sourceFormat == "ldtk");
   project_data_ = std::move(*parsed);
   RebuildTemplateLookupCaches();
   EnsureTilesetTexturesLoaded(registry);
+  if (!previousAcquired.empty()) {
+    if (auto* am = registry.TryGet<AssetManager>()) {
+      am->ReleaseAll(previousAcquired);
+    }
+  }
   UpdateActiveWindow(registry, camera_chunk_x_, camera_chunk_y_);
   ++hot_reload_count_;
   ++map_revision_;
@@ -459,8 +532,12 @@ void TilemapSystem::EnsureTilesetTexturesLoaded(Registry& registry) {
   const auto* ctx = registry.TryGet<EngineContext>();
   if (assetManager != nullptr && ctx != nullptr && ctx->sdlRenderer != nullptr) {
     for (const auto& [assetId, relPath] : project_data_.tilesetAssets) {
-      LoadSingleTilesetTexture(*assetManager, *ctx, assetId, relPath);
+      LoadSingleTilesetTexture(*assetManager, *ctx, assetId, relPath, acquired_tileset_ids_);
     }
+  }
+  if (assetManager != nullptr && !data_pre_sliced_for_atlas_) {
+    ApplyUnremappedAtlasSlices(project_data_, *assetManager);
+    data_pre_sliced_for_atlas_ = true;
   }
   cached_texture_gen_ = 0;
   RefreshTemplateTextureCache(assetManager);
@@ -797,6 +874,10 @@ void SnapStaticLayerVertices(const std::vector<SDL_Vertex>& localVerts, std::vec
 
 void SubmitChunkStaticLayers(ActiveChunk& chunk, RenderQueue& renderQueue, const double worldOriginX,
                              const double worldOriginY, const TilemapSnapTransform& xform) {
+  const bool needsSnap = !chunk.hasSnappedVertices || chunk.snappedCamX != xform.camX ||
+                         chunk.snappedCamY != xform.camY || chunk.snappedZoom != xform.zoom ||
+                         chunk.snappedScaleX != xform.scaleX || chunk.snappedScaleY != xform.scaleY;
+
   for (size_t layerIdx = 0; layerIdx < chunk.templatePtr->staticLayers.size(); ++layerIdx) {
     const auto& layer = chunk.templatePtr->staticLayers[layerIdx];
     const auto& localVerts = layer.Vertices();
@@ -804,7 +885,9 @@ void SubmitChunkStaticLayers(ActiveChunk& chunk, RenderQueue& renderQueue, const
     auto& screenVerts = chunk.layerScreenVertices[layerIdx];
     if (screenVerts.empty() || indices.empty()) continue;
 
-    SnapStaticLayerVertices(localVerts, screenVerts, worldOriginX, worldOriginY, xform);
+    if (needsSnap) {
+      SnapStaticLayerVertices(localVerts, screenVerts, worldOriginX, worldOriginY, xform);
+    }
 
     SDL_Texture* tex = layer.cachedTexture;
     auto& cmd = renderQueue.EmplaceTileChunk(layer.renderLayer, layer.renderDepth, tex);
@@ -814,6 +897,15 @@ void SubmitChunkStaticLayers(ActiveChunk& chunk, RenderQueue& renderQueue, const
     cmd.indexCount = static_cast<int>(indices.size());
     cmd.texture = tex;
     cmd.blendMode = SDL_BLENDMODE_BLEND;
+  }
+
+  if (needsSnap) {
+    chunk.snappedCamX = xform.camX;
+    chunk.snappedCamY = xform.camY;
+    chunk.snappedZoom = xform.zoom;
+    chunk.snappedScaleX = xform.scaleX;
+    chunk.snappedScaleY = xform.scaleY;
+    chunk.hasSnappedVertices = true;
   }
 }
 

@@ -64,4 +64,5 @@ void TextureStore::Clear() {
   }
   textures_.clear();
   explicit_scale_ids_.clear();
+  ++generation_;
 }

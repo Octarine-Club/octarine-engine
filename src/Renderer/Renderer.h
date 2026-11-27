@@ -2,7 +2,9 @@
 
 #include <SDL3/SDL.h>
 
+#include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "AssetManager/AssetManager.h"
@@ -20,6 +22,19 @@ class Registry;
 // Window resizing preserves the original render target size and relies on SDL letterboxing.
 class Renderer {
  public:
+  struct RenderPassContext {
+    SDL_Renderer* sdlRenderer = nullptr;
+    SDL_Texture* sceneTexture = nullptr;
+    int logicalWidth = 0;
+    int logicalHeight = 0;
+    int targetWidth = 0;
+    int targetHeight = 0;
+    float renderScaleX = 1.0F;
+    float renderScaleY = 1.0F;
+  };
+
+  using RenderPassCallback = std::function<void(const RenderPassContext&)>;
+
   Renderer() = default;
   ~Renderer() = default;
 
@@ -29,7 +44,7 @@ class Renderer {
   Renderer& operator=(Renderer&&) = delete;
 
   // Allocate the scene render target. Must run after SDL_CreateRenderer. Returns false (and
-  // leaves the renderer in a no-scene state) when SDL_CreateTexture fails — caller logs.
+  // leaves the renderer in a no-scene state) when SDL_CreateTexture fails - caller logs.
   bool CreateScene(SDL_Renderer* sdlRenderer, int width, int height);
 
   // Dynamically resize the backing scene render target to `targetPixelW` x `targetPixelH` while
@@ -82,6 +97,24 @@ class Renderer {
   // (such as CAMetalLayer direct-display compositing on macOS).
   static void ApplyVSync(SDL_Renderer* sdlRenderer, bool enabled);
 
+  // Convenience forwarding helper to configure per-layer Y-sorting on a RenderQueue.
+  static void SetLayerYSort(RenderQueue& renderQueue, const unsigned int layer, const bool enabled,
+                            const float bandPx = RenderKey::kDefaultYBandPx) noexcept {
+    renderQueue.SetLayerYSort(layer, enabled, bandPx);
+  }
+
+  static void set_layer_y_sort(RenderQueue& renderQueue, const unsigned int layer, const bool enabled,
+                               const float bandPx = RenderKey::kDefaultYBandPx) noexcept {
+    renderQueue.SetLayerYSort(layer, enabled, bandPx);
+  }
+
+  // Optional post-scene render passes executed at the end of DrawQueue while scene_texture_ is active.
+  void AddPostScenePass(RenderPassCallback pass) {
+    if (pass) post_scene_passes_.push_back(std::move(pass));
+  }
+  void ClearPostScenePasses() noexcept { post_scene_passes_.clear(); }
+  [[nodiscard]] size_t PostScenePassCount() const noexcept { return post_scene_passes_.size(); }
+
   // Hand RenderDebugGUI access to the scene texture.
   // Returns nullptr when CreateScene never ran (headless / bake / pre-Init paths).
   [[nodiscard]] SDL_Texture* GetSceneTexture() const { return scene_texture_; }
@@ -102,6 +135,7 @@ class Renderer {
   SDL_Texture* scene_texture_ = nullptr;
   mutable std::vector<SDL_Vertex> batch_verts_;
   mutable std::vector<int> batch_indices_;
+  std::vector<RenderPassCallback> post_scene_passes_;
   int logical_width_ = 0;
   int logical_height_ = 0;
   int target_width_ = 0;

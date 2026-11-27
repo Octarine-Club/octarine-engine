@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 
@@ -34,6 +35,18 @@ class RenderPrimitiveBase {
   [[nodiscard]] bool TryCull(const float originX, const float originY, const float width, const float height,
                              const bool isFixed) const {
     if (IsRenderableOutsideViewport(originX, originY, width, height, isFixed, camera_, windowWidth_, windowHeight_)) {
+      PROFILE_COUNTER_INC(culledCounter_);
+      return true;
+    }
+    PROFILE_COUNTER_INC(emplacedCounter_);
+    return false;
+  }
+
+  [[nodiscard]] bool TryCullRotatedQuad(const float originX, const float originY, const float width, const float height,
+                                        const float pivotX, const float pivotY, const float rotation,
+                                        const bool isFixed) const {
+    if (IsRotatedQuadOutsideViewport(originX, originY, width, height, pivotX, pivotY, rotation, isFixed, camera_,
+                                     windowWidth_, windowHeight_)) {
       PROFILE_COUNTER_INC(culledCounter_);
       return true;
     }
@@ -82,22 +95,20 @@ class RenderPrimitiveBase {
 class RenderPrimitiveSystem : public RenderPrimitiveBase {
  public:
   void operator()(const SquarePrimitiveComponent& square, const GlobalTransformComponent& transform) const {
-    // square.position is a local offset from the entity's transform, so it scales with the
-    // entity the same way BoxColliderComponent::offset does in KDTreeCollisionSystem — otherwise a
-    // scaled entity's primitive grows but stays pinned at its unscaled offset.
     const glm::vec2 scaledOffset = square.position * transform.scale;
     const glm::vec2 origin = transform.position + scaledOffset;
     const float w = square.width * transform.scale.x;
     const float h = square.height * transform.scale.y;
+    const glm::vec2 localPivot = transform.pivot - scaledOffset;
 
-    if (TryCull(origin.x, origin.y, w, h, square.isFixed)) {
+    if (TryCullRotatedQuad(origin.x, origin.y, w, h, localPivot.x, localPivot.y, transform.rotation, square.isFixed)) {
       return;
     }
 
     const glm::vec2 screenOrigin = ToScreenPoint(origin, square.isFixed);
     const float destW = ToScreenLength(w, square.isFixed);
     const float destH = ToScreenLength(h, square.isFixed);
-    const float sortDepth = square.isFixed ? square.position.y : (origin.y + h);
+    const float sortDepth = square.isFixed ? square.position.y : std::max(origin.y, origin.y + h);
 
     auto& cmd =
         renderQueue_->EmplaceSquare(static_cast<unsigned int>(square.layer), sortDepth, nullptr, square.blendMode);
@@ -105,9 +116,6 @@ class RenderPrimitiveSystem : public RenderPrimitiveBase {
         SnapFixedUnrotatedEdges({screenOrigin.x, screenOrigin.y, destW, destH}, square.isFixed, transform.rotation);
     cmd.color = SDL_Color{square.color.r, square.color.g, square.color.b, square.color.a};
     cmd.rotation = transform.rotation;
-    // The quad's top-left is `origin`, but pivot is an offset from transform.position, so rebase
-    // it onto the destRect the renderer receives. Both are in scaled pixels.
-    const glm::vec2 localPivot = transform.pivot - scaledOffset;
     cmd.pivot = square.isFixed ? SDL_FPoint{localPivot.x, localPivot.y}
                                : SDL_FPoint{localPivot.x * zoom_, localPivot.y * zoom_};
     cmd.blendMode = octarine::ToSdlBlendMode(square.blendMode);

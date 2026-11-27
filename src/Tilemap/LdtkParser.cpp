@@ -51,8 +51,56 @@ std::string ResolveRelativePath(const std::string& baseDir, const std::string& r
   return (std::filesystem::path(baseDir) / relPath).lexically_normal().generic_string();
 }
 
+bool ProbePngHeaderSize(SDL_IOStream* io, float& outWidth, float& outHeight) {
+  if (io == nullptr) return false;
+  unsigned char hdr[24]{};
+  const size_t got = SDL_ReadIO(io, hdr, sizeof(hdr));
+  SDL_CloseIO(io);
+  constexpr unsigned char kPngSig[8] = {0x89u, 'P', 'N', 'G', 0x0Du, 0x0Au, 0x1Au, 0x0Au};
+  if (got < sizeof(hdr) || !std::equal(std::begin(kPngSig), std::end(kPngSig), std::begin(hdr)) || hdr[12] != 'I' ||
+      hdr[13] != 'H' || hdr[14] != 'D' || hdr[15] != 'R') {
+    return false;
+  }
+  const uint32_t w = (static_cast<uint32_t>(hdr[16]) << 24u) | (static_cast<uint32_t>(hdr[17]) << 16u) |
+                     (static_cast<uint32_t>(hdr[18]) << 8u) | static_cast<uint32_t>(hdr[19]);
+  const uint32_t h = (static_cast<uint32_t>(hdr[20]) << 24u) | (static_cast<uint32_t>(hdr[21]) << 16u) |
+                     (static_cast<uint32_t>(hdr[22]) << 8u) | static_cast<uint32_t>(hdr[23]);
+  if (w == 0u || h == 0u) return false;
+  outWidth = static_cast<float>(w);
+  outHeight = static_cast<float>(h);
+  return true;
+}
+
+void ResolveTilesetAtlasMetadata(TilesetDesc& desc, const std::string& rawRel, const AssetManager* assetManager) {
+  if (assetManager == nullptr) return;
+  const auto& catalog = assetManager->GetCatalog();
+  const CatalogEntry* entry = catalog.Find(desc.assetId);
+  if (entry == nullptr && !rawRel.empty()) {
+    entry = catalog.Find(std::filesystem::path(rawRel).stem().string());
+  }
+  if (entry == nullptr || !entry->atlasId.has_value() || !entry->atlasSlice.has_value()) {
+    return;
+  }
+  float atlasW = 0.0f;
+  float atlasH = 0.0f;
+  if (SDL_Texture* tex = assetManager->GetTexture(entry->id)) {
+    SDL_GetTextureSize(tex, &atlasW, &atlasH);
+  }
+  if ((atlasW <= 0.0f || atlasH <= 0.0f)) {
+    if (const CatalogEntry* atlasEntry = catalog.Find(*entry->atlasId)) {
+      ProbePngHeaderSize(assetManager->OpenAssetIO(atlasEntry->fullPath), atlasW, atlasH);
+    }
+  }
+  if (atlasW > 0.0f && atlasH > 0.0f) {
+    desc.assetId = entry->id;
+    desc.atlasSlice = *entry->atlasSlice;
+    desc.textureWidth = atlasW;
+    desc.textureHeight = atlasH;
+  }
+}
+
 std::unordered_map<int32_t, TilesetDef> ParseTilesetDefs(const Json& root, const std::string& ldtkDirRelPath,
-                                                         TilemapData& outData) {
+                                                         const AssetManager* assetManager, TilemapData& outData) {
   std::unordered_map<int32_t, TilesetDef> defs;
   if (!root.contains("defs") || !root["defs"].is_object()) {
     return defs;
@@ -74,6 +122,7 @@ std::unordered_map<int32_t, TilesetDef> ParseTilesetDefs(const Json& root, const
     def.desc.textureWidth = std::max(1.0f, static_cast<float>(ts.value("pxWid", 256)));
     def.desc.textureHeight = std::max(1.0f, static_cast<float>(ts.value("pxHei", 256)));
     def.desc.tileGridSize = std::max(1, ts.value("tileGridSize", kDefaultTileSize));
+    ResolveTilesetAtlasMetadata(def.desc, rawRel, assetManager);
     defs[def.uid] = def;
     if (!def.desc.assetId.empty()) {
       outData.tilesetAssets.emplace_back(def.desc.assetId, def.desc.relPath);
@@ -83,7 +132,7 @@ std::unordered_map<int32_t, TilesetDef> ParseTilesetDefs(const Json& root, const
 }
 
 TilesetDef ResolveLayerTileset(const Json& layer, const std::unordered_map<int32_t, TilesetDef>& tilesets,
-                               const std::string& ldtkDirRelPath) {
+                               const std::string& ldtkDirRelPath, const AssetManager* assetManager) {
   int32_t uid = layer.value("__tilesetDefUid", -1);
   if (uid < 0 && layer.contains("tilesetDefUid") && !layer["tilesetDefUid"].is_null()) {
     uid = layer.value("tilesetDefUid", -1);
@@ -98,6 +147,7 @@ TilesetDef ResolveLayerTileset(const Json& layer, const std::unordered_map<int32
   fallback.desc.assetId =
       rawRel.empty() ? std::string{"default_tileset"} : std::filesystem::path(rawRel).stem().string();
   fallback.desc.tileGridSize = std::max(1, layer.value("__gridSize", kDefaultTileSize));
+  ResolveTilesetAtlasMetadata(fallback.desc, rawRel, assetManager);
   return fallback;
 }
 
@@ -414,8 +464,9 @@ bool LevelHasExplicitCollisionLayer(const Json& layers, const std::vector<Collis
 }
 
 void ParseLevelLayer(const Json& layer, const std::unordered_map<int32_t, TilesetDef>& tilesets,
-                     const std::string& ldtkDirRelPath, const bool hasExplicitCollisionLayer,
-                     const TilemapParseOptions& options, float& nextStaticDepth, ParsedLevelRaw& outRaw) {
+                     const std::string& ldtkDirRelPath, const AssetManager* assetManager,
+                     const bool hasExplicitCollisionLayer, const TilemapParseOptions& options, float& nextStaticDepth,
+                     ParsedLevelRaw& outRaw) {
   const std::string id = layer.value("__identifier", std::string{});
   const std::string type = layer.value("__type", std::string{});
 
@@ -424,14 +475,14 @@ void ParseLevelLayer(const Json& layer, const std::unordered_map<int32_t, Tilese
     return;
   }
 
-  const TilesetDef ts = ResolveLayerTileset(layer, tilesets, ldtkDirRelPath);
+  const TilesetDef ts = ResolveLayerTileset(layer, tilesets, ldtkDirRelPath, assetManager);
   if (MatchesAnySubstringCaseInsensitive(id, options.ysortLayerMatches)) {
     ParseYSortLayer(layer, ts, outRaw.tmpl);
     return;
   }
 
   const float layerDepth = nextStaticDepth;
-  nextStaticDepth += 1.0f;
+  nextStaticDepth += static_cast<float>(kDefaultTileSize);
 
   const auto collisionMatch =
       FindMatchingCollisionRule(id, type, hasExplicitCollisionLayer, options.collisionLayerRules);
@@ -441,9 +492,10 @@ void ParseLevelLayer(const Json& layer, const std::unordered_map<int32_t, Tilese
   ParseStaticTileLayer(layer, ts, 0u, layerDepth, outRaw.tmpl);
 }
 
-ParsedLevelRaw ParseSingleLevel(const Json& level, const std::unordered_map<int32_t, TilesetDef>& tilesets,
-                                const std::string& ldtkDirRelPath, const int32_t defaultTileSize,
-                                const TilemapParseOptions& options) {
+ParsedLevelRaw ParseSingleLevel(const Json& level, const Json* externalLayerContainer,
+                                const std::unordered_map<int32_t, TilesetDef>& tilesets,
+                                const std::string& ldtkDirRelPath, const AssetManager* assetManager,
+                                const int32_t defaultTileSize, const TilemapParseOptions& options) {
   ParsedLevelRaw raw;
   raw.tmpl.identifier = level.value("identifier", std::string{"Level"});
   raw.tmpl.tileSize = defaultTileSize;
@@ -460,15 +512,20 @@ ParsedLevelRaw ParseSingleLevel(const Json& level, const std::unordered_map<int3
   raw.rawCollisions.assign(static_cast<size_t>(raw.rawGridW) * static_cast<size_t>(raw.rawGridH), kTileEmpty);
 
   ParseLevelFields(level, raw.tmpl);
+  if (externalLayerContainer != nullptr && (!level.contains("fieldInstances") || !level["fieldInstances"].is_array())) {
+    ParseLevelFields(*externalLayerContainer, raw.tmpl);
+  }
 
-  if (level.contains("layerInstances") && level["layerInstances"].is_array()) {
-    const auto& layers = level["layerInstances"];
+  const Json& layerSource = (externalLayerContainer != nullptr) ? *externalLayerContainer : level;
+  if (layerSource.contains("layerInstances") && layerSource["layerInstances"].is_array()) {
+    const auto& layers = layerSource["layerInstances"];
     const bool hasExplicitCollisionLayer = LevelHasExplicitCollisionLayer(layers, options.collisionLayerRules);
     float nextStaticDepth = 0.0f;
     // Iterate in reverse so background layers (last in LDtk's array) are parsed before foreground layers.
     for (auto it = layers.rbegin(); it != layers.rend(); ++it) {
       if (it->is_object()) {
-        ParseLevelLayer(*it, tilesets, ldtkDirRelPath, hasExplicitCollisionLayer, options, nextStaticDepth, raw);
+        ParseLevelLayer(*it, tilesets, ldtkDirRelPath, assetManager, hasExplicitCollisionLayer, options,
+                        nextStaticDepth, raw);
       }
     }
   }
@@ -748,59 +805,6 @@ void NormalizeLevelGridCoords(std::vector<ChunkTemplate>& templates, const std::
   outData.gridRows = std::max(1, maxGridY + 1);
 }
 
-void ParseAllLevels(const Json& levelsArray, const std::unordered_map<int, TilesetDef>& tilesets,
-                    const std::string& ldtkDirRelPath, const TilemapParseOptions& options, TilemapData& projectData) {
-  std::vector<ParsedLevelRaw> playableLevels;
-  bool foundExplicitBorder = false;
-  int32_t minGridW = std::numeric_limits<int32_t>::max();
-  int32_t minGridH = std::numeric_limits<int32_t>::max();
-
-  for (const auto& level : levelsArray) {
-    if (!level.is_object()) continue;
-    ParsedLevelRaw raw = ParseSingleLevel(level, tilesets, ldtkDirRelPath, projectData.tileSize, options);
-    if (raw.tmpl.isBorder) {
-      CopyRawCollisionsToSingleChunk(raw, raw.tmpl);
-      projectData.borderTemplate = raw.tmpl;
-      foundExplicitBorder = true;
-      continue;
-    }
-    if (raw.tmpl.isPalette || MatchesAnySubstringCaseInsensitive(raw.tmpl.identifier, options.paletteMatches) ||
-        TilemapBuilder::IsPaletteTemplateName(raw.tmpl.identifier)) {
-      raw.tmpl.isPalette = true;
-      CopyRawCollisionsToSingleChunk(raw, raw.tmpl);
-      projectData.paletteTemplates.push_back(std::move(raw.tmpl));
-      continue;
-    }
-    minGridW = std::min(minGridW, std::clamp(raw.rawGridW, 1, kMaxChunkGridSize));
-    minGridH = std::min(minGridH, std::clamp(raw.rawGridH, 1, kMaxChunkGridSize));
-    playableLevels.push_back(std::move(raw));
-  }
-
-  if (minGridW != std::numeric_limits<int32_t>::max()) {
-    projectData.chunkGridWidth = minGridW;
-    projectData.chunkGridHeight = minGridH;
-  }
-
-  std::vector<LevelRawCoord> rawCoords;
-  for (auto& raw : playableLevels) {
-    AppendParsedLevelOrSlices(std::move(raw), projectData.chunkGridWidth, projectData.chunkGridHeight, options,
-                              rawCoords, projectData);
-  }
-
-  if (!foundExplicitBorder) {
-    projectData.borderTemplate =
-        ChunkTemplate::CreateSolidBorder(projectData.tileSize, projectData.chunkGridWidth, projectData.chunkGridHeight);
-  }
-
-  // If the file contained only a border level, keep it in templates as well so Toroidal/ProceduralHash still work.
-  if (projectData.templates.empty() && foundExplicitBorder) {
-    projectData.templates.push_back(projectData.borderTemplate);
-    rawCoords.push_back(LevelRawCoord{});
-  }
-
-  NormalizeLevelGridCoords(projectData.templates, rawCoords, projectData);
-}
-
 const CatalogEntry* FindLdtkCatalogEntry(const AssetManager* assetManager, const std::string& path) {
   if (assetManager == nullptr) {
     return nullptr;
@@ -831,24 +835,124 @@ std::string ResolveLdtkDirRelPath(const std::string& ldtkPath, const std::string
                                   const AssetManager* assetManager) {
   const std::filesystem::path relParent = std::filesystem::path(ldtkPath).parent_path();
   if (!relParent.empty() && !relParent.is_absolute()) {
-    return relParent.generic_string();
+    return relParent.lexically_normal().generic_string();
   }
   if (assetManager != nullptr && !assetManager->GetBasePath().empty()) {
-    std::error_code ec;
-    const auto rel = std::filesystem::relative(std::filesystem::path(fullPath).parent_path(),
-                                               std::filesystem::path(assetManager->GetBasePath()), ec);
-    if (!ec && rel != ".") {
+    const auto normParent = std::filesystem::path(fullPath).parent_path().lexically_normal();
+    const auto normBase = std::filesystem::path(assetManager->GetBasePath()).lexically_normal();
+    const auto rel = normParent.lexically_relative(normBase);
+    if (!rel.empty() && rel != "." && *rel.begin() != "..") {
       return rel.generic_string();
     }
   }
   return {};
 }
 
-}  // namespace
+std::optional<Json> LoadExternalLevelJson(const Json& level, const std::string& ldtkDirRelPath,
+                                          const std::string& ldtkDiskParentDir, const AssetManager* assetManager,
+                                          bool& outHadExternalError) {
+  const bool inlineMissing = !level.contains("layerInstances") || level["layerInstances"].is_null();
+  if (!inlineMissing || !level.contains("externalRelPath") || !level["externalRelPath"].is_string()) {
+    return std::nullopt;
+  }
+  const std::string extRel = level["externalRelPath"].get<std::string>();
+  if (extRel.empty()) return std::nullopt;
 
-std::optional<TilemapData> LdtkParser::ParseFromJsonString(const std::string& jsonText,
-                                                           const std::string& ldtkDirRelPath,
-                                                           const TilemapParseOptions& options) {
+  const std::string resolvedRel = ResolveRelativePath(ldtkDirRelPath, extRel);
+  std::string readPath = ResolveLdtkFullPath(resolvedRel, assetManager);
+  if (assetManager == nullptr && !ldtkDiskParentDir.empty() && !std::filesystem::path(extRel).is_absolute()) {
+    readPath = (std::filesystem::path(ldtkDiskParentDir) / extRel).lexically_normal().string();
+  }
+  if (readPath.empty()) {
+    Logger::Error("LdtkParser: cannot resolve external level '" + extRel + "'");
+    outHadExternalError = true;
+    return std::nullopt;
+  }
+  const auto bytes = ReadFileViaSDL(readPath, assetManager);
+  if (!bytes.has_value()) {
+    Logger::Error("LdtkParser: failed to read external level '" + readPath + "'");
+    outHadExternalError = true;
+    return std::nullopt;
+  }
+  Json parsed = Json::parse(*bytes, nullptr, /*allow_exceptions=*/false);
+  if (parsed.is_discarded() || !parsed.is_object()) {
+    Logger::Error("LdtkParser: invalid JSON in external level '" + readPath + "'");
+    outHadExternalError = true;
+    return std::nullopt;
+  }
+  return parsed;
+}
+
+void ClassifyParsedLevel(ParsedLevelRaw&& raw, const TilemapParseOptions& options, TilemapData& projectData,
+                         std::vector<ParsedLevelRaw>& playableLevels, int32_t& minGridW, int32_t& minGridH,
+                         bool& foundExplicitBorder) {
+  if (raw.tmpl.isBorder) {
+    CopyRawCollisionsToSingleChunk(raw, raw.tmpl);
+    projectData.borderTemplate = raw.tmpl;
+    foundExplicitBorder = true;
+    return;
+  }
+  if (raw.tmpl.isPalette || MatchesAnySubstringCaseInsensitive(raw.tmpl.identifier, options.paletteMatches) ||
+      TilemapBuilder::IsPaletteTemplateName(raw.tmpl.identifier)) {
+    raw.tmpl.isPalette = true;
+    CopyRawCollisionsToSingleChunk(raw, raw.tmpl);
+    projectData.paletteTemplates.push_back(std::move(raw.tmpl));
+    return;
+  }
+  minGridW = std::min(minGridW, std::clamp(raw.rawGridW, 1, kMaxChunkGridSize));
+  minGridH = std::min(minGridH, std::clamp(raw.rawGridH, 1, kMaxChunkGridSize));
+  playableLevels.push_back(std::move(raw));
+}
+
+bool ParseAllLevels(const Json& levelsArray, const std::unordered_map<int, TilesetDef>& tilesets,
+                    const std::string& ldtkDirRelPath, const std::string& ldtkDiskParentDir,
+                    const AssetManager* assetManager, const TilemapParseOptions& options, TilemapData& projectData) {
+  std::vector<ParsedLevelRaw> playableLevels;
+  bool foundExplicitBorder = false;
+  int32_t minGridW = std::numeric_limits<int32_t>::max();
+  int32_t minGridH = std::numeric_limits<int32_t>::max();
+
+  for (const auto& level : levelsArray) {
+    if (!level.is_object()) continue;
+    bool externalError = false;
+    const auto extJson = LoadExternalLevelJson(level, ldtkDirRelPath, ldtkDiskParentDir, assetManager, externalError);
+    if (externalError) {
+      return false;
+    }
+    const Json* extPtr = extJson.has_value() ? &(*extJson) : nullptr;
+    ParsedLevelRaw raw =
+        ParseSingleLevel(level, extPtr, tilesets, ldtkDirRelPath, assetManager, projectData.tileSize, options);
+    ClassifyParsedLevel(std::move(raw), options, projectData, playableLevels, minGridW, minGridH, foundExplicitBorder);
+  }
+
+  if (minGridW != std::numeric_limits<int32_t>::max()) {
+    projectData.chunkGridWidth = minGridW;
+    projectData.chunkGridHeight = minGridH;
+  }
+
+  std::vector<LevelRawCoord> rawCoords;
+  for (auto& raw : playableLevels) {
+    AppendParsedLevelOrSlices(std::move(raw), projectData.chunkGridWidth, projectData.chunkGridHeight, options,
+                              rawCoords, projectData);
+  }
+
+  if (!foundExplicitBorder) {
+    projectData.borderTemplate =
+        ChunkTemplate::CreateSolidBorder(projectData.tileSize, projectData.chunkGridWidth, projectData.chunkGridHeight);
+  }
+
+  if (projectData.templates.empty() && foundExplicitBorder) {
+    projectData.templates.push_back(projectData.borderTemplate);
+    rawCoords.push_back(LevelRawCoord{});
+  }
+
+  NormalizeLevelGridCoords(projectData.templates, rawCoords, projectData);
+  return true;
+}
+
+std::optional<TilemapData> ParseLdtkJsonImpl(const std::string& jsonText, const std::string& ldtkDirRelPath,
+                                             const std::string& ldtkDiskParentDir, const AssetManager* assetManager,
+                                             const TilemapParseOptions& options) {
   if (jsonText.empty()) {
     Logger::Error("LdtkParser: empty JSON string.");
     return std::nullopt;
@@ -863,7 +967,7 @@ std::optional<TilemapData> LdtkParser::ParseFromJsonString(const std::string& js
   TilemapData projectData;
   projectData.sourceFormat = "ldtk";
   projectData.tileSize = std::max(1, root.value("defaultGridSize", kDefaultTileSize));
-  const auto tilesets = ParseTilesetDefs(root, ldtkDirRelPath, projectData);
+  const auto tilesets = ParseTilesetDefs(root, ldtkDirRelPath, assetManager, projectData);
   if (!tilesets.empty() && !root.contains("defaultGridSize")) {
     projectData.tileSize = tilesets.begin()->second.desc.tileGridSize;
   }
@@ -874,8 +978,20 @@ std::optional<TilemapData> LdtkParser::ParseFromJsonString(const std::string& js
   }
 
   const TilemapParseOptions effectiveOpts = EffectiveOptions(options);
-  ParseAllLevels(root["levels"], tilesets, ldtkDirRelPath, effectiveOpts, projectData);
+  if (!ParseAllLevels(root["levels"], tilesets, ldtkDirRelPath, ldtkDiskParentDir, assetManager, effectiveOpts,
+                      projectData)) {
+    return std::nullopt;
+  }
   return projectData;
+}
+
+}  // namespace
+
+std::optional<TilemapData> LdtkParser::ParseFromJsonString(const std::string& jsonText,
+                                                           const std::string& ldtkDirRelPath,
+                                                           const TilemapParseOptions& options) {
+  return ParseLdtkJsonImpl(jsonText, ldtkDirRelPath, /*ldtkDiskParentDir=*/ldtkDirRelPath, /*assetManager=*/nullptr,
+                           options);
 }
 
 std::optional<TilemapData> LdtkParser::ParseFromFile(const std::string& ldtkPath, const AssetManager* assetManager,
@@ -893,7 +1009,8 @@ std::optional<TilemapData> LdtkParser::ParseFromFile(const std::string& ldtkPath
   }
 
   const std::string ldtkDirRelPath = ResolveLdtkDirRelPath(ldtkPath, fullPath, assetManager);
-  return ParseFromJsonString(*bytes, ldtkDirRelPath, options);
+  const std::string diskParent = std::filesystem::path(fullPath).parent_path().lexically_normal().string();
+  return ParseLdtkJsonImpl(*bytes, ldtkDirRelPath, diskParent, assetManager, options);
 }
 
 }  // namespace octarine::tilemap

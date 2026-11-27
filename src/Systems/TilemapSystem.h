@@ -29,6 +29,13 @@ struct ActiveChunk {
   const ChunkTemplate* templatePtr = nullptr;
   // Per-static-layer screen-transformed vertex buffers fed to SDL_RenderGeometry.
   std::vector<std::vector<SDL_Vertex>> layerScreenVertices{};
+  // Cached camera/render-scale state for which layerScreenVertices were last snapped.
+  double snappedCamX = 0.0;
+  double snappedCamY = 0.0;
+  double snappedZoom = 0.0;
+  float snappedScaleX = 0.0F;
+  float snappedScaleY = 0.0F;
+  bool hasSnappedVertices = false;
   // Entities spawned from the chunk's Entities layer while resident.
   std::vector<Entity> spawnedProps{};
 };
@@ -214,6 +221,8 @@ class TilemapSystem {
   std::unordered_map<int64_t, const octarine::tilemap::ChunkTemplate*> resolved_overrides_{};
   std::unordered_map<std::string, const octarine::tilemap::ChunkTemplate*> template_by_id_{};
   std::unordered_map<int64_t, octarine::tilemap::ConsumedPropMask> consumed_props_{};
+  std::vector<std::string> acquired_tileset_ids_{};
+  bool data_pre_sliced_for_atlas_ = false;
   sol::protected_function prop_spawner_{};
   octarine::tilemap::VariantGeneratorFn variant_generator_{};
 

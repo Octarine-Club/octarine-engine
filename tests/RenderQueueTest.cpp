@@ -6,7 +6,9 @@
 #include <SDL3/SDL.h>
 
 #include <cstdint>
+#include <numbers>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "AssetManager/AssetManager.h"
@@ -18,13 +20,18 @@
 #include "Components/LinePrimitiveComponent.h"
 #include "Components/SpriteComponent.h"
 #include "Components/SquarePrimitiveComponent.h"
+#include "Components/TextLabelComponent.h"
 #include "Components/TrianglePrimitiveComponent.h"
 #include "ECS/Registry.h"
+#include "Engine/GameModuleHooks.h"
+#include "Game/EngineContext.h"
 #include "Game/GameConfig.h"
 #include "General/BlendMode.h"
 #include "General/Constants.h"
+#include "Renderer/RenderCulling.h"
 #include "Renderer/RenderKey.h"
 #include "Renderer/RenderQueue.h"
+#include "Renderer/RenderQueueStats.h"
 #include "Renderer/Renderer.h"
 #include "Renderer/SpriteRenderCache.h"
 #include "Systems/RenderCapsulePrimitiveSystem.h"
@@ -33,6 +40,7 @@
 #include "Systems/RenderLinePrimitiveSystem.h"
 #include "Systems/RenderPrimitiveSystem.h"
 #include "Systems/RenderSpriteSystem.h"
+#include "Systems/RenderTextSystem.h"
 #include "Systems/RenderTrianglePrimitiveSystem.h"
 #include "Systems/RenderUIPrimitiveSystem.h"
 #include "TestHarness.h"
@@ -402,6 +410,285 @@ void TestRenderSpriteSystem() {
   CheckEq(it->payload.sprite.destH, 24.0f, "world sprite height scaled by zoom");
 }
 
+void TestClaimSlotOverflowAndThreadSafeClipRects() {
+  std::cout << "[concurrency] ClaimSlot overflow discardSlot & synchronized RegisterClipRect\n";
+  RenderQueue rq(8);
+  Check(!rq.HasOverflowed(), "queue starts without overflow");
+
+  std::vector<std::thread> workers;
+  workers.reserve(4);
+  for (int t = 0; t < 4; ++t) {
+    workers.emplace_back([&rq, t]() {
+      for (int i = 0; i < 32; ++i) {
+        const std::uint8_t cid = rq.RegisterClipRect(SDL_Rect{i % 6, t, 32, 32});
+        auto& sp = rq.EmplaceSprite(0, static_cast<float>(i), nullptr, BlendMode::Blend, cid);
+        sp.destX = static_cast<float>(t * 100 + i);
+      }
+    });
+  }
+  for (auto& w : workers) {
+    w.join();
+  }
+
+  Check(rq.HasOverflowed(), "parallel overflow marks HasOverflowed()");
+  CheckEq(rq.Size(), static_cast<size_t>(8), "Size clamps cleanly to capacity on overflow");
+  rq.Sort();
+  CheckEq(rq.Size(), static_cast<size_t>(8), "Sort succeeds after parallel overflow");
+  Check(rq.GetClipRect(1) != nullptr, "concurrently registered clip rect is retrievable");
+
+  rq.Clear();
+  Check(!rq.HasOverflowed(), "Clear resets overflow warning flag");
+  Check(rq.GetClipRect(1) == nullptr, "Clear resets registered clip rects");
+}
+
+void TestPerLayerYSortConfiguration() {
+  std::cout << "[ysort] per-layer SetLayerYSort / set_layer_y_sort coalesces multi-texture layers\n";
+  RenderQueue rq(256);
+  Renderer::set_layer_y_sort(rq, 2, false);
+  rq.SetLayerYSort(3, true, 64.0f);
+
+  auto* tex1 = reinterpret_cast<SDL_Texture*>(g_texMemA);
+  auto* tex2 = reinterpret_cast<SDL_Texture*>(g_texMemB);
+  for (int i = 0; i < 32; ++i) {
+    SDL_Texture* t = (i % 2 == 0) ? tex1 : tex2;
+    auto& flatCmd = rq.EmplaceSprite(2, static_cast<float>(i * 53 - 400), t);
+    flatCmd.texture = t;
+  }
+  rq.Sort();
+  const auto flatStats = AnalyzeRenderQueue(rq);
+  CheckEq(flatStats.drawBatches, static_cast<size_t>(2),
+          "disabled Y-sort on layer 2 coalesces 32 scattered multi-texture sprites into 2 batches");
+
+  rq.Clear();
+  CheckEq(rq.EmplaceSprite(3, 5.0f, tex1).destX, 0.0f, "layer 3 emplace ok");
+  rq.Clear();
+  const auto kBandA =
+      RenderKey::ComputeSortKey(3, 5.0f, SPRITE, tex1, 0, 0, rq.GetLayerYSort(3).bandPx, rq.GetLayerYSort(3).enabled);
+  const auto kBandB =
+      RenderKey::ComputeSortKey(3, 60.0f, SPRITE, tex1, 0, 0, rq.GetLayerYSort(3).bandPx, rq.GetLayerYSort(3).enabled);
+  CheckEq(kBandA, kBandB, "custom 64px Y-sort band groups depth 5 and 60 together");
+}
+
+void TestSpriteAndTextCaches() {
+  std::cout << "[caches] SpriteRenderCache flat vector, assetId hash validation, SweepDead, and TextRenderCache\n";
+  Registry registry;
+  registry.Set<GameConfig>(GameConfig{});
+  registry.Get<GameConfig>().windowWidth = 640;
+  registry.Get<GameConfig>().windowHeight = 360;
+  registry.Set<CameraComponent>(CameraComponent{octarine::Rect{0.0f, 0.0f, 640.0f, 360.0f}, 1.0f});
+  auto& am = registry.Set<AssetManager>(AssetManager{});
+  auto& cache = registry.Set<SpriteRenderCache>(SpriteRenderCache{});
+  registry.Set<RenderQueue>(RenderQueue(32));
+
+  SDL_Surface* surf = SDL_CreateSurface(64, 64, SDL_PIXELFORMAT_RGBA32);
+  SDL_Renderer* sdlRenderer = surf != nullptr ? SDL_CreateSoftwareRenderer(surf) : nullptr;
+  Check(sdlRenderer != nullptr, "software renderer for cache test");
+  if (sdlRenderer != nullptr) {
+    SDL_Surface* sA = SDL_CreateSurface(8, 8, SDL_PIXELFORMAT_RGBA32);
+    SDL_Surface* sB = SDL_CreateSurface(16, 16, SDL_PIXELFORMAT_RGBA32);
+    am.GetCatalog().InsertOrReplace(CatalogEntry{AssetType::Texture, "tex_a", ""});
+    am.GetCatalog().InsertOrReplace(CatalogEntry{AssetType::Texture, "tex_b", ""});
+    SDL_Texture* rawA = SDL_CreateTextureFromSurface(sdlRenderer, sA);
+    SDL_Texture* rawB = SDL_CreateTextureFromSurface(sdlRenderer, sB);
+    SDL_DestroySurface(sA);
+    SDL_DestroySurface(sB);
+
+    const Entity e1 = registry.CreateEntity();
+    const Entity e2 = registry.CreateEntity();
+    cache.Store(e1, rawA, SDL_FRect{0, 0, 0, 0}, 1, "tex_a");
+    cache.Store(e2, rawB, SDL_FRect{0, 0, 0, 0}, 1, "tex_b");
+    Check(cache.Lookup(e1, 1, "tex_a") != nullptr, "SpriteRenderCache hit on matching assetId");
+    Check(cache.Lookup(e1, 1, "tex_b") == nullptr, "SpriteRenderCache invalidates on C++ assetId mutation");
+
+    registry.BlamEntity(e2);
+    cache.SweepDead([&registry](const Entity e) { return registry.IsAlive(e); });
+    CheckEq(cache.ActiveEntryCount(), static_cast<size_t>(1), "SweepDead evicts destroyed entity slot");
+    registry.BlamEntity(e1);
+    cache.SweepDead([&registry](const Entity e) { return registry.IsAlive(e); });
+    CheckEq(cache.SlotCapacity(), static_cast<size_t>(0), "SweepDead trims trailing empty slots");
+
+    EngineContext ectx{};
+    ectx.sdlRenderer = sdlRenderer;
+    registry.Set<EngineContext>(ectx);
+    RenderTextSystem rts;
+    rts.Prepare(&registry);
+    Check(registry.TryGet<TextRenderCache>() != nullptr,
+          "RenderTextSystem::Prepare installs TextRenderCache singleton");
+    RenderTextSystem::ClearRegistryCache(registry);
+    CheckEq(rts.ContentCacheSize(), static_cast<size_t>(0), "ClearRegistryCache clears TextRenderCache");
+
+    SDL_DestroyTexture(rawA);
+    SDL_DestroyTexture(rawB);
+    SDL_DestroyRenderer(sdlRenderer);
+  }
+  SDL_DestroySurface(surf);
+}
+
+void TestWorldPrimitiveDepthAndRotatedNegativeScaleCulling() {
+  std::cout << "[cull+depth] World maxY depth in Line/Triangle/Capsule and rotated/negative-scale AABB culling\n";
+  Registry registry;
+  registry.Set<GameConfig>(GameConfig{});
+  registry.Get<GameConfig>().windowWidth = 200;
+  registry.Get<GameConfig>().windowHeight = 200;
+  registry.Set<CameraComponent>(CameraComponent{octarine::Rect{0.0f, 0.0f, 200.0f, 200.0f}, 1.0f});
+  registry.Set<AssetManager>(AssetManager{});
+  registry.Set<SpriteRenderCache>(SpriteRenderCache{});
+  registry.Set<RenderQueue>(RenderQueue(32));
+
+  RenderLinePrimitiveSystem lineSys;
+  RenderTrianglePrimitiveSystem triSys;
+  RenderCapsulePrimitiveSystem capSys;
+  lineSys.Prepare(&registry);
+  triSys.Prepare(&registry);
+  capSys.Prepare(&registry);
+
+  GlobalTransformComponent nearXf;
+  nearXf.position = {20.0f, 10.0f};
+  GlobalTransformComponent farXf;
+  farXf.position = {20.0f, 150.0f};
+
+  LinePrimitiveComponent line({0.0f, 0.0f}, {10.0f, 5.0f}, 0, 2.0f);
+  line.isFixed = false;
+  TrianglePrimitiveComponent tri({0.0f, 0.0f}, {10.0f, 0.0f}, {5.0f, 8.0f}, 0);
+  tri.isFixed = false;
+  CapsulePrimitiveComponent cap({0.0f, 0.0f}, {0.0f, 12.0f}, 0, 4.0f);
+  cap.isFixed = false;
+
+  // Emplace far world entity first (with local start.y == 0), then near world entity (with local start.y == 5).
+  // Sorting must place nearXf BEFORE farXf using world maxY rather than local start.y!
+  lineSys(line, farXf);
+  LinePrimitiveComponent nearLine({0.0f, 5.0f}, {10.0f, 8.0f}, 0, 2.0f);
+  nearLine.isFixed = false;
+  lineSys(nearLine, nearXf);
+
+  auto& rq = registry.Get<RenderQueue>();
+  rq.Sort();
+  Check(rq.begin()->payload.line.start.y < (rq.begin() + 1)->payload.line.start.y,
+        "RenderLinePrimitiveSystem sorts by world maxY instead of local start.y");
+
+  rq.Clear();
+  triSys(tri, farXf);
+  TrianglePrimitiveComponent nearTri({0.0f, 4.0f}, {10.0f, 4.0f}, {5.0f, 9.0f}, 0);
+  nearTri.isFixed = false;
+  triSys(nearTri, nearXf);
+  rq.Sort();
+  Check(rq.begin()->payload.triangle.p1.y < (rq.begin() + 1)->payload.triangle.p1.y,
+        "RenderTrianglePrimitiveSystem sorts by world maxY instead of local p1.y");
+
+  rq.Clear();
+  capSys(cap, farXf);
+  CapsulePrimitiveComponent nearCap({0.0f, 6.0f}, {0.0f, 10.0f}, 0, 4.0f);
+  nearCap.isFixed = false;
+  capSys(nearCap, nearXf);
+  rq.Sort();
+  Check(rq.begin()->payload.capsule.start.y < (rq.begin() + 1)->payload.capsule.start.y,
+        "RenderCapsulePrimitiveSystem sorts by world maxY instead of local start.y");
+
+  // Negative-scale & rotated culling check:
+  // Origin at x = -10 (outside camera [0..200]), width = -40 -> normalized [-50..-10] is outside;
+  // Origin at x = 20, scale.x = -2, width = 30 -> w = -60 -> normalized [-40..20] overlaps [0..200]!
+  const octarine::Rect cam{0.0f, 0.0f, 200.0f, 200.0f};
+  Check(!IsRenderableOutsideViewport(20.0f, 50.0f, -60.0f, 20.0f, false, cam, 200.0f, 200.0f),
+        "negative-width mirrored renderable overlapping camera left edge is NOT falsely culled");
+  // Unrotated [210..310] x [50..60] is outside camera [0..200], but rotated +pi around pivot (0,0) lands in [110..210]!
+  Check(!IsRotatedQuadOutsideViewport(210.0f, 50.0f, 100.0f, 10.0f, 0.0f, 0.0f, std::numbers::pi_v<float>, false, cam,
+                                      200.0f, 200.0f),
+        "rotated quad swinging into viewport around offset pivot is NOT falsely culled");
+}
+
+void TestGradientsBatchedTextAndPostScenePass() {
+  std::cout << "[gradients+passes] 4-corner Square/Sprite gradients, batched TEXT, and Renderer post-scene hook\n";
+  SDL_Surface* surf = SDL_CreateSurface(64, 64, SDL_PIXELFORMAT_RGBA32);
+  SDL_Renderer* sdlRenderer = surf != nullptr ? SDL_CreateSoftwareRenderer(surf) : nullptr;
+  Check(sdlRenderer != nullptr, "software renderer for gradient & post-pass test");
+  if (sdlRenderer == nullptr) {
+    SDL_DestroySurface(surf);
+    return;
+  }
+
+  Renderer renderer;
+  Check(renderer.CreateScene(sdlRenderer, 64, 64), "CreateScene 64x64");
+
+  Registry reg;
+  game_module::InvokeRegisterRenderPasses(reg, renderer);
+
+  int passInvocations = 0;
+  renderer.AddPostScenePass([&passInvocations](const Renderer::RenderPassContext& ctx) {
+    if (ctx.sdlRenderer != nullptr && ctx.sceneTexture != nullptr && ctx.logicalWidth == 64) {
+      ++passInvocations;
+    }
+  });
+  CheckEq(renderer.PostScenePassCount(), static_cast<size_t>(1), "AddPostScenePass registers 1 callback");
+
+  SDL_Surface* whiteSurf = SDL_CreateSurface(8, 8, SDL_PIXELFORMAT_RGBA32);
+  SDL_FillSurfaceRect(whiteSurf, nullptr, SDL_MapSurfaceRGBA(whiteSurf, 255, 255, 255, 255));
+  SDL_Texture* whiteTex = SDL_CreateTextureFromSurface(sdlRenderer, whiteSurf);
+  SDL_DestroySurface(whiteSurf);
+
+  RenderQueue rq(64);
+  auto& gradSq = rq.EmplaceSquare(0, 0.0f, nullptr, BlendMode::None);
+  gradSq.destRect = {0.0f, 0.0f, 32.0f, 32.0f};
+  gradSq.blendMode = SDL_BLENDMODE_NONE;
+  gradSq.SetVerticalGradient(SDL_Color{255, 0, 0, 255}, SDL_Color{0, 0, 255, 255});
+
+  auto& gradSp = rq.EmplaceSpriteGradient(
+      0, 0.0f, QuadGradient::Horizontal(SDL_Color{0, 255, 0, 255}, SDL_Color{255, 255, 0, 255}), whiteTex,
+      BlendMode::None, 0, 1);
+  gradSp.texture = whiteTex;
+  gradSp.destX = 32.0f;
+  gradSp.destY = 0.0f;
+  gradSp.destW = 32.0f;
+  gradSp.destH = 32.0f;
+  gradSp.blendMode = SDL_BLENDMODE_NONE;
+
+  // Emit 9 outlined TEXT commands sharing whiteTex to exercise GeometryBatcher::PushText coalescing.
+  for (int i = 0; i < 9; ++i) {
+    auto& tc = rq.EmplaceText(1, 0.0f, whiteTex);
+    tc.texture = whiteTex;
+    tc.destRect = {static_cast<float>(4 + i), 40.0f, 8.0f, 8.0f};
+    tc.colorMod = (i == 8) ? SDL_Color{255, 255, 255, 255} : SDL_Color{20, 40, 60, 255};
+  }
+
+  rq.Sort();
+  renderer.BeginScene(sdlRenderer);
+  renderer.DrawQueue(rq, sdlRenderer);
+  renderer.EndScene(sdlRenderer, false);
+
+  CheckEq(passInvocations, 1, "Post-scene render pass invoked during DrawQueue");
+
+  SDL_SetRenderTarget(sdlRenderer, renderer.GetSceneTexture());
+  SDL_Surface* readback = SDL_RenderReadPixels(sdlRenderer, nullptr);
+  SDL_SetRenderTarget(sdlRenderer, nullptr);
+  Check(readback != nullptr, "readback scene target for gradient verification");
+  if (readback != nullptr) {
+    Uint8 rTop = 0, gTop = 0, bTop = 0, aTop = 0;
+    Uint8 rBot = 0, gBot = 0, bBot = 0, aBot = 0;
+    SDL_ReadSurfacePixel(readback, 8, 2, &rTop, &gTop, &bTop, &aTop);
+    SDL_ReadSurfacePixel(readback, 8, 29, &rBot, &gBot, &bBot, &aBot);
+    Check(rTop > 200 && bTop < 60, "Square vertical gradient top is red-dominant");
+    Check(bBot > 200 && rBot < 60, "Square vertical gradient bottom is blue-dominant");
+
+    Uint8 rLeft = 0, gLeft = 0, bLeft = 0, aLeft = 0;
+    Uint8 rRight = 0, gRight = 0, bRight = 0, aRight = 0;
+    SDL_ReadSurfacePixel(readback, 34, 16, &rLeft, &gLeft, &bLeft, &aLeft);
+    SDL_ReadSurfacePixel(readback, 61, 16, &rRight, &gRight, &bRight, &aRight);
+    Check(gLeft > 200 && rLeft < 60, "Sprite horizontal gradient left is green");
+    Check(rRight > 200 && gRight > 200 && bRight < 60, "Sprite horizontal gradient right is yellow");
+
+    Uint8 rTxt = 0, gTxt = 0, bTxt = 0, aTxt = 0;
+    SDL_ReadSurfacePixel(readback, 14, 44, &rTxt, &gTxt, &bTxt, &aTxt);
+    Check(rTxt > 220 && gTxt > 220 && bTxt > 220, "Batched TEXT foreground glyph rendered white");
+    SDL_DestroySurface(readback);
+  }
+
+  renderer.ClearPostScenePasses();
+  CheckEq(renderer.PostScenePassCount(), static_cast<size_t>(0), "ClearPostScenePasses clears callbacks");
+  SDL_DestroyTexture(whiteTex);
+  renderer.DestroyScene();
+  SDL_DestroyRenderer(sdlRenderer);
+  SDL_DestroySurface(surf);
+}
+
 }  // namespace
 
 int main() {
@@ -411,12 +698,15 @@ int main() {
   std::cout << "[sortkey] field precedence\n";
   {
     Check(Key(1, 0.0f, SPRITE, nullptr) > Key(0, 1000000.0f, SPRITE, nullptr), "layer outranks any depth difference");
-    Check(Key(0, 2.0f * Constants::kRenderBatchYBandPx, SPRITE, nullptr) > Key(0, 0.0f, SPRITE, nullptr),
+    Check(Key(0, 2.0f * RenderKey::kDefaultYBandPx, SPRITE, nullptr) > Key(0, 0.0f, SPRITE, nullptr),
           "deeper band sorts later within a layer");
-    CheckEq(Key(0, 0.0f, SPRITE, nullptr), Key(0, Constants::kRenderBatchYBandPx - 1.0f, SPRITE, nullptr),
-            "depths inside one band share a key");
-    Check(Key(0, -2.0f * Constants::kRenderBatchYBandPx, SPRITE, nullptr) < Key(0, 0.0f, SPRITE, nullptr),
+    CheckEq(Key(0, 0.25f * RenderKey::kDefaultYBandPx, SPRITE, nullptr),
+            Key(0, 0.75f * RenderKey::kDefaultYBandPx, SPRITE, nullptr), "depths inside one band share a key");
+    Check(Key(0, -2.0f * RenderKey::kDefaultYBandPx, SPRITE, nullptr) < Key(0, 0.0f, SPRITE, nullptr),
           "negative depth sorts before zero (band bias)");
+    Check(RenderKey::ComputeSortKey(0, 0.0f, SPRITE, nullptr, 0, 1) >
+              RenderKey::ComputeSortKey(0, 0.0f, TILE_CHUNK, nullptr, 0, 0),
+          "materialId clusters within depth band before type/blend/texture");
     Check(Key(0, 0.0f, SPRITE, nullptr) != Key(0, 0.0f, SQUARE_PRIMITIVE, nullptr), "type participates in the key");
     Check(Key(0, 0.0f, SPRITE, nullptr) != Key(0, 0.0f, CIRCLE_PRIMITIVE, nullptr), "circle type participates in key");
     Check(Key(0, 0.0f, SPRITE, nullptr) != Key(0, 0.0f, LINE_PRIMITIVE, nullptr), "line type participates in key");
@@ -781,6 +1071,11 @@ int main() {
   TestUIPrimitiveRendering();
   TestSoftwareRendererGeometryBatching();
   TestRenderSpriteSystem();
+  TestClaimSlotOverflowAndThreadSafeClipRects();
+  TestPerLayerYSortConfiguration();
+  TestSpriteAndTextCaches();
+  TestWorldPrimitiveDepthAndRotatedNegativeScaleCulling();
+  TestGradientsBatchedTextAndPostScenePass();
 
   std::cout << "[render_queue] ClearGeneration increments on Clear and survives move\n";
   {

@@ -2,6 +2,8 @@
 
 #include <SDL3/SDL.h>
 
+#include <array>
+
 #include "General/BlendMode.h"
 #include "General/Constants.h"
 
@@ -26,6 +28,22 @@ inline SDL_BlendMode ToSdlBlendMode(const BlendMode mode) {
 
 }  // namespace octarine
 
+// 4-corner color/alpha modulation (clockwise from top-left: TL, TR, BR, BL).
+struct QuadGradient {
+  SDL_Color topLeft{Constants::kUint8Max, Constants::kUint8Max, Constants::kUint8Max, Constants::kUint8Max};
+  SDL_Color topRight{Constants::kUint8Max, Constants::kUint8Max, Constants::kUint8Max, Constants::kUint8Max};
+  SDL_Color bottomRight{Constants::kUint8Max, Constants::kUint8Max, Constants::kUint8Max, Constants::kUint8Max};
+  SDL_Color bottomLeft{Constants::kUint8Max, Constants::kUint8Max, Constants::kUint8Max, Constants::kUint8Max};
+
+  [[nodiscard]] static constexpr QuadGradient Vertical(const SDL_Color top, const SDL_Color bottom) noexcept {
+    return {top, top, bottom, bottom};
+  }
+
+  [[nodiscard]] static constexpr QuadGradient Horizontal(const SDL_Color left, const SDL_Color right) noexcept {
+    return {left, right, right, left};
+  }
+};
+
 struct SpriteCommand {
   float destX{}, destY{}, destW{}, destH{};
   SDL_FRect srcRect{};
@@ -44,6 +62,22 @@ struct SquareCommand {
   float rotation{};
   SDL_FPoint pivot{};
   SDL_BlendMode blendMode{SDL_BLENDMODE_BLEND};
+  std::array<SDL_Color, 4> cornerColors{};
+  bool hasCornerColors{false};
+
+  constexpr void SetCornerColors(const SDL_Color topLeft, const SDL_Color topRight, const SDL_Color bottomRight,
+                                 const SDL_Color bottomLeft) noexcept {
+    cornerColors = {topLeft, topRight, bottomRight, bottomLeft};
+    hasCornerColors = true;
+  }
+
+  constexpr void SetVerticalGradient(const SDL_Color top, const SDL_Color bottom) noexcept {
+    SetCornerColors(top, top, bottom, bottom);
+  }
+
+  constexpr void SetHorizontalGradient(const SDL_Color left, const SDL_Color right) noexcept {
+    SetCornerColors(left, right, right, left);
+  }
 };
 
 struct TextCommand {

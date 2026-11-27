@@ -28,8 +28,9 @@ class RenderTrianglePrimitiveSystem : public RenderPrimitiveBase {
     const glm::vec2 s1 = ToScreenPoint(p1World, triangle.isFixed);
     const glm::vec2 s2 = ToScreenPoint(p2World, triangle.isFixed);
     const glm::vec2 s3 = ToScreenPoint(p3World, triangle.isFixed);
+    const float sortDepth = triangle.isFixed ? triangle.p1.y : maxY;
 
-    auto& cmd = renderQueue_->EmplaceTriangle(static_cast<unsigned int>(triangle.layer), triangle.p1.y, nullptr,
+    auto& cmd = renderQueue_->EmplaceTriangle(static_cast<unsigned int>(triangle.layer), sortDepth, nullptr,
                                               triangle.blendMode);
     cmd.p1 = {s1.x, s1.y};
     cmd.p2 = {s2.x, s2.y};

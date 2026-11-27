@@ -104,15 +104,16 @@ class RenderUISpriteSystem {
  private:
   const SpriteRenderCache::Entry* LookupOrCacheSprite(const Entity entity, const SpriteComponent& sprite) const {
     const auto gen = asset_manager_->TextureGeneration();
-    const SpriteRenderCache::Entry* entry = sprite_cache_->Lookup(entity, gen);
+    const std::uint64_t idHash = SpriteRenderCache::HashAssetId(sprite.assetId);
+    const SpriteRenderCache::Entry* entry = sprite_cache_->LookupByHash(entity, gen, idHash);
     if (entry && entry->texture) {
       return entry;
     }
     SDL_Texture* texture = asset_manager_->GetTexture(sprite.assetId);
     const auto slice = asset_manager_->GetAtlasSlice(sprite.assetId);
     const SDL_FRect atlasOffset = slice.has_value() ? *slice : SDL_FRect{0, 0, 0, 0};
-    sprite_cache_->Store(entity, texture, atlasOffset, gen);
-    return sprite_cache_->Lookup(entity, gen);
+    sprite_cache_->StoreByHash(entity, texture, atlasOffset, gen, idHash);
+    return sprite_cache_->LookupByHash(entity, gen, idHash);
   }
 
   static bool TryEmitNineSlice(Registry* registry, RenderQueue& renderQueue, const Entity entity,

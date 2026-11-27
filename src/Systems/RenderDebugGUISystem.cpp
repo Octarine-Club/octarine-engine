@@ -202,10 +202,24 @@ void DrawSinglePanel(Registry& registry, octarine::debug::DebugPanelDescriptor& 
   }
 }
 
+struct DebugScriptQueryCache {
+  std::unique_ptr<ComponentQuery<ScriptComponent>> query{};
+};
+
 void DrawRegisteredPanels(Registry& registry, octarine::debug::DebugMenuRegistry& debugReg) {
   for (auto& panel : debugReg.Panels()) {
     DrawSinglePanel(registry, panel);
   }
+}
+
+void RunDebugScriptCallbacks(Registry& registry) {
+  auto* cache = registry.TryGet<DebugScriptQueryCache>();
+  if (cache == nullptr) {
+    cache = &registry.Set<DebugScriptQueryCache>(DebugScriptQueryCache{registry.CreateQuery<ScriptComponent>()});
+  }
+  cache->query->Update();
+  RenderDebugGUISystem system;
+  cache->query->ForEach(system);
 }
 }  // namespace
 
@@ -236,9 +250,7 @@ void RenderDebugGUISystem::DrawDebugOverlays(Registry* registry, const EngineOpt
   }
 
   if (projectLoaded) {
-    auto query = registry->CreateQuery<ScriptComponent>();
-    RenderDebugGUISystem system;
-    query->ForEach(system);
+    RunDebugScriptCallbacks(*registry);
   }
   if (engineOptions.showEntityInfo) {
     EntityInfoWindow(registry);
