@@ -642,10 +642,7 @@ struct RefreshEntry {
 };
 
 bool MatchesAnyDep(const std::unordered_set<std::string>& deps, const std::unordered_set<std::string>& dirtyKeys) {
-  for (const auto& k : dirtyKeys) {
-    if (deps.contains(k)) return true;
-  }
-  return false;
+  return std::ranges::any_of(dirtyKeys, [&deps](const std::string& k) { return deps.contains(k); });
 }
 
 void RunRefreshEntries(const std::vector<RefreshEntry>& entries, std::unordered_set<std::string>* dirtyKeys) {
@@ -2878,29 +2875,24 @@ void ApplyMountOptions(const sol::optional<sol::table>& opts, const std::shared_
   }
 }
 
-void PopulateMountViewTable(const std::shared_ptr<UIViewInstance>& view) {
-  const std::weak_ptr<UIViewInstance> weakView = view;
-  auto bindContextObservable = [weakView]() {
-    auto v = weakView.lock();
-    if (!v || !IsTableObservable(v->context)) return;
-    SubscribeObservableTable(v->context, [weakView](const std::string& changedKey) {
-      if (auto locked = weakView.lock()) {
-        locked->RefreshKey(changedKey);
-      }
-    });
-  };
-  bindContextObservable();
+void BindViewContextObservable(const std::weak_ptr<UIViewInstance>& weakView) {
+  auto v = weakView.lock();
+  if (!v || !IsTableObservable(v->context)) return;
+  SubscribeObservableTable(v->context, [weakView](const std::string& changedKey) {
+    if (auto locked = weakView.lock()) {
+      locked->RefreshKey(changedKey);
+    }
+  });
+}
 
-  sol::table vt = view->viewTable;
-  vt.set("root", view->rootEntity);
-  vt.set("refs", view->refsTable);
+void BindMountViewContextMethods(sol::table& vt, const std::weak_ptr<UIViewInstance>& weakView) {
   vt.set_function("refresh", [weakView](const sol::table&) {
     if (auto v = weakView.lock()) v->Refresh();
   });
-  vt.set_function("set_context", [weakView, bindContextObservable](const sol::table&, const sol::table& newCtx) {
+  vt.set_function("set_context", [weakView](const sol::table&, const sol::table& newCtx) {
     if (auto v = weakView.lock()) {
       v->context = newCtx;
-      bindContextObservable();
+      BindViewContextObservable(weakView);
       v->Refresh();
     }
   });
@@ -2908,6 +2900,9 @@ void PopulateMountViewTable(const std::shared_ptr<UIViewInstance>& view) {
     const auto v = weakView.lock();
     return v ? sol::object(v->context) : sol::object(sol::lua_nil);
   });
+}
+
+void BindMountViewVisibilityAndFocusMethods(sol::table& vt, const std::weak_ptr<UIViewInstance>& weakView) {
   vt.set_function("show", [weakView](const sol::table&) {
     if (auto v = weakView.lock()) SetEntityVisibility(v->runtime->GetRegistry(), v->rootEntity, true);
   });
@@ -2921,10 +2916,6 @@ void PopulateMountViewTable(const std::shared_ptr<UIViewInstance>& view) {
     const auto v = weakView.lock();
     return v ? v->isInert : false;
   });
-  vt.set_function("is_mounted", [weakView](const sol::table&) -> bool {
-    const auto v = weakView.lock();
-    return v ? v->IsCurrentlyMounted() : false;
-  });
   vt.set_function("focus_first", [weakView](const sol::table&) -> sol::optional<Entity> {
     const auto v = weakView.lock();
     if (!v || !v->IsCurrentlyMounted()) return sol::nullopt;
@@ -2934,6 +2925,21 @@ void PopulateMountViewTable(const std::shared_ptr<UIViewInstance>& view) {
       return *target;
     }
     return sol::nullopt;
+  });
+}
+
+void PopulateMountViewTable(const std::shared_ptr<UIViewInstance>& view) {
+  const std::weak_ptr<UIViewInstance> weakView = view;
+  BindViewContextObservable(weakView);
+
+  sol::table vt = view->viewTable;
+  vt.set("root", view->rootEntity);
+  vt.set("refs", view->refsTable);
+  BindMountViewContextMethods(vt, weakView);
+  BindMountViewVisibilityAndFocusMethods(vt, weakView);
+  vt.set_function("is_mounted", [weakView](const sol::table&) -> bool {
+    const auto v = weakView.lock();
+    return v ? v->IsCurrentlyMounted() : false;
   });
   vt.set_function("unmount", [weakView](const sol::table&) {
     if (auto v = weakView.lock()) v->Unmount();

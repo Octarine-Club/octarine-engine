@@ -1855,7 +1855,7 @@ void BindPlatformAndBuild(sol::state& lua, LuaBindingContext& ctx) {
 #endif
     char buf[64];
     std::strftime(buf, sizeof(buf), "%Y%m%d_%H%M%S", &tmBuf);
-    return std::string(buf);
+    return {buf};
   });
 
   LuaSchemaRegistry::SetFunction(lua, "open_external_url", [&ctx](const std::string& url) -> bool {
@@ -1940,69 +1940,79 @@ sol::table PollTrackedScripts(sol::this_state s, LuaBindingContext& ctx, const s
 }
 #endif
 
-void BindHotReload(sol::state& lua, LuaBindingContext& ctx) {
-  LuaSchemaRegistry::SetFunction(lua, "set_hot_reload_enabled", [&ctx](const bool enabled) -> bool {
+bool SetHotReloadEnabled(LuaBindingContext& ctx, const bool enabled) {
 #ifdef OCTARINE_SHIPPED
-    (void)ctx;
-    (void)enabled;
-    return false;
+  (void)ctx;
+  (void)enabled;
+  return false;
 #else
-    auto* registry = ctx.GetRegistry();
-    auto* config = registry != nullptr ? registry->TryGet<GameConfig>() : nullptr;
-    if (config == nullptr) return false;
-    config->GetEngineOptions().hotReloadEnabled = enabled;
-    return config->GetEngineOptions().hotReloadEnabled;
+  auto* registry = ctx.GetRegistry();
+  auto* config = registry != nullptr ? registry->TryGet<GameConfig>() : nullptr;
+  if (config == nullptr) return false;
+  config->GetEngineOptions().hotReloadEnabled = enabled;
+  return config->GetEngineOptions().hotReloadEnabled;
 #endif
-  });
+}
 
-  LuaSchemaRegistry::SetFunction(lua, "is_hot_reload_enabled", [&ctx]() -> bool {
+bool IsHotReloadEnabled(LuaBindingContext& ctx) {
 #ifdef OCTARINE_SHIPPED
-    (void)ctx;
-    return false;
+  (void)ctx;
+  return false;
 #else
-    auto* registry = ctx.GetRegistry();
-    const auto* config = registry != nullptr ? registry->TryGet<GameConfig>() : nullptr;
-    return config != nullptr && config->GetEngineOptions().hotReloadEnabled;
+  auto* registry = ctx.GetRegistry();
+  const auto* config = registry != nullptr ? registry->TryGet<GameConfig>() : nullptr;
+  return config != nullptr && config->GetEngineOptions().hotReloadEnabled;
 #endif
-  });
+}
+
+void TrackHotReloadScript(LuaBindingContext& ctx, const std::string& absPath) {
+#ifdef OCTARINE_SHIPPED
+  (void)ctx;
+  (void)absPath;
+#else
+  if (absPath.empty()) return;
+  if (auto* tracker = EnsureHotReloadTracker(ctx)) {
+    tracker->watcher.Track(absPath);
+  }
+#endif
+}
+
+void UntrackHotReloadScript(LuaBindingContext& ctx, const std::string& absPath) {
+#ifdef OCTARINE_SHIPPED
+  (void)ctx;
+  (void)absPath;
+#else
+  if (absPath.empty()) return;
+  if (auto* tracker = EnsureHotReloadTracker(ctx)) {
+    tracker->watcher.Untrack(absPath);
+  }
+#endif
+}
+
+std::size_t GetTrackedHotReloadCount(LuaBindingContext& ctx) {
+#ifdef OCTARINE_SHIPPED
+  (void)ctx;
+  return 0;
+#else
+  if (const auto* tracker = EnsureHotReloadTracker(ctx)) {
+    return tracker->watcher.TrackedCount();
+  }
+  return 0;
+#endif
+}
+
+void BindHotReload(sol::state& lua, LuaBindingContext& ctx) {
+  LuaSchemaRegistry::SetFunction(lua, "set_hot_reload_enabled",
+                                 [&ctx](const bool enabled) -> bool { return SetHotReloadEnabled(ctx, enabled); });
+  LuaSchemaRegistry::SetFunction(lua, "is_hot_reload_enabled", [&ctx]() -> bool { return IsHotReloadEnabled(ctx); });
 
   sol::table hotReloadTable = lua.create_named_table("hot_reload");
-  LuaSchemaRegistry::SetFunction(hotReloadTable, "hot_reload", "track_script", [&ctx](const std::string& absPath) {
-#ifdef OCTARINE_SHIPPED
-    (void)ctx;
-    (void)absPath;
-#else
-    if (absPath.empty()) return;
-    if (auto* tracker = EnsureHotReloadTracker(ctx)) {
-      tracker->watcher.Track(absPath);
-    }
-#endif
-  });
-
-  LuaSchemaRegistry::SetFunction(hotReloadTable, "hot_reload", "untrack_script", [&ctx](const std::string& absPath) {
-#ifdef OCTARINE_SHIPPED
-    (void)ctx;
-    (void)absPath;
-#else
-    if (absPath.empty()) return;
-    if (auto* tracker = EnsureHotReloadTracker(ctx)) {
-      tracker->watcher.Untrack(absPath);
-    }
-#endif
-  });
-
-  LuaSchemaRegistry::SetFunction(hotReloadTable, "hot_reload", "get_tracked_count", [&ctx]() -> std::size_t {
-#ifdef OCTARINE_SHIPPED
-    (void)ctx;
-    return 0;
-#else
-    if (const auto* tracker = EnsureHotReloadTracker(ctx)) {
-      return tracker->watcher.TrackedCount();
-    }
-    return 0;
-#endif
-  });
-
+  LuaSchemaRegistry::SetFunction(hotReloadTable, "hot_reload", "track_script",
+                                 [&ctx](const std::string& absPath) { TrackHotReloadScript(ctx, absPath); });
+  LuaSchemaRegistry::SetFunction(hotReloadTable, "hot_reload", "untrack_script",
+                                 [&ctx](const std::string& absPath) { UntrackHotReloadScript(ctx, absPath); });
+  LuaSchemaRegistry::SetFunction(hotReloadTable, "hot_reload", "get_tracked_count",
+                                 [&ctx]() -> std::size_t { return GetTrackedHotReloadCount(ctx); });
   LuaSchemaRegistry::SetFunction(hotReloadTable, "hot_reload", "poll_scripts",
                                  [&ctx](sol::this_state s, const sol::optional<double> dtOpt) -> sol::table {
 #ifdef OCTARINE_SHIPPED
@@ -2010,7 +2020,7 @@ void BindHotReload(sol::state& lua, LuaBindingContext& ctx) {
                                    (void)dtOpt;
                                    return sol::state_view(s).create_table();
 #else
-        return PollTrackedScripts(s, ctx, dtOpt);
+                                   return PollTrackedScripts(s, ctx, dtOpt);
 #endif
                                  });
 }

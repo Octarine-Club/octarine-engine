@@ -23,7 +23,7 @@
       "emit_sites": [
         {
           "file": "src/Lua/Modules/AudioModuleLuaBinding.cpp",
-          "line": 49
+          "line": 48
         },
         {
           "file": "src/Systems/UIButtonSystem.h",

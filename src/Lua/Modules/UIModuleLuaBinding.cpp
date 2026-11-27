@@ -255,6 +255,32 @@ bool ApplyDebugDraw(Registry* r, const sol::optional<bool>& enabled) {
   return cfg->enabled;
 }
 
+float GetAutoUiScale(const Registry* r) {
+  const auto* cfg = r != nullptr ? r->TryGet<GameConfig>() : nullptr;
+  return cfg != nullptr ? octarine::ui::ResolveAutoUiScale(*cfg) : 1.0f;
+}
+
+float SetUiScale(Registry* r, const sol::optional<float>& scale) {
+  auto* cfg = r != nullptr ? r->TryGet<GameConfig>() : nullptr;
+  if (cfg == nullptr) return 1.0f;
+  cfg->GetEngineOptions().uiScale = octarine::ui::ClampUserUiScale(scale.value_or(1.0f));
+  return octarine::ui::ResolveUiScale(*cfg);
+}
+
+void SetUiNineSlice(Registry* registry, const Entity entity, const float left, const float top, const float right,
+                    const float bottom) {
+  if (registry == nullptr || !registry->IsAlive(entity)) return;
+  if (registry->HasComponent<UINineSliceComponent>(entity)) {
+    auto& ns = registry->GetComponent<UINineSliceComponent>(entity);
+    ns.left = left;
+    ns.top = top;
+    ns.right = right;
+    ns.bottom = bottom;
+  } else {
+    registry->AddComponent(entity, UINineSliceComponent(left, top, right, bottom));
+  }
+}
+
 }  // namespace
 
 void LuaModuleBinding<UIModule>::install(sol::state& lua, LuaBindingContext& ctx) {
@@ -267,7 +293,7 @@ void LuaModuleBinding<UIModule>::install(sol::state& lua, LuaBindingContext& ctx
                                  });
   LuaSchemaRegistry::SetFunction(
       ui, "ui", "anchor",
-      [&ctx](const Entity entity, const sol::object& preset_or_table, sol::optional<sol::table> opts) {
+      [&ctx](const Entity entity, const sol::object& preset_or_table, const sol::optional<sol::table>& opts) {
         ApplyAnchor(ctx.GetRegistry(), entity, preset_or_table, opts);
       });
   LuaSchemaRegistry::SetFunction(
@@ -296,17 +322,9 @@ void LuaModuleBinding<UIModule>::install(sol::state& lua, LuaBindingContext& ctx
   });
   LuaSchemaRegistry::SetFunction(ui, "ui", "get_scale",
                                  [&ctx]() { return octarine::ui::ResolveUiScale(ctx.GetRegistry()); });
-  LuaSchemaRegistry::SetFunction(ui, "ui", "get_auto_scale", [&ctx]() {
-    const Registry* r = ctx.GetRegistry();
-    const auto* cfg = r != nullptr ? r->TryGet<GameConfig>() : nullptr;
-    return cfg != nullptr ? octarine::ui::ResolveAutoUiScale(*cfg) : 1.0f;
-  });
+  LuaSchemaRegistry::SetFunction(ui, "ui", "get_auto_scale", [&ctx]() { return GetAutoUiScale(ctx.GetRegistry()); });
   LuaSchemaRegistry::SetFunction(ui, "ui", "set_scale", [&ctx](const sol::optional<float>& scale) {
-    Registry* r = ctx.GetRegistry();
-    auto* cfg = r != nullptr ? r->TryGet<GameConfig>() : nullptr;
-    if (cfg == nullptr) return 1.0f;
-    cfg->GetEngineOptions().uiScale = octarine::ui::ClampUserUiScale(scale.value_or(1.0f));
-    return octarine::ui::ResolveUiScale(*cfg);
+    return SetUiScale(ctx.GetRegistry(), scale);
   });
 
   if (Registry* r = ctx.GetRegistry(); r != nullptr) {
@@ -329,16 +347,6 @@ void LuaModuleBinding<UIModule>::install(sol::state& lua, LuaBindingContext& ctx
   LuaSchemaRegistry::SetFunction(
       lua, "set_ui_nine_slice",
       [&ctx](const Entity entity, const float left, const float top, const float right, const float bottom) {
-        auto* registry = ctx.GetRegistry();
-        if (registry == nullptr || !registry->IsAlive(entity)) return;
-        if (registry->HasComponent<UINineSliceComponent>(entity)) {
-          auto& ns = registry->GetComponent<UINineSliceComponent>(entity);
-          ns.left = left;
-          ns.top = top;
-          ns.right = right;
-          ns.bottom = bottom;
-        } else {
-          registry->AddComponent(entity, UINineSliceComponent(left, top, right, bottom));
-        }
+        SetUiNineSlice(ctx.GetRegistry(), entity, left, top, right, bottom);
       });
 }

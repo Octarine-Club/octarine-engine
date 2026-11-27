@@ -1536,7 +1536,7 @@ void ApplyAutoSeedContextToMountedView(UIRuntime& uiRuntime, const Registry* reg
   }
 }
 
-sol::object MakeWrappedControllerFn(sol::state_view lua, const std::shared_ptr<UIPreviewer*>& handle,
+sol::object MakeWrappedControllerFn(const sol::state_view& lua, const std::shared_ptr<UIPreviewer*>& handle,
                                     const std::string& key, const sol::table& backing,
                                     const sol::protected_function& userFn) {
   return sol::make_object(
@@ -1549,7 +1549,7 @@ sol::object MakeWrappedControllerFn(sol::state_view lua, const std::shared_ptr<U
       });
 }
 
-sol::object MakeStubControllerFn(sol::state_view lua, const std::shared_ptr<UIPreviewer*>& handle,
+sol::object MakeStubControllerFn(const sol::state_view& lua, const std::shared_ptr<UIPreviewer*>& handle,
                                  const std::string& key) {
   return sol::make_object(lua, [handle, key](const sol::table&, const sol::object& arg) {
     const std::string msg = key + "(" + FormatFallbackArg(arg) + ")";
@@ -1595,14 +1595,14 @@ sol::table UIPreviewer::BuildFallbackController(const sol::optional<sol::table>&
 
   meta.set_function(
       "__index", [backing, handle](const sol::table&, const std::string& key, const sol::this_state s) -> sol::object {
-        sol::state_view lua(s);
+        const sol::state_view luaView(s);
         if (const sol::object existing = LookupUserControllerMember(backing, key); existing != sol::lua_nil) {
           return existing.is<sol::protected_function>()
-                     ? MakeWrappedControllerFn(lua, handle, key, backing, existing.as<sol::protected_function>())
+                     ? MakeWrappedControllerFn(luaView, handle, key, backing, existing.as<sol::protected_function>())
                      : existing;
         }
         if (key == "on_mount" || key == "on_unmount") return sol::lua_nil;
-        return MakeStubControllerFn(lua, handle, key);
+        return MakeStubControllerFn(luaView, handle, key);
       });
 
   wrapper[sol::metatable_key] = meta;

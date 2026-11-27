@@ -86,36 +86,43 @@ void CollectProjectLuaScripts(const std::filesystem::path& root, std::vector<std
   }
 }
 
+void CollectDirectoryFiles(const std::filesystem::path& target, std::vector<std::string>& out,
+                           std::set<std::string>& seen) {
+  std::error_code ec;
+  for (auto it = std::filesystem::recursive_directory_iterator(
+           target, std::filesystem::directory_options::skip_permission_denied, ec);
+       it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
+    if (ec) {
+      ec.clear();
+      continue;
+    }
+    if (it->is_regular_file(ec)) {
+      AppendUniqueFile(out, seen, it->path());
+    }
+  }
+}
+
 void CollectPackageIncludeFiles(const std::filesystem::path& root, const std::string& packageIncludeCsv,
                                 std::vector<std::string>& out, std::set<std::string>& seen) {
   if (packageIncludeCsv.empty()) return;
+  const std::filesystem::path normalizedRoot = root.lexically_normal();
   std::size_t start = 0;
   std::error_code ec;
   while (start < packageIncludeCsv.size()) {
-    std::size_t end = packageIncludeCsv.find(',', start);
-    if (end == std::string::npos) end = packageIncludeCsv.size();
+    const std::size_t comma = packageIncludeCsv.find(',', start);
+    const std::size_t end = comma == std::string::npos ? packageIncludeCsv.size() : comma;
     const std::string item = TrimWhitespace(std::string_view(packageIncludeCsv).substr(start, end - start));
     start = end + 1;
     if (item.empty()) continue;
 
     const std::filesystem::path target = (root / item).lexically_normal();
-    const std::filesystem::path relCheck = target.lexically_relative(root.lexically_normal());
+    const std::filesystem::path relCheck = target.lexically_relative(normalizedRoot);
     if (relCheck.empty() || *relCheck.begin() == "..") continue;
 
     if (std::filesystem::is_regular_file(target, ec)) {
       AppendUniqueFile(out, seen, target);
     } else if (std::filesystem::is_directory(target, ec)) {
-      for (auto it = std::filesystem::recursive_directory_iterator(
-               target, std::filesystem::directory_options::skip_permission_denied, ec);
-           it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
-        if (ec) {
-          ec.clear();
-          continue;
-        }
-        if (it->is_regular_file(ec)) {
-          AppendUniqueFile(out, seen, it->path());
-        }
-      }
+      CollectDirectoryFiles(target, out, seen);
     }
   }
 }

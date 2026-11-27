@@ -109,17 +109,10 @@ std::string FormatOverloadType(const LuaFunctionSchema& ov) {
   return s;
 }
 
-void EmitFunctionWithSchema(std::ofstream& out, const std::string& headerName, const LuaFunctionSchema* schema) {
-  if (schema == nullptr) {
-    out << "function " << headerName << "(...) end\n\n";
-    return;
-  }
-  for (const auto& ov : schema->overloads) {
-    out << "---@overload " << FormatOverloadType(ov) << "\n";
-  }
+std::string EmitParamAnnotations(std::ofstream& out, const std::vector<LuaParamSchema>& params) {
   std::string argList;
-  for (std::size_t i = 0; i < schema->params.size(); ++i) {
-    const auto& p = schema->params[i];
+  for (std::size_t i = 0; i < params.size(); ++i) {
+    const auto& p = params[i];
     if (p.variadic) {
       out << "---@param ... " << p.type << "\n";
     } else {
@@ -128,14 +121,29 @@ void EmitFunctionWithSchema(std::ofstream& out, const std::string& headerName, c
     if (i > 0) argList += ", ";
     argList += p.name;
   }
-  if (!schema->returns.empty()) {
-    out << "---@return ";
-    for (std::size_t i = 0; i < schema->returns.size(); ++i) {
-      if (i > 0) out << ", ";
-      out << schema->returns[i];
-    }
-    out << "\n";
+  return argList;
+}
+
+void EmitReturnAnnotation(std::ofstream& out, const std::vector<std::string>& returns) {
+  if (returns.empty()) return;
+  out << "---@return ";
+  for (std::size_t i = 0; i < returns.size(); ++i) {
+    if (i > 0) out << ", ";
+    out << returns[i];
   }
+  out << "\n";
+}
+
+void EmitFunctionWithSchema(std::ofstream& out, const std::string& headerName, const LuaFunctionSchema* schema) {
+  if (schema == nullptr) {
+    out << "function " << headerName << "(...) end\n\n";
+    return;
+  }
+  for (const auto& ov : schema->overloads) {
+    out << "---@overload " << FormatOverloadType(ov) << "\n";
+  }
+  const std::string argList = EmitParamAnnotations(out, schema->params);
+  EmitReturnAnnotation(out, schema->returns);
   out << "function " << headerName << "(" << argList << ") end\n\n";
 }
 

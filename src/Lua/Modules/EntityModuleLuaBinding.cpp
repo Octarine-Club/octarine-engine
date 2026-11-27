@@ -38,6 +38,22 @@ void SetEntityName(Registry* registry, const Entity entity, const std::string& n
   registry->AddComponent(entity, NameComponent(name));
 }
 
+void ScanArchetypeForEntityName(const Archetype& arch, const std::size_t compIdx, const std::string& name,
+                                Entity& bestMatch) {
+  const std::size_t chunkCount = arch.GetChunkCount();
+  for (std::size_t c = 0; c < chunkCount; ++c) {
+    const std::size_t entCount = arch.GetEntityCountInChunk(c);
+    const auto* names = arch.GetComponentArrayByIndex<NameComponent>(c, compIdx);
+    for (std::size_t i = 0; i < entCount; ++i) {
+      if (names[i].name != name) continue;
+      const Entity candidate = arch.GetEntity(c, i);
+      if (bestMatch.id == kInvalidEntityID || candidate.GetId() < bestMatch.GetId()) {
+        bestMatch = candidate;
+      }
+    }
+  }
+}
+
 sol::object FindEntityByName(sol::this_state state, Registry* registry, const std::string& name) {
   if (registry == nullptr) return sol::lua_nil;
   const auto nameComp = registry->TryComponent<NameComponent>();
@@ -49,18 +65,7 @@ sol::object FindEntityByName(sol::this_state state, Registry* registry, const st
     if (arch == nullptr || arch->IsEmpty()) continue;
     const std::size_t compIdx = arch->GetComponentIndex(nameCompId);
     if (compIdx == Archetype::kInvalidComponentIndex) continue;
-    const std::size_t chunkCount = arch->GetChunkCount();
-    for (std::size_t c = 0; c < chunkCount; ++c) {
-      const std::size_t entCount = arch->GetEntityCountInChunk(c);
-      const auto* names = arch->GetComponentArrayByIndex<NameComponent>(c, compIdx);
-      for (std::size_t i = 0; i < entCount; ++i) {
-        if (names[i].name != name) continue;
-        const Entity candidate = arch->GetEntity(c, i);
-        if (bestMatch.id == kInvalidEntityID || candidate.GetId() < bestMatch.GetId()) {
-          bestMatch = candidate;
-        }
-      }
-    }
+    ScanArchetypeForEntityName(*arch, compIdx, name, bestMatch);
   }
   if (bestMatch.id == kInvalidEntityID) return sol::lua_nil;
   return sol::make_object(state, bestMatch);

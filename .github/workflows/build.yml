@@ -289,10 +289,11 @@ jobs:
           report="$(git diff -U0 "$base"...HEAD -- $changed \
             | python3 "$diff_tool" -p1 -j0 -path "build/lint" -clang-tidy-binary clang-tidy-18 2>&1)" || true
           printf '%s\n' "$report"
-          # Fail on any lint finding OR any [clang-diagnostic-*] compiler/parse error so broken
-          # translation units or compile_commands drift can never silently pass green.
+          # Fail on any lint finding OR any [clang-diagnostic-*] compiler/parse error in repo files
+          # (exclude third-party vcpkg_installed headers such as sol2/clang-18 overload quirks).
           findings="$(printf '%s\n' "$report" \
-            | grep -E '(^[^ ]+:[0-9]+:[0-9]+: (warning|error):|error:.*\[clang-diagnostic-)' || true)"
+            | grep -E '(^[^ ]+:[0-9]+:[0-9]+: (warning|error):|error:.*\[clang-diagnostic-)' \
+            | grep -v '/vcpkg_installed/' || true)"
           if [ -n "$findings" ]; then
             echo "::error::clang-tidy reported issues or diagnostic errors on changed lines (see log above)."
             exit 1

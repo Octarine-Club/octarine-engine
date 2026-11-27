@@ -659,6 +659,86 @@ bool Game::SaveUserSettings() {
   return userSettings->Save(savePath);
 }
 
+namespace {
+void StopDevAndUiBeforeTeardown(Registry& registry) {
+#ifndef OCTARINE_SHIPPED
+  // Stop the dev listener before the registry teardown drops it so the listener thread
+  // joins cleanly while the engine is still alive.
+  if (auto* devListen = registry.TryGet<octarine::dev::DevListenServer>()) {
+    devListen->Stop();
+  }
+  if (auto* previewer = registry.TryGet<UIPreviewer>()) {
+    previewer->UnmountPreview(/*restoreIsolationState=*/false);
+  }
+#endif
+  if (auto* uiRuntime = registry.TryGet<UIRuntime>()) {
+    uiRuntime->UnmountAllViews();
+    uiRuntime->ClearCustomWidgets();
+  }
+}
+
+void ReleaseRegistryLuaOwnedState(Registry& registry) {
+  registry.ClearUserEntities();
+  if (auto* inputSystem = registry.TryGet<InputSystem>()) {
+    inputSystem->ResetLuaState();
+  }
+  if (auto* tilemap = registry.TryGet<TilemapSystem>()) {
+    tilemap->Unload(registry);
+    tilemap->ClearPropSpawner();
+  }
+  if (auto* debugReg = registry.TryGet<octarine::debug::DebugMenuRegistry>()) {
+    debugReg->ClearLuaOwned();
+  }
+  if (auto* hotReloadTracker = registry.TryGet<octarine::LuaScriptHotReloadTracker>()) {
+    *hotReloadTracker = octarine::LuaScriptHotReloadTracker{};
+  }
+}
+
+void SaveImGuiIniAndUninstallHandler() {
+#ifdef OCTARINE_WITH_IMGUI
+  if (ImGui::GetCurrentContext() == nullptr) return;
+  const ImGuiIO& io = ImGui::GetIO();
+  if (io.IniFilename != nullptr && io.IniFilename[0] != '\0') {
+    ImGui::SaveIniSettingsToDisk(io.IniFilename);
+  }
+  octarine::debug::UninstallImGuiSettingsHandler();
+#endif
+}
+
+void StopAndFlushSceneLoader(SceneLoader* sceneLoader) {
+  if (sceneLoader == nullptr) return;
+  if (sceneLoader->IsSceneRunning()) {
+    sceneLoader->StopScene();
+  }
+  sceneLoader->FlushPendingSceneLoad();
+}
+
+void ClearLuaAssetsAndCollectGarbage(sol::state& luaState) {
+  if (luaState.lua_state() == nullptr) return;
+  lua_State* L = luaState.lua_state();
+  lua_pushnil(L);
+  lua_setfield(L, LUA_REGISTRYINDEX, "octarine_assets");
+  luaState.collect_garbage();
+}
+
+void ShutdownRendererAndRuntime(EngineRuntime& runtime, Renderer* renderer) {
+  if (runtime.SdlRenderer() != nullptr && renderer != nullptr) {
+    renderer->DestroyScene();
+  }
+  if (runtime.SdlRenderer() != nullptr || runtime.Window() != nullptr) {
+    runtime.Shutdown();
+  }
+}
+
+bool ShouldAbortAfterTick(const bool quitOnError, const bool headless, const uint64_t initialScriptErrorSeq,
+                          const SceneLoader* sceneLoader) {
+  if (quitOnError && LatestScriptErrorSeq() > initialScriptErrorSeq) {
+    return true;
+  }
+  return sceneLoader != nullptr && sceneLoader->LastLoadFailed() && (quitOnError || headless);
+}
+}  // namespace
+
 void Game::Destroy() {
   if (is_destroyed_) {
     return;
@@ -666,14 +746,6 @@ void Game::Destroy() {
   is_destroyed_ = true;
 
   if (registry_) {
-#ifndef OCTARINE_SHIPPED
-    // Stop the dev listener before the registry teardown drops it so the listener thread
-    // joins cleanly while the engine is still alive.
-    if (auto* devListen = registry_->TryGet<octarine::dev::DevListenServer>()) {
-      devListen->Stop();
-    }
-#endif
-
 #ifndef OCTARINE_SHIPPED
     const bool hasOneShotPreviewExport =
         (startup_mode_ == "ui-preview") && (!ui_preview_capture_path_.empty() || !ui_preview_audit_json_path_.empty() ||
@@ -684,61 +756,20 @@ void Game::Destroy() {
     if (!bake_mode_ && !hasOneShotPreviewExport && (!headless_ || HasExplicitSavePathEnv())) {
       static_cast<void>(SaveUserSettings());
     }
-
-#ifndef OCTARINE_SHIPPED
-    if (auto* previewer = registry_->TryGet<UIPreviewer>()) {
-      previewer->UnmountPreview(/*restoreIsolationState=*/false);
-    }
-#endif
-    if (auto* uiRuntime = registry_->TryGet<UIRuntime>()) {
-      uiRuntime->UnmountAllViews();
-      uiRuntime->ClearCustomWidgets();
-    }
+    StopDevAndUiBeforeTeardown(*registry_);
   }
 
   // Phase 1 (both Registry and lua_State* live): release all scene, UI, singleton, and ECS-held
   // sol::* references, nil out LUA_REGISTRYINDEX["octarine_assets"], and run a Lua GC pass so
   // any Lua __gc finalizers execute while engine singletons are still alive.
-  if (scene_loader_) {
-    if (scene_loader_->IsSceneRunning()) {
-      scene_loader_->StopScene();
-    }
-    scene_loader_->FlushPendingSceneLoad();
-  }
+  StopAndFlushSceneLoader(scene_loader_.get());
   if (registry_) {
-    registry_->ClearUserEntities();
-    if (auto* inputSystem = registry_->TryGet<InputSystem>()) {
-      inputSystem->ResetLuaState();
-    }
-    if (auto* tilemap = registry_->TryGet<TilemapSystem>()) {
-      tilemap->Unload(*registry_);
-      tilemap->ClearPropSpawner();
-    }
-    if (auto* debugReg = registry_->TryGet<octarine::debug::DebugMenuRegistry>()) {
-      debugReg->ClearLuaOwned();
-    }
-    if (auto* hotReloadTracker = registry_->TryGet<octarine::LuaScriptHotReloadTracker>()) {
-      *hotReloadTracker = octarine::LuaScriptHotReloadTracker{};
-    }
+    ReleaseRegistryLuaOwnedState(*registry_);
   }
 
   LuaSystemRegistry::clear();
-  if (lua.lua_state() != nullptr) {
-    lua_State* L = lua.lua_state();
-    lua_pushnil(L);
-    lua_setfield(L, LUA_REGISTRYINDEX, "octarine_assets");
-    lua.collect_garbage();
-  }
-
-#ifdef OCTARINE_WITH_IMGUI
-  if (ImGui::GetCurrentContext() != nullptr) {
-    const ImGuiIO& io = ImGui::GetIO();
-    if (io.IniFilename != nullptr && io.IniFilename[0] != '\0') {
-      ImGui::SaveIniSettingsToDisk(io.IniFilename);
-    }
-    octarine::debug::UninstallImGuiSettingsHandler();
-  }
-#endif
+  ClearLuaAssetsAndCollectGarbage(lua);
+  SaveImGuiIniAndUninstallHandler();
 
   // Phase 2 (lua_State* still live): tear down Registry/EventBus BEFORE closing Lua and BEFORE
   // SDL_Quit so any remaining sol::* refs in engine or downstream octarine_game_module singletons
@@ -756,12 +787,7 @@ void Game::Destroy() {
 
   // Free the off-screen scene target while the SDL renderer is still live (EngineRuntime owns
   // the ImGui backend + window/renderer destroy + SDL_Quit, in that order).
-  if (runtime_.SdlRenderer() != nullptr) {
-    renderer_->DestroyScene();
-  }
-  if (runtime_.SdlRenderer() != nullptr || runtime_.Window() != nullptr) {
-    runtime_.Shutdown();
-  }
+  ShutdownRendererAndRuntime(runtime_, renderer_.get());
 }
 
 void Game::Run() {
@@ -781,8 +807,7 @@ void Game::Run() {
     // current_tick_ counts simulation steps (not rendered frames), so sub-stepped fast-forward
     // and paused frames are accounted exactly.
     current_tick_ += static_cast<uint64_t>(frame_loop_->Update(deltaTime));
-    if ((quit_on_error_ && LatestScriptErrorSeq() > initial_script_error_seq_) ||
-        (scene_loader_ && scene_loader_->LastLoadFailed() && (quit_on_error_ || headless_))) {
+    if (ShouldAbortAfterTick(quit_on_error_, headless_, initial_script_error_seq_, scene_loader_.get())) {
       has_fatal_error_ = true;
       s_is_running_ = false;
       break;
@@ -810,12 +835,11 @@ void Game::StepTicks(const uint32_t count, const float deltaTime) {
   // Each requested tick runs one FrameLoop::Update, which itself may execute simSubSteps steps.
   for (uint32_t i = 0; i < count && s_is_running_; ++i) {
     frame_loop_->ProcessInput();
-    if (registry_ && registry_->TryGet<GameConfig>()) {
-      registry_->Get<GameConfig>().GetEngineOptions().stepFrame = true;
+    if (auto* cfg = registry_ ? registry_->TryGet<GameConfig>() : nullptr) {
+      cfg->GetEngineOptions().stepFrame = true;
     }
     current_tick_ += static_cast<uint64_t>(frame_loop_->Update(deltaTime));
-    if ((quit_on_error_ && LatestScriptErrorSeq() > initial_script_error_seq_) ||
-        (scene_loader_ && scene_loader_->LastLoadFailed() && (quit_on_error_ || headless_))) {
+    if (ShouldAbortAfterTick(quit_on_error_, headless_, initial_script_error_seq_, scene_loader_.get())) {
       has_fatal_error_ = true;
       s_is_running_ = false;
     }

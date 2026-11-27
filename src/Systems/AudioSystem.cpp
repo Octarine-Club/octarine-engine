@@ -101,6 +101,26 @@ AudioSystem::Acquired AudioSystem::AcquireTrack() {
   return {};
 }
 
+namespace {
+template <typename TrackPool>
+int CountActiveVoicesAndPrune(const TrackPool& trackPool, octarine::AudioGainRegistry& gainReg,
+                              const std::string& clipId) {
+  int activeVoices = 0;
+  for (const auto& slot : trackPool) {
+    if (!slot.track) continue;
+    if (!MIX_TrackPlaying(slot.track)) {
+      gainReg.active_track_clips.erase(slot.track);
+      continue;
+    }
+    const auto it = gainReg.active_track_clips.find(slot.track);
+    if (it != gainReg.active_track_clips.end() && it->second == clipId) {
+      ++activeVoices;
+    }
+  }
+  return activeVoices;
+}
+}  // namespace
+
 void AudioSystem::OnAudioPlay(const AudioPlayEvent& event) {
   if (!state_ || !registry_) return;
 
@@ -114,18 +134,7 @@ void AudioSystem::OnAudioPlay(const AudioPlayEvent& event) {
   auto* gainReg = registry_->TryGet<octarine::AudioGainRegistry>();
   const std::uint64_t nowNs = SDL_GetTicksNS();
   if (gainReg != nullptr) {
-    int activeVoices = 0;
-    for (const TrackSlot& slot : state_->track_pool) {
-      if (!slot.track) continue;
-      if (!MIX_TrackPlaying(slot.track)) {
-        gainReg->active_track_clips.erase(slot.track);
-        continue;
-      }
-      const auto it = gainReg->active_track_clips.find(slot.track);
-      if (it != gainReg->active_track_clips.end() && it->second == event.clipId) {
-        ++activeVoices;
-      }
-    }
+    const int activeVoices = CountActiveVoicesAndPrune(state_->track_pool, *gainReg, event.clipId);
     if (gainReg->ShouldThrottleClip(event.clipId, nowNs, activeVoices)) {
       return;
     }

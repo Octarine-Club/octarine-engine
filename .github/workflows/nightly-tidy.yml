@@ -99,7 +99,7 @@ jobs:
           cat build/lint/tidy-summary.txt
           echo "::notice::clang-tidy whole-tree findings: $count (report in artifact)"
 
-          diag_errors="$(grep -E 'error:.*\[clang-diagnostic-' build/lint/tidy-report.txt || true)"
+          diag_errors="$(grep -E 'error:.*\[clang-diagnostic-' build/lint/tidy-report.txt | grep -v '/vcpkg_installed/' || true)"
           if [ -n "$diag_errors" ]; then
             echo "::error::clang-tidy hit compiler/parse errors ([clang-diagnostic-*]):"
             printf '%s\n' "$diag_errors" | head -50

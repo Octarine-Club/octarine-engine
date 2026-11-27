@@ -216,10 +216,10 @@ void TestDeterministicPlaybackOrderAndClearCaptures() {
   }
 
   // Record in forward order into cmdA and reverse order into cmdB
-  for (size_t i = 0; i < entsA.size(); ++i) {
-    cmdA.AddComponent(entsA[i], Position{1.0f, 0.0f});
-    cmdA.AddComponent(entsA[i], Position{2.0f, 0.0f});  // sequence 2 overwrites sequence 1 for same entity
-    cmdA.EmplaceDespawn(entsA[i]);
+  for (const Entity entity : entsA) {
+    cmdA.AddComponent(entity, Position{1.0f, 0.0f});
+    cmdA.AddComponent(entity, Position{2.0f, 0.0f});  // sequence 2 overwrites sequence 1 for same entity
+    cmdA.EmplaceDespawn(entity);
   }
   for (size_t i = entsB.size(); i > 0; --i) {
     const size_t idx = i - 1;

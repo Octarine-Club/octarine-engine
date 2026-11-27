@@ -205,6 +205,11 @@ sol::object ImportModule(LuaBindingContext& ctx, const std::string& relPath, con
   struct LoadingGuard {
     sol::table tbl;
     std::string key;
+    LoadingGuard(sol::table t, std::string k) : tbl(std::move(t)), key(std::move(k)) {}
+    LoadingGuard(const LoadingGuard&) = delete;
+    LoadingGuard& operator=(const LoadingGuard&) = delete;
+    LoadingGuard(LoadingGuard&&) = delete;
+    LoadingGuard& operator=(LoadingGuard&&) = delete;
     ~LoadingGuard() {
       if (tbl.valid()) tbl.raw_set(key, sol::lua_nil);
     }
@@ -241,5 +246,5 @@ void LuaModuleBinding<IoModule>::install(sol::state& lua, LuaBindingContext& ctx
       });
   LuaSchemaRegistry::SetFunction(
       lua, "clear_import_cache",
-      [&ctx](const sol::optional<std::string> relPath, sol::this_state s) { ClearImportCache(ctx, relPath, s); });
+      [&ctx](const sol::optional<std::string>& relPath, sol::this_state s) { ClearImportCache(ctx, relPath, s); });
 }

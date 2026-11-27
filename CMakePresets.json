@@ -26,6 +26,7 @@
       "displayName": "Lint (No PCH)",
       "description": "Debug build with PCH disabled and clang-tidy enabled, producing a non-PCH compile_commands.json for standalone clang-tidy.",
       "cacheVariables": {
+        "CMAKE_CXX_SCAN_FOR_MODULES": "OFF",
         "OCTARINE_ENABLE_PCH": "OFF",
         "OCTARINE_ENABLE_LINTING": "ON"
       }
