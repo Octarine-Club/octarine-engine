@@ -72,7 +72,7 @@ void LuaModuleBinding<LogModule>::install(sol::state& lua, LuaBindingContext& /*
     for (auto v : va) {
       if (!first) msg += "\t";
       first = false;
-      AppendPrintValue(msg, v);
+      AppendPrintValue(msg, sol::stack_object(v.lua_state(), v.stack_index()));
     }
     Logger::LogLua(msg);
   });
