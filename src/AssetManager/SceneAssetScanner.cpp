@@ -231,7 +231,7 @@ void CollectTilemapTableRefs(const sol::table& tilemap, const AssetManager* am, 
 }
 
 void CollectSceneTilemapField(const sol::table& scene, const AssetManager* am, std::vector<AssetReference>& out) {
-  const sol::object tilemapObj = scene["tilemap"];
+  const sol::object tilemapObj = scene.get<sol::object>("tilemap");
   if (tilemapObj.is<sol::table>()) {
     CollectTilemapTableRefs(tilemapObj.as<sol::table>(), am, out);
   } else if (tilemapObj.is<std::string>()) {

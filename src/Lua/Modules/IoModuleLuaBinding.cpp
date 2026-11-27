@@ -126,7 +126,7 @@ std::string NormalizeImportPath(const std::string& modulePath) {
 }
 
 sol::table EnsureRegistryTable(sol::state_view lua, const char* regKey) {
-  sol::object existing = lua.registry()[regKey];
+  sol::object existing = lua.registry().get<sol::object>(regKey);
   if (existing.is<sol::table>()) {
     return existing.as<sol::table>();
   }
@@ -217,7 +217,7 @@ sol::object ImportModule(LuaBindingContext& ctx, const std::string& relPath, con
 
 void ClearImportCache(LuaBindingContext& ctx, const sol::optional<std::string>& relPath, sol::this_state s) {
   sol::state_view lua(s);
-  sol::object existing = lua.registry()[kImportCacheKey];
+  sol::object existing = lua.registry().get<sol::object>(kImportCacheKey);
   if (!existing.is<sol::table>()) return;
   sol::table cache = existing.as<sol::table>();
   if (!relPath.has_value() || relPath->empty()) {

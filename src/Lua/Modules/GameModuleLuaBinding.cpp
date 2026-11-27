@@ -1889,7 +1889,7 @@ octarine::LuaScriptHotReloadTracker* EnsureHotReloadTracker(LuaBindingContext& c
 }
 
 void EvictImportCacheForChangedPath(sol::state_view& luaView, const std::string& changedPath) {
-  sol::object cacheObj = luaView.registry()["__octarine_import_cache"];
+  sol::object cacheObj = luaView.registry().get<sol::object>("__octarine_import_cache");
   if (!cacheObj.is<sol::table>()) return;
   sol::table cache = cacheObj.as<sol::table>();
   cache.raw_set(changedPath, sol::lua_nil);
