@@ -1863,6 +1863,12 @@ function entity:get_id() end
 ---@return any
 function find_entity_by_name(arg1) end
 
+---@type integer
+game_window_height = 0
+
+---@type integer
+game_window_width = 0
+
 ---@param arg1 string
 ---@return string
 function get_asset_path(arg1) end
@@ -2281,7 +2287,13 @@ name_component = {}
 function name_component.new(...) end
 
 ---@type boolean
+oct_dev_mode = false
+
+---@type boolean
 oct_shipped = false
+
+---@type string
+oct_startup_mode = ""
 
 ---@param arg1 string
 ---@return boolean

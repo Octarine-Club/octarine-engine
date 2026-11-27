@@ -6,6 +6,7 @@ on:
     paths:
       - 'src/**'
       - 'tests/**'
+      - 'examples/**'
       - 'CMakeLists.txt'
       - 'cmake/**'
       - 'CMakePresets.json'
@@ -21,6 +22,7 @@ on:
     paths:
       - 'src/**'
       - 'tests/**'
+      - 'examples/**'
       - 'CMakeLists.txt'
       - 'cmake/**'
       - 'CMakePresets.json'
@@ -260,50 +262,57 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      # Blocking clang-tidy over the PR's changed LINES (not whole files), using the
-      # compile_commands.json the player-debug build just emitted.
+      # Blocking clang-tidy over the PR's changed LINES (not whole files), using a non-PCH
+      # compile_commands.json emitted by the `lint` preset with Clang so neither PCH flags nor
+      # GCC-only driver flags trigger [clang-diagnostic-*] parse failures.
       - name: clang-tidy (changed lines, blocking)
         if: matrix.platform == 'linux' && matrix.preset == 'player-debug' && github.event_name == 'pull_request'
         shell: bash
         run: |
-          sudo apt-get update && sudo apt-get install -y clang-tidy-18
+          sudo apt-get update && sudo apt-get install -y clang-18 clang-tidy-18
           base="${{ github.event.pull_request.base.sha }}"
-          changed="$(git diff --name-only --diff-filter=ACMR "$base"...HEAD -- 'src/*' 'tests/*' | grep -E '\.cpp$' || true)"
+          changed="$(git diff --name-only --diff-filter=ACMR "$base"...HEAD -- 'src/*' 'tests/*' 'examples/*' | grep -E '\.cpp$' || true)"
           if [ -z "$changed" ]; then
             echo "No changed .cpp files to lint."
             exit 0
           fi
           printf 'tidying changed lines in:\n%s\n' "$(printf '  %s\n' $changed)"
-          # clang-tidy-diff.py ships inside the llvm-18 toolchain; fall back to the pinned upstream copy.
+          CC=clang-18 CXX=clang++-18 cmake --preset lint \
+            -DOCTARINE_ENABLE_LINTING=OFF \
+            -DOCTARINE_ENABLE_TESTS=ON \
+            -DVCPKG_INSTALLED_DIR="$GITHUB_WORKSPACE/build/${{ matrix.preset }}/vcpkg_installed"
           diff_tool="$(find /usr/lib/llvm-18 -name 'clang-tidy-diff.py' 2>/dev/null | head -1)"
           if [ -z "$diff_tool" ]; then
             diff_tool="$RUNNER_TEMP/clang-tidy-diff.py"
             curl -fsSL https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-18.1.8/clang-tools-extra/clang-tidy/tool/clang-tidy-diff.py -o "$diff_tool"
           fi
-          # -p1 strips the a/ b/ diff prefixes; -path points at compile_commands.json. Note: no
-          # released clang-tidy-diff.py accepts -warnings-as-errors (it forwards only post-`--` args,
-          # and those go to the *compiler*, not clang-tidy), and the wrapper exits 0 on warnings — so
-          # we capture its output and fail the step ourselves on any diagnostic against a touched line.
-          #
-          # `|| true`: clang-tidy-diff.py exits non-zero whenever clang-tidy hits a file-level compiler
-          # error — including the harmless `-fno-fat-lto-objects` that a GCC-built (LTO) release
-          # compile_commands carries but clang rejects. Under `set -e -o pipefail` that non-zero would
-          # abort the capture *before* we print/grep, so the step would die with no diagnostics shown.
-          # We judge on real `file:line:col:` diagnostics below, not on the wrapper's exit code.
           report="$(git diff -U0 "$base"...HEAD -- $changed \
-            | python3 "$diff_tool" -p1 -j0 -path "build/${{ matrix.preset }}" -clang-tidy-binary clang-tidy-18 2>&1)" || true
+            | python3 "$diff_tool" -p1 -j0 -path "build/lint" -clang-tidy-binary clang-tidy-18 2>&1)" || true
           printf '%s\n' "$report"
-          # Count only clang-tidy CHECK findings on the changed lines. Drop [clang-diagnostic-*]:
-          # those are the clang *frontend's* own diagnostics that clang-tidy passes through — clang
-          # choking on a GCC-only flag in the LTO compile_commands, or on a sol2+glm template
-          # instantiation that GCC accepts. The GCC -Werror build is the compiler-error gate; this
-          # step is for lint checks, whose names never start with clang-diagnostic-.
+          # Fail on any lint finding OR any [clang-diagnostic-*] compiler/parse error so broken
+          # translation units or compile_commands drift can never silently pass green.
           findings="$(printf '%s\n' "$report" \
-            | grep -E '^[^ ]+:[0-9]+:[0-9]+: (warning|error):' | grep -v '\[clang-diagnostic-' || true)"
+            | grep -E '(^[^ ]+:[0-9]+:[0-9]+: (warning|error):|error:.*\[clang-diagnostic-)' || true)"
           if [ -n "$findings" ]; then
-            echo "::error::clang-tidy reported issues on changed lines (see log above)."
+            echo "::error::clang-tidy reported issues or diagnostic errors on changed lines (see log above)."
             exit 1
           fi
+
+      # Minimal in-repo native game module check (ENG-DX-08): verifies CMake link visibility,
+      # header hygiene, GameModuleHooks seam, and native C++/Lua component bindings.
+      - name: Build & test minimal native module example
+        if: matrix.platform == 'linux' && matrix.preset == 'player-debug'
+        shell: bash
+        run: |
+          cmake -S "$GITHUB_WORKSPACE" -B build/minimal-native-module \
+            --preset player-debug \
+            -DOCTARINE_ENABLE_TESTS=ON \
+            -DOCTARINE_GAME_MODULE_DIR="${GITHUB_WORKSPACE}/examples/minimal-native-module" \
+            -DVCPKG_INSTALLED_DIR="${GITHUB_WORKSPACE}/build/player-debug/vcpkg_installed"
+          cmake --build build/minimal-native-module \
+            --target OctarineEngine OctarineLuaBehaviorTest octarine_game_module_tests --parallel
+          ctest --test-dir build/minimal-native-module \
+            -R "(MinimalNativeModuleTest|LuaBehaviorTest)" --output-on-failure
 
       - name: Stage runtime DLLs (Windows)
         if: matrix.platform == 'windows'
@@ -357,19 +366,19 @@ jobs:
           max-size: 250M
 
       - name: Configure CMake
-        run: cmake --preset player-debug -DOCTARINE_SANITIZE=asan -DOCTARINE_ENABLE_TESTS=ON
+        run: cmake --preset asan-ubsan
 
       - name: Build
-        run: cmake --build build/player-debug --parallel
+        run: cmake --build --preset asan-ubsan --parallel
 
       - name: Run engine tests (ctest under ASan+UBSan)
         env:
           # halt_on_error makes the first finding fail the test instead of logging past it.
           # Leak checking stays off for now: exit-time leaks in non-instrumented third-party
-          # libs (SDL/Lua via vcpkg) would drown real findings — revisit once a baseline exists.
+          # libs (SDL/Lua via vcpkg) would drown real findings - revisit once a baseline exists.
           ASAN_OPTIONS: halt_on_error=1:detect_leaks=0
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
-        run: ctest --test-dir build/player-debug --output-on-failure
+        run: ctest --test-dir build/asan-ubsan --output-on-failure
 
   # Diff coverage gate. Instruments binaries with Clang source-based coverage, runs ctest,
   # and enforces >= 80% coverage on modified lines under src/ (excluding non-headless GUI panels).
@@ -447,7 +456,7 @@ jobs:
         run: |
           base="${{ github.event.pull_request.base.sha }}"
           if [ -z "$base" ]; then base="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"; fi
-          mapfile -t files < <(git diff --name-only --diff-filter=ACMR "$base"...HEAD -- 'src/*' 'tests/*' \
+          mapfile -t files < <(git diff --name-only --diff-filter=ACMR "$base"...HEAD -- 'src/*' 'tests/*' 'examples/*' \
             | grep -E '\.(cpp|h|hpp)$' || true)
           if [ ${#files[@]} -eq 0 ]; then
             echo "No changed C/C++ sources to format-check."

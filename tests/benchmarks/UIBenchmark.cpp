@@ -219,14 +219,15 @@ BENCHMARK(BM_UIOss_ParseAndResolve)->Name("Misc/UI/OssParseAndResolve");
 
 void BM_UIRuntime_ReactiveRefresh(benchmark::State& state) {
   const int repeaterCount = static_cast<int>(state.range(0));
+  // Declare sol::state before Registry and UIRuntime so mounted view/component Lua refs unwind first.
+  sol::state lua;
+  lua.open_libraries(sol::lib::base, sol::lib::math, sol::lib::string, sol::lib::table);
+
   Registry registry;
   GameConfig cfg{};
   cfg.windowWidth = 1280;
   cfg.windowHeight = 720;
   registry.Set<GameConfig>(cfg);
-
-  sol::state lua;
-  lua.open_libraries(sol::lib::base, sol::lib::math, sol::lib::string, sol::lib::table);
 
   UIRuntime uiRuntime(&lua, &registry, nullptr);
   sol::table uiTbl = lua.create_table();

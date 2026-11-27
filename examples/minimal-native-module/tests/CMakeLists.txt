@@ -1,0 +1,4 @@
+octarine_add_engine_test(OctarineMinimalNativeModuleTest MinimalNativeModuleTest
+        MinimalNativeModuleTest.cpp
+)
+target_link_libraries(OctarineMinimalNativeModuleTest PRIVATE octarine_game_module)

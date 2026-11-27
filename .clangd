@@ -1,0 +1,20 @@
+# clangd configuration for Octarine Engine.
+# Strips PCH and GCC-only driver flags so clangd can parse compile_commands.json produced by
+# player-debug, player-release (LTO), or GCC toolchains without frontend flag errors.
+# ClangTidy check selection and CheckOptions are inherited from the root .clang-tidy file.
+CompileFlags:
+  Add:
+    - -std=c++20
+  Remove:
+    - -fpch-preprocess
+    - -fno-fat-lto-objects
+    - -fno-tree-slp-vectorize
+    - -Winvalid-pch
+    - -Xclang
+    - -include-pch*
+    - -march=*
+
+Diagnostics:
+  UnusedIncludes: None
+  ClangTidy:
+    FastCheckFilter: Strict
