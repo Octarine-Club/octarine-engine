@@ -4,11 +4,22 @@
 
 #include <algorithm>
 #include <array>
+#ifndef OCTARINE_SHIPPED
+#include <atomic>
+#endif
+#include <chrono>
 #include <cmath>
 #include <cstdint>
+#ifndef OCTARINE_SHIPPED
+#include <cstdio>
+#endif
 #include <cstdlib>
+#include <ctime>
 #include <glm/glm.hpp>
 #include <iomanip>
+#ifndef OCTARINE_SHIPPED
+#include <mutex>
+#endif
 #include <optional>
 #include <set>
 #include <sstream>
@@ -30,12 +41,14 @@
 #include "General/PerformanceTracker.h"
 #include "General/SimRandom.h"
 #include "General/ThreadPool.h"
+#include "Lua/HotReload/ScriptHotReload.h"
 #include "Lua/LuaBindingContext.h"
 #include "Renderer/Renderer.h"
 
 namespace {
 constexpr size_t kDefaultMaxDepth = 5;
 
+#ifndef OCTARINE_SHIPPED
 bool IsAllowedEnvVar(const std::string_view name) {
   constexpr std::array<std::string_view, 4> kAllowedPrefixes = {"OCT_", "OCTARINE_", "GAME_", "BOT_"};
   return std::any_of(kAllowedPrefixes.begin(), kAllowedPrefixes.end(),
@@ -55,6 +68,7 @@ std::string ReadEnvVar(const std::string& name) {
   return value ? std::string(value) : std::string();
 #endif
 }
+#endif
 
 octarine::UserSettings* GetOrCreateUserSettings(LuaBindingContext& ctx) {
   auto* registry = ctx.GetRegistry();
@@ -163,6 +177,7 @@ sol::table GetPerfStatsTable(sol::this_state ts, LuaBindingContext& ctx) {
   return t;
 }
 
+#ifndef OCTARINE_SHIPPED
 void SetDebugGuiState(LuaBindingContext& ctx, const bool enabled) {
   auto& options = ctx.GetRegistry()->Get<GameConfig>().GetEngineOptions();
   options.showDebugGUI = enabled;
@@ -185,6 +200,7 @@ bool ToggleDebugGuiState(LuaBindingContext& ctx) {
   }
   return options.showDebugGUI;
 }
+#endif
 
 void BindDiagnostics(sol::state& lua, LuaBindingContext& ctx) {
   lua.set_function("log_table", [](const sol::table& table, const sol::optional<std::string>& message) {
@@ -199,8 +215,13 @@ void BindDiagnostics(sol::state& lua, LuaBindingContext& ctx) {
   lua.set_function("get_entity_count", [&ctx]() -> std::size_t { return GetEntityCountState(ctx); });
   lua.set_function("get_memory_usage", [&ctx]() -> std::uint64_t { return GetMemoryUsageState(ctx); });
   lua.set_function("get_perf_stats", [&ctx](sol::this_state ts) -> sol::table { return GetPerfStatsTable(ts, ctx); });
+#ifdef OCTARINE_SHIPPED
+  lua.set_function("set_debug_gui", [](const bool) -> bool { return false; });
+  lua.set_function("toggle_debug_gui", []() -> bool { return false; });
+#else
   lua.set_function("set_debug_gui", [&ctx](const bool enabled) { SetDebugGuiState(ctx, enabled); });
   lua.set_function("toggle_debug_gui", [&ctx]() -> bool { return ToggleDebugGuiState(ctx); });
+#endif
 }
 
 void BindSubsteppingAndDt(sol::state& lua, LuaBindingContext& ctx) {
@@ -290,6 +311,11 @@ void BindStateInspection(sol::state& lua, LuaBindingContext& ctx) {
     return out.str();
   });
 
+#ifdef OCTARINE_SHIPPED
+  lua.set_function("write_state_dump", [](const std::string&) -> bool { return false; });
+  lua.set_function("get_env", [](const std::string&) -> sol::optional<std::string> { return sol::nullopt; });
+  lua.set_function("write_project_file", [](const std::string&, const std::string&) -> bool { return false; });
+#else
   lua.set_function("write_state_dump", [&ctx](const std::string& relativePath) -> bool {
     const std::string root = ctx.GetProjectPath();
     if (root.empty()) return false;
@@ -316,6 +342,7 @@ void BindStateInspection(sol::state& lua, LuaBindingContext& ctx) {
     if (fullPath.empty()) return false;
     return file_sandbox::WriteFileAtomic(fullPath, contents);
   });
+#endif
 }
 
 void UpdateCameraViewportOnResize(CameraComponent* camera, const GameConfig& config, const int logicalW,
@@ -1717,6 +1744,202 @@ void BindAudioSettings(sol::state& lua, LuaBindingContext& ctx) {
   lua.set_function("is_audio_muted", [&ctx]() -> bool { return GetAudioMutedState(ctx); });
   lua.set_function("set_audio_muted", [&ctx](const bool muted) { SetAudioMutedState(ctx, muted); });
 }
+
+bool IsSafeHttpsUrl(const std::string& url) {
+  if (url.size() < 10 || url.size() > 2048) return false;
+  if (url.rfind("https://", 0) != 0) return false;
+  return std::none_of(url.begin(), url.end(), [](const char ch) {
+    const auto byte = static_cast<unsigned char>(ch);
+    return byte <= 0x20 || ch == 0x7f;
+  });
+}
+
+bool IsHeadlessMode(const LuaBindingContext& ctx) {
+  auto* registry = ctx.GetRegistry();
+  if (registry == nullptr) return false;
+  const auto* config = registry->TryGet<GameConfig>();
+  return config != nullptr && config->GetEngineOptions().headless;
+}
+
+#ifndef OCTARINE_SHIPPED
+std::atomic<bool> g_verifyFailed{false};
+std::once_flag g_verifyExitHandlerOnce;
+
+void VerifyFailedExitHandler() {
+  if (g_verifyFailed.load(std::memory_order_relaxed)) {
+    std::fflush(stdout);
+    std::fflush(stderr);
+    std::_Exit(1);
+  }
+}
+
+void RegisterVerifyExitHandler() {
+  std::call_once(g_verifyExitHandlerOnce, []() { std::atexit(VerifyFailedExitHandler); });
+}
+
+void InstallVerifyBindings(sol::state& lua, LuaBindingContext& ctx) {
+  RegisterVerifyExitHandler();
+  g_verifyFailed.store(false, std::memory_order_relaxed);
+  lua.set_function("mark_verify_failed", [&ctx](const std::string& reason) {
+    RegisterVerifyExitHandler();
+    g_verifyFailed.store(true, std::memory_order_relaxed);
+    Logger::Error("[VERIFY_FAILED] " + reason);
+    ctx.RequestQuit();
+  });
+  lua.set_function("has_verify_failed", []() -> bool { return g_verifyFailed.load(std::memory_order_relaxed); });
+}
+#endif
+
+void BindPlatformAndBuild(sol::state& lua, LuaBindingContext& ctx) {
+  lua.set_function("get_system_time", []() -> double {
+    const auto now = std::chrono::system_clock::now();
+    return std::chrono::duration<double>(now.time_since_epoch()).count();
+  });
+
+  lua.set_function("get_timestamp_string", []() -> std::string {
+    const auto now = std::chrono::system_clock::now();
+    const std::time_t tt = std::chrono::system_clock::to_time_t(now);
+    std::tm tmBuf{};
+#if defined(_WIN32)
+    localtime_s(&tmBuf, &tt);
+#else
+    localtime_r(&tt, &tmBuf);
+#endif
+    char buf[64];
+    std::strftime(buf, sizeof(buf), "%Y%m%d_%H%M%S", &tmBuf);
+    return std::string(buf);
+  });
+
+  lua.set_function("open_external_url", [&ctx](const std::string& url) -> bool {
+    if (!IsSafeHttpsUrl(url) || IsHeadlessMode(ctx)) return false;
+    return SDL_OpenURL(url.c_str());
+  });
+
+  lua.set_function("set_clipboard_text", [&ctx](const std::string& text) -> bool {
+    if (text.empty() || text.size() > 1024 || IsHeadlessMode(ctx)) return false;
+    return SDL_SetClipboardText(text.c_str());
+  });
+
+#ifdef OCTARINE_SHIPPED
+  lua["oct_shipped"] = true;
+  lua.set_function("is_shipped_build", []() -> bool { return true; });
+#else
+  lua["oct_shipped"] = false;
+  lua.set_function("is_shipped_build", []() -> bool { return false; });
+  InstallVerifyBindings(lua, ctx);
+#endif
+}
+
+#ifndef OCTARINE_SHIPPED
+octarine::LuaScriptHotReloadTracker* EnsureHotReloadTracker(LuaBindingContext& ctx) {
+  auto* registry = ctx.GetRegistry();
+  if (registry == nullptr) return nullptr;
+  if (auto* tracker = registry->TryGet<octarine::LuaScriptHotReloadTracker>()) {
+    return tracker;
+  }
+  return &registry->Set<octarine::LuaScriptHotReloadTracker>(octarine::LuaScriptHotReloadTracker{});
+}
+
+sol::table PollTrackedScripts(sol::this_state s, LuaBindingContext& ctx, const sol::optional<double> dtOpt) {
+  sol::state_view luaView(s);
+  sol::table out = luaView.create_table();
+  auto* registry = ctx.GetRegistry();
+  if (registry == nullptr) return out;
+  const auto* config = registry->TryGet<GameConfig>();
+  if (config == nullptr || !config->GetEngineOptions().hotReloadEnabled) return out;
+  auto* tracker = EnsureHotReloadTracker(ctx);
+  if (tracker == nullptr || tracker->watcher.Empty()) return out;
+  const auto dt = static_cast<float>(dtOpt.value_or(0.0));
+  const float pollInterval = config->GetEngineOptions().hotReloadPollSeconds;
+  if (dt > 0.0F) {
+    tracker->accum += dt;
+    if (tracker->accum < pollInterval) return out;
+    tracker->accum = 0.0F;
+  } else {
+    tracker->accum = 0.0F;
+  }
+  const auto changed = tracker->watcher.Poll();
+  for (std::size_t i = 0; i < changed.size(); ++i) {
+    out[i + 1] = changed[i];
+  }
+  return out;
+}
+#endif
+
+void BindHotReload(sol::state& lua, LuaBindingContext& ctx) {
+  lua.set_function("set_hot_reload_enabled", [&ctx](const bool enabled) -> bool {
+#ifdef OCTARINE_SHIPPED
+    (void)ctx;
+    (void)enabled;
+    return false;
+#else
+    auto* registry = ctx.GetRegistry();
+    auto* config = registry != nullptr ? registry->TryGet<GameConfig>() : nullptr;
+    if (config == nullptr) return false;
+    config->GetEngineOptions().hotReloadEnabled = enabled;
+    return config->GetEngineOptions().hotReloadEnabled;
+#endif
+  });
+
+  lua.set_function("is_hot_reload_enabled", [&ctx]() -> bool {
+#ifdef OCTARINE_SHIPPED
+    (void)ctx;
+    return false;
+#else
+    auto* registry = ctx.GetRegistry();
+    const auto* config = registry != nullptr ? registry->TryGet<GameConfig>() : nullptr;
+    return config != nullptr && config->GetEngineOptions().hotReloadEnabled;
+#endif
+  });
+
+  sol::table hotReloadTable = lua.create_named_table("hot_reload");
+  hotReloadTable.set_function("track_script", [&ctx](const std::string& absPath) {
+#ifdef OCTARINE_SHIPPED
+    (void)ctx;
+    (void)absPath;
+#else
+    if (absPath.empty()) return;
+    if (auto* tracker = EnsureHotReloadTracker(ctx)) {
+      tracker->watcher.Track(absPath);
+    }
+#endif
+  });
+
+  hotReloadTable.set_function("untrack_script", [&ctx](const std::string& absPath) {
+#ifdef OCTARINE_SHIPPED
+    (void)ctx;
+    (void)absPath;
+#else
+    if (absPath.empty()) return;
+    if (auto* tracker = EnsureHotReloadTracker(ctx)) {
+      tracker->watcher.Untrack(absPath);
+    }
+#endif
+  });
+
+  hotReloadTable.set_function("get_tracked_count", [&ctx]() -> std::size_t {
+#ifdef OCTARINE_SHIPPED
+    (void)ctx;
+    return 0;
+#else
+    if (const auto* tracker = EnsureHotReloadTracker(ctx)) {
+      return tracker->watcher.TrackedCount();
+    }
+    return 0;
+#endif
+  });
+
+  hotReloadTable.set_function("poll_scripts",
+                              [&ctx](sol::this_state s, const sol::optional<double> dtOpt) -> sol::table {
+#ifdef OCTARINE_SHIPPED
+                                (void)ctx;
+                                (void)dtOpt;
+                                return sol::state_view(s).create_table();
+#else
+                                return PollTrackedScripts(s, ctx, dtOpt);
+#endif
+                              });
+}
 }  // namespace
 
 void LuaModuleBinding<GameModule>::install(sol::state& lua, LuaBindingContext& ctx) {
@@ -1728,4 +1951,6 @@ void LuaModuleBinding<GameModule>::install(sol::state& lua, LuaBindingContext& c
   BindUserSettings(lua, ctx);
   BindWindowAndDisplay(lua, ctx);
   BindAudioSettings(lua, ctx);
+  BindPlatformAndBuild(lua, ctx);
+  BindHotReload(lua, ctx);
 }

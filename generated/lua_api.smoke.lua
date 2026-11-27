@@ -1682,6 +1682,8 @@ function get_display_size(...) end
 
 function get_displays(...) end
 
+function get_entity_children(...) end
+
 function get_entity_count(...) end
 
 function get_env(...) end
@@ -1716,9 +1718,17 @@ function get_presentation_mode(...) end
 
 function get_sim_substeps(...) end
 
+function get_sprite_src_rect(...) end
+
 function get_state_hash(...) end
 
+function get_system_time(...) end
+
+function get_text_label_font(...) end
+
 function get_texture_scale_mode(...) end
+
+function get_timestamp_string(...) end
 
 function get_user_setting(...) end
 
@@ -1729,6 +1739,22 @@ function get_window_mode(...) end
 function get_window_position(...) end
 
 function get_window_size(...) end
+
+function has_catalog_asset(...) end
+
+function has_verify_failed(...) end
+
+---@class hot_reload
+hot_reload = {}
+
+function hot_reload.get_tracked_count(...) end
+
+function hot_reload.poll_scripts(...) end
+
+function hot_reload.track_script(...) end
+
+function hot_reload.untrack_script(...) end
+
 
 ---@class input
 input = {}
@@ -1810,7 +1836,11 @@ function is_fullscreen(...) end
 
 function is_headless(...) end
 
+function is_hot_reload_enabled(...) end
+
 function is_maximized(...) end
+
+function is_shipped_build(...) end
 
 function is_window_resizable(...) end
 
@@ -1842,9 +1872,16 @@ function log_table(...) end
 
 function log_w(...) end
 
+function mark_verify_failed(...) end
+
 ---@class name_component
 name_component = {}
 
+
+---@type boolean
+oct_shipped = false
+
+function open_external_url(...) end
 
 ---@class pivot_component
 pivot_component = {}
@@ -2054,9 +2091,13 @@ script_callback_component = {}
 script_component = {}
 
 
+function set_audio_cue_gain(...) end
+
 function set_audio_muted(...) end
 
 function set_camera_zoom(...) end
+
+function set_clipboard_text(...) end
 
 function set_debug_gui(...) end
 
@@ -2074,11 +2115,15 @@ function set_game_map_dimensions(...) end
 
 function set_headless(...) end
 
+function set_hot_reload_enabled(...) end
+
 function set_master_volume(...) end
 
 function set_maximized(...) end
 
 function set_name(...) end
+
+function set_native_sfx_volume(...) end
 
 function set_position(...) end
 
@@ -2090,9 +2135,17 @@ function set_sim_seed(...) end
 
 function set_sim_substeps(...) end
 
+function set_sprite_region(...) end
+
 function set_sprite_src_rect(...) end
 
+function set_sprite_world_size(...) end
+
+function set_text_label_font(...) end
+
 function set_texture_scale_mode(...) end
+
+function set_ui_nine_slice(...) end
 
 function set_user_setting(...) end
 

@@ -14,17 +14,17 @@
     {
       "name": "Assets",
       "binding_header": "src/Lua/Modules/AssetsModuleLuaBinding.h",
-      "globals": ["get_asset_path"]
+      "globals": ["get_asset_path", "has_catalog_asset"]
     },
     {
       "name": "Audio",
       "binding_header": "src/Lua/Modules/AudioModuleLuaBinding.h",
-      "globals": ["play_sound"]
+      "globals": ["play_sound", "set_audio_cue_gain", "set_native_sfx_volume"]
     },
     {
       "name": "Entity",
       "binding_header": "src/Lua/Modules/EntityModuleLuaBinding.h",
-      "globals": ["are_colliding", "blam", "find_entity_by_name", "get_name", "get_position", "get_position_xy", "registry", "set_name", "set_position", "set_rotation", "set_sprite_src_rect"]
+      "globals": ["are_colliding", "blam", "find_entity_by_name", "get_entity_children", "get_name", "get_position", "get_position_xy", "get_sprite_src_rect", "get_text_label_font", "registry", "set_name", "set_position", "set_rotation", "set_sprite_region", "set_sprite_src_rect", "set_sprite_world_size", "set_text_label_font"]
     },
     {
       "name": "Scene",
@@ -34,12 +34,12 @@
     {
       "name": "Game",
       "binding_header": "src/Lua/Modules/GameModuleLuaBinding.h",
-      "globals": ["get_avg_fps", "get_base_resolution", "get_camera_position", "get_camera_zoom", "get_current_display_index", "get_current_display_name", "get_display_count", "get_display_modes", "get_display_size", "get_displays", "get_entity_count", "get_env", "get_fixed_dt", "get_fps", "get_fps_target", "get_frame_time", "get_fullscreen_resolution", "get_game_map_dimensions", "get_logical_size", "get_master_volume", "get_memory_usage", "get_perf_stats", "get_presentation_mode", "get_sim_substeps", "get_state_hash", "get_texture_scale_mode", "get_user_setting", "get_vsync", "get_window_mode", "get_window_position", "get_window_size", "is_audio_muted", "is_deterministic", "is_fullscreen", "is_headless", "is_maximized", "is_window_resizable", "log_table", "quit_game", "save_user_settings", "set_audio_muted", "set_camera_zoom", "set_debug_gui", "set_deterministic", "set_fixed_dt", "set_fps_target", "set_fullscreen", "set_fullscreen_resolution", "set_game_map_dimensions", "set_headless", "set_master_volume", "set_maximized", "set_presentation_mode", "set_sim_seed", "set_sim_substeps", "set_texture_scale_mode", "set_user_setting", "set_vsync", "set_window_display", "set_window_mode", "set_window_position", "set_window_resizable", "set_window_size", "settings", "toggle_debug_gui", "write_project_file", "write_state_dump"]
+      "globals": ["get_avg_fps", "get_base_resolution", "get_camera_position", "get_camera_zoom", "get_current_display_index", "get_current_display_name", "get_display_count", "get_display_modes", "get_display_size", "get_displays", "get_entity_count", "get_env", "get_fixed_dt", "get_fps", "get_fps_target", "get_frame_time", "get_fullscreen_resolution", "get_game_map_dimensions", "get_logical_size", "get_master_volume", "get_memory_usage", "get_perf_stats", "get_presentation_mode", "get_sim_substeps", "get_state_hash", "get_system_time", "get_texture_scale_mode", "get_timestamp_string", "get_user_setting", "get_vsync", "get_window_mode", "get_window_position", "get_window_size", "has_verify_failed", "hot_reload", "is_audio_muted", "is_deterministic", "is_fullscreen", "is_headless", "is_hot_reload_enabled", "is_maximized", "is_shipped_build", "is_window_resizable", "log_table", "mark_verify_failed", "oct_shipped", "open_external_url", "quit_game", "save_user_settings", "set_audio_muted", "set_camera_zoom", "set_clipboard_text", "set_debug_gui", "set_deterministic", "set_fixed_dt", "set_fps_target", "set_fullscreen", "set_fullscreen_resolution", "set_game_map_dimensions", "set_headless", "set_hot_reload_enabled", "set_master_volume", "set_maximized", "set_presentation_mode", "set_sim_seed", "set_sim_substeps", "set_texture_scale_mode", "set_user_setting", "set_vsync", "set_window_display", "set_window_mode", "set_window_position", "set_window_resizable", "set_window_size", "settings", "toggle_debug_gui", "write_project_file", "write_state_dump"]
     },
     {
       "name": "UI",
       "binding_header": "src/Lua/Modules/UIModuleLuaBinding.h",
-      "globals": ["ui"]
+      "globals": ["set_ui_nine_slice", "ui"]
     },
     {
       "name": "Storage",

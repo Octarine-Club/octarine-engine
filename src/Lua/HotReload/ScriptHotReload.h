@@ -10,6 +10,14 @@
 class Registry;
 struct ScriptComponent;
 
+namespace octarine {
+// Script-driven hot-reload tracker wrapping FileWatcher for Lua hot_reload.* bindings.
+struct LuaScriptHotReloadTracker {
+  FileWatcher watcher{};
+  float accum = 0.0F;
+};
+}  // namespace octarine
+
 #ifndef OCTARINE_SHIPPED
 
 // Owns the watcher + auto-discovers file-backed ScriptComponents via a Registry query each tick.

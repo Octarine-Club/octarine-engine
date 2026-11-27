@@ -19,7 +19,7 @@
       "emit_sites": [
         {
           "file": "src/Lua/Modules/AudioModuleLuaBinding.cpp",
-          "line": 19
+          "line": 36
         },
         {
           "file": "src/Systems/UIButtonSystem.h",
@@ -27,6 +27,11 @@
         }
       ],
       "subscribe_sites": [
+        {
+          "file": "src/Audio/AudioGainRegistry.h",
+          "line": 22,
+          "owner": "AudioGainRegistry"
+        },
         {
           "file": "src/Systems/AudioSystem.cpp",
           "line": 65,

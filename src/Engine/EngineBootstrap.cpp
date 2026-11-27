@@ -7,6 +7,7 @@
 
 #include "AssetManager/AssetManager.h"
 #include "AssetManager/SdlFileReader.h"
+#include "Audio/AudioGainRegistry.h"
 #include "Audio/AudioTrackCache.h"
 #include "Components/CameraComponents.h"
 #include "Components/ViewportInfo.h"
@@ -22,6 +23,7 @@
 #include "General/Logger.h"
 #include "General/Rect.h"
 #include "Lua/Bindings/RegisterAllBindings.h"
+#include "Lua/HotReload/ScriptHotReload.h"
 #include "Lua/Modules/RegisterAllModules.h"
 #include "Renderer/RenderQueue.h"
 #include "Renderer/SpriteRenderCache.h"
@@ -117,6 +119,11 @@ void InstallCoreSingletons(Registry& registry, EngineContext& context, const int
 
 void InstallPoolAndSingletons(Registry& registry) {
   registry.Set<EntityPoolManager>(EntityPoolManager());
+  registry.Set<octarine::LuaScriptHotReloadTracker>(octarine::LuaScriptHotReloadTracker{});
+  auto& audioGainRegistry = registry.Set<octarine::AudioGainRegistry>(octarine::AudioGainRegistry{});
+  if (auto* engCtx = registry.TryGet<EngineContext>(); engCtx != nullptr && engCtx->eventBus != nullptr) {
+    audioGainRegistry.Subscribe(*engCtx->eventBus);
+  }
   game_module::InstallSingletons(registry);
 }
 
@@ -146,6 +153,11 @@ void SetCommonLuaGlobals(sol::state& lua, const GameConfig& config, const std::s
   lua["game_window_width"] = config.windowWidth;
   lua["game_window_height"] = config.windowHeight;
   lua["oct_startup_mode"] = startupMode;
+#ifdef OCTARINE_SHIPPED
+  (void)devMode;
+  lua["oct_dev_mode"] = false;
+#else
   lua["oct_dev_mode"] = devMode;
+#endif
 }
 }  // namespace engine_bootstrap

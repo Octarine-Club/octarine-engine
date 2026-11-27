@@ -2,17 +2,20 @@
 
 #include <glm/glm.hpp>
 #include <string>
+#include <tuple>
 
 #include "Components/NameComponent.h"
 #include "Components/PositionComponent.h"
 #include "Components/RotationComponent.h"
 #include "Components/SpriteComponent.h"
+#include "Components/TextLabelComponent.h"
 #include "ECS/Query.h"
 #include "ECS/Registry.h"
 #include "General/AngleUnit.h"
 #include "General/Logger.h"
 #include "Lua/Bindings/LuaComponentRegistry.h"
 #include "Lua/LuaBindingContext.h"
+#include "Renderer/SpriteRenderCache.h"
 #include "Systems/KDTreeCollisionSystem.h"
 
 namespace {
@@ -69,6 +72,69 @@ void SetEntitySpriteSrcRect(Registry* registry, const Entity entity, const float
   sprite.srcRect.y = srcRectY;
 }
 
+void SetTextLabelFont(Registry* registry, const Entity entity, const std::string& fontId) {
+  if (registry != nullptr && registry->IsAlive(entity) && registry->HasComponent<TextLabelComponent>(entity)) {
+    registry->GetComponent<TextLabelComponent>(entity).fontId = fontId;
+  }
+}
+
+std::string GetTextLabelFont(Registry* registry, const Entity entity) {
+  if (registry != nullptr && registry->IsAlive(entity) && registry->HasComponent<TextLabelComponent>(entity)) {
+    return registry->GetComponent<TextLabelComponent>(entity).fontId;
+  }
+  return "";
+}
+
+void SetSpriteWorldSize(Registry* registry, const Entity entity, const float width, const float height) {
+  if (registry != nullptr && registry->IsAlive(entity) && registry->HasComponent<SpriteComponent>(entity)) {
+    auto& sp = registry->GetComponent<SpriteComponent>(entity);
+    sp.width = width;
+    sp.height = height;
+  }
+}
+
+std::tuple<float, float, float, float> GetSpriteSrcRect(Registry* registry, const Entity entity) {
+  if (registry != nullptr && registry->IsAlive(entity) && registry->HasComponent<SpriteComponent>(entity)) {
+    const auto& sp = registry->GetComponent<SpriteComponent>(entity);
+    return {sp.srcRect.x, sp.srcRect.y, sp.srcRect.w, sp.srcRect.h};
+  }
+  return {0.0F, 0.0F, 0.0F, 0.0F};
+}
+
+void SetSpriteRegion(Registry* registry, const Entity entity, const std::string& assetId, const float x, const float y,
+                     const float w, const float h) {
+  if (registry == nullptr || !registry->IsAlive(entity)) return;
+  if (registry->HasComponent<SpriteComponent>(entity)) {
+    auto& sp = registry->GetComponent<SpriteComponent>(entity);
+    if (sp.assetId != assetId) {
+      sp.assetId = assetId;
+      if (auto* cache = registry->TryGet<SpriteRenderCache>()) {
+        cache->Forget(entity);
+      }
+    }
+    sp.srcRect.x = x;
+    sp.srcRect.y = y;
+    sp.srcRect.w = w;
+    sp.srcRect.h = h;
+  } else {
+    SpriteComponent sp(assetId, w, h, 0, true, x, y);
+    sp.srcRect.w = w;
+    sp.srcRect.h = h;
+    registry->AddComponent(entity, sp);
+  }
+}
+
+sol::table GetEntityChildren(sol::this_state state, Registry* registry, const Entity entity) {
+  sol::state_view luaView(state);
+  sol::table out = luaView.create_table();
+  if (registry == nullptr || !registry->IsAlive(entity)) return out;
+  const auto children = registry->GetChildren(entity);
+  for (std::size_t i = 0; i < children.size(); ++i) {
+    out[i + 1] = children[i];
+  }
+  return out;
+}
+
 void SetEntityParent(Registry* registry, const Entity child, const Entity parent) {
   if (child.id == parent.id) {
     Logger::Error("set_parent: entity cannot be its own parent.");
@@ -123,6 +189,22 @@ void LuaModuleBinding<EntityModule>::install(sol::state& lua, LuaBindingContext&
   });
   lua.set_function("set_sprite_src_rect", [&ctx](const Entity entity, const float x, const float y) {
     SetEntitySpriteSrcRect(ctx.GetRegistry(), entity, x, y);
+  });
+  lua.set_function("set_text_label_font", [&ctx](const Entity entity, const std::string& fontId) {
+    SetTextLabelFont(ctx.GetRegistry(), entity, fontId);
+  });
+  lua.set_function("get_text_label_font",
+                   [&ctx](const Entity entity) { return GetTextLabelFont(ctx.GetRegistry(), entity); });
+  lua.set_function("set_sprite_world_size", [&ctx](const Entity entity, const float width, const float height) {
+    SetSpriteWorldSize(ctx.GetRegistry(), entity, width, height);
+  });
+  lua.set_function("get_sprite_src_rect",
+                   [&ctx](const Entity entity) { return GetSpriteSrcRect(ctx.GetRegistry(), entity); });
+  lua.set_function("set_sprite_region",
+                   [&ctx](const Entity entity, const std::string& assetId, const float x, const float y, const float w,
+                          const float h) { SetSpriteRegion(ctx.GetRegistry(), entity, assetId, x, y, w, h); });
+  lua.set_function("get_entity_children", [&ctx](sol::this_state state, const Entity entity) {
+    return GetEntityChildren(state, ctx.GetRegistry(), entity);
   });
 
   lua.set_function("are_colliding", [&ctx](const Entity a, const Entity b) {

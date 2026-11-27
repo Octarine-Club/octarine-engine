@@ -306,4 +306,19 @@ void LuaModuleBinding<UIModule>::install(sol::state& lua, LuaBindingContext& ctx
   }
 
   lua["ui"] = ui;
+
+  lua.set_function("set_ui_nine_slice", [&ctx](const Entity entity, const float left, const float top,
+                                               const float right, const float bottom) {
+    auto* registry = ctx.GetRegistry();
+    if (registry == nullptr || !registry->IsAlive(entity)) return;
+    if (registry->HasComponent<UINineSliceComponent>(entity)) {
+      auto& ns = registry->GetComponent<UINineSliceComponent>(entity);
+      ns.left = left;
+      ns.top = top;
+      ns.right = right;
+      ns.bottom = bottom;
+    } else {
+      registry->AddComponent(entity, UINineSliceComponent(left, top, right, bottom));
+    }
+  });
 }
