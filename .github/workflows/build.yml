@@ -280,6 +280,7 @@ jobs:
           CC=clang-18 CXX=clang++-18 cmake --preset lint \
             -DOCTARINE_ENABLE_LINTING=OFF \
             -DOCTARINE_ENABLE_TESTS=ON \
+            -DOCTARINE_GAME_MODULE_DIR="$GITHUB_WORKSPACE/examples/minimal-native-module" \
             -DVCPKG_INSTALLED_DIR="$GITHUB_WORKSPACE/build/${{ matrix.preset }}/vcpkg_installed"
           diff_tool="$(find /usr/lib/llvm-18 -name 'clang-tidy-diff.py' 2>/dev/null | head -1)"
           if [ -z "$diff_tool" ]; then
