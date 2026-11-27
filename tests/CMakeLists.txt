@@ -139,7 +139,9 @@ octarine_add_test(OctarineAssetRefcounterTest AssetRefcounterTest
 # Dedicated shipped-semantics asset layer (OCTARINE_SHIPPED=ON, OCTARINE_ALLOW_LOOSE_ASSETS=OFF)
 # so ShippedPakSmokeTest exercises the exact shipped OpenAssetIO / AssetCatalog / DecryptLuaBytes
 # branches even when ctest runs under the player-debug or asan-ubsan presets.
-add_library(octarine_assets_shipped_test STATIC
+# Compiles the required octarine_core sources with OCTARINE_SHIPPED directly instead of linking
+# non-shipped octarine_core, avoiding ODR collisions (e.g., MSVC LNK2005 on Logger::Info).
+set(_octarine_shipped_test_sources
         "${PROJECT_SOURCE_DIR}/src/AssetManager/AssetCatalog.cpp"
         "${PROJECT_SOURCE_DIR}/src/AssetManager/AssetManager.cpp"
         "${PROJECT_SOURCE_DIR}/src/AssetManager/AssetPak.cpp"
@@ -147,7 +149,15 @@ add_library(octarine_assets_shipped_test STATIC
         "${PROJECT_SOURCE_DIR}/src/AssetManager/FontStore.cpp"
         "${PROJECT_SOURCE_DIR}/src/AssetManager/GlyphAtlas.cpp"
         "${PROJECT_SOURCE_DIR}/src/AssetManager/TextureStore.cpp"
+        "${PROJECT_SOURCE_DIR}/src/Game/GameConfig.cpp"
+        "${PROJECT_SOURCE_DIR}/src/General/IniParser.cpp"
+        "${PROJECT_SOURCE_DIR}/src/General/Logger.cpp"
+        "${PROJECT_SOURCE_DIR}/src/General/LuaEscape.cpp"
 )
+if (UNIX AND NOT APPLE AND NOT ANDROID)
+    list(APPEND _octarine_shipped_test_sources "${PROJECT_SOURCE_DIR}/src/General/SDL3_Linux_Stubs.cpp")
+endif ()
+add_library(octarine_assets_shipped_test STATIC ${_octarine_shipped_test_sources})
 set_source_files_properties("${PROJECT_SOURCE_DIR}/src/AssetManager/GlyphAtlas.cpp" PROPERTIES
         COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>"
         SKIP_PRECOMPILE_HEADERS ON)
@@ -157,6 +167,8 @@ target_include_directories(octarine_assets_shipped_test PUBLIC
 )
 target_include_directories(octarine_assets_shipped_test PRIVATE "${PROJECT_SOURCE_DIR}/libs/stb")
 target_compile_definitions(octarine_assets_shipped_test PUBLIC
+        GLM_FORCE_INTRINSICS
+        SOL_NO_CHECK_NUMBER_PRECISION=1
         OCTARINE_SHIPPED
         OCTARINE_PROTECT_SCRIPTS
 )
@@ -170,11 +182,16 @@ else ()
     target_compile_options(octarine_assets_shipped_test PUBLIC -UOCTARINE_ALLOW_LOOSE_ASSETS)
 endif ()
 target_link_libraries(octarine_assets_shipped_test PUBLIC
-        octarine_core
+        glm::glm
+        SDL3::SDL3
+        sol2::sol2
+        ${LUA_LIBRARIES}
+        Threads::Threads
         SDL3_ttf::SDL3_ttf
         $<IF:$<TARGET_EXISTS:SDL3_mixer::SDL3_mixer>,SDL3_mixer::SDL3_mixer,SDL3_mixer::SDL3_mixer-static>
         $<IF:$<TARGET_EXISTS:SDL3_image::SDL3_image-shared>,SDL3_image::SDL3_image-shared,SDL3_image::SDL3_image-static>
 )
+target_link_libraries(octarine_assets_shipped_test PRIVATE spdlog::spdlog)
 
 octarine_add_test(OctarineShippedPakSmokeTest ShippedPakSmokeTest
         SOURCES ShippedPakSmokeTest.cpp
